@@ -72,6 +72,6 @@ jobs:
                 sha: pullRequest.data.head.sha,
                 state: state,
                 description: 'The integration tests have completed',
-                context: 'integration-tests'
+                context: 'integration_tests'
               })
 
