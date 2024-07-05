@@ -1,0 +1,77 @@
+name: integration_tests
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  integration_tests:
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      pull-requests: write
+      statuses: write
+    if: contains(github.event.comment.body, '/integration_tests')
+    runs-on: ubuntu-latest
+    steps:
+        - name: Checkout repository
+          uses: actions/checkout@v3
+    
+        - name: Setup Conda Environment
+          run: |
+            ./.github/workflow_scripts/setup_conda_environment.sh
+          shell: bash
+    
+        - name: Install Dependencies
+          run: |
+            source $HOME/miniconda/etc/profile.d/conda.sh
+            conda activate gnn
+            make install_dev_deps
+          shell: bash
+
+        - name: Google Cloud Auth
+          uses: 'google-github-actions/auth@v2'
+          with:
+            project_id: ${{ secrets.GCP_PROJECT_ID }}
+            workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+            service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+        - name: Set up Cloud SDK
+          uses: google-github-actions/setup-gcloud@v2
+          with:
+            project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+        - name: Use gcloud CLI
+          run: gcloud info
+    
+        - name: Run Integration Tests
+          run: |
+            source $HOME/miniconda/etc/profile.d/conda.sh
+            conda activate gnn
+            make integration_test
+            make integration_e2e_test
+          shell: bash
+
+        - name: Fetch PR details and update commit status
+          uses: actions/github-script@v5
+          if: always()
+          with:
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+            script: |
+              const pullRequest = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+
+              const state = '${{ job.status }}';
+
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: pullRequest.data.head.sha,
+                state: state,
+                description: 'The integration tests have completed',
+                context: 'integration-tests'
+              })
+

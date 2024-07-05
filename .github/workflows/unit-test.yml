@@ -1,0 +1,32 @@
+name: unit_test
+
+on:
+  pull_request:
+    types: [synchronize, opened, reopened]
+
+jobs:
+  unit-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+        - name: Checkout repository
+          uses: actions/checkout@v3
+    
+        - name: Setup Conda Environment
+          run: |
+            ./.github/workflow_scripts/setup_conda_environment.sh
+          shell: bash
+    
+        - name: Install Dependencies
+          run: |
+            source $HOME/miniconda/etc/profile.d/conda.sh
+            conda activate gnn
+            make install_dev_deps
+          shell: bash
+    
+        - name: Run Unit Tests
+          run: |
+            source $HOME/miniconda/etc/profile.d/conda.sh
+            conda activate gnn
+            make unit_test
+          shell: bash

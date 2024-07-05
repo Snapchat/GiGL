@@ -1,0 +1,58 @@
+name: generate-hashed-requirements
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  generate-linux-hashed-requirements:
+    runs-on: ubuntu-latest
+    if: contains(github.event.comment.body, '/generate_hashed_requirements')
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9.18'
+
+      - name: Install pip-tools
+        run: pip install pip-tools
+
+      - name: Generate hashed requirements
+        run: |
+          pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
+          --output-file=requirements/dev_linux_cuda_requirements_unified.txt \
+          ./pyproject.toml
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev_linux_cuda_requirements_unified
+          path: requirements/dev_linux_cuda_requirements_unified.txt
+
+  generate-mac-hashed-requirements:
+    runs-on: macos-14
+    if: contains(github.event.comment.body, '/generate_hashed_requirements')
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.18'
+
+      - name: Install pip-tools
+        run: pip install pip-tools
+
+      - name: Generate hashed requirements
+        run: |
+          pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
+          --output-file=requirements/dev_darwin_arm64_requirements_unified.txt \
+          ./pyproject.toml
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev_darwin_arm64_requirements_unified
+          path: requirements/dev_darwin_arm64_requirements_unified.txt
