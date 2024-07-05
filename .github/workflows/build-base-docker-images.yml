@@ -1,0 +1,38 @@
+name: build-base-docker-images
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  build-docker-images:
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.run_number}}
+    if: contains(github.event.comment.body, '/build_base_docker_images')
+    steps:
+        - name: Checkout repository
+          uses: actions/checkout@v3
+
+        - name: Google Cloud Auth
+          uses: 'google-github-actions/auth@v2'
+          with:
+            project_id: ${{ secrets.GCP_PROJECT_ID }}
+            workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+            service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+        - name: Set Up Cloud SDK
+          uses: google-github-actions/setup-gcloud@v2
+          with:
+            project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+        - name: Build and Push Docker Images
+          run: |
+            gcloud auth configure-docker us-central1-docker.pkg.dev
+            docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gigl-base-images/gigl-cpu-base:${TAG} -f containers/Dockerfile.cpu.base .
+            docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gigl-base-images/gigl-cpu-base:${TAG}
+            docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gigl-base-images/gigl-cuda-base:${TAG} -f containers/Dockerfile.cuda.base .
+            docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gigl-base-images/gigl-cuda-base:${TAG}
