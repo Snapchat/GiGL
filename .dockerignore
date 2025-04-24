@@ -21,8 +21,6 @@ target
 .lib
 tmp
 .tmp
-large_scale_gnn.egg-info/
-gigantic_graph_learning.egg-info/
 gigl.egg-info/
 gigl_dataflow_setup.egg-info/
 miniconda/

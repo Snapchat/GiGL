@@ -150,7 +150,7 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/research/GiGL"
+Homepage = "https://github.com/snapchat/gigl"
 
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages (["."] by default)

@@ -12,8 +12,6 @@ logs/
 .devcontainer/
 gigl.egg-info/
 gigl_dataflow_setup.egg-info/
-large_scale_gnn.egg-info/
-gigantic_graph_learning.egg-info/
 .python-version
 dist/
 *.egg-info/
