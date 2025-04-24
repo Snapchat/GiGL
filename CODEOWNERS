@@ -1,0 +1,7 @@
+# Global rule: All files need review from any of these
+* @svij-sc @nshah-sc @kmontemayor2-sc @yliu2-sc @mkolodner-sc
+
+# More strict rules for specific files and directories
+.github/ @svij-sc @kmontemayor2-sc
+requirements @svij-sc @kmontemayor2-sc @nshah-sc
+python/pyproject.toml @svij-sc @kmontemayor2-sc @nshah-sc
