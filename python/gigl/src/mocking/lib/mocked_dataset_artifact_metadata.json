@@ -1,0 +1,42 @@
+{
+    "cora_homogeneous_supervised_node_classification": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_supervised_node_classification/frozen_gbml_config.yaml"
+    },
+    "cora_homogeneous_supervised_node_classification_edge_features": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_supervised_node_classification_edge_features/frozen_gbml_config.yaml"
+    },
+    "cora_homogeneous_node_anchor": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor/frozen_gbml_config.yaml"
+    },
+    "cora_homogeneous_node_anchor_edge_features": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features/frozen_gbml_config.yaml"
+    },
+    "cora_homogeneous_node_anchor_edge_features_user_defined_labels": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features_user_defined_labels/frozen_gbml_config.yaml"
+    },
+    "dblp_node_anchor_edge_features_user_defined_labels": {
+        "version": "2024-08-01--17-11-27-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/frozen_gbml_config.yaml"
+    },
+    "dblp_node_anchor_edge_features_lp": {
+        "version": "2024-08-01--17-11-27-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_lp/frozen_gbml_config.yaml"
+    },
+    "toy_graph_homogeneous_node_anchor_lp": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/toy_graph_homogeneous_node_anchor_lp/frozen_gbml_config.yaml"
+    },
+    "toy_graph_homogeneous_node_anchor_lp_user_defined_edges": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/toy_graph_homogeneous_node_anchor_lp_user_defined_edges/frozen_gbml_config.yaml"
+    },
+    "toy_graph_heterogeneous_node_anchor_lp": {
+        "version": "2024-07-15--21-30-07-UTC",
+        "frozen_gbml_config_uri": "gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/toy_graph_heterogeneous_node_anchor_lp/frozen_gbml_config.yaml"
+    }
+}

@@ -1,0 +1,21 @@
+name: KFP Validation Check
+description: KFP Validation Check
+inputs:
+- {name: job_name, type: String, description: 'Unique name to identify the job'}
+- {name: task_config_uri, type: String, description: 'Template or frozen GBML config uri'}
+- {name: start_at, type: String, description: 'Start component'}
+- {name: resource_config_uri, type: String, description: 'Runtine argument for resource and env specifications of each component'}
+- {name: stop_after, type: String, description: 'Stop component'}
+outputs:
+
+implementation:
+  container:
+    image: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/src-cpu:latest # Dummy value, always overwritten by arguments passed to gnn.py
+    command: [
+      python, -m, gigl.src.validation_check.config_validator,
+      --job_name, {inputValue: job_name},
+      --task_config_uri, {inputValue: task_config_uri},
+      --start_at, {inputValue: start_at},
+      --resource_config_uri, {inputValue: resource_config_uri},
+      --stop_after, {inputValue: stop_after}
+    ]

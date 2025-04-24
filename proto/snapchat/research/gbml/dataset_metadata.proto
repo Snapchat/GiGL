@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+// Stores SupervisedNodeClassificationSample-relevant output
+message SupervisedNodeClassificationDataset {
+  string train_data_uri = 1;
+  string test_data_uri = 2;
+  string val_data_uri = 3;
+}
+
+// Stores NodeAnchorBasedLinkPredictionSample-relevant output
+message NodeAnchorBasedLinkPredictionDataset {
+  string train_main_data_uri = 1;
+  string test_main_data_uri = 2;
+  string val_main_data_uri = 3;
+  map<string, string> train_node_type_to_random_negative_data_uri = 4;
+  map<string, string> val_node_type_to_random_negative_data_uri = 5;
+  map<string, string> test_node_type_to_random_negative_data_uri = 6;
+}
+
+// Stores SupervisedLinkBasedTaskSample-relevant output
+message SupervisedLinkBasedTaskSplitDataset {
+  string train_data_uri = 1;
+  string test_data_uri = 2;
+  string val_data_uri = 3;
+}
+
+
+// Stores final dataset output by SplitGenerator
+message DatasetMetadata{
+  // Stores one of the following fields, which indicates both the task type, and where to find relevant TFRecord data.
+  oneof output_metadata {
+    // indicates the output is of SupervisedNodeClassificationSamples
+    SupervisedNodeClassificationDataset supervised_node_classification_dataset = 1;
+    // indicates the output is of NodeAnchorBasedLinkPredictionSamples
+    NodeAnchorBasedLinkPredictionDataset node_anchor_based_link_prediction_dataset = 2;
+    // indicates the output is of SupervisedLinkBasedTaskSamples
+    SupervisedLinkBasedTaskSplitDataset supervised_link_based_task_dataset = 3;
+  }
+}

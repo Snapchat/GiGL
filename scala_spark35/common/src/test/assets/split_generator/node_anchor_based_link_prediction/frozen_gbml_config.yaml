@@ -1,0 +1,47 @@
+datasetConfig:
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    assignerClsPath: splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner
+    splitStrategyClsPath: splitgenerator.lib.split_strategies.TransductiveNodeAnchorBasedLinkPredictionSplitStrategy
+sharedConfig:
+  datasetMetadata:
+    nodeAnchorBasedLinkPredictionDataset:
+      testMainDataUri: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/test/main_samples/samples/
+      testNodeTypeToRandomNegativeDataUri:
+        user: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/test/random_negatives/user/neighborhoods-
+      trainMainDataUri: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/train/main_samples/samples/
+      trainNodeTypeToRandomNegativeDataUri:
+        user: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/train/random_negatives/user/neighborhoods-
+      valMainDataUri: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/val/main_samples/samples/
+      valNodeTypeToRandomNegativeDataUri:
+        user: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/val/random_negatives/user/neighborhoods-
+  flattenedGraphMetadata:
+    nodeAnchorBasedLinkPredictionOutput:
+      nodeTypeToRandomNegativeTfrecordUriPrefix:
+        user:  common/src/test/assets/split_generator/node_anchor_based_link_prediction/sgs_output/random_negative_rooted_neighborhood_samples/user/
+      tfrecordUriPrefix:  common/src/test/assets/split_generator/node_anchor_based_link_prediction/sgs_output/node_anchor_based_link_prediction_samples/
+  preprocessedMetadataUri: common/src/test/assets/split_generator/node_anchor_based_link_prediction/preprocessed_metadata.yaml
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+      - srcNodeType: user
+        relation: engage
+        dstNodeType: user
+graphMetadata:
+  condensedEdgeTypeMap:
+    '0':
+      dstNodeType: user
+      relation: engage
+      srcNodeType: user
+  condensedNodeTypeMap:
+    '0': user
+  edgeTypes:
+  - dstNodeType: user
+    relation: engage
+    srcNodeType: user
+  nodeTypes:
+  - user

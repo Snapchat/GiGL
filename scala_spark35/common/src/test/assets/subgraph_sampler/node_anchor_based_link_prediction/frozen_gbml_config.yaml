@@ -1,0 +1,33 @@
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorArgs:
+      bq_edges_table_name: "FAKE DATASET NAME 1"
+      bq_nodes_table_name: "FAKE DATASET NAME 2"
+    dataPreprocessorConfigClsPath: this.is.non.existent.test.path.1
+  subgraphSamplerConfig:
+#    numMaxTrainingSamplesToOutput: 10
+    numHops: 2
+    numNeighborsToSample: 3
+    numPositiveSamples: 2
+    numUserDefinedPositiveSamples: 2
+    numUserDefinedNegativeSamples: 2
+sharedConfig:
+  flattenedGraphMetadata:
+    nodeAnchorBasedLinkPredictionOutput:
+      nodeTypeToRandomNegativeTfrecordUriPrefix:
+        user: common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/output/random_negative_rooted_neighborhood_samples/
+      tfrecordUriPrefix:  common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/output/node_anchor_based_link_prediction_samples/
+  preprocessedMetadataUri: common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/preprocessed_metadata.yaml
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+      - srcNodeType: user
+        relation: friend
+        dstNodeType: user
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: user
+    relation: friend
+    srcNodeType: user
+  nodeTypes:
+  - user

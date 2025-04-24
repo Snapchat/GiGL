@@ -1,0 +1,204 @@
+# Starting with PEP 621, the Python community selected pyproject.toml as a standard way of specifying project metadata.
+# https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html
+# A tutorial on packages: https://realpython.com/pypi-publish-python-package/#prepare-your-package-for-publication
+# What are python wheels: https://realpython.com/python-wheels/
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "gigl"
+description     = "GIgantic Graph Learning Library"
+readme          = "README.md"
+version         = "0.0.6"
+requires-python = ">=3.9,<3.10" # Currently we only support python 3.9 as per deps setup below
+classifiers     = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+
+# Note: we make use of environment markers to install the correct version of torch
+# https://peps.python.org/pep-0508/#environment-markers
+# Specifically we use the following to differentiate between host machines:
+#   platform_system=='Darwin' and platform_machine=='arm64'" # M1 Macs
+#   platform_system=='Darwin' and platform_machine=='x86_64'" # Intel Macs
+#   platform_system=='Linux'" # Linux
+# You may see other tags being used too, please see documentation linked above
+# for details.
+
+dependencies = [
+    "argo-workflows",
+    # When updating to a new tensorflow version, please ensure that the version changes align with
+    # transform deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
+    # must move in lockstep, with guidance on compatible versions listed here:
+    # https://pypi.org/project/tensorflow-transform/
+    "tensorflow==2.15.1",
+    # https://developer.apple.com/metal/tensorflow-plugin/
+    "tensorflow-metal ; platform_system=='Darwin' and platform_machine=='arm64'",
+    "numpy==1.24.3",
+    "pandas",
+    "scikit-learn",
+    "protobuf",
+    "msgpack",
+    "google-cloud-logging",
+    "google-cloud-storage",
+    "google-cloud-dataproc",
+    "pyyaml",
+    "mmh3",
+    "mypy-extensions",
+    "chardet",
+    "google-cloud-aiplatform~=1.44.0",
+    "kfp~=2.5.0",
+    "python-dotenv==1.0.0",
+    "torch-geometric==2.5.3",
+    "torchmetrics==1.0.3"
+]
+
+[project.optional-dependencies]
+torch25-cuda-121 = [ # Torch 2.5.1 w/ Cuda 12.1
+    # Assuming Linux for cuda installation
+    # Currently supports py3.9. To support other python versions, wheels will need to be manually added
+
+    # ===================================== Deps for PyTorch =====================================
+    "torch @ https://download.pytorch.org/whl/cu121/torch-2.5.1%2Bcu121-cp39-cp39-linux_x86_64.whl#sha256=3c96b2ec4723e7d97259964ee73e2d6a2bace42511a49005b083ea7be1a0b0ac ; platform_system=='Linux' and python_version=='3.9'",
+
+    # ===================================== Deps for PyTorch Geometric =====================================
+    "pyg-lib @ https://data.pyg.org/whl/torch-2.5.0+cu121/pyg_lib-0.4.0+pt25cu121-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-cluster @ https://data.pyg.org/whl/torch-2.5.0+cu121/torch_cluster-1.6.3+pt25cu121-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-scatter @ https://data.pyg.org/whl/torch-2.5.0+cu121/torch_scatter-2.1.2+pt25cu121-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-sparse @ https://data.pyg.org/whl/torch-2.5.0+cu121/torch_sparse-0.6.18+pt25cu121-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-spline-conv @ https://data.pyg.org/whl/torch-2.5.0+cu121/torch_spline_conv-1.2.2+pt25cu121-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+
+    # ===================================== Deps for TorchRec =====================================
+    "torchrec @ https://download.pytorch.org/whl/cu121/torchrec-1.0.0%2Bcu121-py3-none-any.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "fbgemm-gpu @ https://download.pytorch.org/whl/cu121/fbgemm_gpu-1.0.0%2Bcu121-cp39-cp39-manylinux2014_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+
+    # =========================================== Deps for graphlearn-torch   ===========================================
+    # Graph learn torch is installed from source in `install_py_deps.sh` as there are issues installing it from pypi
+    # "graphlearn-torch=="0.2.5"
+]
+
+torch25-cpu = [
+    # PYG, tensorflow-transform, and graphlearn-torch do not have prebuilt wheels for arm64 MACS
+    # i.e. (M1,M2,M3 chips), they need to be built from scratch
+    # We currently don't support MAC environment as a result.
+
+    # ===================================== Deps for PyTorch =====================================
+    "torch==2.5.1",
+    # ===================================== Deps for PyG =====================================
+    # https://data.pyg.org/whl/torch-2.5.0+cpu
+    # https://data.pyg.org/whl/torch-2.5.0+cpu/pyg_lib-0.4.0+pt25cpu-cp39-cp39-linux_x86_64.whl
+    "pyg-lib @ https://data.pyg.org/whl/torch-2.5.0+cpu/pyg_lib-0.4.0+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-cluster @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_cluster-1.6.3+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-scatter @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_scatter-2.1.2+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-sparse @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_sparse-0.6.18+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "torch-spline-conv @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_spline_conv-1.2.2+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+
+    # ===================================== Deps for TorchRec =====================================
+    "torchrec @ https://download.pytorch.org/whl/cpu/torchrec-1.0.0%2Bcpu-py3-none-any.whl ; platform_system=='Linux' and python_version=='3.9'",
+    "fbgemm-gpu @ https://download.pytorch.org/whl/cpu/fbgemm_gpu-1.0.0%2Bcpu-cp39-cp39-manylinux2014_x86_64.whl ; platform_system=='Linux' and python_version=='3.9'",
+
+    # =========================================== Deps for graphlearn-torch   ===========================================
+    # Graph learn torch is installed from source in `install_py_deps.sh` as there are issues installing it from pypi
+    # "graphlearn-torch=="0.2.5"
+]
+
+# Used for tensorflow-transform. Must move in lockstep with tensorflow, and pref if moved with
+# compatible version matrix to ensure nothing breaks: https://pypi.org/project/tensorflow-transform/
+transform = [
+    "apache-beam[gcp]==2.56.0",
+    "pyarrow==10.0.1",
+
+    # Tensorflow-transform natively doesnt provide wheels for arm64 Macs.
+    "tfx-bsl~=1.14.0 ; platform_system!='Darwin'",
+    "tensorflow_data_validation==1.14.0 ; platform_system!='Darwin'",
+    "tensorflow-transform~=1.14.0 ; platform_system!='Darwin'",
+    "tensorflow-metadata==1.14.0 ; platform_system!='Darwin'",
+    "tensorflow-serving-api==2.15.1 ; platform_system!='Darwin'"
+]
+
+dev = [
+    "autoflake==2.3.1",
+    "black~=23.1.0",
+    "isort~=5.12.0",
+    "mdformat==0.7.22",
+    "mypy==1.8.0",
+    "types-PyYAML~=6.0.12",
+    "mypy-protobuf==3.3.0",
+    "pyopenssl>=22.1.0 ; platform_system=='Linux'",
+    "matplotlib==3.6.3",
+    "parameterized==0.9.0",
+    "pre-commit==3.3.2",
+    # Pillow is a transitive dependency of matplotlib, but the *newest* version of mpl (3.9.x) which support py 3.9
+    # https://github.com/matplotlib/matplotlib/blob/73873c072a610a16703980d803be11e144e29e24/pyproject.toml#L46
+    # does not support required security for pillow (>= 10.5).
+    # Note this is *not* required but we are trying to follow "best practices" and patch up security holes.
+    "pillow>=11.1.0",
+]
+
+docs = [
+    "sphinx==7.2.6",
+    "sphinx-rtd-theme==2.0.0",
+    "pydata-sphinx-theme==0.15.2",
+    "myst-parser==2.0.0",
+    "nbsphinx==0.9.3",
+    "sphinx-hoverxref==1.3.0",
+    "mistune>=2.0.3",
+    "nbconvert>=7.16.2",
+    "sphinx-tabs==3.4.5",
+    "sphinx-design==0.6.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/research/GiGL"
+
+[tool.setuptools.packages.find]
+where = ["."]  # list of folders that contain the packages (["."] by default)
+include = ["gigl*", "snapchat*"]  # Include only packages that match the gigl* pattern
+
+# https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html#setuptools-specific-configuration
+[tool.setuptools] # Disabled until refactored where to have gigl as top level dir
+# package-dir = { gigl = "" }
+# packages = [
+#     "gigl.common",
+#     "gigl.src",
+#     "gigl.snapchat",
+#     "gigl.configs",
+#     "gigl.deployment",
+#     "gigl.tests",
+# ]
+
+[tool.black]
+# Skip generated proto files.
+# Note black uses regex instead of the glob isort/autoflake use.
+exclude = ".*_pb2.pyi?"
+
+[tool.isort]
+profile = "black"
+src_paths = [
+    "../python",
+    "../scripts",
+]
+# Skip generated proto files.
+skip_glob = [
+    "**_pb2.py*",
+]
+skip_gitignore = true
+
+
+[tool.autoflake]
+exclude =  [
+    # Skip generated proto files. If we run autoflake on generated protos
+    # their descriptor gets removed and they break, see below.
+    #   File "python/snapchat/research/gbml/gbml_config_pb2.py", line 17, in <module>
+    #   DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(...)
+    #   TypeError: Couldn't build proto file into descriptor pool!
+    #   Invalid proto descriptor for file "snapchat/research/gbml/gbml_config.proto":
+    #   snapchat/research/gbml/trained_model_metadata.proto: Import "snapchat/research/gbml/trained_model_metadata.proto" has not been loaded.
+    "**_pb2.py*",
+    # __init__.py are used to "export" modules, and their input are often not directly used.
+    "__init__.py",
+]
+remove-all-unused-imports = true
+in-place = true
+recursive = true

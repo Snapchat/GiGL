@@ -1,0 +1,237 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+import "snapchat/research/gbml/graph_schema.proto";
+import "snapchat/research/gbml/flattened_graph_metadata.proto";
+import "snapchat/research/gbml/dataset_metadata.proto";
+import "snapchat/research/gbml/trained_model_metadata.proto";
+import "snapchat/research/gbml/inference_metadata.proto";
+import "snapchat/research/gbml/postprocessed_metadata.proto";
+import "snapchat/research/gbml/subgraph_sampling_strategy.proto";
+
+
+/*
+TODO: document all protos with comments.
+ */
+
+message GbmlConfig {
+  // Indicates the training task specification and metadata for the config.
+  message TaskMetadata {
+    oneof task_metadata {
+      NodeBasedTaskMetadata node_based_task_metadata = 1;
+      NodeAnchorBasedLinkPredictionTaskMetadata node_anchor_based_link_prediction_task_metadata = 2;
+      LinkBasedTaskMetadata link_based_task_metadata = 3;
+    }
+    message NodeBasedTaskMetadata {
+      repeated string supervision_node_types = 1;
+    }
+    message NodeAnchorBasedLinkPredictionTaskMetadata {
+      repeated EdgeType supervision_edge_types = 1;
+    }
+    message LinkBasedTaskMetadata {
+      repeated EdgeType supervision_edge_types = 1;
+    }
+
+  }
+
+  message SharedConfig {
+    // Uri where DataPreprocessor generates the PreprocessedMetadata proto.
+    string preprocessed_metadata_uri = 1;
+    // FlattenedGraphMetadata message, which designates locations of GraphFlat outputs.
+    FlattenedGraphMetadata flattened_graph_metadata = 2;
+    // DatasetMetadata message, which designates location of SplitGenerator outputs.
+    DatasetMetadata dataset_metadata = 3;
+    // TrainedModelMetadata message, which designates location of Trainer outputs.
+    TrainedModelMetadata trained_model_metadata = 4;
+    // InferenceMetadata message, which designates location of Inferencer outputs.
+    InferenceMetadata inference_metadata = 5;
+    // PostProcessedMetadata message, which designates location of PostProcessor outputs.
+    PostProcessedMetadata postprocessed_metadata = 12;
+    map<string, string> shared_args = 6;
+    // is the graph directed or undirected (bidirectional)
+    bool is_graph_directed = 7;
+    // to skip training or not (inference only)
+    bool should_skip_training = 8;
+    // If set to true, will skip automatic clean up of temp assets
+    // Useful if you are running hyper param tuning jobs and dont want to continuously
+    // run the whole pipeline
+    bool should_skip_automatic_temp_asset_cleanup = 9;
+    // to skip inference or not (for training only jobs)
+    bool should_skip_inference = 10;
+
+    // If set, we will not compute or export model metrics like MRR, etc
+    // Has a side effect if should_skip_training is set as well to result in
+    // not generating training samples and only RNNs needed for inference.
+    bool should_skip_model_evaluation = 11;
+
+    // If set to true, will include isolated nodes in training data
+    // As isolated nodes do not have positive neighbors, self loop will be added
+    // SGS outputs training samples including isolated nodes, trainer adds self loops in training subgraphs
+    bool should_include_isolated_nodes_in_training = 13;
+  }
+
+  // Contains config related to generating training data for a GML task.
+  message DatasetConfig {
+     message DataPreprocessorConfig {
+       // Uri pointing to user-written DataPreprocessorConfig class definition.
+       string data_preprocessor_config_cls_path = 1;
+       // Arguments to instantiate concrete DataPreprocessorConfig instance with.
+       map<string, string> data_preprocessor_args = 2;
+     }
+
+    message SubgraphSamplerConfig {
+      // number of hops for subgraph sampler to include
+      uint32 num_hops = 1 [deprecated=true];
+      // num_neighbors_to_sample indicates the max number of neighbors to sample for each hop
+      // num_neighbors_to_sample can be set to -1 to indicate no sampling (include all neighbors)
+      int32 num_neighbors_to_sample = 2 [deprecated=true];
+
+      // num hops and num neighbors to sample is deprecated in favor of neighbor_sampling_strategy.
+      // Used to specify how the graphs which are used for message passing are constructed
+      SubgraphSamplingStrategy subgraph_sampling_strategy = 10;
+
+      // number of positive samples (1hop) used in NodeAnchorBasedLinkPredictionTask
+      // as part of loss computation. It cannot be 0. And it's recommended to be larger
+      // than 1 due to the split filtering logic in split generator, to guarantee most samples to
+      // have at least one positive for it to not be excluded in training.
+      uint32 num_positive_samples = 3;
+
+      // (deprecated)
+      // number of hard negative samples (3,4hops) used in NodeAnchorBasedLinkPredictionTask
+      // also used in loss computation. Random negatives will always be used even when there
+      // are no hard negatives
+      // uint32 num_hard_negative_samples = 4;
+
+      // Arguments for experimental_flags, can be permutation_strategy: 'deterministic' or 'non-deterministic'
+      map<string, string> experimental_flags = 5;
+
+      // max number of training samples (i.e. nodes to store as main samples for training)
+      // If this is not provided or is set to 0, all nodes will be included for training
+      uint32 num_max_training_samples_to_output = 6;
+
+      // number of user defined positive samples. Used in NodeAnchorBasedLinkPredictionTask
+      // as part of loss computation.
+      // If `num_user_defined_positive_samples` is specified `num_positive_samples` will be ignored as
+      // positive samples will only be drawn from user defined positive samples.
+      uint32 num_user_defined_positive_samples = 7 [deprecated=true];
+
+      // number of user defined negative samples.
+      // Treated as hard negative samples. Used in NodeAnchorBasedLinkPredictionTask
+      // Also used in loss computation. Random negatives will always be used even when there
+      // are no user defined hard negatives
+      uint32 num_user_defined_negative_samples = 8 [deprecated=true];
+
+      // If specified, intention is to run ingestion into graphDB for subgraph sampler 
+      GraphDBConfig graph_db_config = 9;
+    }
+
+    message SplitGeneratorConfig {
+       // Module path to concrete SplitStrategy instance.
+       string split_strategy_cls_path = 1;
+       // Arguments to instantiate concrete SplitStrategy instance with.
+       map<string, string> split_strategy_args = 2;
+
+       // Module path to concrete Assigner instance
+       string assigner_cls_path = 3;
+       // Arguments to instantiate concrete Assigner instance with.
+       map<string, string> assigner_args = 4;
+    }
+
+    DataPreprocessorConfig data_preprocessor_config = 1;
+    SubgraphSamplerConfig subgraph_sampler_config = 2;
+    SplitGeneratorConfig split_generator_config = 3;
+
+  }
+
+  // Generic Configuration for a GraphDB connection.
+  message GraphDBConfig {
+    // Python class path pointing to user-written 
+    // `BaseIngestion`` class definition. e.g. `my.team.graph_db.BaseInjectionImpl`.
+    // This class is currently, as an implementation detail, used for injestion only.
+    // We document this *purely* for information purposes and may change the implementation at any time.
+    string graph_db_ingestion_cls_path = 1;
+    
+    // Arguments to instantiate concrete BaseIngestion instance with.
+    map<string, string> graph_db_ingestion_args = 2;
+
+    // General arguments required for graphDB (graph space, port, etc.)
+    // These are passed to both the Python and Scala implementations.
+    map<string, string> graph_db_args = 3;
+
+    // If provided, then an implementation of a `DBClient[DBResult]` Scala class
+    // for a GraphDB.
+    // Intended to be used to inject specific implementations at runtime.
+    // The object constructed from this is currently, as an implementation detail, used for sampling only.
+    // We document this *purely* for information purposes and may change the implementation at any time.
+    GraphDBServiceConfig graph_db_sampler_config = 4;
+
+    // Scala-specific configuration.
+    message GraphDBServiceConfig {
+      // Scala absolute class path pointing to an implementation of `DBClient[DBResult]`
+      // e.g. `my.team.graph_db.DBClient`.
+      string graph_db_client_class_path = 1;
+    }
+  }
+
+  message TrainerConfig {
+    // (deprecated)
+    // Uri pointing to user-written BaseTrainer class definition. Used for the subgraph-sampling-based training process. 
+    string trainer_cls_path = 1;
+    // Arguments to parameterize training process with.
+    map<string, string> trainer_args = 2;
+    // Specifies how to execute training
+    oneof executable {
+      // Path pointing to trainer class definition.
+      string cls_path = 100;
+      // Command to use for launching trainer job
+      string command = 101;
+    }
+    // Weather to log to tensorboard or not (defaults to false)
+    bool should_log_to_tensorboard = 12;
+  }
+
+  message InferencerConfig {
+    map<string, string> inferencer_args = 1;
+    // (deprecated)
+    // Path to modeling task spec class path to construct model for inference. Used for the subgraph-sampling-based inference process. 
+    string inferencer_cls_path = 2;
+    // Specifies how to execute inference
+    oneof executable {
+      // Path pointing to inferencer class definition.
+      string cls_path = 100;
+      // Command to use for launching inference job
+      string command = 101;
+    }
+    // Optional. If set, will be used to batch inference samples to a specific size before call for inference is made
+    // Defaults to setting in python/gigl/src/inference/gnn_inferencer.py
+    uint32 inference_batch_size = 5;
+  }
+
+  message PostProcessorConfig {
+    map<string, string> post_processor_args = 1;
+    string post_processor_cls_path = 2;
+  }
+
+  message MetricsConfig {
+    string metrics_cls_path = 1;
+    map<string, string> metrics_args = 2;
+  }
+
+  message ProfilerConfig {
+    bool should_enable_profiler = 1;
+    string profiler_log_dir = 2;
+    map<string, string> profiler_args = 3;
+  }
+
+  TaskMetadata task_metadata = 1;
+  GraphMetadata graph_metadata = 2;
+  SharedConfig shared_config = 3;
+  DatasetConfig dataset_config = 4;
+  TrainerConfig trainer_config = 5;
+  InferencerConfig inferencer_config = 6;
+  PostProcessorConfig post_processor_config = 9;
+  MetricsConfig metrics_config = 7;
+  ProfilerConfig profiler_config = 8;
+  map<string, string> feature_flags = 10;
+}

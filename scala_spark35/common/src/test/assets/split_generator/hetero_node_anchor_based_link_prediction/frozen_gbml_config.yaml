@@ -1,0 +1,58 @@
+# This yaml is used to test HGS. The data is generated via mock assets for Toy graph and copied over in relevent paths below.
+datasetConfig:
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    assignerClsPath: splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner
+    splitStrategyClsPath: splitgenerator.lib.split_strategies.TransductiveNodeAnchorBasedLinkPredictionSplitStrategy
+sharedConfig:
+  datasetMetadata:
+    nodeAnchorBasedLinkPredictionDataset:
+      testMainDataUri: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/test/main_samples/samples/
+      testNodeTypeToRandomNegativeDataUri:
+        user: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/test/random_negatives/story/neighborhoods-
+      trainMainDataUri: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/train/main_samples/samples/
+      trainNodeTypeToRandomNegativeDataUri:
+        user: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/train/random_negatives/story/neighborhoods-
+      valMainDataUri: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/val/main_samples/samples/
+      valNodeTypeToRandomNegativeDataUri:
+        user: common/src/test/assets/split_generator/node_anchor_based_link_prediction/output/val/random_negatives/story/neighborhoods-
+  flattenedGraphMetadata:
+    nodeAnchorBasedLinkPredictionOutput:
+      nodeTypeToRandomNegativeTfrecordUriPrefix:
+        story: common/src/test/assets/split_generator/hetero_node_anchor_based_link_prediction/sgs_output/random_negative_rooted_neighborhood_samples/story/samples/
+        user: common/src/test/assets/split_generator/hetero_node_anchor_based_link_prediction/sgs_output/random_negative_rooted_neighborhood_samples/user/samples/
+      tfrecordUriPrefix: common/src/test/assets/split_generator/hetero_node_anchor_based_link_prediction/sgs_output/node_anchor_based_link_prediction_samples/samples/
+  preprocessedMetadataUri: common/src/test/assets/split_generator/hetero_node_anchor_based_link_prediction/preprocessed_metadata.yaml
+graphMetadata:
+  condensedEdgeTypeMap:
+    '0':
+      dstNodeType: story
+      relation: to
+      srcNodeType: user
+    '1':
+      dstNodeType: user
+      relation: to
+      srcNodeType: story
+  condensedNodeTypeMap:
+    '0': user
+    '1': story
+  edgeTypes:
+  - dstNodeType: story
+    relation: to
+    srcNodeType: user
+  - dstNodeType: user
+    relation: to
+    srcNodeType: story
+  nodeTypes:
+  - user
+  - story
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+    - dstNodeType: user
+      relation: to
+      srcNodeType: story

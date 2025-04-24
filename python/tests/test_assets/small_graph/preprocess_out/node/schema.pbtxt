@@ -1,0 +1,99 @@
+feature {
+  name: "f0"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f1"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f2"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f3"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f4"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f5"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f6"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f7"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f8"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f9"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "node_int_id"
+  type: INT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}

@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+// Stores SupervisedNodeClassificationSample-relevant output
+message SupervisedNodeClassificationOutput {
+  // GCS prefix which can be used to glob the TFRecord dataset.
+  string labeled_tfrecord_uri_prefix = 1;
+  string unlabeled_tfrecord_uri_prefix = 2;
+}
+
+// Stores NodeAnchorBasedLinkPredictionSample-relevant output
+message NodeAnchorBasedLinkPredictionOutput {
+  // GCS prefix which can be used to glob the TFRecord dataset.
+  string tfrecord_uri_prefix = 1;
+  // Rooted subgraphs for each type of nodes; besides training, also used for inference as these are just subgraphs for each node
+  map<string, string> node_type_to_random_negative_tfrecord_uri_prefix = 2;
+}
+
+// Stores SupervisedLinkBasedTaskSample-relevant output
+message SupervisedLinkBasedTaskOutput {
+  // GCS prefix which can be used to glob the TFRecord dataset.
+  string labeled_tfrecord_uri_prefix = 1;
+  string unlabeled_tfrecord_uri_prefix = 2;
+}
+
+
+// Stores flattened graph metadata output by SubgraphSampler
+message FlattenedGraphMetadata{
+  // Stores one of the following fields, which indicates both the task type, and where to find relevant TFRecord data.
+  oneof output_metadata {
+    // indicates the output is of SupervisedNodeClassificationSamples
+    SupervisedNodeClassificationOutput supervised_node_classification_output = 1;
+    // indicates the output is of NodeAnchorBasedLinkPredictionSamples
+    NodeAnchorBasedLinkPredictionOutput node_anchor_based_link_prediction_output = 2;
+    // indicates the output is of SupervisedLinkBasedTaskSamples
+    SupervisedLinkBasedTaskOutput supervised_link_based_task_output = 3;
+  }
+}

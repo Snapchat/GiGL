@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+message InferenceMetadata{
+  // Map of node type to outputs from inferencer
+  map<string, InferenceOutput> node_type_to_inferencer_output_info_map = 1;
+}
+
+message InferenceOutput{
+    // Embeddings from model output
+    optional string embeddings_path = 1;
+    // Predictions from model output
+    optional string predictions_path = 2;
+}

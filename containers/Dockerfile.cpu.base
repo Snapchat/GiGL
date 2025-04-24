@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+
+FROM continuumio/miniconda3:4.12.0
+
+SHELL ["/bin/bash", "-c"]
+
+# TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
+# Once VAI natively supports this communication, we can remove this requirement.
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    cmake \
+    iputils-ping \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create the environment:
+RUN conda create -y --name gnn python=3.9 pip
+
+# Update path so any call for python executables in the built image defaults to using the gnn conda environment
+ENV PATH=/opt/conda/envs/gnn/bin:$PATH
+
+RUN conda init bash
+RUN echo "conda activate gnn" >> ~/.bashrc
+
+COPY requirements tmp/requirements
+RUN source ~/.bashrc && pip install --upgrade pip
+RUN source ~/.bashrc && cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+
+CMD [ "/bin/bash" ]

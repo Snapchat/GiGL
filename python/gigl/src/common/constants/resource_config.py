@@ -1,0 +1,3 @@
+SPARK_SPLIT_GENERATOR_CONFIG = "spark_split_generator_config"
+DATAFLOW_SPLIT_GENERATOR_CONFIG = "dataflow_split_generator_config"
+RESOURCE_CONFIG_OS_ENV = "RESOURCE_CONFIG_PATH"

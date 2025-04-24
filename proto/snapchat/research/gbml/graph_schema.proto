@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+message Node {
+    // should be unique for nodes per node_type
+    uint32 node_id = 1;
+    // condensed_node_type are integer values that correspond 1:1 to a node_type: string
+    // See GraphMetadata for mapping. If not provided, assumed homogeneous.
+    optional uint32 condensed_node_type = 2;
+    // feature_values for a node
+    repeated float feature_values = 3;
+}
+
+
+
+message Edge {
+    // the src_node_id & dst_node_id that the edge spans across
+    // node types for these nodes is encoded in condensed_edge_type
+    uint32 src_node_id = 1;
+    uint32 dst_node_id = 2;
+    // Graph is assumed homogeneous if condensed_edge_type is not provided
+    // We store condensed representation here instead of EdgeType to optimize
+    // on storage space. Otherwise we would be storing atleast 3*32bytes of information : (
+    //    src_node_type: string, dst_node_type: string, edge_type: string
+    // )
+    // See GraphMetadata for mapping
+    optional uint32 condensed_edge_type = 3;
+    // features_values for an edge
+    repeated float feature_values = 4;
+}
+
+message EdgeType {
+    // The relation of source / destination node_type
+    // i.e. (Person , is_friend, Person) ; "Person" is node_type for both
+    // src and dst nodes, and "is_friend" is the "relation"
+    string relation = 1;
+    string src_node_type = 2;
+    string dst_node_type = 3;
+}
+
+// Stores metadata that helps map the created graph samples back to original graph
+message GraphMetadata {
+    // User provided list of node types
+    repeated string node_types = 1;
+    // User provided list of edge types
+    repeated EdgeType edge_types = 2;
+    // Maps condensed_edge_type: uint32 to edge_type: EdgeType; 1:1 mapping
+    // We use unit32 instead of EdgeType to save space when storing
+    // graph information
+    map<uint32, EdgeType> condensed_edge_type_map = 3;
+    // Maps condensed_node_type: uint32 to node_type: string; 1:1 mapping
+    // We use unit32 instead of string to save space when storing
+    // graph information
+    map<uint32, string> condensed_node_type_map = 4;
+}
+
+// Represents a graph; usually used to represent a rooted k-hop subgraph for a bigger graph
+message Graph {
+    repeated Node nodes = 2;
+    repeated Edge edges = 3;
+}

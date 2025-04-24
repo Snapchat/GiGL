@@ -1,0 +1,104 @@
+graph:
+  node_types: 
+    - user
+  edge_types:
+    user_friend_user:
+      src_node_type: user
+      relation_type: friend
+      dst_node_type: user
+
+adj_list:
+  user_friend_user:
+    - src: 0
+      dst: [1, 2]
+    - src: 1
+      dst: [3, 5]
+    - src: 2
+      dst: [6, 4]
+    - src: 4
+      dst: [8]
+    - src: 5
+      dst: [4]
+    - src: 6
+      dst: [2]
+    - src: 7
+      dst: [15]
+    - src: 9
+      dst: [8]
+    - src: 10
+      dst: [8]
+    - src: 11
+      dst: [8]
+    - src: 12
+      dst: [8]
+    - src: 17
+      dst: [16]
+    - src: 18
+      dst: [15]
+    - src: 19
+      dst: [16]
+    - src: 20
+      dst: [9]
+    - src: 21
+      dst: [15]
+    - src: 22
+      dst: [15]
+    - src: 26
+      dst: [16]
+
+nodes:
+  user:
+    - src: 0
+      features: [0.0, 0]
+    - src: 1
+      features: [0.1, 1]
+    - src: 2
+      features: [0.2, 2]
+    - src: 3
+      features: [0.3, 3]
+    - src: 4
+      features: [0.4, 4]
+    - src: 5
+      features: [0.5, 5]
+    - src: 6
+      features: [0.6, 6]
+    - src: 7
+      features: [0.7, 7]
+    - src: 8
+      features: [0.8, 8]
+    - src: 9
+      features: [0.9, 9]
+    - src: 10
+      features: [0.01, 10]
+    - src: 11
+      features: [0.11, 11]
+    - src: 12
+      features: [0.12, 12]
+    - src: 13
+      features: [0.13, 13]
+    - src: 14
+      features: [0.14, 14]
+    - src: 15
+      features: [0.15, 15]
+    - src: 16
+      features: [0.16, 16]
+    - src: 17
+      features: [0.17, 17]
+    - src: 18
+      features: [0.18, 18]
+    - src: 19
+      features: [0.19, 19]
+    - src: 20
+      features: [0.20, 20]
+    - src: 21
+      features: [0.21, 21]
+    - src: 22
+      features: [0.22, 22]
+    - src: 23
+      features: [0.23, 23]
+    - src: 24
+      features: [0.24, 24]
+    - src: 25
+      features: [0.25, 25]
+    - src: 26
+      features: [0.26, 26]

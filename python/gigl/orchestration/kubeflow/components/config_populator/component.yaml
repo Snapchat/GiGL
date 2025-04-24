@@ -1,0 +1,19 @@
+name: Config Populator
+description: Config Populator
+inputs:
+- {name: job_name, type: String, description: 'Unique name to identify the job'}
+- {name: template_uri, type: String, description: 'GBML Template uri'}
+- {name: resource_config_uri, type: String, description: 'Runtine argument for resource and env specifications of each component'}
+outputs:
+- {name: frozen_gbml_config_uri, type: String, description: 'Output frozen gbml config uri, populated'}
+
+implementation:
+  container:
+    image: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/src-cpu:latest # Dummy value, always overwritten by arguments passed to gnn.py
+    command: [
+      python, -m, gigl.src.config_populator.config_populator,
+      --job_name, {inputValue: job_name},
+      --template_uri, {inputValue: template_uri},
+      --resource_config_uri, {inputValue: resource_config_uri},
+      --output_file_path_frozen_gbml_config_uri, {outputPath: frozen_gbml_config_uri}
+    ]

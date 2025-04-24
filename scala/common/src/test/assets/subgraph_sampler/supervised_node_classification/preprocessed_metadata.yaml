@@ -1,0 +1,20 @@
+condensedEdgeTypeToPreprocessedMetadata:
+  '0':
+    dstNodeIdKey: dst
+    srcNodeIdKey: src
+    mainEdgeInfo:
+      tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/edge_data
+      featureDim: 0
+      schemaUri: not.used.for.test
+      enumeratedEdgeDataBqTable: not.used.for.test
+condensedNodeTypeToPreprocessedMetadata:
+  '0':
+    featureDim: 2
+    featureKeys:
+    - f0
+    - f1
+    labelKeys:
+    - node_label
+    nodeIdKey: node_id
+    schemaUri: not.used.for.test
+    tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/supervised_node_classification/node_data

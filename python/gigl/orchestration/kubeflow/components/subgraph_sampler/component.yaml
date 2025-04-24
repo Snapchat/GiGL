@@ -1,0 +1,25 @@
+# TODO: (svij-sc) This can probably be made abstract for all Spark jobs
+# The refactor here to do that should not be too hard; opting not to do it during implementation
+# to be pragmatic.
+name: Subgraph Sampler
+description: Subgraph Sampler
+inputs:
+- {name: job_name, type: String, description: 'Unique name to identify the job'}
+- {name: task_config_uri, type: String, description: 'Frozen GBML config uri'}
+- {name: resource_config_uri, type: String, description: 'Runtine argument for resource and env specifications of each component'}
+- {name: custom_worker_image_uri, type: String, description: "Docker image to use for the worker harness in dataflow "}
+- {name: additional_spark35_jar_file_uris, type: String, default: "", description: "Additional local jar file paths which should be uploaded to GCS and then added to a Spark3.5 cluster"}
+
+outputs:
+
+implementation:
+  container:
+    image: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/src-cpu:latest # Dummy value, always overwritten by arguments passed to gnn.py
+    command: [
+      python, -m, gigl.src.subgraph_sampler.subgraph_sampler,
+      --job_name, {inputValue: job_name},
+      --task_config_uri, {inputValue: task_config_uri},
+      --resource_config_uri, {inputValue: resource_config_uri},
+      --custom_worker_image_uri, {inputValue: custom_worker_image_uri},
+      --additional_spark35_jar_file_uris, {inputValue: additional_spark35_jar_file_uris}
+    ]

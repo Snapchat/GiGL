@@ -1,0 +1,95 @@
+# Assets in this config are generated with dataset_asset_mocking_suite.py - mock_toy_graph_heterogeneous_node_anchor_based_link_prediction_dataset()
+# The assets in this config are used for local testing and unit tests.
+# See docs/sphinx/source/components/subgraph_sampler.md for more info on how to configure subgraph sampler.
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorArgs:
+      bq_edges_table_name: "FAKE DATASET NAME 1"
+      bq_nodes_table_name: "FAKE DATASET NAME 2"
+    dataPreprocessorConfigClsPath: this.is.non.existent.test.path.1
+  subgraphSamplerConfig:
+    subgraphSamplingStrategy:
+      messagePassingPaths:
+        paths:
+        - rootNodeType: paper
+          samplingOps:
+          - edgeType:
+              dstNodeType: paper
+              relation: to
+              srcNodeType: author
+            opName: op_1
+            randomUniform:
+              numNodesToSample: 10
+          - edgeType:
+              dstNodeType: author
+              relation: to
+              srcNodeType: paper
+            opName: op_3
+            inputOpNames:
+            - op_1
+            randomUniform:
+              numNodesToSample: 10
+        - rootNodeType: author
+          samplingOps:
+          - edgeType:
+              dstNodeType: author
+              relation: to
+              srcNodeType: paper
+            opName: op_4
+            randomUniform:
+              numNodesToSample: 10
+          - edgeType:
+              dstNodeType: paper
+              relation: to
+              srcNodeType: author
+            opName: op_6
+            inputOpNames:
+            - op_4
+            randomUniform:
+              numNodesToSample: 10
+    numMaxTrainingSamplesToOutput: 10
+    numHops: 2
+    numNeighborsToSample: 3
+    numPositiveSamples: 1
+    numUserDefinedPositiveSamples: 2
+    numUserDefinedNegativeSamples: 2
+    graphDbConfig:
+      graphDbArgs:
+        use_local_sampler: 'true'
+sharedConfig:
+  flattenedGraphMetadata:
+    nodeAnchorBasedLinkPredictionOutput:
+      nodeTypeToRandomNegativeTfrecordUriPrefix:
+        author: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/output/random_negative_rooted_neighborhood_samples/user/
+        paper: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/output/random_negative_rooted_neighborhood_samples/story/
+      tfrecordUriPrefix:  common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/output/node_anchor_based_link_prediction_samples/
+  preprocessedMetadataUri: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/preprocessed_metadata.yaml
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+      - srcNodeType: author
+        relation: to
+        dstNodeType: paper
+graphMetadata:
+  condensedEdgeTypeMap:
+    '0':
+      srcNodeType: author
+      relation: to
+      dstNodeType: paper
+    '1':
+      srcNodeType: paper
+      relation: to
+      dstNodeType: author
+  condensedNodeTypeMap:
+    '0': author
+    '1': paper
+  edgeTypes:
+    - dstNodeType: paper
+      relation: to
+      srcNodeType: author
+    - dstNodeType: author
+      relation: to
+      srcNodeType: paper
+  nodeTypes:
+    - author
+    - paper

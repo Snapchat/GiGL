@@ -1,0 +1,66 @@
+# ==================== Python artifacts
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.python-version
+.mypy_cache
+_autosummary
+
+# ==================== Build artifacts
+build
+dist
+target
+*.egg-info
+*.DS_Store
+*.scala-build
+.bsp
+.bloop
+.metals
+.cache
+.lib
+tmp
+.tmp
+large_scale_gnn.egg-info/
+gigantic_graph_learning.egg-info/
+gigl.egg-info/
+gigl_dataflow_setup.egg-info/
+miniconda/
+
+# ==================== IDE / Editor folders
+.idea
+.vscode
+.history
+
+# ==================== Project tools & devcontainers
+.devcontainer
+tools/
+project/boot/
+project/plugins/project/
+project/target/
+**/project/**/metals.sbt
+src_managed/
+lib_managed/
+src/test/assets/output/*
+containers/
+
+# ==================== Test / temp / logs
+.test_assets/
+logs/
+**/src/test/assets/**/output/*
+
+# ==================== Git & VCS
+**/.git
+
+# ==================== Fossa files
+fossa
+fossa.bundle
+fossa*.zip
+
+# ==================== Miscellaneous folders
+proto/
+examples/MAG240M/downloads/
+scripts/
+graphlearn_torch/
+graphlearn_torch.egg-info/
+do_not_open_source

@@ -1,0 +1,17 @@
+name: Split Generator
+description: Split Generator
+inputs:
+- {name: job_name, type: String, description: 'Unique name to identify the job'}
+- {name: task_config_uri, type: String, description: 'Frozen GBML config uri'}
+- {name: resource_config_uri, type: String, description: "Runtime argument for resource and env specifications of each component"}
+outputs:
+
+implementation:
+  container:
+    image: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/src-cpu:latest # Dummy value, always overwritten by arguments passed to gnn.py
+    command: [
+      python, -m, gigl.src.split_generator.split_generator,
+      --job_name, {inputValue: job_name},
+      --task_config_uri, {inputValue: task_config_uri},
+      --resource_config_uri, {inputValue: resource_config_uri},
+    ]

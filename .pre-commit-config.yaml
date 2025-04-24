@@ -1,0 +1,17 @@
+repos:
+  - repo: local
+    hooks:
+    # Hook to run make format on demand.
+    # This isn't stricly necessary now that we don't run format on push but nice to keep around as an example.
+    - id: make-format
+      name: make-format
+      entry: make format
+      language: system
+      pass_filenames: false
+      stages: [manual]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.0.1
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

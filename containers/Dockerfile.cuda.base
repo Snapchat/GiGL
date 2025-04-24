@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+
+# Used to generate hashed requirements.txt
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+
+SHELL ["/bin/bash", "-c"]
+
+# Install basic dependencies
+# TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
+# Once VAI natively supports this communication, we can remove this requirement.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y build-essential git wget cmake iputils-ping \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Miniconda
+ENV CONDA_DIR /opt/conda
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh &&  /bin/bash ~/miniconda.sh -b -p /opt/conda
+ENV PATH $CONDA_DIR/bin:$PATH
+
+# Create the conda env environment:
+RUN conda create -y --name gnn python=3.9 pip
+
+# Update path so any call for python executables in the built image defaults to using the gnn conda environment
+ENV PATH /opt/conda/envs/gnn/bin:$PATH
+
+# The default bashrc exists early and is mainly for local dev niceties - we delete so we can
+# setup conda properly
+RUN rm ~/.bashrc && touch ~/.bashrc && conda init bash
+RUN echo "conda activate gnn" >> ~/.bashrc
+
+COPY requirements tmp/requirements
+RUN source ~/.bashrc && pip install --upgrade pip
+RUN source ~/.bashrc && cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+
+CMD [ "/bin/bash" ]

@@ -1,0 +1,27 @@
+feature {
+  name: "f0"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "f1"
+  type: FLOAT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}
+feature {
+  name: "node_id"
+  type: INT
+  presence {
+    min_fraction: 1.0
+  }
+  shape {
+  }
+}

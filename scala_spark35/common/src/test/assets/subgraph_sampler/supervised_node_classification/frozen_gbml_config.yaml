@@ -1,0 +1,27 @@
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: user
+    relation: friend
+    srcNodeType: user
+  nodeTypes:
+  - user
+taskMetadata:
+  nodeBasedTaskMetadata:
+    supervisionNodeTypes:
+      - user
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorArgs:
+      bq_edges_table_name: external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_supervised_node_classification_user_friend_user_edges
+      bq_nodes_table_name: external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_supervised_node_classification_user_nodes
+    dataPreprocessorConfigClsPath: this.is.non.existent.test.path.1
+  subgraphSamplerConfig:
+    numHops: 2
+    numNeighborsToSample: 3
+    numPositiveSamples: 2
+sharedConfig:
+  flattenedGraphMetadata:
+    supervisedNodeClassificationOutput:
+      labeledTfrecordUriPrefix:  common/src/test/assets/subgraph_sampler/supervised_node_classification/output/labeled/samples/
+      unlabeledTfrecordUriPrefix:  common/src/test/assets/subgraph_sampler/supervised_node_classification/output/unlabeled/samples/
+  preprocessedMetadataUri: common/src/test/assets/subgraph_sampler/supervised_node_classification/preprocessed_metadata.yaml

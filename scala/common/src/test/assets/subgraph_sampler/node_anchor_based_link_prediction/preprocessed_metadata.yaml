@@ -1,0 +1,34 @@
+condensedEdgeTypeToPreprocessedMetadata:
+  '0':
+    dstNodeIdKey: dst
+    srcNodeIdKey: src
+    mainEdgeInfo:
+      tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/edge_data
+      featureDim: 2
+      schemaUri: not.used.for.test
+      enumeratedEdgeDataBqTable: not.used.for.test
+    negativeEdgeInfo:
+      featureDim: 3
+      featureKeys:
+        - f0
+        - f1
+        - f2
+      schemaUri: not.used.for.test
+      tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/user_defined_neg
+    positiveEdgeInfo:
+      featureDim: 3
+      featureKeys:
+        - f0
+        - f1
+        - f2
+      schemaUri: not.used.for.test
+      tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/user_defined_pos
+condensedNodeTypeToPreprocessedMetadata:
+  '0':
+    featureDim: 2
+    featureKeys:
+    - f0
+    - f1
+    nodeIdKey: node_id
+    schemaUri: not.used.for.test
+    tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/node_anchor_based_link_prediction/node_data

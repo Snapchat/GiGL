@@ -1,0 +1,195 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+// Enum for pipeline components
+enum Component {
+ Component_Unknown = 0;
+ Component_Config_Validator = 1;
+ Component_Config_Populator = 2;
+ Component_Data_Preprocessor = 3;
+ Component_Subgraph_Sampler = 4;
+ Component_Split_Generator = 5;
+ Component_Trainer = 6;
+ Component_Inferencer = 7;
+}
+
+// Configuration for Spark Components
+message SparkResourceConfig {
+ // Machine type for Spark Resource
+ string machine_type = 1;
+ // Number of local SSDs
+ uint32 num_local_ssds = 2;
+ // Num workers for Spark Resource
+ uint32 num_replicas = 3;
+}
+
+// Configuration for Dataflow Components
+message DataflowResourceConfig {
+ // Number of workers for Dataflow resources
+ uint32 num_workers = 1;
+ // Maximum number of workers for Dataflow resources
+ uint32 max_num_workers = 2;
+ // Machine type for Dataflow resources
+ string machine_type = 3;
+ // Disk size in GB for Dataflow resources
+ uint32 disk_size_gb = 4;
+}
+
+// Configuration for Data Preprocessor
+message DataPreprocessorConfig {
+  DataflowResourceConfig edge_preprocessor_config = 1;
+  DataflowResourceConfig node_preprocessor_config = 2;
+}
+
+// (deprecated)
+// Configuration for Vertex AI training resources
+message VertexAiTrainerConfig {
+  // Machine type for training job
+  string machine_type = 1;
+  // GPU type for training job. Must be set to 'ACCELERATOR_TYPE_UNSPECIFIED' for cpu training.
+  string gpu_type = 2;
+  // GPU limit for training job. Must be set to 0 for cpu training.
+  uint32 gpu_limit = 3;
+  // Num workers for training job
+  uint32 num_replicas = 4;
+ }
+ 
+ // (deprecated)
+ // Configuration for KFP training resources
+ message KFPTrainerConfig {
+  // Num CPU requested for training job (str) which can be a number or a number followed by "m", which means 1/1000
+  string cpu_request = 1;
+  // Amount of Memory requested for training job (str) can either be a number or a number followed by one of "Ei", "Pi", "Ti", "Gi", "Mi", "Ki".
+  string memory_request = 2;
+  // GPU type for training job. Must be set to 'ACCELERATOR_TYPE_UNSPECIFIED' for cpu training.
+  string gpu_type = 3;
+  // GPU limit for training job. Must be set to 0 for cpu training.
+  uint32 gpu_limit = 4;
+  // Number of replicas for training job
+  uint32 num_replicas = 5;
+ }
+
+ // (deprecated)
+ // Configuration for Local Training
+ message LocalTrainerConfig {
+    uint32 num_workers = 1;
+ }
+
+// Configuration for Vertex AI resources
+message VertexAiResourceConfig {
+  // Machine type for job
+  string machine_type = 1;
+  // GPU type for job. Must be set to 'ACCELERATOR_TYPE_UNSPECIFIED' for cpu.
+  string gpu_type = 2;
+  // GPU limit for job. Must be set to 0 for cpu.
+  uint32 gpu_limit = 3;
+  // Num workers for job
+  uint32 num_replicas = 4;
+  // Timeout in seconds for the job. If unset or zero, will use the default @ google.cloud.aiplatform.CustomJob, which is 7 days: 
+  // https://github.com/googleapis/python-aiplatform/blob/58fbabdeeefd1ccf1a9d0c22eeb5606aeb9c2266/google/cloud/aiplatform/jobs.py#L2252-L2253
+  uint32 timeout = 5;
+ }
+ 
+ // Configuration for KFP job resources
+ message KFPResourceConfig {
+  // Num CPU requested for job (str) which can be a number or a number followed by "m", which means 1/1000
+  string cpu_request = 1;
+  // Amount of Memory requested for job (str) can either be a number or a number followed by one of "Ei", "Pi", "Ti", "Gi", "Mi", "Ki".
+  string memory_request = 2;
+  // GPU type for job. Must be set to 'ACCELERATOR_TYPE_UNSPECIFIED' for cpu.
+  string gpu_type = 3;
+  // GPU limit for job. Must be set to 0 for cpu.
+  uint32 gpu_limit = 4;
+  // Number of replicas for job
+  uint32 num_replicas = 5;
+ }
+
+ // Configuration for Local Jobs
+ message LocalResourceConfig {
+    uint32 num_workers = 1;
+ }
+
+// (deprecated)
+// Configuration for distributed training resources
+message DistributedTrainerConfig {
+ oneof trainer_config {
+   VertexAiTrainerConfig vertex_ai_trainer_config = 1;
+   KFPTrainerConfig kfp_trainer_config = 2;
+   LocalTrainerConfig local_trainer_config = 3;
+ }
+}
+
+// Configuration for training resources
+message TrainerResourceConfig {
+ oneof trainer_config {
+   VertexAiResourceConfig vertex_ai_trainer_config = 1;
+   KFPResourceConfig kfp_trainer_config = 2;
+   LocalResourceConfig local_trainer_config = 3;
+ }
+}
+
+// Configuration for distributed inference resources
+message InferencerResourceConfig {
+ oneof inferencer_config {
+   VertexAiResourceConfig vertex_ai_inferencer_config = 1;
+   DataflowResourceConfig dataflow_inferencer_config = 2;
+   LocalResourceConfig local_inferencer_config = 3;
+ }
+}
+
+// Shared resources configuration
+message SharedResourceConfig {
+  message CommonComputeConfig {
+    // GCP Project
+    string project = 1;
+   // GCP Region where compute is to be scheduled
+    string region = 2;
+   // GCS Bucket for where temporary assets are to be stored
+    string temp_assets_bucket = 3;
+   // Regional GCS Bucket used to store temporary assets
+    string temp_regional_assets_bucket = 4;
+   // Regional GCS Bucket that will store permanent assets like Trained Model
+    string perm_assets_bucket = 5;
+   // Path to BQ dataset used to store temporary assets
+    string temp_assets_bq_dataset_name = 6;
+   // Path to BQ Dataset used to persist generated embeddings and predictions
+    string embedding_bq_dataset_name = 7;
+   // The GCP service account email being used to schedule compute on GCP
+    string gcp_service_account_email = 8;
+    // The runner to use for Dataflow i.e DirectRunner or DataflowRunner
+    string dataflow_runner = 11;
+  }
+
+
+  map<string, string> resource_labels = 1;
+  CommonComputeConfig common_compute_config = 2;
+ }
+
+
+// GiGL resources configuration
+message GiglResourceConfig {
+ oneof shared_resource {
+   string shared_resource_config_uri = 1;
+   SharedResourceConfig shared_resource_config = 2;
+ }
+ // Configuration for Data Preprocessor
+ DataPreprocessorConfig preprocessor_config = 12;
+ // Configuration for Spark subgraph sampler
+ SparkResourceConfig subgraph_sampler_config = 13;
+ // Configuration for Spark split generator
+ SparkResourceConfig split_generator_config = 14;
+
+ // (deprecated)
+ // Configuration for trainer
+ DistributedTrainerConfig trainer_config = 15 [deprecated=true];
+
+ // (deprecated)
+ // Configuration for inferencer
+ DataflowResourceConfig inferencer_config = 16 [deprecated=true];
+ 
+ // Configuration for distributed trainer
+ TrainerResourceConfig trainer_resource_config = 17;
+ // Configuration for distributed inferencer
+ InferencerResourceConfig inferencer_resource_config = 18;
+}

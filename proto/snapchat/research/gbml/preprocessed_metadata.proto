@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+message PreprocessedMetadata{
+  // Houses metadata about node TFTransform output from DataPreprocessor.
+  message NodeMetadataOutput{
+    // The field in output TFRecords which references the node identifier.
+    string node_id_key = 1;
+    // Fields in output TFRecords which reference features.
+    repeated string feature_keys = 2;
+    // Fields in output TFRecords which reference labels.
+    repeated string label_keys = 3;
+    // GCS prefix which can be used to glob the TFRecord dataset.
+    string tfrecord_uri_prefix = 4;
+    // GCS path to a schema which can be used to parse the TFRecord dataset.
+    string schema_uri = 5;
+    // BQ path to a table which stores the original to enumerated node id association.
+    string enumerated_node_ids_bq_table = 6;
+    // BQ path to a table which stores the enumerated node id to node metadata association.
+    string enumerated_node_data_bq_table = 7;
+    // Feature dimension after preprocessing
+    optional uint32 feature_dim = 8;
+    // Contains categorical feature vocabularies
+    string transform_fn_assets_uri = 9;
+  }
+
+  // Houses metadata of edge features output from DataPreprocessor
+  message EdgeMetadataInfo{
+    // Fields in output TFRecords which reference features.
+    repeated string feature_keys = 1;
+    // Fields in output TFRecords which reference labels.
+    repeated string label_keys = 2;
+    // GCS prefix which can be used to glob the TFRecord dataset.
+    string tfrecord_uri_prefix = 3;
+    // GCS path to a schema which can be used to parse the TFRecord dataset.
+    string schema_uri = 4;
+    // BQ path to a table which stores the enumerated node id to node metadata association.
+    string enumerated_edge_data_bq_table = 5;
+    // Feature dimension after preprocessing
+    optional uint32 feature_dim = 6;
+    // Contains categorical feature vocabularies
+    string transform_fn_assets_uri = 7;
+  }
+
+  // Houses metadata about edge TFTransform output from DataPreprocessor.
+  message EdgeMetadataOutput{
+    // The field in output TFRecords which references the source node identifier.
+    string src_node_id_key = 1;
+    // The field in output TFRecords which references the destination node identifier.
+    string dst_node_id_key = 2;
+    // Detailed metadata for message-passing edges
+    EdgeMetadataInfo main_edge_info = 3;
+    // Detailed metadata for user-defined positive edges
+    optional EdgeMetadataInfo positive_edge_info = 4;
+    // Detailed metadata for user-defined negative edges
+    optional EdgeMetadataInfo negative_edge_info = 5;
+  }
+
+  // Maps condensed node types to their respective post-TFTransform outputs.
+  map<uint32, NodeMetadataOutput> condensed_node_type_to_preprocessed_metadata = 1;
+  // Maps condensed edge types to their respective post-TFTransform outputs.
+  map<uint32, EdgeMetadataOutput> condensed_edge_type_to_preprocessed_metadata = 2;
+}

@@ -1,0 +1,41 @@
+Copyright © 2025 Snap Inc.
+
+GiGL is made available under the MIT License.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+==============================================
+Third-Party Software
+
+GiGL includes or interacts with third-party software. A detailed report of the third-party software used, including their respective licenses, can be found at the following link.
+
+https://portal.fossa.com/p/snap/release/2724/5782
+
+For third-party software licensed under terms requiring source code distribution, copies of the source code are available upon request by emailing sourcecoderequest@snap.com.
+
+==============================================
+Third-Party Datasets
+
+GiGL utilizes third-party datasets that are licensed under different terms. Users are responsible for complying with the terms of those dataset licenses. Below is a list of the datasets used:
+Cora Dataset
+Copyright © Andrew McCallum
+License: Creative Commons Attribution 4.0 International (CC BY 4.0) License.
+Project Link:
+https://people.cs.umass.edu/~mccallum/data.html
+DBLP Dataset
+Collected in the paper "MAGNN: Metapath Aggregated Graph Neural Network for Heterogeneous Graph Embedding"
+License: CC0 1.0 Public Domain Dedication License
+Project Link:
+https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.datasets.DBLP.html
+MAG240M Dataset
+Wang, K., Shen, Z., Huang, C., Wu, C. H., Dong, Y., & Kanakia, A. (2020). Microsoft Academic Graph: When experts are not enough. Quantitative Science Studies, 1(1), 396-413.
+License: Open Data Commons Attribution License (ODC-BY)
+Project Link:
+https://ogb.stanford.edu/docs/lsc/mag240m/

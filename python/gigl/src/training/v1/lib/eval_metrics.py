@@ -1,0 +1,19 @@
+from gigl.src.common.constants.metrics import DELIMITER, OFFLINE_METRIC_PREFIX
+
+LINK_PREDICTION_METRICS_PREFIX = f"{OFFLINE_METRIC_PREFIX}{DELIMITER}link_prediction"
+
+MRR_METRIC_NAME = "mrr"
+LOSS_METRIC_NAME = "loss"
+HIT_RATE_METRIC_PREFIX = "HitRate_at_"
+
+GAUGE_MODEL_METRICS_MRR = (
+    f"{LINK_PREDICTION_METRICS_PREFIX}{DELIMITER}{MRR_METRIC_NAME}"
+)
+GAUGE_MODEL_METRICS_LOSS = (
+    f"{LINK_PREDICTION_METRICS_PREFIX}{DELIMITER}{LOSS_METRIC_NAME}"
+)
+KS_FOR_EVAL = [1, 5, 10, 50, 100, 500]
+
+
+def get_metric_name_for_gauge_model_metrics_hit_rate_at(hit_rate_at: int) -> str:
+    return f"{LINK_PREDICTION_METRICS_PREFIX}{DELIMITER}{HIT_RATE_METRIC_PREFIX.lower()}{hit_rate_at}"

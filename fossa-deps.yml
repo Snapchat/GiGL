@@ -1,0 +1,38 @@
+referenced-dependencies:
+- type: pypi
+  name: torch
+  version: "2.3.1"
+- type: pypi
+  name: torchvision
+  version: "0.18.1"
+- type: pypi
+  name: torchaudio
+  version: "2.3.1"
+- type: git
+  name: https://github.com/alibaba/graphlearn-for-pytorch
+  version: "v0.2.4"
+- type: git
+  name: https://github.com/protocolbuffers/protobuf
+  version: "v3.19.6"
+- type: git
+  name: https://github.com/scalapb/ScalaPB
+  version: "v0.11.14"
+vendored-dependencies:
+- name: spark-tfrecord-spark3.1
+  path: tools/scala/spark_packages/spark-custom-tfrecord_2.12-0.5.0.jar
+  version: "0.5.0"
+  metadata:
+    description: "Linked-In's library for reading and writing Tensorflow TFRecord data from Apache Spark."
+    homepage: "https://github.com/linkedin/spark-tfrecord"
+- name: spark-tfrecord-spark3.5
+  path: tools/scala/spark_packages/spark_3.5.0-custom-tfrecord_2.12-0.6.1.jar
+  version: "0.6.1"
+  metadata:
+    description: "Linked-In's library for reading and writing Tensorflow TFRecord data from Apache Spark."
+    homepage: "https://github.com/linkedin/spark-tfrecord"
+- name: spark-tfrecord
+  path: scala_spark35/external-jars/spark-bigquery-with-dependencies_2.12-0.36.1.jar
+  version: "0.36.1"
+  metadata:
+    description: "Google's connector that supports reading Google BigQuery tables into Spark's DataFrames, and writing DataFrames back into BigQuery."
+    homepage: "https://github.com/GoogleCloudDataproc/spark-bigquery-connector"

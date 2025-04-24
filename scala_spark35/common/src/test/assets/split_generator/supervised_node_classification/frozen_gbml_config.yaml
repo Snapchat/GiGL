@@ -1,0 +1,31 @@
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: user
+    relation: engage
+    srcNodeType: user
+  nodeTypes:
+  - user
+taskMetadata:
+  nodeBasedTaskMetadata:
+    supervisionNodeTypes:
+      - user
+datasetConfig:
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    assignerClsPath: splitgenerator.lib.assigners.NodeToDatasetSplitHashingAssigner
+    splitStrategyClsPath: splitgenerator.lib.split_strategies.TransductiveSupervisedNodeClassificationSplitStrategy
+sharedConfig:
+  datasetMetadata:
+    supervisedNodeClassificationDataset:
+      testDataUri: common/src/test/assets/split_generator/supervised_node_classification/output/test/samples/
+      trainDataUri: common/src/test/assets/split_generator/supervised_node_classification/output/train/samples/
+      valDataUri: common/src/test/assets/split_generator/supervised_node_classification/output/val/samples/
+  flattenedGraphMetadata:
+    supervisedNodeClassificationOutput:
+      labeledTfrecordUriPrefix:  common/src/test/assets/split_generator/supervised_node_classification/sgs_output/labeled/samples/
+      unlabeledTfrecordUriPrefix:  common/src/test/assets/split_generator/supervised_node_classification/sgs_output/unlabeled/samples/
+  preprocessedMetadataUri: common/src/test/assets/split_generator/supervised_node_classification/preprocessed_metadata.yaml

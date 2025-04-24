@@ -1,0 +1,38 @@
+condensedEdgeTypeToPreprocessedMetadata:
+  '0':
+    dstNodeIdKey: dst
+    mainEdgeInfo:
+      featureDim: 2
+      featureKeys:
+      - f0
+      - f1
+      schemaUri: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/edge_features_dir/user-to-story/main_edges/schema.pbtxt
+      tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/edge_features_dir/user-to-story/main_edges/features/
+    srcNodeIdKey: src
+  '1':
+    dstNodeIdKey: dst
+    mainEdgeInfo:
+      featureDim: 2
+      featureKeys:
+      - f0
+      - f1
+      schemaUri: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/edge_features_dir/story-to-user/main_edges/schema.pbtxt
+      tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/edge_features_dir/story-to-user/main_edges/features/
+    srcNodeIdKey: src
+condensedNodeTypeToPreprocessedMetadata:
+  '0':
+    featureDim: 2
+    featureKeys:
+    - f0
+    - f1
+    nodeIdKey: node_id
+    schemaUri: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/node_features_dir/user/schema.pbtxt
+    tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/node_features_dir/user/features/
+  '1':
+    featureDim: 2
+    featureKeys:
+    - f0
+    - f1
+    nodeIdKey: node_id
+    schemaUri: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/node_features_dir/story/schema.pbtxt
+    tfrecordUriPrefix: common/src/test/assets/subgraph_sampler/heterogeneous/node_anchor_based_link_prediction/node_features_dir/story/features/

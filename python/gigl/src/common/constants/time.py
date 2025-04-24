@@ -1,0 +1,5 @@
+DEFAULT_DATETIME_FORMAT = "%Y-%m-%d--%H-%M-%S-%Z"
+DEFAULT_DATE_FORMAT = "%Y%m%d"
+NODASH_DATE_FMT = "%Y%m%d"
+NODASH_DATETIME_FORMAT = "%Y%m%d%H%M%S"
+DASH_DATE_FMT = "%Y-%m-%d"

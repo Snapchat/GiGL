@@ -1,0 +1,26 @@
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: user
+    relation: engage
+    srcNodeType: user
+  nodeTypes:
+  - user
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+      - srcNodeType: user
+        relation: engage
+        dstNodeType: user
+datasetConfig:
+  subgraphSamplerConfig:
+    numHops: 2
+    numNeighborsToSample: 10
+    numPositiveSamples: 3
+sharedConfig:
+  preprocessedMetadataUri: tests/test_assets/small_graph/preprocessed_metadata.yaml
+  flattenedGraphMetadata:
+    nodeAnchorBasedLinkPredictionOutput:
+      nodeTypeToRandomNegativeTfrecordUriPrefix:
+        user: tests/test_assets/small_graph/subgraph_sampler_out/random_negative_rooted_neighborhood_samples/user/samples
+      tfrecordUriPrefix: tests/test_assets/small_graph/subgraph_sampler_out/node_anchor_based_link_prediction_samples/samples
+  isGraphDirected: False

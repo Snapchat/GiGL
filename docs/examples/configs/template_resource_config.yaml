@@ -1,0 +1,41 @@
+shared_resource_config:
+  common_compute_config:
+    project: "project_id"
+    region: "us-central1"
+    temp_assets_bucket: "gs://"
+    temp_regional_assets_bucket: "gs://"
+    perm_assets_bucket: "gs://"
+    temp_assets_bq_dataset_name: "my-bq-dataset-name"
+    embedding_bq_dataset_name: "my-bq-embeddings-dataset"
+    gcp_service_account_email: "YOUR_SERVICE_ACCOUNT@project.iam.gserviceaccount.com"
+    dataflow_runner: "DataflowRunner"  # or "DirectRunner" for local
+preprocessor_config:  # Dataflow config
+  edge_preprocessor_config:
+    num_workers: 1
+    max_num_workers: 128
+    machine_type: "n2d-highmem-32"
+    disk_size_gb: 300
+  node_preprocessor_config:
+    num_workers: 1
+    max_num_workers: 128
+    machine_type: "n2d-highmem-64"
+    disk_size_gb: 300
+subgraph_sampler_config:  # Dataproc config
+  machine_type: "n2d-highmem-16"
+  num_local_ssds: 2
+  num_replicas: 4
+split_generator_config:  # Dataproc config
+  machine_type: n2d-standard-16
+  num_local_ssds: 2
+  num_replicas: 4
+trainer_config:
+  vertex_ai_trainer_config:  # or local_trainer_config
+    machine_type: "n1-highmem-8"
+    gpu_type: nvidia-tesla-p100
+    gpu_limit: 1
+    num_replicas: 2
+inferencer_config:
+  num_workers: 1
+  max_num_workers: 256
+  machine_type: "c3-standard-22"
+  disk_size_gb: 100

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+message TrainedModelMetadata{
+  // The path to a trained PyTorch model.
+  string trained_model_uri = 1;
+  // The path to above model which is TorchScripted.
+  string scripted_model_uri = 2;
+  // The path where evaluation metrics are stored
+  string eval_metrics_uri = 3;
+  // Path where tensorboard logs will be stored
+  string tensorboard_logs_uri = 4;
+}

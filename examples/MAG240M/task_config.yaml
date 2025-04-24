@@ -1,0 +1,69 @@
+# GraphMetadata specified what edge and node types are present in the graph.
+# Note all the edge / node types here should be referenced in the preprocessor_config
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: paper_or_author
+    relation: references
+    srcNodeType: paper_or_author
+  nodeTypes:
+  - paper_or_author
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    # Specifying that we will perform node anchor based link prediction on edge of type: paper_or_author -> references -> paper_or_author
+    supervisionEdgeTypes: 
+      - srcNodeType: paper_or_author
+        relation: references
+        dstNodeType: paper_or_author
+# Shared config specifies some extra metadata about the graph structure management of orchestration.
+sharedConfig:
+  isGraphDirected: True
+  shouldSkipAutomaticTempAssetCleanup: true
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorConfigClsPath: examples.MAG240M.preprocessor_config.Mag240DataPreprocessorConfig
+    # our implementation takes no runtime arguments; if provided these are passed to the constructor off dataPreprocessorConfigClsPath
+    # dataPreprocessorArgs:
+  subgraphSamplerConfig:
+    numHops: 2  # Each subgraph that is computed will be of 2 hops
+    numNeighborsToSample: 15 # And, we will sample 10 neighbors at each hop for each node
+    numUserDefinedPositiveSamples: 1 # We will sample 1 positive sample per anchor node
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    # Since the positive labels are user defined we use the following setup.
+    # More assigner and split strategies can be found in splitgenerator.lib.assigners and 
+    # splitgenerator.lib.split_strategies respectively.
+    assignerClsPath: splitgenerator.lib.assigners.UserDefinedLabelsEdgeToLinkSplitHashingAssigner
+    splitStrategyClsPath: splitgenerator.lib.split_strategies.UserDefinedLabelsNodeAnchorBasedLinkPredictionSplitStrategy
+trainerConfig:
+  # GiGL provides a basic implementation of a NABLP trainer; customers are encouraged to extend this class to suit their needs.
+  trainerClsPath: gigl.src.common.modeling_task_specs.NodeAnchorBasedLinkPredictionModelingTaskSpec
+  trainerArgs: # The following arguments are passed to trainerClsPath's constructor. See class implementation for more details.
+    early_stop_patience: '5'
+    early_stop_criterion: 'loss'
+    main_sample_batch_size: '512' # Reduce batch size if Cuda OOM. Note that train/validation/test loss definition is associated with this batch size.
+    num_test_batches: '400'  # Increase this number to get more stable test loss
+    num_val_batches: '192'
+    random_negative_sample_batch_size: '512'
+    random_negative_sample_batch_size_for_evaluation: '1000' # The validation/test MRR and hit rates definitions are associated with this batch size.
+    val_every_num_batches: '100'  # Trains the model for 100 batches, evaluate it, and mark it as the best checkpoint.
+    # More data loaders prefetch more data into memory, which significantly saves data read and preprocess time.
+    # However, it also significantly increases CPU memory consumption and could lead to CPU memory OOM.
+    # The CPU memory consumption depends on both the number of data loaders and the batch size. 
+    train_main_num_workers: '10'
+    train_random_negative_num_workers: '10'
+    val_main_num_workers: '4'
+    val_random_negative_num_workers: '4'
+    test_main_num_workers: '8'
+    test_random_negative_num_workers: '8'
+inferencerConfig:
+  # inferencerArgs: We don't need to pass any special arguments for inferencer
+  # Note: The inferencerClsPath is the same as the trainerClsPath
+  # This is because NodeAnchorBasedLinkPredictionModelingTaskSpec implements both BaseTrainer (interface class needs to implement for training) 
+  # and BaseInferencer (interface class needs to implement for inference). See their respective definitions for more information:
+  # - gigl.src.training.v1.lib.base_trainer.BaseTrainer
+  # - gigl.src.inference.v1.lib.base_inferencer.BaseInferencer
+  inferencerClsPath: gigl.src.common.modeling_task_specs.NodeAnchorBasedLinkPredictionModelingTaskSpec

@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+import "snapchat/research/gbml/graph_schema.proto";
+
+message RandomUniform { // Randomly sample nodes from the neighborhood without replacement. 
+    int32 num_nodes_to_sample = 1;
+}
+
+message RandomWeighted {  // Sample based off some edge weight
+    int32 num_nodes_to_sample = 1;
+    string edge_feat_name = 2;
+}
+
+message TopK { // Order the edges based off of some edge feature and pick top K
+    int32 num_nodes_to_sample = 1;
+    string edge_feat_name = 2;
+}
+
+message UserDefined {
+    string path_to_udf = 1; // Path to class that implements UserDefinedFilter interface (TODO: Define this interface)
+    map<string, string> params = 2; // Runtime params to pass into the class
+}
+
+enum SamplingDirection {
+    INCOMING = 0;   // Sample incoming edges to the dst nodes (default)
+    OUTGOING = 1;   // Sample outgoing edges from the src nodes
+}
+
+// TODO: (svij) Define UserDefinedFilter interface
+// Rough idea of UserDefinedFilter interface
+// class UserDefinedFilter:
+//   def filter_next_hop_nodes_and_edges(
+//     potential_next_hop: Tuple[Set(Edge), Set(Node)],
+//   ) -> Tuple[Set(Edge), Set(Node)] # Given a set of edges and nodes; the function filters the next hop nodes/edges
+
+message SamplingOp {
+    // 1-100 field numbers reserved for expanding SamplingOp
+    string op_name = 1; // Can be used as a reference in other operations
+    EdgeType edge_type = 2;
+    // the list of upstream sampling operations in the DAG, empty if this is the root
+    repeated string input_op_names = 3;
+
+    // 100-200 field numbers reserved for SamplingMethods
+    // The sampling method to use
+    oneof sampling_method {
+        RandomUniform random_uniform = 100;
+        RandomWeighted random_weighted = 101;
+        TopK top_k = 103;
+        UserDefined user_defined = 104;
+    }
+
+    // Sampling edge direction, INCOMING or OUTGOING. INCOMING is default since SamplingDirection enum defined INCOMING=0, OUTGOING=1
+    // INCOMING - Sample incoming edges to the dst nodes (default)
+    // OUTGOING - Sample outgoing edges from the src nodes
+    SamplingDirection sampling_direction = 200;
+}
+
+
+message MessagePassingPath {
+    string root_node_type = 1;
+    repeated SamplingOp sampling_ops = 2;
+}
+
+message MessagePassingPathStrategy {
+    // Note: One message passing path needs to be specified per relevant node type
+    // i.e. for SupervisedNodeBasedTask, one message passing path per supervision node type
+    // for SupervisedLinkBasedTask, one message passing path per node type in the supervision edges
+    // We currently do not support multiple message passing paths for the same node type.
+    repeated MessagePassingPath paths = 1;
+}
+
+message GlobalRandomUniformStrategy {
+    uint32 num_hops = 1;
+    RandomUniform random_uniform_spec = 2;
+}
+
+message SubgraphSamplingStrategy {
+    oneof strategy {
+        MessagePassingPathStrategy message_passing_paths = 1;
+        GlobalRandomUniformStrategy global_random_uniform = 2; // Randomly sample num nodes specified nodes of each node type without replacement
+    }
+}

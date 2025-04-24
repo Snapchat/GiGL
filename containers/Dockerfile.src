@@ -1,0 +1,25 @@
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
+
+# Copy the source
+WORKDIR /gigl
+
+RUN touch __init__.py
+
+# Note: main package files must live in root of the repo for the python package to be built correctly for Dataflow workers.
+# See https://beam.apache.org/documentation/sdks/python-pipeline-dependencies/#create-reproducible-environments.
+COPY python/MANIFEST.in MANIFEST.in
+COPY python/setup.py setup.py
+COPY python/pyproject.toml pyproject.toml
+COPY dep_vars.env /dep_vars.env
+COPY deployment deployment
+COPY python/snapchat snapchat
+COPY examples examples
+COPY python/gigl gigl
+
+# enables usage of tcm as the memory allocator instead of default C memory allocators. Mainly, advantageous for CPU training jobs
+# Either boosts performance or does not make any improvement compared to default settings.
+# PyTorch recommendation: https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html#switch-memory-allocator
+# Replace `libtcmalloc` with `libjemalloc` if you want to try jem memory allocator
+# nshah: This creates huge memory overhead with graphlearn-torch usage.  Disabling this memory allocator.
+# ENV LD_PRELOAD /opt/conda/envs/gnn/lib/libtcmalloc.so:$LD_PRELOAD 

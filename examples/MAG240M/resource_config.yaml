@@ -1,0 +1,59 @@
+shared_resource_config:
+  resource_labels:
+  # These are compute labels that we will try to attach to the resources created by GiGL components.
+  # More information: https://cloud.google.com/compute/docs/labeling-resources.
+  # These can be mostly used to get finer grained cost reporting through GCP billing on individual component
+  # and pipeline costs.
+
+  # If COMPONENT is provided in cost_resource_group_tag, it will be automatically be replaced with one of
+  # {pre|sgs|spl|tra|inf|pos} standing for: {Preprocessor | Subgraph Sampler | Split Generator | Trainer
+  # | Inference | Post  Processor} so we can get more accurate cost measurements of each component.
+  # See implementation:
+  # `python/gigl/src/common/types/pb_wrappers/gigl_resource_config.py#GiglResourceConfigWrapper.get_resource_labels`
+
+    cost_resource_group_tag: dev_experiments_COMPONENT
+    cost_resource_group: gigl_platform
+  common_compute_config:
+    project: "USER_PROVIDED_PROJECT"
+    region: "us-central1"
+    # We recommend using the same bucket for temp_assets_bucket and temp_regional_assets_bucket
+    # These fields will get combined into one in the future. Note: Usually storage for regional buckets is cheaper,
+    # thus that is recommended.
+    temp_assets_bucket: "gs://USER_PROVIDED_TEMP_ASSETS_BUCKET"
+    temp_regional_assets_bucket: "gs://USER_PROVIDED_TEMP_ASSETS_BUCKET"
+    perm_assets_bucket: "gs://USER_PROVIDED_PERM_ASSETS_BUCKET"
+    temp_assets_bq_dataset_name: "gigl_temp_assets"
+    embedding_bq_dataset_name: "gigl_embeddings"
+    gcp_service_account_email: "USER_PROVIDED_SA@USER_PROVIDED_PROJECT.iam.gserviceaccount.com"
+    dataflow_runner: "DataflowRunner"
+preprocessor_config:
+  edge_preprocessor_config:
+    num_workers: 1
+    max_num_workers: 256
+    machine_type: "n2d-highmem-64"
+    disk_size_gb: 300
+  node_preprocessor_config:
+    num_workers: 1
+    max_num_workers: 128
+    machine_type: "n2d-highmem-64"
+    disk_size_gb: 300
+subgraph_sampler_config:
+  machine_type: "n2d-highmem-32"
+  num_local_ssds: 16
+  num_replicas: 240
+split_generator_config:
+  machine_type: "n2d-standard-16"
+  num_local_ssds: 2
+  num_replicas: 256
+trainer_config:
+  vertex_ai_trainer_config:
+    # NOTE: make sure the num_worker args in the trainerArgs don't go beyond 8
+    machine_type: "n1-highmem-8"
+    gpu_type: "nvidia-tesla-v100"
+    gpu_limit: 1
+    num_replicas: 16
+inferencer_config:
+  num_workers: 1
+  max_num_workers: 256
+  machine_type: "c2d-highmem-32"
+  disk_size_gb: 100

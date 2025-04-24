@@ -1,0 +1,18 @@
+condensedEdgeTypeToPreprocessedMetadata:
+  '0':
+    dstNodeIdKey: dst
+    srcNodeIdKey: src
+    mainEdgeInfo:
+      tfrecordUriPrefix: not.used.for.test
+      featureDim: 2
+      schemaUri: not.used.for.test
+      enumeratedEdgeDataBqTable: not.used.for.test
+condensedNodeTypeToPreprocessedMetadata:
+  '0':
+    featureDim: 2
+    featureKeys:
+      - f0
+      - f1
+    nodeIdKey: node_id
+    schemaUri: not.used.for.test
+    tfrecordUriPrefix: not.used.for.test

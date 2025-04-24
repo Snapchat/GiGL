@@ -1,0 +1,64 @@
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: paper
+    relation: cites
+    srcNodeType: paper
+  nodeTypes:
+  - paper
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+      - srcNodeType: paper
+        relation: cites
+        dstNodeType: paper
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
+    dataPreprocessorArgs:
+      # Supported keys in python/gigl/src/mocking/lib/mocked_dataset_artifact_metadata.json
+      mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
+  subgraphSamplerConfig:
+    numHops: 2
+    numNeighborsToSample: 10
+    numUserDefinedPositiveSamples: 1
+    numUserDefinedNegativeSamples: 1
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    assignerClsPath: splitgenerator.lib.assigners.NodeToDatasetSplitHashingAssigner
+    splitStrategyClsPath: splitgenerator.lib.split_strategies.UDLAnchorBasedSupervisionEdgeSplitStrategy
+inferencerConfig:
+  inferencerArgs:
+    early_stop_patience: '1'
+    main_sample_batch_size: '16'
+    num_test_batches: '8'
+    num_val_batches: '8'
+    random_negative_sample_batch_size: '16'
+    random_negative_sample_batch_size_for_evaluation: '32'
+    val_every_num_batches: '8'
+    train_main_sample_num_workers: '1'
+    train_random_sample_num_workers: '1'
+    val_main_sample_num_workers: '1'
+    val_random_sample_num_workers: '1'
+    test_main_sample_num_workers: '1'
+    test_random_sample_num_workers: '1'
+  inferencerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
+trainerConfig:
+  trainerArgs:
+    early_stop_patience: '1'
+    main_sample_batch_size: '16'
+    num_test_batches: '8'
+    num_val_batches: '8'
+    random_negative_sample_batch_size: '16'
+    random_negative_sample_batch_size_for_evaluation: '32'
+    val_every_num_batches: '8'
+    train_main_sample_num_workers: '1'
+    train_random_sample_num_workers: '1'
+    val_main_sample_num_workers: '1'
+    val_random_sample_num_workers: '1'
+    test_main_sample_num_workers: '1'
+    test_random_sample_num_workers: '1'
+  trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec

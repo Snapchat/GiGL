@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+message PostProcessedMetadata{
+  // The path to the post processor evaluation results
+  string post_processor_log_metrics_uri = 1;
+}

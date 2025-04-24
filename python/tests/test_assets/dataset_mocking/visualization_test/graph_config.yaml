@@ -1,0 +1,70 @@
+graph:
+  node_types:
+    - user
+  edge_types:
+    user_friend_user:
+      src_node_type: user
+      relation_type: friend
+      dst_node_type: user
+
+adj_list:
+  user_friend_user:
+    - src: 0
+      dst: [1, 3]
+    - src: 1
+      dst: [0, 5]
+    - src: 2
+      dst: [1]
+    - src: 3
+      dst: [0, 5, 6, 7]
+    - src: 4
+      dst: [3]
+    - src: 5
+      dst: [1, 3, 6]
+    - src: 6
+      dst: [2, 3, 7]
+    - src: 7
+      dst: [3, 6, 8, 9]
+    - src: 8
+      dst: [7, 9, 10]
+    - src: 9
+      dst: [7, 8, 10]
+    - src: 10
+      dst: [11, 9, 8]
+    - src: 11
+      dst: [12]
+    - src: 12
+      dst: [13]
+    - src: 13
+      dst: []
+
+nodes:
+  user: 
+    - src: 0
+      features: [0.0, 0]
+    - src: 1
+      features: [0.1, 1]
+    - src: 2
+      features: [0.2, 2]
+    - src: 3
+      features: [0.3, 3]
+    - src: 4
+      features: [0.4, 4]
+    - src: 5
+      features: [0.5, 5]
+    - src: 6
+      features: [0.6, 6]
+    - src: 7
+      features: [0.7, 7]
+    - src: 8
+      features: [0.8, 8]
+    - src: 9
+      features: [0.9, 9]
+    - src: 10
+      features: [0.01, 10]
+    - src: 11
+      features: [0.11, 11]
+    - src: 12
+      features: [0.12, 12]
+    - src: 13
+      features: [0.13, 13]

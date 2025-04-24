@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package snapchat.research.gbml;
+
+import "snapchat/research/gbml/graph_schema.proto";
+
+
+message Label {
+    string label_type = 1;
+    int32 label = 2;
+}
+
+
+// Store each node and related neighborhood subgraph
+// can be used for storing random negative samples
+message RootedNodeNeighborhood {
+    // The main node for the sample
+    Node root_node = 1;
+    // k-hop neighborhood of the root_node
+    Graph neighborhood = 2;
+}
+
+
+message SupervisedNodeClassificationSample {
+    // The main node for the sample
+    Node root_node = 1;
+    // k-hop neighborhood of the root_node
+    Graph neighborhood = 2;
+    repeated Label root_node_labels = 3;
+}
+
+
+message NodeAnchorBasedLinkPredictionSample{
+    // The main node for the sample
+    Node root_node = 1;
+
+    // Hard negative edges: destination node is a negative example to the root_node
+    // Can be "fake" edges i.e. destination is a non neighbor of the root_node or user-defined
+    repeated Edge hard_neg_edges = 2;
+
+    // Positive edges: destination node is a positive example to the root_node
+    // Can be "real" edges i.e. destination is a neighbor of the root_node or user-defined
+    repeated Edge pos_edges = 4;
+
+    // (DEPRECATED) Random negatives edges, now provided by batch-shared random negatives
+    // in RootedNodeNeighborhood and in-batch negatives
+    repeated Edge neg_edges = 5;
+
+    // The khop neighborhoods of root/pos/neg nodes are merged in proto definition,
+    // therefore in training additional fast tree search needs to be done to retrieve
+    // the relevant k hop neighborhoods for each node
+    Graph neighborhood = 3;
+}
+
+// The SupervisedLinkBasedTaskSample can be used for both
+// Link-classification-based link prediction tasks & Edge level prediction tasks
+message SupervisedLinkBasedTaskSample{
+    // The main edge for the sample
+    Edge root_edge = 1;
+    // Contains the k hop neighborhood for both nodes composing the root_edge
+    Graph neighborhood = 2;
+
+    // Allow multiple edge labels with different type ex. Snap view as target label, and Story view as target label
+    repeated Label root_edge_labels = 3;
+}

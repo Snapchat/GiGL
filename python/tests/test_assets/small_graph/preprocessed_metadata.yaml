@@ -1,0 +1,25 @@
+# Generated using:
+# python -m applied_tasks.mocking.subgraph_sampler_input.mocker --task_config_uri=tests/test_assets/small_graph/sgs_input_node_anchor_link_prediction.yaml --job_name=small_graph_test --num_nodes=4 --num_edges_per_node=2
+# The number of nodes = 4; number of edges per node = 2
+condensedEdgeTypeToPreprocessedMetadata:
+  '0':
+    dstNodeIdKey: dst_node_int_id
+    schemaUri: tests/test_assets/small_graph/preprocess_out/edge/schema.pbtxt
+    srcNodeIdKey: src_node_int_id
+    tfrecordUriPrefix: tests/test_assets/small_graph/preprocess_out/edge/samples/
+condensedNodeTypeToPreprocessedMetadata:
+  '0':
+    featureKeys:
+    - f0
+    - f1
+    - f2
+    - f3
+    - f4
+    - f5
+    - f6
+    - f7
+    - f8
+    - f9
+    nodeIdKey: node_int_id
+    schemaUri: tests/test_assets/small_graph/preprocess_out/node/schema.pbtxt
+    tfrecordUriPrefix: tests/test_assets/small_graph/preprocess_out/node/samples/

@@ -1,0 +1,57 @@
+graphMetadata:
+  condensedEdgeTypeMap:
+    '0':
+      dstNodeType: paper
+      relation: cites
+      srcNodeType: paper
+  condensedNodeTypeMap:
+    '0': paper
+  edgeTypes:
+  - dstNodeType: paper
+    relation: cites
+    srcNodeType: paper
+  nodeTypes:
+  - paper
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
+    dataPreprocessorArgs:
+      # Supported keys in python/tests/test_assets/dataset_mocking/lib/mocked_dataset_artifact_metadata.json
+      mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
+  # Below not used for GLT Inference
+  subgraphSamplerConfig:
+    numHops: 2
+    numNeighborsToSample: 10
+    numUserDefinedPositiveSamples: 1
+    numUserDefinedNegativeSamples: 1
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    assignerClsPath: splitgenerator.lib.assigners.UserDefinedLabelsEdgeToLinkSplitHashingAssigner
+    splitStrategyClsPath: splitgenerator.lib.split_strategies.UserDefinedLabelsNodeAnchorBasedLinkPredictionSplitStrategy
+  # Above not used for GLT Inference
+inferencerConfig:
+  inferencerArgs:
+    # Example argument to inferencer
+    log_every_n_batch: "50"
+  inferenceBatchSize: 512
+  command: python -m examples.distributed.homogeneous_inference
+sharedConfig:
+  shouldSkipAutomaticTempAssetCleanup: false
+  shouldSkipInference: false
+  shouldSkipTraining: true  # GLT Task does not have a training phase that is being tested right now
+  shouldSkipModelEvaluation: true
+  trainedModelMetadata:
+    trainedModelUri: gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features_user_defined_labels/trainer/models/model.pt
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+    - dstNodeType: paper
+      relation: cites
+      srcNodeType: paper
+featureFlags:
+  should_run_glt_backend: 'True'
+  data_preprocessor_num_shards: '2'
