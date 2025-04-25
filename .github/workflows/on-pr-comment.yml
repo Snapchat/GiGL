@@ -52,7 +52,7 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
-            make integration_test PYTEST_FILES="trainer_test.py"
+            make integration_test
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/e2e_test') }} 
     runs-on: ubuntu-latest
