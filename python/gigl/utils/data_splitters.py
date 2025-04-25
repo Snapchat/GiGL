@@ -415,7 +415,7 @@ def _get_padded_labels(
             torch.cat(
                 [
                     indices[start:end],
-                    torch.full((max_range - (end - start),), PADDING_NODE),
+                    torch.full((max_range - (end - start),), PADDING_NODE.item()),
                 ]
             )
             for start, end in zip(starts, ends)
