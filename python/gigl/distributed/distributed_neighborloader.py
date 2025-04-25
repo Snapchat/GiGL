@@ -1,8 +1,9 @@
 from collections import abc
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-import graphlearn_torch
 import torch
+from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
+from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
@@ -23,7 +24,23 @@ logger = Logger()
 DEFAULT_NUM_CPU_THREADS = 2
 
 
-class DistNeighborLoader(graphlearn_torch.distributed.DistNeighborLoader):
+# By default GLT does not support per-example batching, so we add this to support sampling
+# from multiple nodes in a single batch.
+# See https://github.com/alibaba/graphlearn-for-pytorch/pull/155/files for more info.
+class _BatchedNodeSamplerInput(NodeSamplerInput):
+    def __len__(self) -> int:
+        return self.node.shape[0]
+
+    def __getitem__(
+        self, index: Union[torch.Tensor, Any]
+    ) -> "_BatchedNodeSamplerInput":
+        if not isinstance(index, torch.Tensor):
+            index = torch.tensor(index, dtype=torch.long)
+        index = index.to(self.node.device)
+        return _BatchedNodeSamplerInput(self.node[index].view(-1), self.input_type)
+
+
+class DistNeighborLoader(DistLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
@@ -159,7 +176,7 @@ class DistNeighborLoader(graphlearn_torch.distributed.DistNeighborLoader):
         )
 
         # Sets up worker options for the dataloader
-        worker_options = graphlearn_torch.distributed.MpDistSamplingWorkerOptions(
+        worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
@@ -179,17 +196,28 @@ class DistNeighborLoader(graphlearn_torch.distributed.DistNeighborLoader):
             pin_memory=device.type == "cuda",
         )
 
-        super().__init__(
-            data=dataset,
+        sampling_config = SamplingConfig(
+            sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
-            input_nodes=curr_process_nodes,
             batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
             with_edge=True,
-            edge_dir=dataset.edge_dir,
             collect_features=True,
-            to_device=device,
-            worker_options=worker_options,
+            with_neg=False,
+            with_weight=False,
+            edge_dir=dataset.edge_dir,
+            seed=None,  # it's actually optional - None means random.
         )
+        if isinstance(curr_process_nodes, torch.Tensor):
+            node_ids = curr_process_nodes
+            node_type = None
+        else:
+            node_type, node_ids = curr_process_nodes
+
+        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
+
+        super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
 
 def _shard_nodes_by_process(
