@@ -2,16 +2,20 @@ import unittest
 from collections.abc import Mapping
 
 import torch
+from graphlearn_torch.data import Dataset, Topology
 from parameterized import param, parameterized
 from torch.testing import assert_close
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
+    LabelInfo,
     _check_edge_index,
     _check_val_test_percentage,
     _fast_hash,
+    _get_padded_labels,
     select_ssl_positive_label_edges,
+    setup_labeled_input_from_dataset,
 )
 
 # For TestDataSplitters
@@ -512,6 +516,111 @@ class TestDataSplitters(unittest.TestCase):
     def test_check_edge_index(self, _, edges):
         with self.assertRaises(ValueError):
             _check_edge_index(edges)
+
+    def test_setup_labeled_input_from_edges(self):
+        edges = torch.tensor(
+            [
+                [9, 10, 10, 10, 11, 11, 12, 12, 10],
+                [8, 10, 11, 15, 12, 13, 10, 11, 7],
+            ]
+        )
+        ds = Dataset()
+        ds.init_graph(
+            edge_index=edges, edge_ids=torch.arange(edges.shape[1]), graph_mode="CPU"
+        )
+
+        # TODO(kmonte): Update to use a splitter once we've migrated splitter API.
+        node_ids = torch.tensor([9, 10])
+        actual, label_info = setup_labeled_input_from_dataset(
+            dataset=ds, node_ids=node_ids, return_label_info=True
+        )
+
+        expected = torch.tensor([[9, 8, -1, -1, -1], [10, 7, 10, 11, 15]])
+        assert_close(actual, expected, rtol=0, atol=0)
+        assert isinstance(label_info, LabelInfo)
+        self.assertEqual(label_info.num_positive_labels, 4)
+        self.assertIsNone(label_info.num_negative_labels)
+
+    def test_setup_labeled_input_from_edges_heterogeneous(self):
+        a_to_b = EdgeType(_NODE_A, _TO, _NODE_B)
+        a_to_c = EdgeType(_NODE_A, _TO, _NODE_C)
+        edges = {
+            a_to_b: torch.tensor([[10, 11, 12, 13, 10], [10, 10, 11, 11, 12]]),
+            a_to_c: torch.tensor([[11, 12, 13], [10, 10, 11]]),
+        }
+        ds = Dataset(edge_dir="in")
+        ds.init_graph(
+            edge_index=edges,
+            edge_ids={e: torch.arange(edges[e].shape[1]) for e in edges},
+            graph_mode="CPU",
+        )
+        # TODO(kmonte): Update to use a splitter once we've migrated splitter API.
+        node_ids = torch.tensor([10])
+        actual = setup_labeled_input_from_dataset(
+            dataset=ds, node_ids=node_ids, supervision_edge_types=a_to_b
+        )
+
+        expected = torch.tensor([[10, 10, 11]])
+
+        assert_close(actual, expected, rtol=0, atol=0)
+
+    def test_setup_labeled_input_from_edges_heterogeneous_positive_and_negative(self):
+        a_to_b = EdgeType(_NODE_A, _TO, _NODE_B)
+        a_to_c = EdgeType(_NODE_A, _TO, _NODE_C)
+        edges = {
+            a_to_b: torch.tensor([[10, 10, 11, 11, 12], [10, 11, 12, 13, 10]]),
+            a_to_c: torch.tensor([[10, 11, 12], [20, 30, 40]]),
+        }
+        ds = Dataset()
+        ds.init_graph(
+            edge_index=edges,
+            edge_ids={e: torch.arange(edges[e].shape[1]) for e in edges},
+            graph_mode="CPU",
+        )
+
+        # TODO(kmonte): Update to use a splitter once we've migrated splitter API.
+        node_ids = torch.tensor([10])
+        actual, label_info = setup_labeled_input_from_dataset(
+            dataset=ds,
+            node_ids=node_ids,
+            supervision_edge_types=(a_to_b, a_to_c),
+            return_label_info=True,
+        )
+
+        expected = torch.tensor([[10, 10, 11, 20]])
+        assert_close(actual, expected, rtol=0, atol=0)
+        assert isinstance(label_info, LabelInfo)
+        self.assertEqual(label_info.num_positive_labels, 2)
+        self.assertEqual(label_info.num_negative_labels, 1)
+
+    @parameterized.expand(
+        [
+            param(
+                "CSR",
+                node_ids=torch.tensor([0, 1]),
+                topo=Topology(
+                    edge_index=torch.tensor([[0, 0, 1], [1, 2, 2]]), layout="CSR"
+                ),
+                expected_range=2,
+                expected=torch.tensor([[1, 2], [2, -1]]),
+            ),
+            param(
+                "CSC",
+                node_ids=torch.tensor([0, 1]),
+                # Note: the edge index needs to be reversed for CSC...
+                # Maybe this is a bug? Unclear how/if GLT uses this.
+                topo=Topology(
+                    edge_index=torch.tensor([[1, 2, 0], [0, 1, 1]]), layout="CSC"
+                ),
+                expected_range=2,
+                expected=torch.tensor([[1, -1], [0, 2]]),
+            ),
+        ]
+    )
+    def test_get_padded_labels(self, _, node_ids, topo, expected_range, expected):
+        labels, max_range = _get_padded_labels(node_ids, topo)
+        self.assertEqual(max_range, expected_range)
+        assert_close(labels, expected, rtol=0, atol=0)
 
 
 class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
