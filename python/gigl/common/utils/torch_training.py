@@ -26,6 +26,24 @@ def get_rank() -> int:
     return int(os.environ.get("RANK", 0))
 
 
+def get_local_rank() -> int:
+    """
+    This is automatically set by Kubeflow PyTorchJob launcher
+    Returns:
+        int: The index of the local (within-node) process involved in distributed training
+    """
+    return int(os.environ.get("LOCAL_RANK", 0))
+
+
+def get_local_world_size() -> int:
+    """
+    This is automatically set by Kubeflow PyTorchJob launcher
+    Returns:
+        int: Total number of local (within-node) processes involved in distributed training
+    """
+    return int(os.environ.get("LOCAL_WORLD_SIZE", 1))
+
+
 def is_distributed_local_debug() -> bool:
     """
     For local debugging purpose only

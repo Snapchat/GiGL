@@ -62,7 +62,7 @@ def get_world_size() -> int:
     It is the user's responsibility to create multiple processes per machine.
     Throws if not on Vertex AI.
     """
-    return int(os.environ["WORLD_SIZE"])
+    return int(os.environ.get("WORLD_SIZE", 1))
 
 
 def get_rank() -> int:
@@ -73,7 +73,7 @@ def get_rank() -> int:
     for the main process that VAI creates.
     Throws if not on Vertex AI.
     """
-    return int(os.environ["RANK"])
+    return int(os.environ.get("RANK", 0))
 
 
 def connect_worker_pool() -> DistributedContext:
