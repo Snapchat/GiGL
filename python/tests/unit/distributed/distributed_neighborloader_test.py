@@ -88,7 +88,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 ]
             ),
         }
-        po = PartitionOutput(
+        partition_output = PartitionOutput(
             node_partition_book=to_heterogeneous_node(torch.zeros(14)),
             edge_partition_book={
                 DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.zeros(6),
@@ -107,7 +107,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_positive_labels=None,
         )
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=po)
+        dataset.build(partition_output=partition_output)
 
         loader = DistNeighborLoader(
             dataset=dataset,
