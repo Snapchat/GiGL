@@ -6,7 +6,6 @@ import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc
 from torch.multiprocessing import Manager
-from torch.testing import assert_close
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_context import DistributedContext
@@ -29,6 +28,7 @@ from gigl.types.graph import (
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
+from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
@@ -77,9 +77,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         self.assertEqual(count, 2708)
 
     def test_distributed_neighbor_loader_batched(self):
-        nt = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        positive_edge = EdgeType(nt, POSITIVE_LABEL_RELATION, nt)
-        negative_edge = EdgeType(nt, NEGATIVE_LABEL_RELATION, nt)
+        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        positive_edge_type = EdgeType(node_type, POSITIVE_LABEL_RELATION, node_type)
+        negative_edge_type = EdgeType(node_type, NEGATIVE_LABEL_RELATION, node_type)
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
                 [
@@ -92,8 +92,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             node_partition_book=to_heterogeneous_node(torch.zeros(14)),
             edge_partition_book={
                 DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.zeros(6),
-                positive_edge: torch.zeros(3),
-                negative_edge: torch.zeros(3),
+                positive_edge_type: torch.zeros(3),
+                negative_edge_type: torch.zeros(3),
             },
             partitioned_edge_index={
                 etype: GraphPartitionData(
@@ -112,7 +112,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         loader = DistNeighborLoader(
             dataset=dataset,
             num_neighbors=[2],
-            input_nodes=(nt, torch.tensor([[10, 12]])),
+            input_nodes=(node_type, torch.tensor([[10, 12]])),
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
@@ -123,8 +123,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 1)
-        assert_close(datum[nt].node.msort(), torch.tensor([10, 11, 12, 14]))
-        assert_close(datum[nt].batch.msort(), torch.tensor([10, 12]))
+        assert_tensor_equality(
+            datum[node_type].node, torch.tensor([10, 11, 12, 14]), dim=0
+        )
+        assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
