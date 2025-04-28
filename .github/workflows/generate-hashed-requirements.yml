@@ -39,7 +39,7 @@ jobs:
           pr_number: ${{ inputs.pr_number }}
           should_leave_progress_comments: "false"
           command: |
-            rm -rf /opt/hostedtoolcache/
+            pip-compile --version
             make -j4 generate_dev_linux_cuda_hashed_requirements \
               generate_linux_cuda_hashed_requirements \
               generate_dev_linux_cpu_hashed_requirements \
@@ -67,7 +67,7 @@ jobs:
           pr_number: ${{ inputs.pr_number }}
           should_leave_progress_comments: "false"
           command: |
-            rm -rf /opt/hostedtoolcache/
+            pip-compile --version
             make -j2 generate_mac_arm64_cpu_hashed_requirements \
               generate_dev_mac_arm64_cpu_hashed_requirements
       - name: Upload Artifacts
