@@ -351,6 +351,11 @@ run_cora_glt_udl_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt
 run_cora_glt_udl_kfp_test: should_compile_then_run_str:="false"
 run_cora_glt_udl_kfp_test: _run_e2e_kfp_test
 
+run_dblp_glt_kfp_test: job_name_prefixes_str:="dblp_glt_test_on"
+run_dblp_glt_kfp_test: task_config_uris_str:="examples/distributed/configs/e2e_dblp_task_config.yaml"
+run_dblp_glt_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
+run_dblp_glt_kfp_test: _run_e2e_kfp_test
+
 # Spawns a background job for each e2e test defined by job_name_prefix, task_config_uri, and resource_config_uri
 # Waits for all jobs to finish since should_wait_for_job_to_finish:=true
 run_all_e2e_tests: should_send_job_to_background:=true
@@ -359,18 +364,21 @@ run_all_e2e_tests: job_name_prefixes_str:=\
 		"cora_nalp_test_on" \
 		"cora_snc_test_on" \
 		"dblp_nalp_test_on" \
-		"cora_glt_udl_test_on"
+		"cora_glt_udl_test_on" \
+		"dblp_glt_test_on"
 # Removed UDL due to transient issue:
 # "gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml"
 run_all_e2e_tests: task_config_uris_str:=\
 		"gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml" \
-		"examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml"
+		"examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml" \
+		"examples/distributed/configs/e2e_dblp_task_config.yaml"
 run_all_e2e_tests: resource_config_uris_str:=\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
+		"deployment/configs/e2e_glt_resource_config.yaml"\
 		"deployment/configs/e2e_glt_resource_config.yaml"
 run_all_e2e_tests: should_compile_then_run_str:=\
 		"true" \
