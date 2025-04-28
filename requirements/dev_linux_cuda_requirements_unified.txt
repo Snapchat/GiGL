@@ -1404,6 +1404,12 @@ matplotlib==3.6.3 \
 mdformat==0.7.22 \
     --hash=sha256:61122637c9e1d9be1329054f3fa216559f0d1f722b7919b060a8c2a4ae1850e5 \
     --hash=sha256:eef84fa8f233d3162734683c2a8a6222227a229b9206872e6139658d99acb1ea
+    # via
+    #   gigl (python/pyproject.toml)
+    #   mdformat-tables
+mdformat-tables==1.0.0 \
+    --hash=sha256:94cd86126141b2adc3b04c08d1441eb1272b36c39146bab078249a41c7240a9a \
+    --hash=sha256:a57db1ac17c4a125da794ef45539904bb8a9592e80557d525e1f169c96daa2c8
     # via gigl (python/pyproject.toml)
 mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
@@ -2924,7 +2930,7 @@ tensorflow==2.15.1 \
     #   tensorflow-serving-api
     #   tensorflow-transform
     #   tfx-bsl
-tensorflow-data-validation==1.14.0 ; platform_machine != "arm64" \
+tensorflow-data-validation==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:00b29e486c04e18ca255c764f8d788b398daf43c18a9372220c0e6d70f6d1131 \
     --hash=sha256:0aa894ee574855beb0bbe4a06032515d6a261d6326958edd67b562c210601acf \
     --hash=sha256:148604e3d7263343a4fc9cf591743b8f022b9474f38b0cb46df943072977f2fb \
@@ -2956,26 +2962,26 @@ tensorflow-io-gcs-filesystem==0.37.1 \
     --hash=sha256:fe8dcc6d222258a080ac3dfcaaaa347325ce36a7a046277f6b3e19abc1efb3c5 \
     --hash=sha256:ffebb6666a7bfc28005f4fbbb111a455b5e7d6cd3b12752b7050863ecb27d5cc
     # via tensorflow
-tensorflow-metadata==1.14.0 ; platform_machine != "arm64" \
+tensorflow-metadata==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:5ff79bf96f98c800fc08270b852663afe7e74d7e1f92b50ba1487bfc63894cdb
     # via
     #   gigl (python/pyproject.toml)
     #   tensorflow-data-validation
     #   tensorflow-transform
     #   tfx-bsl
-tensorflow-serving-api==2.15.1 ; platform_machine != "arm64" \
+tensorflow-serving-api==2.15.1 ; platform_system != "Darwin" \
     --hash=sha256:7db02614e57f948f94da3b4cba3e90d19b6acde0d7fb3c0972312da1f0580b65
     # via
     #   gigl (python/pyproject.toml)
     #   tfx-bsl
-tensorflow-transform==1.14.0 ; platform_machine != "arm64" \
+tensorflow-transform==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:f21bb7dfbced576a5eec77c4ddaa59e74855144b57045e43ac46d78f51524ad1
     # via gigl (python/pyproject.toml)
 termcolor==3.0.1 \
     --hash=sha256:a6abd5c6e1284cea2934443ba806e70e5ec8fd2449021be55c280f8a3731b611 \
     --hash=sha256:da1ed4ec8a5dc5b2e17476d859febdb3cccb612be1c36e64511a6f2485c10c69
     # via tensorflow
-tfx-bsl==1.14.0 ; platform_machine != "arm64" \
+tfx-bsl==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:2cf105a8d2190f7a74b61cc52d59a80b8e2d238f07623cb41b55558ba8258b24 \
     --hash=sha256:4c016162eeb9247ffb45b88a98b7f15c1d88d0719a200cea89a91fe5315e2afa \
     --hash=sha256:585b194482b6e0a4e2643dafc8ff9621c7a85537d5ca2930485ef3806af4fbe5 \
@@ -3125,6 +3131,10 @@ virtualenv==20.30.0 \
     --hash=sha256:800863162bcaa5450a6e4d721049730e7f2dae07720e0902b0e4040bd6f9ada8 \
     --hash=sha256:e34302959180fca3af42d1800df014b35019490b119eba981af27f2fa486e5d6
     # via pre-commit
+wcwidth==0.2.13 \
+    --hash=sha256:3da69048e4540d84af32131829ff948f1e022c1c6bdb8d6102117aac784f6859 \
+    --hash=sha256:72ea0c06399eb286d978fdedb6923a9eb47e1c486ce63e9b4e64fc18303972b5
+    # via mdformat-tables
 websocket-client==1.8.0 \
     --hash=sha256:17b44cc997f5c498e809b22cdf2d9c7a9e71c02c8cc2b6c56e7c2d1239bfa526 \
     --hash=sha256:3239df9f44da632f96012472805d40a23281a991027ce11d2f45a6f24ac4c3da
