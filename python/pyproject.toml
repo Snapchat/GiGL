@@ -3,7 +3,7 @@
 # A tutorial on packages: https://realpython.com/pypi-publish-python-package/#prepare-your-package-for-publication
 # What are python wheels: https://realpython.com/python-wheels/
 [build-system]
-requires      = ["setuptools>=61.0.0,<=78.1.1", "wheel"]
+requires      = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
