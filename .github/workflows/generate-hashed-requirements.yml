@@ -38,8 +38,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pr_number: ${{ inputs.pr_number }}
           should_leave_progress_comments: "false"
+          # File ".../python3.9/site-packages/piptools/repositories/pypi.py", line 452, in allow_all_wheels
+          # self.finder.find_all_candidates.cache_clear()
+          # AttributeError: 'function' object has no attribute 'cache_clear'
           command: |
-            pip-compile --version
+            python -m pip install "pip==25.0.1"
             make -j4 generate_dev_linux_cuda_hashed_requirements \
               generate_linux_cuda_hashed_requirements \
               generate_dev_linux_cpu_hashed_requirements \
