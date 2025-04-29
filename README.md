@@ -38,7 +38,7 @@ The components are as follows:
 | Trainer           | [here](python/gigl/src/training/trainer.py)                    | [here](docs/sphinx/source/components/trainer.md)           |
 | Inferencer        | [here](python/gigl/src/inference/gnn_inferencer.py)            | [here](docs/sphinx/source/components/inferencer.md)        |
 
-The figure below illustrates at a high level how all the components work together.
+The figure below illustrates at a high level how all the components work together. (<span style="color:magenta">Magenta</span> items are work-in-progress.)
 
 <img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" style="width: 50%; display: block; margin: 0 auto;" />
 
