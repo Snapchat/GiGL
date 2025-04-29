@@ -1,1 +1,9 @@
+# Formatting of this file is not an accident. The dformat linter for some reason also decides to format
+
+# this file. So we may need extra lines, et al present to ensure that this file isn't formatted in a way
+
+# that breaks the mdformat linter.
+
 wrap = 120
+
+extensions = [ "tables", ]
