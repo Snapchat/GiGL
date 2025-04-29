@@ -1,9 +1,10 @@
 from collections import abc
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
@@ -17,6 +18,7 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
+from gigl.utils.data_splitters import LabelInfo
 
 logger = Logger()
 
@@ -38,6 +40,74 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
             index = torch.tensor(index, dtype=torch.long)
         index = index.to(self.node.device)
         return _BatchedNodeSamplerInput(self.node[index].view(-1), self.input_type)
+
+
+class _UDLToHomogeneous:
+    def __init__(
+        self,
+        positive_label_edge_type: EdgeType,
+        negative_label_edge_type: EdgeType,
+        edge_dir: Union[Literal["in", "out"], str],
+        label_info: LabelInfo,
+    ):
+        if edge_dir not in ["in", "out"]:
+            raise ValueError(f"edge_dir must be either 'in' or 'out', got {edge_dir}.")
+
+        if positive_label_edge_type[0] != positive_label_edge_type[2]:
+            raise ValueError(
+                f"positive_label_edge_type must be a homogeneous edge type, got {positive_label_edge_type}."
+            )
+        if negative_label_edge_type[0] != negative_label_edge_type[2]:
+            raise ValueError(
+                f"negative_label_edge_type must be a homogeneous edge type, got {negative_label_edge_type}."
+            )
+        if positive_label_edge_type[0] != negative_label_edge_type[0]:
+            raise ValueError(
+                f"positive_label_edge_type and negative_label_edge_type must have the same node type, got {positive_label_edge_type} and {negative_label_edge_type}."
+            )
+        self._positive_label_edge_type = positive_label_edge_type
+        self._negative_label_edge_type = negative_label_edge_type
+        self._label_info = label_info
+
+    def __call__(self, data: HeteroData) -> Data:
+        if len(data.edge_types) != 3:
+            raise ValueError(
+                f"Data must have exactly three edge types for us to convert it a homogeneous Data, we got {data.edge_types}."
+            )
+        if (
+            not self._positive_label_edge_type in data.edge_types
+            and self._negative_label_edge_type
+        ):
+            raise ValueError(
+                f"Data must have a positive label edge type of {self._positive_label_edge_type}, and negative label edge type of {self._negative_label_edge_type}. We got {data.edge_types}."
+            )
+        if len(data.node_types) != 1:
+            raise ValueError(
+                f"Data must have exactly one node type for us to convert it a homogeneous Data, we got {data.node_types}."
+            )
+        print(f"input: {data}")
+        edge_types = [
+            e
+            for e in data.edge_types
+            if e not in (self._positive_label_edge_type, self._negative_label_edge_type)
+        ]
+        homogeneous_data = data.edge_type_subgraph(edge_types).to_homogeneous(
+            add_edge_type=False, add_node_type=False
+        )
+        # "batch" gets flatted out - we need to select the labels from it
+        num_labels_per_sample = (
+            self._label_info.num_positive_labels + self._label_info.num_negative_labels
+            if self._label_info.num_negative_labels
+            else 0
+        )
+        if len(homogeneous_data.batch) % num_labels_per_sample != 0:
+            raise ValueError(
+                f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {num_labels_per_sample}."
+            )
+        per_batch_view = homogeneous_data.batch.view(-1, num_labels_per_sample)
+        without_anchors = per_batch_view[:, 1:]
+        homogeneous_data.y = without_anchors
+        return homogeneous_data
 
 
 class DistNeighborLoader(DistLoader):
