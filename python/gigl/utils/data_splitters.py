@@ -271,7 +271,7 @@ class LabelInfo:
 def get_labels_for_anchor_nodes(
     dataset: Dataset,
     node_ids: torch.Tensor,
-    supervision_edge_types: Optional[Union[EdgeType, tuple[EdgeType, EdgeType]]] = None,
+    supervision_edge_types: Union[EdgeType, tuple[EdgeType, EdgeType]],
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Selects labels for the given node ids based on the provided edge types.
 
@@ -297,8 +297,7 @@ def get_labels_for_anchor_nodes(
     Args:
         dataset (Dataset): The dataset storing the graph info.
         node_ids (torch.Tensor): The node ids to use for the labels. [N]
-        supervision_edge_types (Optional[Union[EdgeType, tuple[EdgeType, EdgeType]]]): The edge types to use for the labels.
-            If None, then the dataset must be homogeneous, and the edges in the dataset will be used.
+        supervision_edge_types (Union[EdgeType, tuple[EdgeType, EdgeType]]): The edge types to use for the labels.
             If a single edge type is provided, then the dataset must be heterogeneous,
             and the edge type provided will be used to generate positive labels.
             If two edge types are provided, then the dataset must be heterogeneous,
@@ -308,14 +307,7 @@ def get_labels_for_anchor_nodes(
         negative labels may be None depending on supervision_edge_types.
         The returned tensors are of shape N x M where N is the number of nodes and M is the max number of labels, per type.
     """
-    if supervision_edge_types is None:
-        if isinstance(dataset.graph, Mapping):
-            raise ValueError(
-                f"No supervision edge types provided, but dataset is heterogeneous."
-            )
-        positive_node_topo = dataset.graph.topo
-        negative_node_topo = None
-    elif isinstance(supervision_edge_types, EdgeType):
+    if isinstance(supervision_edge_types, EdgeType):
         if not isinstance(dataset.graph, Mapping):
             raise ValueError(
                 f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."

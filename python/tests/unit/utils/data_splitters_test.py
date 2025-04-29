@@ -7,6 +7,7 @@ from parameterized import param, parameterized
 from torch.testing import assert_close
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     _check_edge_index,
@@ -525,12 +526,18 @@ class TestDataSplitters(unittest.TestCase):
         )
         ds = Dataset()
         ds.init_graph(
-            edge_index=edges, edge_ids=torch.arange(edges.shape[1]), graph_mode="CPU"
+            edge_index=to_heterogeneous_edge(edges),
+            edge_ids=to_heterogeneous_edge(torch.arange(edges.shape[1])),
+            graph_mode="CPU",
         )
 
         # TODO(kmonte): Update to use a splitter once we've migrated splitter API.
         node_ids = torch.tensor([9, 10])
-        positive, negative = get_labels_for_anchor_nodes(dataset=ds, node_ids=node_ids)
+        positive, negative = get_labels_for_anchor_nodes(
+            dataset=ds,
+            node_ids=node_ids,
+            supervision_edge_types=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
         expected_positive = torch.tensor([[8, -1, -1, -1], [7, 10, 11, 15]])
 
         assert_close(positive, expected_positive, rtol=0, atol=0)
