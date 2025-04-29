@@ -58,6 +58,8 @@ class DistNeighborLoader(DistLoader):
         channel_size: str = "4GB",
         process_start_gap_seconds: int = 60,
         num_cpu_threads: Optional[int] = None,
+        shuffle: bool = False,
+        drop_last: bool = False,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -105,6 +107,8 @@ class DistNeighborLoader(DistLoader):
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
+            shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
+            drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -200,8 +204,8 @@ class DistNeighborLoader(DistLoader):
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
             batch_size=batch_size,
-            shuffle=False,
-            drop_last=False,
+            shuffle=shuffle,
+            drop_last=drop_last,
             with_edge=True,
             collect_features=True,
             with_neg=False,
