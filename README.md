@@ -40,7 +40,7 @@ The components are as follows:
 
 The figure below illustrates at a high level how all the components work together.
 
-<img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" style="width: 75%; display: block; margin: 0 auto;" />
+<img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" style="width: 50%; display: block; margin: 0 auto;" />
 
 The figure below is a example GiGL workflow with tabularized subgraph sampling for the task of link prediction, in which the model is trained with triplet-style contrastive loss on a set of anchor nodes along with their positives and (in-batch) negatives.
 
