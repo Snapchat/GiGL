@@ -44,12 +44,26 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
 
 
 class _UDLToHomogeneous:
+    """Transform class to convert a heterogeneous graph to a homogeneous graph."""
     def __init__(
         self,
         supervision_edge_types: Union[EdgeType, Tuple[EdgeType, EdgeType]],
         num_sampled_nodes_per_batch: int,
         edge_dir: Union[Literal["in", "out"], str],
     ):
+        """
+        Args:
+            supervision_edge_types (Union[EdgeType, Tuple[EdgeType, EdgeType]]):
+                The edge types to use as labels for supervised training.
+                If set to a single edge type, the edge type will be used as the positive label,
+                and the dataset must contain exactly two edge types, the message passing edge type and the positive label edge type.
+                If set to a tuple of two edge types, the first edge type will be used as the positive label,
+                and the second edge type will be used as the negative label.
+                The dataset must contain exactly three edge types, the message passing edge type,
+                the positive label edge type and the negative label edge type.
+            num_sampled_nodes_per_batch (int): The number of sampled nodes per batch.
+            edge_dir (str): The direction of edges to sample from. Must be either "in" or "out".
+        """
         if edge_dir not in ["in", "out"]:
             raise ValueError(f"edge_dir must be either 'in' or 'out', got {edge_dir}.")
 
@@ -81,6 +95,7 @@ class _UDLToHomogeneous:
         self._num_sampled_nodes_per_batch = num_sampled_nodes_per_batch
 
     def __call__(self, data: HeteroData) -> Data:
+        """Transform the heterogeneous graph to a homogeneous graph."""
         if self._negative_label_edge_type is not None and len(data.edge_types) != 3:
             raise ValueError(
                 f"Data must have exactly three edge types for us to convert it a homogeneous Data, when only positive edges are provided. We got {data.edge_types}."
@@ -118,11 +133,24 @@ class _UDLToHomogeneous:
             raise ValueError(
                 f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {self._num_sampled_nodes_per_batch}."
             )
+        # batch starts off like, `[node_id_0, positive_label_0, negative_label_0, node_id_1, positive_label_1, negative_label_1]`
+        # per_batch view transforms it to:
+        # [
+        #   [node_id_0, positive_label_0, negative_label_0],
+        #   [node_id_1, positive_label_1, negative_label_1]
+        # ]
         per_batch_view = homogeneous_data.batch.view(
             -1, self._num_sampled_nodes_per_batch
         )
+        # Then we strip out the anchor node ids, which are the first column of the per_batch_view
+        # And get:
+        # [
+        #   [positive_label_0, negative_label_0],
+        #   [positive_label_1, negative_label_1]
+        # ]
         without_anchors = per_batch_view[:, 1:]
         homogeneous_data.y = without_anchors
+        # Which become our labels.
         return homogeneous_data
 
 
@@ -333,7 +361,6 @@ class DistNeighborLoader(DistLoader):
                 node_ids = torch.cat([node_ids.unsqueeze(1), positive, negative], dim=1)
             else:
                 node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
-            print(f"node_ids: {node_ids}")
             self._transforms.append(
                 _UDLToHomogeneous(
                     supervision_edge_types=supervision_edge_types,
