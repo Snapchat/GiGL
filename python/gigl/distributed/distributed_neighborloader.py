@@ -1,7 +1,8 @@
 from collections import abc
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import torch
+from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
@@ -18,7 +19,7 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
-from gigl.utils.data_splitters import LabelInfo
+from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 logger = Logger()
 
@@ -45,47 +46,61 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
 class _UDLToHomogeneous:
     def __init__(
         self,
-        positive_label_edge_type: EdgeType,
-        negative_label_edge_type: EdgeType,
+        supervision_edge_types: Union[EdgeType, Tuple[EdgeType, EdgeType]],
+        num_sampled_nodes_per_batch: int,
         edge_dir: Union[Literal["in", "out"], str],
-        label_info: LabelInfo,
     ):
         if edge_dir not in ["in", "out"]:
             raise ValueError(f"edge_dir must be either 'in' or 'out', got {edge_dir}.")
+
+        if len(supervision_edge_types) == 2:
+            positive_label_edge_type, negative_label_edge_type = supervision_edge_types
+        elif len(supervision_edge_types) == 3:
+            positive_label_edge_type = supervision_edge_types
+            negative_label_edge_type = None
+        else:
+            raise ValueError(
+                f"supervision_edge_types must be either a tuple of length 2 or 3, got {supervision_edge_types}."
+            )
 
         if positive_label_edge_type[0] != positive_label_edge_type[2]:
             raise ValueError(
                 f"positive_label_edge_type must be a homogeneous edge type, got {positive_label_edge_type}."
             )
-        if negative_label_edge_type[0] != negative_label_edge_type[2]:
-            raise ValueError(
-                f"negative_label_edge_type must be a homogeneous edge type, got {negative_label_edge_type}."
-            )
-        if positive_label_edge_type[0] != negative_label_edge_type[0]:
-            raise ValueError(
-                f"positive_label_edge_type and negative_label_edge_type must have the same node type, got {positive_label_edge_type} and {negative_label_edge_type}."
-            )
+        if negative_label_edge_type is not None:
+            if negative_label_edge_type[0] != negative_label_edge_type[2]:
+                raise ValueError(
+                    f"negative_label_edge_type must be a homogeneous edge type, got {negative_label_edge_type}."
+                )
+            if positive_label_edge_type[0] != negative_label_edge_type[0]:
+                raise ValueError(
+                    f"positive_label_edge_type and negative_label_edge_type must have the same node type, got {positive_label_edge_type} and {negative_label_edge_type}."
+                )
         self._positive_label_edge_type = positive_label_edge_type
         self._negative_label_edge_type = negative_label_edge_type
-        self._label_info = label_info
+        self._num_sampled_nodes_per_batch = num_sampled_nodes_per_batch
 
     def __call__(self, data: HeteroData) -> Data:
         if len(data.edge_types) != 3:
             raise ValueError(
                 f"Data must have exactly three edge types for us to convert it a homogeneous Data, we got {data.edge_types}."
             )
+        if not self._positive_label_edge_type in data.edge_types:
+            raise ValueError(
+                f"Data must have a positive label edge type of {self._positive_label_edge_type} We got {data.edge_types}."
+            )
         if (
-            not self._positive_label_edge_type in data.edge_types
-            and self._negative_label_edge_type
+            self._negative_label_edge_type is not None
+            and self._negative_label_edge_type not in data.edge_types
         ):
             raise ValueError(
-                f"Data must have a positive label edge type of {self._positive_label_edge_type}, and negative label edge type of {self._negative_label_edge_type}. We got {data.edge_types}."
+                f"Data must have a negative label edge type of {self._negative_label_edge_type} We got {data.edge_types}."
             )
+
         if len(data.node_types) != 1:
             raise ValueError(
                 f"Data must have exactly one node type for us to convert it a homogeneous Data, we got {data.node_types}."
             )
-        print(f"input: {data}")
         edge_types = [
             e
             for e in data.edge_types
@@ -95,16 +110,13 @@ class _UDLToHomogeneous:
             add_edge_type=False, add_node_type=False
         )
         # "batch" gets flatted out - we need to select the labels from it
-        num_labels_per_sample = (
-            self._label_info.num_positive_labels + self._label_info.num_negative_labels
-            if self._label_info.num_negative_labels
-            else 0
-        )
-        if len(homogeneous_data.batch) % num_labels_per_sample != 0:
+        if len(homogeneous_data.batch) % self._num_sampled_nodes_per_batch != 0:
             raise ValueError(
-                f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {num_labels_per_sample}."
+                f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {self._num_sampled_nodes_per_batch}."
             )
-        per_batch_view = homogeneous_data.batch.view(-1, num_labels_per_sample)
+        per_batch_view = homogeneous_data.batch.view(
+            -1, self._num_sampled_nodes_per_batch
+        )
         without_anchors = per_batch_view[:, 1:]
         homogeneous_data.y = without_anchors
         return homogeneous_data
@@ -130,6 +142,7 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        supervision_edge_types: Union[EdgeType, Tuple[EdgeType, EdgeType]] = None,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -270,6 +283,11 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
+        # Eventually - we should expose this as an arg to be passed in.
+        self._transforms: list[
+            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
+        ] = []
+
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -277,9 +295,6 @@ class DistNeighborLoader(DistLoader):
             shuffle=shuffle,
             drop_last=drop_last,
             with_edge=True,
-            collect_features=True,
-            with_neg=False,
-            with_weight=False,
             collect_features=True,
             with_neg=False,
             with_weight=False,
@@ -292,9 +307,30 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
+        if supervision_edge_types is not None:
+            positive, negative = get_labels_for_anchor_nodes(
+                dataset, node_ids, supervision_edge_types
+            )
+            if negative is not None:
+                node_ids = torch.cat([node_ids.unsqueeze(1), positive, negative], dim=1)
+            else:
+                node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
+            self._transforms.append(
+                _UDLToHomogeneous(
+                    supervision_edge_types=supervision_edge_types,
+                    num_sampled_nodes_per_batch=node_ids.shape[1],
+                    edge_dir=dataset.edge_dir,
+                )
+            )
         input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
 
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        data = super()._collate_fn(msg)
+        for transform in self._transforms:
+            data = transform(data)
+        return data
 
 
 def _shard_nodes_by_process(
