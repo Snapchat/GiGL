@@ -19,7 +19,7 @@ then
 else
     echo "Setting up Scala Deps for Linux Environment"
     mkdir -p tools/scala/coursier
-    gsutil cp gs://public-gigl/tools/coursier/cs-x86_64-pc-linux.gz cs-x86_64-pc-linux.gz
+    gsutil cp gs://public-gigl/tools/scala/coursier/cs-x86_64-pc-linux.gz cs-x86_64-pc-linux.gz
     gunzip cs-x86_64-pc-linux.gz > tools/scala/coursier/cs && chmod +x tools/scala/coursier/cs && tools/scala/coursier/cs setup -y
     rm -f cs-x86_64-pc-linux
 fi
