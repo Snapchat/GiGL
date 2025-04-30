@@ -7,10 +7,10 @@ from gigl.distributed.dataset_factory import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.dist_context import DistributedContext
-from gigl.distributed.dist_link_prediction_data_partitioner import (
-    DistLinkPredictionDataPartitioner,
-)
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_link_prediction_partitioner import (
+    DistLinkPredictionPartitioner,
+)
 from gigl.distributed.dist_link_prediction_range_partitioner import (
     DistLinkPredictionRangePartitioner,
 )

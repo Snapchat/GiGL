@@ -47,7 +47,7 @@ class ShareMemoryTest(unittest.TestCase):
         if isinstance(entity, torch.Tensor):
             self.assertTrue(entity.is_shared())
         elif isinstance(entity, RangePartitionBook):
-            self.assertTrue(entity.partition_bounds.is_shared())
+            self.assertFalse(entity.partition_bounds.is_shared())
         elif isinstance(entity, abc.Mapping):
             for entity_tensor in entity.values():
                 self.assertTrue(entity_tensor.is_shared())
