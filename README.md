@@ -29,21 +29,25 @@ ______________________________________________________________________
 GiGL contains six components, each designed to facilitate the platforms end-to-end graph machine learning (ML) tasks.
 The components are as follows:
 
-| Component | Source Code | Documentation |
-|-------------------|---------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
-| Config Populator | [here](python/gigl/src/config_populator/config_populator.py) |
-[here](docs/sphinx/source/components/config_populator.md) | | Data Preprocessor |
-[here](python/gigl/src/data_preprocessor/data_preprocessor.py) |
-[here](docs/sphinx/source/components/data_preprocessor.md) | | Subgraph Sampler |
-[here](scala/subgraph_sampler/src/main/scala/Main.scala) | [here](docs/sphinx/source/components/subgraph_sampler.md) | |
-Split Generator | [here](scala/split_generator/src/main/scala/Main.scala) |
-[here](docs/sphinx/source/components/split_generator.md) | | Trainer | [here](python/gigl/src/training/trainer.py) |
-[here](docs/sphinx/source/components/trainer.md) | | Inferencer | [here](python/gigl/src/inference/gnn_inferencer.py) |
-[here](docs/sphinx/source/components/inferencer.md) |
+| Component         | Source Code                                                    | Documentation                                              |
+| ----------------- | -------------------------------------------------------------- | ---------------------------------------------------------- |
+| Config Populator  | [here](python/gigl/src/config_populator/config_populator.py)   | [here](docs/sphinx/source/components/config_populator.md)  |
+| Data Preprocessor | [here](python/gigl/src/data_preprocessor/data_preprocessor.py) | [here](docs/sphinx/source/components/data_preprocessor.md) |
+| Subgraph Sampler  | [here](scala/subgraph_sampler/src/main/scala/Main.scala)       | [here](docs/sphinx/source/components/subgraph_sampler.md)  |
+| Split Generator   | [here](scala/split_generator/src/main/scala/Main.scala)        | [here](docs/sphinx/source/components/split_generator.md)   |
+| Trainer           | [here](python/gigl/src/training/trainer.py)                    | [here](docs/sphinx/source/components/trainer.md)           |
+| Inferencer        | [here](python/gigl/src/inference/gnn_inferencer.py)            | [here](docs/sphinx/source/components/inferencer.md)        |
 
-The figure below illustrates at a high level how all the components work together for and end-to-end GiGL pipeline.
+The figure below illustrates at a high level how all the components work together.
+(<span style="color:purple">Purple</span> items are work-in-progress.)
 
-![gigl-framework](docs/assets/images/gigl-framework.png)
+<img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" style="width: 50%; display: block; margin: 0 auto;" />
+
+The figure below is a example GiGL workflow with tabularized subgraph sampling for the task of link prediction, in which
+the model is trained with triplet-style contrastive loss on a set of anchor nodes along with their positives and
+(in-batch) negatives.
+
+![gigl_nablp](docs/assets/images/gigl_nablp.png)
 
 ## Installation ⚙️
 

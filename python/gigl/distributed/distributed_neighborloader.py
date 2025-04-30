@@ -128,6 +128,8 @@ class DistNeighborLoader(DistLoader):
         channel_size: str = "4GB",
         process_start_gap_seconds: int = 60,
         num_cpu_threads: Optional[int] = None,
+        shuffle: bool = False,
+        drop_last: bool = False,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -175,6 +177,8 @@ class DistNeighborLoader(DistLoader):
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
+            shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
+            drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -247,6 +251,7 @@ class DistNeighborLoader(DistLoader):
 
         # Sets up worker options for the dataloader
         worker_options = MpDistSamplingWorkerOptions(
+        worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
@@ -268,6 +273,8 @@ class DistNeighborLoader(DistLoader):
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
+        sampling_config = SamplingConfig(
+            sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
             batch_size=batch_size,
             shuffle=False,
@@ -276,7 +283,21 @@ class DistNeighborLoader(DistLoader):
             collect_features=True,
             with_neg=False,
             with_weight=False,
+            collect_features=True,
+            with_neg=False,
+            with_weight=False,
             edge_dir=dataset.edge_dir,
+            seed=None,  # it's actually optional - None means random.
+        )
+        if isinstance(curr_process_nodes, torch.Tensor):
+            node_ids = curr_process_nodes
+            node_type = None
+        else:
+            node_type, node_ids = curr_process_nodes
+
+        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
+
+        super().__init__(dataset, input_data, sampling_config, device, worker_options)
             seed=None,  # it's actually optional - None means random.
         )
         if isinstance(curr_process_nodes, torch.Tensor):
