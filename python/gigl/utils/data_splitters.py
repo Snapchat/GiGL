@@ -343,8 +343,7 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
         anchor_node_ids (torch.Tensor): The anchor node ids to use for the labels. [N]
         topo (Topology): The topology to use for the labels.
     Returns:
-        The shape of the returned tensor is [N, max_range].
-        tuple[torch.Tensor, int]: The labels and the max range of labels.
+        The shape of the returned tensor is [N, max_number_of_labels].
     """
     # indptr is the ROW_INDEX of a CSR matrix.
     # and indices is the COL_INDEX of a CSR matrix.
@@ -365,7 +364,9 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     # Mask out the parts of "ranges" that are not applicable to the current label
     # filling out the rest with `PADDING_NODE`.
     mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
-    labels = torch.where(mask, torch.full_like(ranges, PADDING_NODE), indices[ranges])
+    labels = torch.where(
+        mask, torch.full_like(ranges, PADDING_NODE.item()), indices[ranges]
+    )
     return labels
 
 
