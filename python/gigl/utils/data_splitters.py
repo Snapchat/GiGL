@@ -1,7 +1,6 @@
 import gc
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Callable, Final, Literal, Optional, Protocol, Tuple, Union, overload
 
 import torch
@@ -262,25 +261,16 @@ class HashedNodeAnchorLinkSplitter:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
 
 
-@dataclass(frozen=True)
-class LabelInfo:
-    num_positive_labels: int
-    num_negative_labels: Optional[int] = None
-
-
-def setup_labeled_input_from_dataset(
+def get_labels_for_anchor_nodes(
     dataset: Dataset,
     node_ids: torch.Tensor,
-    supervision_edge_types: Optional[Union[EdgeType, tuple[EdgeType, EdgeType]]] = None,
-    return_label_info: bool = False,
-) -> Union[torch.Tensor, tuple[torch.Tensor, LabelInfo]]:
-    """Setups up a tensor of labeled data containing anchor nodes, positive node ids, and negative negative based on provided node_ids and dataset.
+    supervision_edge_types: Union[EdgeType, tuple[EdgeType, EdgeType]],
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Selects labels for the given node ids based on the provided edge types.
 
-    Each tensor that is returned will be a 2d tensor of form:
-        [[node_id_i, [positive_node_ids_i], [negative_node_ids_i]?], ...]
-    Negative node ids will only be returned if `supervision_edge_types` is provided and contains two edge types.
-    Both positive and negative node ids will be padded with `PADDING_NODE` to the maximum number of labeled nodes.
-
+    The labels returned are padded with `PADDING_NODE` to the maximum number of labels, so that we don't need to work with jagged tensors.
+    The labels are N x M, where N is the number of nodes and M is the max number of labels.
+    For a given ith node id, the ith row of the labels tensor will contain the labels for the given node id.
     e.g. if we have node_ids = [0, 1, 2] and the following topology:
         0 -> 1 -> 2
         0 -> 2
@@ -288,12 +278,10 @@ def setup_labeled_input_from_dataset(
     then the returned tensor will be:
         [
             [
-                0, # Node id
                 1, # Positive node (0 -> 1)
                 2, # Positive node (0 -> 2)
             ],
             [
-                1, # Node id
                 2, # Positive node (1 -> 2)
                 -1, # Positive node (padded)
             ],
@@ -302,29 +290,17 @@ def setup_labeled_input_from_dataset(
     Args:
         dataset (Dataset): The dataset storing the graph info.
         node_ids (torch.Tensor): The node ids to use for the labels. [N]
-        supervision_edge_types (Optional[Union[EdgeType, tuple[EdgeType, EdgeType]]]): The edge types to use for the labels.
-            If None, then the dataset must be homogeneous, and the edges in the dataset will be used.
+        supervision_edge_types (Union[EdgeType, tuple[EdgeType, EdgeType]]): The edge types to use for the labels.
             If a single edge type is provided, then the dataset must be heterogeneous,
             and the edge type provided will be used to generate positive labels.
             If two edge types are provided, then the dataset must be heterogeneous,
             the first edge type will be used to generate positive labels, and the second edge type will be used to generate negative labels.
-        return_label_info (bool): Whether to return the label info or not. Defaults to False.
-
     Returns:
-        The returned tensor is always of shape [Number of nodes, max number of positive labels + max number negative labels].
-        If return_label_info:
-            tuple[torch.Tensor, LabelInfo]: The labels and the label info.
-        Else:
-            torch.Tensor: The labels.
+        Tuple of (positive labels, negative_labels?)
+        negative labels may be None depending on supervision_edge_types.
+        The returned tensors are of shape N x M where N is the number of nodes and M is the max number of labels, per type.
     """
-    if supervision_edge_types is None:
-        if isinstance(dataset.graph, Mapping):
-            raise ValueError(
-                f"No supervision edge types provided, but dataset is heterogeneous."
-            )
-        positive_node_topo = dataset.graph.topo
-        negative_node_topo = None
-    elif isinstance(supervision_edge_types, EdgeType):
+    if isinstance(supervision_edge_types, EdgeType):
         if not isinstance(dataset.graph, Mapping):
             raise ValueError(
                 f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."
@@ -345,46 +321,18 @@ def setup_labeled_input_from_dataset(
         )
 
     # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
-    positive_labels, positive_label_count = _get_padded_labels(
-        node_ids, positive_node_topo
-    )
+    positive_labels = _get_padded_labels(node_ids, positive_node_topo)
 
-    # Setup list so it's shaped like:
-    # [
-    #     [[node_id_0], [positive_labels_0]],
-    #     [[node_id_1], [positive_labels_1]],
-    #     ...
-    # ]
-    unbuilt_labels = [node_ids.unsqueeze(1), positive_labels]
     if negative_node_topo is not None:
         # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
-        negative_labels, negative_label_count = _get_padded_labels(
-            node_ids, negative_node_topo
-        )
-        unbuilt_labels.append(negative_labels)
+        negative_labels = _get_padded_labels(node_ids, negative_node_topo)
     else:
-        negative_label_count = None
         negative_labels = None
 
-    labels = torch.cat(unbuilt_labels, dim=1)
-
-    unbuilt_labels.clear()
-    del unbuilt_labels, positive_labels, negative_labels
-    gc.collect()
-
-    if return_label_info:
-        info = LabelInfo(
-            num_positive_labels=positive_label_count,
-            num_negative_labels=negative_label_count,
-        )
-        return labels, info
-    else:
-        return labels
+    return positive_labels, negative_labels
 
 
-def _get_padded_labels(
-    anchor_node_ids: torch.Tensor, topo: Topology
-) -> tuple[torch.Tensor, int]:
+def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.Tensor:
     """Returns the padded labels and the max range of labels.
 
     Given anchor node ids and a topology, this function returns a tensor
@@ -395,8 +343,7 @@ def _get_padded_labels(
         anchor_node_ids (torch.Tensor): The anchor node ids to use for the labels. [N]
         topo (Topology): The topology to use for the labels.
     Returns:
-        The shape of the returned tensor is [N, max_range].
-        tuple[torch.Tensor, int]: The labels and the max range of labels.
+        The shape of the returned tensor is [N, max_number_of_labels].
     """
     # indptr is the ROW_INDEX of a CSR matrix.
     # and indices is the COL_INDEX of a CSR matrix.
@@ -408,20 +355,19 @@ def _get_padded_labels(
     ends = indptr[anchor_node_ids + 1]  # [N]
 
     max_range = int(torch.max(ends - starts).item())
+
     # Sample all labels based on the CSR start/stop indices.
-    # Then pad so the tensor can be of correct structure.
-    padded_labels = torch.stack(
-        [
-            torch.cat(
-                [
-                    indices[start:end],
-                    torch.full((max_range - (end - start),), PADDING_NODE.item()),
-                ]
-            )
-            for start, end in zip(starts, ends)
-        ]
+    # Creates "indices" for us to us, e.g [[0, 1], [2, 3]]
+    ranges = starts.unsqueeze(1) + torch.arange(max_range)  # [N, max_range]
+    # Clamp the ranges to be valid indices into `indices`.
+    ranges.clamp_(min=0, max=ends.max().item() - 1)
+    # Mask out the parts of "ranges" that are not applicable to the current label
+    # filling out the rest with `PADDING_NODE`.
+    mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
+    labels = torch.where(
+        mask, torch.full_like(ranges, PADDING_NODE.item()), indices[ranges]
     )
-    return padded_labels, max_range
+    return labels
 
 
 def _check_sampling_direction(sampling_direction: str):
