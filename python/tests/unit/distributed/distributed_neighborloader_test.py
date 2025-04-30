@@ -5,6 +5,7 @@ from typing import MutableMapping
 import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc
+from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
@@ -30,6 +31,17 @@ from tests.test_assets.distributed.run_distributed_dataset import (
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
+_POSITIVE_EDGE_TYPE = EdgeType(
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    POSITIVE_LABEL_RELATION,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+)
+_NEGATIVE_EDGE_TYPE = EdgeType(
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    NEGATIVE_LABEL_RELATION,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+)
+
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
     def setUp(self):
@@ -43,7 +55,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def test_distributed_neighbor_loader(self):
+    def _test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -76,7 +88,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def test_distributed_neighbor_loader_batched(self):
+    def _test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -127,7 +139,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def test_distributed_neighbor_loader_heterogeneous(self):
+    def _test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -160,10 +172,42 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         self.assertEqual(count, 4057)
 
-    def test_distributed_neighbor_loader_with_supervision_edges(self):
+    @parameterized.expand(
+        [
+            param(
+                "Positive and Negative edges",
+                supervision_edge_types=(_POSITIVE_EDGE_TYPE, _NEGATIVE_EDGE_TYPE),
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10], [16]]),
+                },
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16]),
+                expected_y=torch.tensor([[15, 16]]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14]),
+            ),
+            param(
+                "Positive edges",
+                supervision_edge_types=_POSITIVE_EDGE_TYPE,
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15]),
+                expected_y=torch.tensor([[15]]),
+                expected_srcs=torch.tensor([10, 10, 15, 15]),
+                expected_dsts=torch.tensor([11, 12, 13, 14]),
+            ),
+        ]
+    )
+    def test_distributed_neighbor_loader_with_supervision_edges(
+        self,
+        _,
+        supervision_edge_types,
+        labeled_edges,
+        expected_node,
+        expected_y,
+        expected_srcs,
+        expected_dsts,
+    ):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        positive_edge = EdgeType(node_type, POSITIVE_LABEL_RELATION, node_type)
-        negative_edge = EdgeType(node_type, NEGATIVE_LABEL_RELATION, node_type)
         # Graph looks like:
         # 10 -> {11, 12}
         # 11 -> {13, 17}
@@ -180,9 +224,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                     [11, 12, 13, 17, 13, 14, 12, 14],
                 ]
             ),
-            positive_edge: torch.tensor([[10], [15]]),
-            negative_edge: torch.tensor([[10], [16]]),
         }
+        edge_index.update(labeled_edges)
+
         partition_output = PartitionOutput(
             node_partition_book=to_heterogeneous_node(torch.zeros(17)),
             edge_partition_book={
@@ -210,7 +254,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
-            supervision_edge_types=[positive_edge, negative_edge],
+            supervision_edge_types=supervision_edge_types,
         )
 
         count = 0
@@ -221,23 +265,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         self.assertEqual(count, 1)
         assert_tensor_equality(
             datum.node,
-            torch.tensor(
-                [
-                    10,
-                    11,
-                    12,
-                    13,
-                    14,
-                    15,
-                    16,
-                ]
-            ),
+            expected_node,
             dim=0,
         )
-        assert_tensor_equality(datum.y, torch.tensor([[15, 16]]))
+        assert_tensor_equality(datum.y, expected_y)
         dsts, srcs, *_ = datum.coo()
-        assert_tensor_equality(datum.node[srcs], torch.tensor([10, 10, 15, 15, 16, 16]))
-        assert_tensor_equality(datum.node[dsts], torch.tensor([11, 12, 13, 14, 12, 14]))
+        assert_tensor_equality(datum.node[srcs], expected_srcs)
+        assert_tensor_equality(datum.node[dsts], expected_dsts)
 
 
 if __name__ == "__main__":

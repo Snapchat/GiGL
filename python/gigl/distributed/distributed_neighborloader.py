@@ -81,9 +81,13 @@ class _UDLToHomogeneous:
         self._num_sampled_nodes_per_batch = num_sampled_nodes_per_batch
 
     def __call__(self, data: HeteroData) -> Data:
-        if len(data.edge_types) != 3:
+        if self._negative_label_edge_type is not None and len(data.edge_types) != 3:
             raise ValueError(
-                f"Data must have exactly three edge types for us to convert it a homogeneous Data, we got {data.edge_types}."
+                f"Data must have exactly three edge types for us to convert it a homogeneous Data, when only positive edges are provided. We got {data.edge_types}."
+            )
+        if self._negative_label_edge_type is None and len(data.edge_types) != 2:
+            raise ValueError(
+                f"Data must have exactly two edge types for us to convert it a homogeneous Data when positive and negative edges are provided. We got {data.edge_types}."
             )
         if not self._positive_label_edge_type in data.edge_types:
             raise ValueError(
@@ -308,6 +312,10 @@ class DistNeighborLoader(DistLoader):
             node_type, node_ids = curr_process_nodes
 
         if supervision_edge_types is not None:
+            if len(node_ids.shape) != 1:
+                raise ValueError(
+                    f"node_ids must be a 1D tensor when supervision_edge_types are provided, got {node_ids.shape}."
+                )
             positive, negative = get_labels_for_anchor_nodes(
                 dataset, node_ids, supervision_edge_types
             )
@@ -315,6 +323,7 @@ class DistNeighborLoader(DistLoader):
                 node_ids = torch.cat([node_ids.unsqueeze(1), positive, negative], dim=1)
             else:
                 node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
+            print(f"node_ids: {node_ids}")
             self._transforms.append(
                 _UDLToHomogeneous(
                     supervision_edge_types=supervision_edge_types,
