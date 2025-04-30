@@ -67,7 +67,7 @@ def get_leader_port() -> int:
     """
     if not is_currently_running_in_vertex_ai_job():
         raise _VAI_EXCEPTION
-    return int(os.environ.get("MASTER_PORT"), 29500)
+    return int(os.environ.get("MASTER_PORT", 29500))
 
 
 def get_world_size() -> int:
