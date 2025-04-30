@@ -31,6 +31,8 @@ def get_vertex_ai_job_id() -> str:
     Get the Vertex AI job ID.
     Throws if not on Vertex AI.
     """
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
     return os.environ["CLOUD_ML_JOB_ID"]
 
 
@@ -39,6 +41,8 @@ def get_host_name() -> str:
     Get the current machines hostname.
     Throws if not on Vertex AI.
     """
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
     return os.environ["HOSTNAME"]
 
 
