@@ -62,7 +62,8 @@ class DistLinkPredictionRangePartitioner(DistLinkPredictionDataPartitioner):
         self._edge_index = convert_to_tensor(input_edge_index, dtype=torch.int64)
 
     def _partition_node(self, node_type: NodeType) -> PartitionBook:
-        r"""Partition graph nodes of a specific node type. For range-based partitioning, we partition all
+        """
+        Partition graph nodes of a specific node type. For range-based partitioning, we partition all
         the nodes into continuous ranges so that the diff between lengths of any two ranges is no greater
         than 1. This function gets called by the `partition_node` API from the parent class, which handles
         the node partitioning across all node types.
@@ -128,7 +129,7 @@ class DistLinkPredictionRangePartitioner(DistLinkPredictionDataPartitioner):
         # The parent class always returns ids in the feature_partition_data, but we don't need to store the partitioned node feature ids for
         # range-based partitioning, since this is available from the node partition book.
         assert features_partition_data.ids is not None
-        _, sorted_node_ids_indices = torch.sort(features_partition_data.ids)
+        sorted_node_ids_indices = torch.argsort(features_partition_data.ids)
         partitioned_node_features = features_partition_data.feats[
             sorted_node_ids_indices
         ]
@@ -139,7 +140,8 @@ class DistLinkPredictionRangePartitioner(DistLinkPredictionDataPartitioner):
         node_partition_book: Dict[NodeType, PartitionBook],
         edge_type: EdgeType,
     ) -> tuple[GraphPartitionData, Optional[FeaturePartitionData], PartitionBook]:
-        r"""Partition graph topology of a specific edge type. For range-based partitioning, we partition
+        """
+        Partition graph topology of a specific edge type. For range-based partitioning, we partition
         edges and edge features (if they exist) together. Once they have been partitioned across machines,
         we build the edge partition book based on the number of edges assigned to each machine. Then, we infer
         the edge IDs from the edge partition book's ranges.
@@ -277,7 +279,7 @@ class DistLinkPredictionRangePartitioner(DistLinkPredictionDataPartitioner):
     ]:
         """
         Partitions edges of a graph, including edge indices and edge features. If heterogeneous, partitions edges
-        for all edge type. Must call `partition_node` first to get the node partition book as input. The difference
+        for all edge types. You must call `partition_node` first to get the node partition book as input. The difference
         between this function and its parent is that we no longer need to check that the `edge_ids` have been
         pre-computed as a prerequisite for partitioning edges and edge features.
 
