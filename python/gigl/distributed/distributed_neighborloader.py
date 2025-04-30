@@ -45,6 +45,7 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
 
 class _UDLToHomogeneous:
     """Transform class to convert a heterogeneous graph to a homogeneous graph."""
+
     def __init__(
         self,
         supervision_edge_types: Union[EdgeType, Tuple[EdgeType, EdgeType]],
