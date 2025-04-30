@@ -11,6 +11,7 @@ from torch.testing import assert_close
 from gigl.distributed import (
     DistLinkPredictionDataPartitioner,
     DistLinkPredictionDataset,
+    DistLinkPredictionRangePartitioner,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
@@ -65,6 +66,10 @@ class LoadAndBuildDatasetTestCase(unittest.TestCase):
             param(
                 "Test Building Dataset for tensor-based partitioning",
                 partitioner_class=DistLinkPredictionDataPartitioner,
+            ),
+            param(
+                "Test Building Dataset for range-based partitioning",
+                partitioner_class=DistLinkPredictionRangePartitioner,
             ),
         ]
     )

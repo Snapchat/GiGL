@@ -8,4 +8,7 @@ from gigl.distributed.dist_link_prediction_data_partitioner import (
     DistLinkPredictionDataPartitioner,
 )
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_link_prediction_range_partitioner import (
+    DistLinkPredictionRangePartitioner,
+)
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
