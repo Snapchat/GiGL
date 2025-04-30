@@ -55,7 +55,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def _test_distributed_neighbor_loader(self):
+    def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -88,7 +88,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def _test_distributed_neighbor_loader_batched(self):
+    def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -139,7 +139,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_distributed_neighbor_loader_heterogeneous(self):
+    def test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
