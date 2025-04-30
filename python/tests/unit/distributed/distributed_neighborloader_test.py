@@ -176,7 +176,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         [
             param(
                 "Positive and Negative edges",
-                supervision_edge_types=(_POSITIVE_EDGE_TYPE, _NEGATIVE_EDGE_TYPE),
                 labeled_edges={
                     _POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]]),
                     _NEGATIVE_EDGE_TYPE: torch.tensor([[10], [16]]),
@@ -188,7 +187,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
             param(
                 "Positive edges",
-                supervision_edge_types=_POSITIVE_EDGE_TYPE,
                 labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15]),
                 expected_y=torch.tensor([[15]]),
@@ -200,7 +198,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     def test_distributed_neighbor_loader_with_supervision_edges(
         self,
         _,
-        supervision_edge_types,
         labeled_edges,
         expected_node,
         expected_y,
@@ -254,7 +251,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
-            supervision_edge_types=supervision_edge_types,
+            message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
         )
 
         count = 0

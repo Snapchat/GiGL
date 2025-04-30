@@ -1,8 +1,9 @@
 from collections import abc
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.data import Graph
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
@@ -19,6 +20,7 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
+from gigl.types.graph import NEGATIVE_LABEL_RELATION, POSITIVE_LABEL_RELATION
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 logger = Logger()
@@ -48,91 +50,27 @@ class _UDLToHomogeneous:
 
     def __init__(
         self,
-        supervision_edge_types: Union[EdgeType, Tuple[EdgeType, EdgeType]],
-        num_sampled_nodes_per_batch: int,
-        edge_dir: Union[Literal["in", "out"], str],
+        message_passing_edge_type: EdgeType,
+        num_source_nodes: int,
     ):
         """
         Args:
-            supervision_edge_types (Union[EdgeType, Tuple[EdgeType, EdgeType]]):
-                The edge types to use as labels for supervised training.
-                If set to a single edge type, the edge type will be used as the positive label,
-                and the dataset must contain exactly two edge types, the message passing edge type and the positive label edge type.
-                If set to a tuple of two edge types, the first edge type will be used as the positive label,
-                and the second edge type will be used as the negative label.
-                The dataset must contain exactly three edge types, the message passing edge type,
-                the positive label edge type and the negative label edge type.
-            num_sampled_nodes_per_batch (int): The number of sampled nodes per batch.
-            edge_dir (str): The direction of edges to sample from. Must be either "in" or "out".
+            message_passing_edge_type (EdgeType): The edge type to use for message passing.
+            num_source_nodes (int): The number of source nodes to sample from. E.g The "anchor node" and all of it's labels.
         """
-        if edge_dir not in ["in", "out"]:
-            raise ValueError(f"edge_dir must be either 'in' or 'out', got {edge_dir}.")
 
-        if len(supervision_edge_types) == 2:
-            positive_label_edge_type, negative_label_edge_type = supervision_edge_types
-        elif len(supervision_edge_types) == 3:
-            positive_label_edge_type = supervision_edge_types
-            negative_label_edge_type = None
-        else:
-            raise ValueError(
-                f"supervision_edge_types must be either a tuple of length 2 or 3, got {supervision_edge_types}."
-            )
-
-        if positive_label_edge_type[0] != positive_label_edge_type[2]:
-            raise ValueError(
-                f"positive_label_edge_type must be a homogeneous edge type, got {positive_label_edge_type}."
-            )
-        if negative_label_edge_type is not None:
-            if negative_label_edge_type[0] != negative_label_edge_type[2]:
-                raise ValueError(
-                    f"negative_label_edge_type must be a homogeneous edge type, got {negative_label_edge_type}."
-                )
-            if positive_label_edge_type[0] != negative_label_edge_type[0]:
-                raise ValueError(
-                    f"positive_label_edge_type and negative_label_edge_type must have the same node type, got {positive_label_edge_type} and {negative_label_edge_type}."
-                )
-        self._positive_label_edge_type = positive_label_edge_type
-        self._negative_label_edge_type = negative_label_edge_type
-        self._num_sampled_nodes_per_batch = num_sampled_nodes_per_batch
+        self._message_passing_edge_type = message_passing_edge_type
+        self._num_source_nodes = num_source_nodes
 
     def __call__(self, data: HeteroData) -> Data:
         """Transform the heterogeneous graph to a homogeneous graph."""
-        if self._negative_label_edge_type is not None and len(data.edge_types) != 3:
-            raise ValueError(
-                f"Data must have exactly three edge types for us to convert it a homogeneous Data, when only positive edges are provided. We got {data.edge_types}."
-            )
-        if self._negative_label_edge_type is None and len(data.edge_types) != 2:
-            raise ValueError(
-                f"Data must have exactly two edge types for us to convert it a homogeneous Data when positive and negative edges are provided. We got {data.edge_types}."
-            )
-        if not self._positive_label_edge_type in data.edge_types:
-            raise ValueError(
-                f"Data must have a positive label edge type of {self._positive_label_edge_type} We got {data.edge_types}."
-            )
-        if (
-            self._negative_label_edge_type is not None
-            and self._negative_label_edge_type not in data.edge_types
-        ):
-            raise ValueError(
-                f"Data must have a negative label edge type of {self._negative_label_edge_type} We got {data.edge_types}."
-            )
-
-        if len(data.node_types) != 1:
-            raise ValueError(
-                f"Data must have exactly one node type for us to convert it a homogeneous Data, we got {data.node_types}."
-            )
-        edge_types = [
-            e
-            for e in data.edge_types
-            if e not in (self._positive_label_edge_type, self._negative_label_edge_type)
-        ]
-        homogeneous_data = data.edge_type_subgraph(edge_types).to_homogeneous(
-            add_edge_type=False, add_node_type=False
-        )
+        homogeneous_data = data.edge_type_subgraph(
+            [self._message_passing_edge_type]
+        ).to_homogeneous(add_edge_type=False, add_node_type=False)
         # "batch" gets flatted out - we need to select the labels from it
-        if len(homogeneous_data.batch) % self._num_sampled_nodes_per_batch != 0:
+        if len(homogeneous_data.batch) % self._num_source_nodes != 0:
             raise ValueError(
-                f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {self._num_sampled_nodes_per_batch}."
+                f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {self._num_source_nodes}."
             )
         # batch starts off like, `[node_id_0, positive_label_0, negative_label_0, node_id_1, positive_label_1, negative_label_1]`
         # per_batch view transforms it to:
@@ -140,9 +78,7 @@ class _UDLToHomogeneous:
         #   [node_id_0, positive_label_0, negative_label_0],
         #   [node_id_1, positive_label_1, negative_label_1]
         # ]
-        per_batch_view = homogeneous_data.batch.view(
-            -1, self._num_sampled_nodes_per_batch
-        )
+        per_batch_view = homogeneous_data.batch.view(-1, self._num_source_nodes)
         # Then we strip out the anchor node ids, which are the first column of the per_batch_view
         # And get:
         # [
@@ -175,7 +111,7 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
-        supervision_edge_types: Union[EdgeType, Tuple[EdgeType, EdgeType]] = None,
+        message_passing_edge_type: Optional[EdgeType] = None,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -225,16 +161,7 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
-            supervision_edge_types (Union[EdgeType, Tuple[EdgeType, EdgeType]]): The edge types to use as labels for supervised training.
-                If set to `None`, no labels will be used. (default: ``None``).
-                If set to a single edge type, the edge type will be used as the positive label,
-                and the dataset must contain exactly two edge types, the message passing edge type and the positive label edge type.
-                If set to a tuple of two edge types, the first edge type will be used as the positive label,
-                and the second edge type will be used as the negative label.
-                The dataset must contain exactly three edge types, the message passing edge type,
-                the positive label edge type and the negative label edge type.
-                If any edge types are provided, then then the graph will be converted to a homogeneous graph.
-                The labels will be added to the `y` attribute of the returned data object.
+            message_passing_edge_type (EdgeType): The edge type to use for message passing.
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -350,11 +277,33 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
-        if supervision_edge_types is not None:
+        if message_passing_edge_type is not None:
             if len(node_ids.shape) != 1:
                 raise ValueError(
                     f"node_ids must be a 1D tensor when supervision_edge_types are provided, got {node_ids.shape}."
                 )
+            positive_label_edge_type = None
+            negative_label_edge_type = None
+            if isinstance(dataset.graph, Graph):
+                raise ValueError("Heterogeneous graphs are not supported.")
+            for edge_type in dataset.graph:
+                if (
+                    edge_type[1] == POSITIVE_LABEL_RELATION
+                    and edge_type[0] == message_passing_edge_type[0]
+                    and edge_type[2] == message_passing_edge_type[2]
+                ):
+                    positive_label_edge_type = edge_type
+                elif (
+                    edge_type[1] == NEGATIVE_LABEL_RELATION
+                    and edge_type[0] == message_passing_edge_type[0]
+                    and edge_type[2] == message_passing_edge_type[2]
+                ):
+                    negative_label_edge_type = edge_type
+            supervision_edge_types = (
+                (positive_label_edge_type, negative_label_edge_type)
+                if negative_label_edge_type
+                else positive_label_edge_type
+            )
             positive, negative = get_labels_for_anchor_nodes(
                 dataset, node_ids, supervision_edge_types
             )
@@ -364,9 +313,8 @@ class DistNeighborLoader(DistLoader):
                 node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
             self._transforms.append(
                 _UDLToHomogeneous(
-                    supervision_edge_types=supervision_edge_types,
-                    num_sampled_nodes_per_batch=node_ids.shape[1],
-                    edge_dir=dataset.edge_dir,
+                    message_passing_edge_type=message_passing_edge_type,
+                    num_source_nodes=node_ids.shape[1],
                 )
             )
         input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
