@@ -40,6 +40,7 @@ RUN echo 'export PATH="/tools/google-cloud-sdk/bin:/usr/lib/jvm/java-1.11.0-open
 RUN echo 'export JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"' >> /root/.bashrc
 
 # Create the environment:
+# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
 RUN conda create -y --name gigl python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment

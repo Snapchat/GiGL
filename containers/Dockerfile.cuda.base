@@ -20,6 +20,7 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
 ENV PATH $CONDA_DIR/bin:$PATH
 
 # Create the conda env environment:
+# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
 RUN conda create -y --name gnn python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
