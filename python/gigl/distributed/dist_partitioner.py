@@ -196,6 +196,8 @@ class DistPartitioner:
         self._edge_feat: Optional[Dict[EdgeType, torch.Tensor]] = None
         self._edge_feat_dim: Optional[Dict[EdgeType, int]] = None
 
+        # TODO (mkolodner-sc): Deprecate the need for explicitly storing labels are part of this class, leveraging
+        # heterogeneous support instead
         self._positive_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
         self._negative_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
 

@@ -34,7 +34,7 @@ def share_memory(
     """
 
     if entity is None or isinstance(entity, RangePartitionBook):
-        return None
+        return
     elif isinstance(entity, abc.Mapping):
         for entity_tensor in entity.values():
             share_memory(entity_tensor)
@@ -42,5 +42,5 @@ def share_memory(
         # If the tensor has a dimension which is 0, it is an empty tensor. As a result, we don't move this
         # to shared_memory, since share_memory_() is unsafe on empty tensors, which may cause processes to hang.
         if 0 in entity.shape:
-            return None
+            return
         entity.share_memory_()

@@ -30,12 +30,8 @@ from gigl.common.utils.decorator import tf_on_cpu
 from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.dist_partitioner import (
-    DistPartitioner,
-)
-from gigl.distributed.dist_range_partitioner import (
-    DistRangePartitioner,
-)
+from gigl.distributed.dist_partitioner import DistPartitioner
+from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,

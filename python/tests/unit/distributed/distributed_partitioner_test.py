@@ -12,10 +12,7 @@ from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 
-from gigl.distributed import (
-    DistPartitioner,
-    DistRangePartitioner,
-)
+from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -663,9 +660,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         unified_output_neg_label: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
 
-        is_range_based_partition = (
-            partitioner_class is DistRangePartitioner
-        )
+        is_range_based_partition = partitioner_class is DistRangePartitioner
 
         for rank, partition_output in output_dict.items():
             partitioned_edge_index = partition_output.partitioned_edge_index

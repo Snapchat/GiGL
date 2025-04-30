@@ -3,9 +3,7 @@ from typing import Literal, MutableMapping, Optional, Type
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.dist_partitioner import (
-    DistPartitioner,
-)
+from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
