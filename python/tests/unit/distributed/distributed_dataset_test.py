@@ -41,7 +41,7 @@ _USER = NodeType("user")
 _STORY = NodeType("story")
 
 
-class LoadAndBuildDatasetTestCase(unittest.TestCase):
+class DistributedDatasetTestCase(unittest.TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
         self._world_size = 1
@@ -73,14 +73,12 @@ class LoadAndBuildDatasetTestCase(unittest.TestCase):
             ),
         ]
     )
-    def test_load_and_build_dataset(
+    def test_build_dataset(
         self, _, partitioner_class: Type[DistLinkPredictionDataPartitioner]
     ):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
-
-        partitioner = partitioner_class()
 
         dataset = run_distributed_dataset(
             rank=0,
@@ -90,7 +88,7 @@ class LoadAndBuildDatasetTestCase(unittest.TestCase):
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
             master_port=master_port,
-            partitioner=partitioner,
+            partitioner_class=partitioner_class,
         )
 
         self.assertIsNone(dataset.train_node_ids)
@@ -98,7 +96,7 @@ class LoadAndBuildDatasetTestCase(unittest.TestCase):
         self.assertIsNone(dataset.test_node_ids)
         self.assertIsInstance(dataset.node_ids, torch.Tensor)
 
-    def test_load_build_and_split_dataset(self):
+    def test_build_and_split_dataset_homogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -370,7 +368,7 @@ class LoadAndBuildDatasetTestCase(unittest.TestCase):
             ),
         ]
     )
-    def test_load_build_and_split_dataset_heterogeneous(
+    def test_build_and_split_dataset_heterogeneous(
         self,
         _,
         splits,
