@@ -1,11 +1,10 @@
-from torch_geometric.datasets.planetoid import Planetoid
-
 from gigl.common.logger import Logger
+from gigl.src.mocking.lib.pyg_datasets_forks import CoraFromGCS
 
 logger = Logger()
 
 
-def log_stats_for_pyg_planetoid_dataset(dataset: Planetoid):
+def log_stats_for_pyg_planetoid_dataset(dataset: CoraFromGCS):
     logger.info(f"Dataset Info: {dataset}:")
     logger.info("======================")
     logger.info(f"Number of graphs: {len(dataset)}")
@@ -34,7 +33,7 @@ def log_stats_for_pyg_planetoid_dataset(dataset: Planetoid):
     logger.info(f"Is undirected: {data.is_undirected()}")
 
 
-def get_pyg_cora_dataset(store_at: str = "/tmp/Cora") -> Planetoid:
+def get_pyg_cora_dataset(store_at: str = "/tmp/Cora") -> CoraFromGCS:
     """Cora graph is the graph in the first index in the returned dataset
     i.e. the Planetoid object is subscriptable, data = dataset[0]
     Train and tests masks are defined by `train_mask` and `test_mask`` properties on data.
@@ -44,5 +43,5 @@ def get_pyg_cora_dataset(store_at: str = "/tmp/Cora") -> Planetoid:
         torch_geometric.datasets.planetoid.Planetoid
     """
     # Fetch the dataset
-    dataset = Planetoid(root=store_at, name="Cora")
+    dataset = CoraFromGCS(root=store_at, name="Cora")
     return dataset
