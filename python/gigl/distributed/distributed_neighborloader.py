@@ -251,7 +251,6 @@ class DistNeighborLoader(DistLoader):
 
         # Sets up worker options for the dataloader
         worker_options = MpDistSamplingWorkerOptions(
-        worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
@@ -273,12 +272,10 @@ class DistNeighborLoader(DistLoader):
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
-        sampling_config = SamplingConfig(
-            sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
             batch_size=batch_size,
-            shuffle=False,
-            drop_last=False,
+            shuffle=shuffle,
+            drop_last=drop_last,
             with_edge=True,
             collect_features=True,
             with_neg=False,
@@ -287,17 +284,6 @@ class DistNeighborLoader(DistLoader):
             with_neg=False,
             with_weight=False,
             edge_dir=dataset.edge_dir,
-            seed=None,  # it's actually optional - None means random.
-        )
-        if isinstance(curr_process_nodes, torch.Tensor):
-            node_ids = curr_process_nodes
-            node_type = None
-        else:
-            node_type, node_ids = curr_process_nodes
-
-        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
-
-        super().__init__(dataset, input_data, sampling_config, device, worker_options)
             seed=None,  # it's actually optional - None means random.
         )
         if isinstance(curr_process_nodes, torch.Tensor):
