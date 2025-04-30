@@ -196,6 +196,16 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            supervision_edge_types (Union[EdgeType, Tuple[EdgeType, EdgeType]]): The edge types to use as labels for supervised training.
+                If set to `None`, no labels will be used. (default: ``None``).
+                If set to a single edge type, the edge type will be used as the positive label,
+                and the dataset must contain exactly two edge types, the message passing edge type and the positive label edge type.
+                If set to a tuple of two edge types, the first edge type will be used as the positive label,
+                and the second edge type will be used as the negative label.
+                The dataset must contain exactly three edge types, the message passing edge type,
+                the positive label edge type and the negative label edge type.
+                If any edge types are provided, then then the graph will be converted to a homogeneous graph.
+                The labels will be added to the `y` attribute of the returned data object.
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
