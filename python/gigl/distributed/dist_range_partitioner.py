@@ -8,8 +8,8 @@ from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_link_prediction_partitioner import (
-    DistLinkPredictionPartitioner,
+from gigl.distributed.dist_partitioner import (
+    DistPartitioner,
 )
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -18,7 +18,7 @@ from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homoge
 logger = Logger()
 
 
-class DistLinkPredictionRangePartitioner(DistLinkPredictionPartitioner):
+class DistRangePartitioner(DistPartitioner):
     """
     This class is responsible for implementing range-based partitioning. Rather than using a tensor-based partition
     book, this approach stores the upper bound of ids for each rank. For example, a range partition book [4, 8, 12]

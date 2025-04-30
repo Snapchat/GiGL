@@ -10,8 +10,8 @@ from torch.testing import assert_close
 
 from gigl.distributed import (
     DistLinkPredictionDataset,
-    DistLinkPredictionPartitioner,
-    DistLinkPredictionRangePartitioner,
+    DistPartitioner,
+    DistRangePartitioner,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
@@ -65,16 +65,16 @@ class DistributedDatasetTestCase(unittest.TestCase):
         [
             param(
                 "Test Building Dataset for tensor-based partitioning",
-                partitioner_class=DistLinkPredictionPartitioner,
+                partitioner_class=DistPartitioner,
             ),
             param(
                 "Test Building Dataset for range-based partitioning",
-                partitioner_class=DistLinkPredictionRangePartitioner,
+                partitioner_class=DistRangePartitioner,
             ),
         ]
     )
     def test_build_dataset(
-        self, _, partitioner_class: Type[DistLinkPredictionPartitioner]
+        self, _, partitioner_class: Type[DistPartitioner]
     ):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
