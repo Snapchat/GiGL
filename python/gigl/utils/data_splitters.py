@@ -1,7 +1,6 @@
 import gc
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Callable, Final, Literal, Optional, Protocol, Tuple, Union, overload
 
 import torch
@@ -260,12 +259,6 @@ class HashedNodeAnchorLinkSplitter:
             return splits
         else:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
-
-
-@dataclass(frozen=True)
-class LabelInfo:
-    num_positive_labels: int
-    num_negative_labels: Optional[int] = None
 
 
 def get_labels_for_anchor_nodes(

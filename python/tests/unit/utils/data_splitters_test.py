@@ -532,13 +532,20 @@ class TestDataSplitters(unittest.TestCase):
         )
 
         # TODO(kmonte): Update to use a splitter once we've migrated splitter API.
-        node_ids = torch.tensor([9, 10])
+        node_ids = torch.tensor([9, 10, 11, 12])
         positive, negative = get_labels_for_anchor_nodes(
             dataset=ds,
             node_ids=node_ids,
             supervision_edge_types=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
         )
-        expected_positive = torch.tensor([[8, -1, -1, -1], [7, 10, 11, 15]])
+        expected_positive = torch.tensor(
+            [
+                [8, -1, -1, -1],  # node 9 labels
+                [7, 10, 11, 15],  # node 10 labels
+                [12, 13, -1, -1],  # node 11 labels
+                [10, 11, -1, -1],  # node 12 labels
+            ]
+        )
 
         assert_close(positive, expected_positive, rtol=0, atol=0)
         self.assertIsNone(negative)
