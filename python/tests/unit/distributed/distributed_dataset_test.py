@@ -73,7 +73,9 @@ class DistributedDatasetTestCase(unittest.TestCase):
             ),
         ]
     )
-    def test_build_dataset(self, _, partitioner_class: Type[DistPartitioner]):
+    def test_build_dataset(
+        self, _, partitioner_class: Type[DistPartitioner]
+    ):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()

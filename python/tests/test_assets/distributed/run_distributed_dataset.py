@@ -1,4 +1,4 @@
-from typing import Literal, MutableMapping, Optional, Type
+from typing import Literal, MutableMapping, Optional
 
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
