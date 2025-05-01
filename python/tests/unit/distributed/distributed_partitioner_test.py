@@ -12,10 +12,7 @@ from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 
-from gigl.distributed import (
-    DistLinkPredictionDataPartitioner,
-    DistLinkPredictionRangePartitioner,
-)
+from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -548,7 +545,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistLinkPredictionDataPartitioner,
+                partitioner_class=DistPartitioner,
                 expected_pb_dtype=torch.uint8,
             ),
             param(
@@ -556,7 +553,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=True,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistLinkPredictionDataPartitioner,
+                partitioner_class=DistPartitioner,
                 expected_pb_dtype=torch.uint8,
             ),
             param(
@@ -564,7 +561,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=False,
-                partitioner_class=DistLinkPredictionDataPartitioner,
+                partitioner_class=DistPartitioner,
                 expected_pb_dtype=torch.uint8,
             ),
             param(
@@ -572,7 +569,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=True,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=False,
-                partitioner_class=DistLinkPredictionDataPartitioner,
+                partitioner_class=DistPartitioner,
                 expected_pb_dtype=torch.uint8,
             ),
             param(
@@ -580,7 +577,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistLinkPredictionDataPartitioner,
+                partitioner_class=DistPartitioner,
                 expected_pb_dtype=torch.uint8,
             ),
             param(
@@ -588,7 +585,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistLinkPredictionDataPartitioner,
+                partitioner_class=DistPartitioner,
                 expected_pb_dtype=torch.uint8,
             ),
             param(
@@ -596,7 +593,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistLinkPredictionRangePartitioner,
+                partitioner_class=DistRangePartitioner,
                 expected_pb_dtype=torch.int64,
             ),
             param(
@@ -604,7 +601,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 is_heterogeneous=True,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistLinkPredictionRangePartitioner,
+                partitioner_class=DistRangePartitioner,
                 expected_pb_dtype=torch.int64,
             ),
         ]
@@ -615,7 +612,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         is_heterogeneous: bool,
         input_data_strategy: InputDataStrategy,
         should_assign_edges_by_src_node: bool,
-        partitioner_class: Type[DistLinkPredictionDataPartitioner],
+        partitioner_class: Type[DistPartitioner],
         expected_pb_dtype: torch.dtype,
     ) -> None:
         """
@@ -624,7 +621,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             is_heterogeneous (bool): Whether homogeneous or heterogeneous inputs should be used
             input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
-            partitioner_class (Type[DistLinkPredictionDataPartitioner]): The class to use for partitioning
+            partitioner_class (Type[DistPartitioner]): The class to use for partitioning
             expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
                 Otherwise, it will be a torch.uint8.
         """
@@ -663,9 +660,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         unified_output_neg_label: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
 
-        is_range_based_partition = (
-            partitioner_class is DistLinkPredictionRangePartitioner
-        )
+        is_range_based_partition = partitioner_class is DistRangePartitioner
 
         for rank, partition_output in output_dict.items():
             partitioned_edge_index = partition_output.partitioned_edge_index
@@ -888,7 +883,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             num_rpc_threads=4,
         )
 
-        partitioner = DistLinkPredictionDataPartitioner(
+        partitioner = DistPartitioner(
             should_assign_edges_by_src_node=True,
         )
 
@@ -919,7 +914,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             ):
                 partitioner.partition_node()
 
-        partitioner = DistLinkPredictionDataPartitioner(
+        partitioner = DistPartitioner(
             should_assign_edges_by_src_node=True,
         )
         empty_node_ids = torch.empty(0)

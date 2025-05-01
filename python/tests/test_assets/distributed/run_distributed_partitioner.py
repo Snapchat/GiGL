@@ -4,7 +4,7 @@ from typing import Dict, Type, Union
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
 
-from gigl.distributed import DistLinkPredictionDataPartitioner
+from gigl.distributed import DistPartitioner
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import PartitionOutput
 from tests.test_assets.distributed.constants import (
@@ -30,7 +30,7 @@ def run_distributed_partitioner(
     master_addr: str,
     master_port: int,
     input_data_strategy: InputDataStrategy,
-    partitioner_class: Type[DistLinkPredictionDataPartitioner],
+    partitioner_class: Type[DistPartitioner],
 ) -> None:
     """
     Runs the distributed partitioner on a specific rank.
@@ -43,7 +43,7 @@ def run_distributed_partitioner(
         master_addr (str): Master address for initializing rpc for partitioning
         master_port (int): Master port for initializing rpc for partitioning
         input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
-        partitioner_class (Type[DistLinkPredictionDataPartitioner]): The class to use for partitioning
+        partitioner_class (Type[DistPartitioner]): The class to use for partitioning
     """
 
     input_graph = rank_to_input_graph[rank]
@@ -72,7 +72,7 @@ def run_distributed_partitioner(
 
     init_worker_group(world_size=MOCKED_NUM_PARTITIONS, rank=rank)
     init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
-    dist_partitioner: DistLinkPredictionDataPartitioner
+    dist_partitioner: DistPartitioner
 
     if input_data_strategy == InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY:
         dist_partitioner = partitioner_class(

@@ -29,13 +29,9 @@ from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
 from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
-from gigl.distributed.dist_link_prediction_data_partitioner import (
-    DistLinkPredictionDataPartitioner,
-)
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.dist_link_prediction_range_partitioner import (
-    DistLinkPredictionRangePartitioner,
-)
+from gigl.distributed.dist_partitioner import DistPartitioner
+from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -56,7 +52,7 @@ def _load_and_build_partitioned_dataset(
     serialized_graph_metadata: SerializedGraphMetadata,
     should_load_tensors_in_parallel: bool,
     edge_dir: Literal["in", "out"],
-    partitioner_class: Optional[Type[DistLinkPredictionDataPartitioner]],
+    partitioner_class: Optional[Type[DistPartitioner]],
     tf_dataset_options: TFDatasetOptions,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
@@ -69,8 +65,8 @@ def _load_and_build_partitioned_dataset(
         serialized_graph_metadata (SerializedGraphMetadata): Serialized Graph Metadata contains serialized information for loading TFRecords across node and edge types
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         edge_dir (Literal["in", "out"]): Edge direction of the provided graph
-        partitioner_class (Optional[Type[DistLinkPredictionDataPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
-            DistLinkPredictionDataPartitioner or subclass of it. If not provided, will initialize use the DistLinkPredictionDataPartitioner class.
+        partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
+            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
@@ -101,7 +97,7 @@ def _load_and_build_partitioned_dataset(
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
     if partitioner_class is None:
-        partitioner_class = DistLinkPredictionDataPartitioner
+        partitioner_class = DistPartitioner
 
     if should_assign_edges_by_src_node:
         logger.info(
@@ -203,7 +199,7 @@ def _build_dataset_process(
     dataset_building_port: int,
     sample_edge_direction: Literal["in", "out"],
     should_load_tensors_in_parallel: bool,
-    partitioner_class: Optional[Type[DistLinkPredictionDataPartitioner]],
+    partitioner_class: Optional[Type[DistPartitioner]],
     tf_dataset_options: TFDatasetOptions,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
@@ -234,8 +230,8 @@ def _build_dataset_process(
         dataset_building_port (int): RPC port to use to build the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
-        partitioner_class (Optional[Type[DistLinkPredictionDataPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
-            DistLinkPredictionDataPartitioner or subclass of it. If not provided, will initialize use the DistLinkPredictionDataPartitioner class.
+        partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
+            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
@@ -278,7 +274,7 @@ def build_dataset(
     distributed_context: DistributedContext,
     sample_edge_direction: Union[Literal["in", "out"], str],
     should_load_tensors_in_parallel: bool = True,
-    partitioner_class: Optional[Type[DistLinkPredictionDataPartitioner]] = None,
+    partitioner_class: Optional[Type[DistPartitioner]] = None,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
@@ -292,8 +288,8 @@ def build_dataset(
         sample_edge_direction (Union[Literal["in", "out"], str]): Whether edges in the graph are directed inward or outward. Note that this is
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
-        partitioner_class (Optional[Type[DistLinkPredictionDataPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
-            DistLinkPredictionDataPartitioner or subclass of it. If not provided, will initialize use the DistLinkPredictionDataPartitioner class.
+        partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
+            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
@@ -408,9 +404,9 @@ def build_dataset_from_task_config_uri(
     )
 
     if should_use_range_partitioning:
-        partitioner_class = DistLinkPredictionDataPartitioner
+        partitioner_class = DistPartitioner
     else:
-        partitioner_class = DistLinkPredictionRangePartitioner
+        partitioner_class = DistRangePartitioner
 
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,

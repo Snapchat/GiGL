@@ -47,7 +47,10 @@ class ShareMemoryTest(unittest.TestCase):
         if isinstance(entity, torch.Tensor):
             self.assertTrue(entity.is_shared())
         elif isinstance(entity, RangePartitionBook):
-            self.assertTrue(entity.partition_bounds.is_shared())
+            # If we have a range partition book, we don't move the partition bounds to shared memory, as the shape of this tensor
+            # is very small (being at equal in length to the number of machines) and GLT doesn't natively provide support for
+            # serializing a range partition book.
+            self.assertFalse(entity.partition_bounds.is_shared())
         elif isinstance(entity, abc.Mapping):
             for entity_tensor in entity.values():
                 self.assertTrue(entity_tensor.is_shared())

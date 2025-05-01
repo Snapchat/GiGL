@@ -2,10 +2,8 @@ from typing import Literal, MutableMapping, Optional, Type
 
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_link_prediction_data_partitioner import (
-    DistLinkPredictionDataPartitioner,
-)
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -26,7 +24,7 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool,
     master_ip_address: str,
     master_port: int,
-    partitioner_class: Optional[Type[DistLinkPredictionDataPartitioner]] = None,
+    partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
 ) -> DistLinkPredictionDataset:
     """
@@ -39,7 +37,7 @@ def run_distributed_dataset(
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         master_ip_address (str): Master IP Address for performing distributed operations.
         master_port (int) Master Port for performing distributed operations
-        partitioner_class (Optional[Type[DistLinkPredictionDataPartitioner]]): Optional partitioner class to pass into `build_dataset`
+        partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[NodeAnchorLinkSplitter]): Provided splitter for testing
     """
     mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
