@@ -385,6 +385,7 @@ run_all_e2e_tests: should_compile_then_run_str:=\
 		"true" \
 		"false" \
 		"false" \
+		"false" \
 		"false"
 run_all_e2e_tests: _run_e2e_kfp_test
 
