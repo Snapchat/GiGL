@@ -196,7 +196,6 @@ class DistDatasetTestCase(unittest.TestCase):
                 self._master_ip_address,
                 master_port,
                 None,  # partitioner
-                None,  # dataset
                 split_fn,
             ),
             nprocs=self._world_size,

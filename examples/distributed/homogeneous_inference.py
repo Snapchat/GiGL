@@ -33,17 +33,13 @@ import gigl.distributed
 import gigl.distributed.utils
 from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
-from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.vertex_ai_context import connect_worker_pool
 from gigl.distributed import (
     DistLinkPredictionDataset,
     DistributedContext,
-    build_dataset,
-)
-from gigl.distributed.utils.serialized_graph_metadata_translator import (
-    convert_pb_to_serialized_graph_metadata,
+    build_dataset_from_task_config_uri,
 )
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
 from gigl.src.common.models.pyg.link_prediction import (
@@ -324,7 +320,20 @@ def _run_example_inference(
     # - the (GCP) internal IP address of the rank 0 machine, which will be used by GLT for building RPC connections.
     # - the current machine rank
     # - the total number of machines (world size)
+
+    program_start_time = time.time()
+
     distributed_context: DistributedContext = connect_worker_pool()
+
+    logger.info(
+        f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
+    )
+
+    # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
+    # and registering that information to a DistLinkPredictionDataset class.
+    dataset = build_dataset_from_task_config_uri(
+        task_config_uri=task_config_uri, distributed_context=distributed_context
+    )
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -360,40 +369,13 @@ def _run_example_inference(
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
-    # Should be a string which is either "in" or "out"
-    sample_edge_direction = inferencer_args.get("sample_edge_direction", "in")
-
-    assert sample_edge_direction in (
-        "in",
-        "out",
-    ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
-
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
 
     num_inference_processes_per_machine = int(
         inferencer_args.get("num_inference_processes_per_machine", "4")
     )  # Current large-scale setting sets this value to 4
 
-    # We use a `SerializedGraphMetadata` object to store and organize information for loading serialized TFRecords from disk into memory.
-    # While this can be populated directly, we also provide a convenience utility `convert_pb_to_serialized_graph_metadata` to build the
-    # `SerializedGraphMetadata` object when using GiGL orchestration, leveraging fields of the GBMLConfigPbWrapper
-
-    serialized_graph_metadata: SerializedGraphMetadata = convert_pb_to_serialized_graph_metadata(
-        preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-        graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-    )
-
     ## Inference Start
-
-    program_start_time = time.time()
-
-    # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
-    # and registering that information to a DistLinkPredictionDataset class.
-    dataset: DistLinkPredictionDataset = build_dataset(
-        serialized_graph_metadata=serialized_graph_metadata,
-        distributed_context=distributed_context,
-        sample_edge_direction=sample_edge_direction,
-    )
 
     inference_start_time = time.time()
 
