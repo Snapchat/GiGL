@@ -22,6 +22,7 @@ DEFAULT_HOMOGENEOUS_EDGE_TYPE = EdgeType(
 _POSITIVE_LABEL_TAG = "gigl_positive"
 _NEGATIVE_LABEL_TAG = "gigl_negative"
 
+_EdgeType = TypeVar("_EdgeType", EdgeType, tuple[str, str, str])
 # TODO(kmonte, mkolodner): Move SerializedGraphMetadata and maybe convert_pb_to_serialized_graph_metadata here.
 
 
@@ -146,7 +147,9 @@ class LoadedGraphTensors:
         self.negative_label = None
 
 
-def message_passing_to_positive_label(message_passing_edge_type: EdgeType) -> EdgeType:
+def message_passing_to_positive_label(
+    message_passing_edge_type: _EdgeType,
+) -> _EdgeType:
     """Convert a message passing edge type to a positive label edge type.
 
     Args:
@@ -155,16 +158,22 @@ def message_passing_to_positive_label(message_passing_edge_type: EdgeType) -> Ed
     Returns:
         EdgeType: The positive label edge type.
     """
-    return EdgeType(
-        src_node_type=message_passing_edge_type.src_node_type,
-        relation=Relation(
-            f"{message_passing_edge_type.relation}_{_POSITIVE_LABEL_TAG}"
-        ),
-        dst_node_type=message_passing_edge_type.dst_node_type,
+    edge_type = (
+        str(message_passing_edge_type[0]),
+        f"{message_passing_edge_type[1]}_{_POSITIVE_LABEL_TAG}",
+        str(message_passing_edge_type[2]),
     )
+    if isinstance(message_passing_edge_type, EdgeType):
+        return EdgeType(
+            NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
+        )
+    else:
+        return edge_type
 
 
-def message_passing_to_negative_label(message_passing_edge_type: EdgeType) -> EdgeType:
+def message_passing_to_negative_label(
+    message_passing_edge_type: _EdgeType,
+) -> _EdgeType:
     """Convert a message passing edge type to a negative label edge type.
 
     Args:
@@ -173,18 +182,22 @@ def message_passing_to_negative_label(message_passing_edge_type: EdgeType) -> Ed
     Returns:
         EdgeType: The negative label edge type.
     """
-    return EdgeType(
-        src_node_type=message_passing_edge_type.src_node_type,
-        relation=Relation(
-            f"{message_passing_edge_type.relation}_{_NEGATIVE_LABEL_TAG}"
-        ),
-        dst_node_type=message_passing_edge_type.dst_node_type,
+    edge_type = (
+        str(message_passing_edge_type[0]),
+        f"{message_passing_edge_type[1]}_{_NEGATIVE_LABEL_TAG}",
+        str(message_passing_edge_type[2]),
     )
+    if isinstance(message_passing_edge_type, EdgeType):
+        return EdgeType(
+            NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
+        )
+    else:
+        return edge_type
 
 
 def select_label_edge_types(
-    message_passing_edge_type: EdgeType, edge_entities: abc.Iterable[EdgeType]
-) -> tuple[EdgeType, Optional[EdgeType]]:
+    message_passing_edge_type: _EdgeType, edge_entities: abc.Iterable[_EdgeType]
+) -> tuple[_EdgeType, Optional[_EdgeType]]:
     """Select label edge types for a given message passing edge type.
 
     Args:

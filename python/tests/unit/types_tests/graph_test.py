@@ -205,6 +205,24 @@ class GraphTypesTyest(unittest.TestCase):
             select_label_edge_types(message_passing_edge_type, edge_types),
         )
 
+    def test_select_label_edge_types_pyg(self):
+        message_passing_edge_type = ("node", "to", "node")
+        edge_types = [
+            message_passing_edge_type,
+            message_passing_to_positive_label(message_passing_edge_type),
+            message_passing_to_negative_label(message_passing_edge_type),
+            ("other", "to", "node"),
+            ("other", "to", "other"),
+        ]
+
+        self.assertEqual(
+            (
+                message_passing_to_positive_label(message_passing_edge_type),
+                message_passing_to_negative_label(message_passing_edge_type),
+            ),
+            select_label_edge_types(message_passing_edge_type, edge_types),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
