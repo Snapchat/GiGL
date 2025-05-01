@@ -22,7 +22,11 @@ DEFAULT_HOMOGENEOUS_EDGE_TYPE = EdgeType(
 _POSITIVE_LABEL_TAG = "gigl_positive"
 _NEGATIVE_LABEL_TAG = "gigl_negative"
 
+# We really should support PyG EdgeType natively but since we type ignore it that's not ideal atm...
+# We can use this TypeVar to try and stem the bleeding (hopefully).
 _EdgeType = TypeVar("_EdgeType", EdgeType, tuple[str, str, str])
+
+
 # TODO(kmonte, mkolodner): Move SerializedGraphMetadata and maybe convert_pb_to_serialized_graph_metadata here.
 
 
