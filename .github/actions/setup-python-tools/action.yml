@@ -46,9 +46,16 @@ runs:
           python-version: '3.9.13' 
 
       # Step 2: Install pip-tools, which is used to generate hashed requirements.
+      # Note: pip 25.1 has a bug that causes pip-tools to fail with the following error:
+      # File ".../python3.9/site-packages/piptools/repositories/pypi.py", line 452, in allow_all_wheels
+      #   self.finder.find_all_candidates.cache_clear()
+      #   AttributeError: 'function' object has no attribute 'cache_clear'
+      # Thus, we fix the pip version to 25.0.1.
       - name: Install pip-tools
         shell: bash
-        run: pip install pip-tools
+        run: |
+          python -m pip install "pip==25.0.1"
+          pip install pip-tools
 
       # Step 3: Set up Gcloud AUTH using Workload Identity Federation
       # See following for context: https://cloud.google.com/blog/products/identity-security/enabling-keyless-authentication-from-github-actions

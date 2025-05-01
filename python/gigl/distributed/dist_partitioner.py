@@ -1,5 +1,4 @@
 import gc
-import math
 import time
 from collections import abc, defaultdict
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -54,6 +53,8 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
         logger.info(
             f"Since the world size is {world_size}, using dtype of {self._pb_dtype} for partition book"
         )
+        self.cur_part_val_list: List[Tuple[torch.Tensor, ...]] = []
+        self.generate_pb: bool
         super().__init__(total_val_size, generate_pb)
 
     def reset(self, total_val_size: int, generate_pb: bool = True):
@@ -66,8 +67,9 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
         self.partition_book: Optional[torch.Tensor]
 
         with self._lock:
-            self.generate_pb: bool = generate_pb
-            self.cur_part_val_list: List[Tuple[torch.Tensor, ...]] = []
+            self.generate_pb = generate_pb
+            self.cur_part_val_list.clear()
+            gc.collect()
             if self.generate_pb:
                 # This is the only difference from DistPartitionManager's reset() function.
                 self.partition_book = torch.zeros(total_val_size, dtype=self._pb_dtype)
@@ -75,7 +77,7 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
                 self.partition_book = None
 
 
-class DistLinkPredictionDataPartitioner:
+class DistPartitioner:
     """
     This class is based on GLT's DistRandomPartitioner class (https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_random_partitioner.py)
     and has been optimized for better flexibility and memory management. We assume that init_rpc() and init_worker_group have been called to initialize the rpc and context,
@@ -95,10 +97,10 @@ class DistLinkPredictionDataPartitioner:
     Option 1: User wants to Partition just the nodes of a graph
 
     ```
-    partitioner = DistLinkPredictionDataPartitioner()
+    partitioner = DistPartitioner()
     # Customer doesn't have to pass in excessive amounts of parameters to the constructor to partition only nodes
     partitioner.register_nodes(node_ids)
-    del node_ids # Del reference to node_ids outside of DistLinkPredictionDataPartitioner to allow memory cleanup within the class
+    del node_ids # Del reference to node_ids outside of DistPartitioner to allow memory cleanup within the class
     partitioner.partition_nodes()
     # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up, which may happen in cases where only a subset of inputs are partitioned (i.e no feats or labels)
     gc.collect()
@@ -107,7 +109,7 @@ class DistLinkPredictionDataPartitioner:
     Option 2: User wants to partition all parts of a graph together and in sequence
 
     ```
-    partitioner = DistLinkPredictionDataPartitioner(node_ids, edge_index, node_features, edge_features, pos_labels, neg_labels)
+    partitioner = DistPartitioner(node_ids, edge_index, node_features, edge_features, pos_labels, neg_labels)
     # Register is called in the __init__ functions and doesn't need to be called at all outside the class.
     del (
         node_ids,
@@ -116,7 +118,7 @@ class DistLinkPredictionDataPartitioner:
         edge_features,
         pos_labels,
         neg_labels
-    ) # Del reference to tensors outside of DistLinkPredictionDataPartitioner to allow memory cleanup within the class
+    ) # Del reference to tensors outside of DistPartitioner to allow memory cleanup within the class
     partitioner.partition()
     # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up, which may happen in cases where only a subset of inputs are partitioned (i.e no feats or labels)
     gc.collect()
@@ -194,6 +196,8 @@ class DistLinkPredictionDataPartitioner:
         self._edge_feat: Optional[Dict[EdgeType, torch.Tensor]] = None
         self._edge_feat_dim: Optional[Dict[EdgeType, int]] = None
 
+        # TODO (mkolodner-sc): Deprecate the need for explicitly storing labels are part of this class, leveraging
+        # heterogeneous support instead
         self._positive_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
         self._negative_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
 
@@ -602,9 +606,9 @@ class DistLinkPredictionDataPartitioner:
         input_data: Optional[Tuple[torch.Tensor, ...]],
         rank_indices: torch.Tensor,
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
-        total_val_size: int,
-        generate_pb: bool = True,
-    ) -> Tuple[List[Tuple[torch.Tensor, ...]], Optional[PartitionBook]]:
+        total_val_size: int = 0,
+        generate_pb: bool = False,
+    ) -> Tuple[List[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]:
         r"""Partitions input data chunk by chunk.
         Args:
             input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned across machine, which any information that should be partitioned across machines.
@@ -612,23 +616,23 @@ class DistLinkPredictionDataPartitioner:
             partition_function (Callable): Function for determining ranks of current chunk. The first argument to this function is
                 the specified indices in the chunk range while the second argument is the chunk start and end values. It returns a tuple indicating the rank
                 of each item in the chunk.
-            total_val_size (int): The size of the partition book
+            total_val_size (int): The size of the partition book. Defaults to 0 in the case where there should be no partition book generated.
             generate_pb (bool): Whether a partition book should be generated, defaults to True. This should only be set to true if partitioning nodes or edges,
                 and should be false if partitioning node features or edge features.
         Return:
             List[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
-            Optional[PartitionBook]: Partition Book if `generate_pb` is True, returns None if `generate_pb` is False
+            Optional[torch.Tensor]: Torch Tensor if `generate_pb` is True, returns None if `generate_pb` is False
         """
-        # TODO (mkolodner-sc): Investigate range-based partitioning
         num_items = len(rank_indices)
 
-        # We currently hard-code the chunk_num to be 4 unless the number of items is less than 4, and determine the chunk size based on this value.
+        # We currently hard-code the chunk_num to be 8 unless the number of items is less than 8, and determine the chunk size based on this value.
         # If this is not performant, we may revisit this in the future.
-        chunk_num = min(num_items, 4)
+        chunk_num = min(num_items, 8)
         if chunk_num != 0:
-            chunk_size = math.ceil(num_items / chunk_num)
+            chunk_size, remainder = divmod(num_items, chunk_num)
         else:
             chunk_size = 0
+            remainder = 0
 
         # This is set to 0 since the the data that is provided is already per-rank, and we begin at index 0 of this local data.
         chunk_start_pos = 0
@@ -642,8 +646,12 @@ class DistLinkPredictionDataPartitioner:
 
         # Rather than processing all of the tensors at once, we batch the tensors into chunks and process them separately.
         # Doing so yields performance improvement over processesing all of the tensor at once or processing each item individually.
-        for _ in range(chunk_num):
-            chunk_end_pos = min(num_items, chunk_start_pos + chunk_size)
+        for i in range(chunk_num):
+            # We set `remainder` number of chunks to have at most one more item.
+            if i < remainder:
+                chunk_end_pos = chunk_start_pos + chunk_size + 1
+            else:
+                chunk_end_pos = chunk_start_pos + chunk_size
             self._partition_single_chunk_data(
                 input_data=index_select(
                     input_data, index=(chunk_start_pos, chunk_end_pos)
@@ -654,7 +662,7 @@ class DistLinkPredictionDataPartitioner:
                 chunk_end_pos=chunk_end_pos,
             )
 
-            chunk_start_pos += chunk_size
+            chunk_start_pos = chunk_end_pos
 
             # The garbage collection here significantly reduces peak memory usage.
             gc.collect()
@@ -705,14 +713,18 @@ class DistLinkPredictionDataPartitioner:
             generate_pb=True,
         )
 
-        assert (
-            node_partition_book is not None
+        assert isinstance(
+            node_partition_book, torch.Tensor
         ), "Ensure `generate_pb` is set to true prior to calling _partition_by_chunk for node partitioning"
 
         del local_node_ids
 
         partitioned_results.clear()
         gc.collect()
+
+        logger.info(
+            f"Got node tensor-based partition book for node type {node_type} on rank {self._rank} of shape {node_partition_book.shape}"
+        )
 
         return node_partition_book
 
@@ -846,8 +858,8 @@ class DistLinkPredictionDataPartitioner:
         )
 
         # We add this check both to ensure generate_pb was set to True for above call and to correctly type edge_partition_book as a torch tensor
-        assert (
-            edge_partition_book is not None
+        assert isinstance(
+            edge_partition_book, torch.Tensor
         ), "Ensure `generate_pb` is set to true prior to calling _partition_by_chunk for edge partitioning"
 
         del edge_index, target_indices
@@ -935,6 +947,9 @@ class DistLinkPredictionDataPartitioner:
             current_feat_part = FeaturePartitionData(
                 feats=partitioned_edge_features, ids=partitioned_edge_feat_ids
             )
+        logger.info(
+            f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
+        )
 
         return current_graph_part, current_feat_part, edge_partition_book
 

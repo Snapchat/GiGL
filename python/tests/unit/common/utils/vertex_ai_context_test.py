@@ -19,33 +19,49 @@ from gigl.distributed import DistributedContext
 
 
 class TestVertexAIContext(unittest.TestCase):
-    @patch.dict(os.environ, {"CLOUD_ML_JOB_ID": "test_job_id"})
+    VAI_JOB_ENV = {"CLOUD_ML_JOB_ID": "test_job_id"}
+
+    @patch.dict(os.environ, VAI_JOB_ENV)
     def test_is_currently_running_in_vertex_ai_job(self):
         self.assertTrue(is_currently_running_in_vertex_ai_job())
 
-    @patch.dict(os.environ, {"CLOUD_ML_JOB_ID": "test_job_id"})
+    @patch.dict(os.environ, VAI_JOB_ENV)
     def test_get_vertex_ai_job_id(self):
         self.assertEqual(get_vertex_ai_job_id(), "test_job_id")
 
-    @patch.dict(os.environ, {"HOSTNAME": "test_hostname"})
+    @patch.dict(os.environ, VAI_JOB_ENV | {"HOSTNAME": "test_hostname"})
     def test_get_host_name(self):
         self.assertEqual(get_host_name(), "test_hostname")
 
-    @patch.dict(os.environ, {"MASTER_ADDR": "test_leader_hostname"})
+    @patch.dict(os.environ, VAI_JOB_ENV | {"MASTER_ADDR": "test_leader_hostname"})
     def test_get_leader_hostname(self):
         self.assertEqual(get_leader_hostname(), "test_leader_hostname")
 
-    @patch.dict(os.environ, {"MASTER_PORT": "12345"})
+    @patch.dict(os.environ, VAI_JOB_ENV | {"MASTER_PORT": "12345"})
     def test_get_leader_port(self):
         self.assertEqual(get_leader_port(), 12345)
 
-    @patch.dict(os.environ, {"WORLD_SIZE": "4"})
+    @patch.dict(os.environ, VAI_JOB_ENV | {"WORLD_SIZE": "4"})
     def test_get_world_size(self):
         self.assertEqual(get_world_size(), 4)
 
-    @patch.dict(os.environ, {"RANK": "1"})
+    @patch.dict(os.environ, VAI_JOB_ENV | {"RANK": "1"})
     def test_get_rank(self):
         self.assertEqual(get_rank(), 1)
+
+    def test_throws_if_not_on_vai(self):
+        with self.assertRaises(Exception):
+            get_vertex_ai_job_id()
+        with self.assertRaises(Exception):
+            get_host_name()
+        with self.assertRaises(Exception):
+            get_leader_hostname()
+        with self.assertRaises(Exception):
+            get_leader_port()
+        with self.assertRaises(Exception):
+            get_world_size()
+        with self.assertRaises(Exception):
+            get_rank()
 
     @patch("subprocess.check_output", return_value=b"127.0.0.1")
     @patch("time.sleep", return_value=None)

@@ -46,17 +46,17 @@ EDGE_TYPE_TO_FEATURE_DIMENSION_MAP: Final[Dict[EdgeType, int]] = {
 ## Node IDs
 # Each rank contains 4 user nodes and 2 item nodes. Each node id tensor is of shape [num_nodes_on_rank].
 
-MOCKED_USER_NODES_IDS_ON_RANK_ZERO: Final[torch.Tensor] = torch.Tensor([0, 1, 2, 3]).to(
+MOCKED_USER_NODES_IDS_ON_RANK_ZERO: Final[torch.Tensor] = torch.Tensor([3, 0, 1, 2]).to(
     torch.int64
 )
-MOCKED_USER_NODES_IDS_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor([4, 5, 6, 7]).to(
+MOCKED_USER_NODES_IDS_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor([7, 4, 5, 6]).to(
     torch.int64
 )
 
-MOCKED_ITEM_NODES_IDS_ON_RANK_ZERO: Final[torch.Tensor] = torch.Tensor([0, 1]).to(
+MOCKED_ITEM_NODES_IDS_ON_RANK_ZERO: Final[torch.Tensor] = torch.Tensor([1, 0]).to(
     torch.int64
 )
-MOCKED_ITEM_NODES_IDS_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor([2, 3]).to(
+MOCKED_ITEM_NODES_IDS_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor([3, 2]).to(
     torch.int64
 )
 
@@ -65,15 +65,17 @@ MOCKED_ITEM_NODES_IDS_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor([2, 3]).to
 # Each node feature tensor is of shape [num_nodes_on_rank, node_feat_dim]
 
 MOCKED_USER_NODE_FEATURES_ON_RANK_ZERO: Final[torch.Tensor] = torch.Tensor(
-    [[0, 0], [0.1, 0.1], [0.2, 0.2], [0.3, 0.3]]
+    [[0.3, 0.3], [0.0, 0.0], [0.1, 0.1], [0.2, 0.2]]
 )
 MOCKED_USER_NODE_FEATURES_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor(
-    [[0.4, 0.4], [0.5, 0.5], [0.6, 0.6], [0.7, 0.7]]
+    [[0.7, 0.7], [0.4, 0.4], [0.5, 0.5], [0.6, 0.6]]
 )
 
-MOCKED_ITEM_NODE_FEATURES_ON_RANK_ZERO: Final[torch.Tensor] = torch.Tensor([[0], [0.1]])
+MOCKED_ITEM_NODE_FEATURES_ON_RANK_ZERO: Final[torch.Tensor] = torch.Tensor(
+    [[0.1], [0.0]]
+)
 MOCKED_ITEM_NODE_FEATURES_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor(
-    [[0.2], [0.3]]
+    [[0.3], [0.2]]
 )
 
 ## Edge Index

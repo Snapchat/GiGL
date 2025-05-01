@@ -1,11 +1,9 @@
-from typing import Literal, MutableMapping, Optional
+from typing import Literal, MutableMapping, Optional, Type
 
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_link_prediction_data_partitioner import (
-    DistLinkPredictionDataPartitioner,
-)
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -26,8 +24,7 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool,
     master_ip_address: str,
     master_port: int,
-    partitioner: Optional[DistLinkPredictionDataPartitioner] = None,
-    dataset: Optional[DistLinkPredictionDataset] = None,
+    partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
 ) -> DistLinkPredictionDataset:
     """
@@ -40,8 +37,7 @@ def run_distributed_dataset(
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         master_ip_address (str): Master IP Address for performing distributed operations.
         master_port (int) Master Port for performing distributed operations
-        partitioner (Optional[DistLinkPredictionDataPartitioner]): Optional initialized partitioner class to pass into `load_and_build_partitioned_dataset`
-        dataset (Optional[DistLinkPredictionDataset]): Optional initialized dataset class to pass into `load_and_build_partitioned_dataset`
+        partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[NodeAnchorLinkSplitter]): Provided splitter for testing
     """
     mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
@@ -75,8 +71,7 @@ def run_distributed_dataset(
         distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
-        partitioner=partitioner,
-        dataset=dataset,
+        partitioner_class=partitioner_class,
         splitter=splitter,
         _dataset_building_port=master_port,
     )
