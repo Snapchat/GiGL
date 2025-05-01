@@ -5,6 +5,7 @@ from typing import Callable, Final, Literal, Optional, Protocol, Tuple, Union, o
 
 import torch
 from graphlearn_torch.data import Dataset, Topology
+from torch_geometric.typing import EdgeType as PyGEdgeType
 
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -264,7 +265,7 @@ class HashedNodeAnchorLinkSplitter:
 def get_labels_for_anchor_nodes(
     dataset: Dataset,
     node_ids: torch.Tensor,
-    supervision_edge_types: Union[EdgeType, tuple[EdgeType, EdgeType]],
+    supervision_edge_types: Union[PyGEdgeType, tuple[PyGEdgeType, PyGEdgeType]],
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Selects labels for the given node ids based on the provided edge types.
 
@@ -300,14 +301,14 @@ def get_labels_for_anchor_nodes(
         negative labels may be None depending on supervision_edge_types.
         The returned tensors are of shape N x M where N is the number of nodes and M is the max number of labels, per type.
     """
-    if isinstance(supervision_edge_types, EdgeType):
+    if len(supervision_edge_types) == 3:
         if not isinstance(dataset.graph, Mapping):
             raise ValueError(
                 f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."
             )
         positive_node_topo = dataset.graph[supervision_edge_types].topo
         negative_node_topo = None
-    elif isinstance(supervision_edge_types, tuple):
+    elif len(supervision_edge_types) == 2:
         if not isinstance(dataset.graph, Mapping):
             raise ValueError(
                 f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."

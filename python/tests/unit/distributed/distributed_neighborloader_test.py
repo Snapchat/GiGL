@@ -5,6 +5,7 @@ from typing import MutableMapping
 import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc
+from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
@@ -29,6 +30,17 @@ from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
+
+_POSITIVE_EDGE_TYPE = EdgeType(
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    POSITIVE_LABEL_RELATION,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+)
+_NEGATIVE_EDGE_TYPE = EdgeType(
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    NEGATIVE_LABEL_RELATION,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+)
 
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
@@ -78,8 +90,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        positive_edge_type = EdgeType(node_type, POSITIVE_LABEL_RELATION, node_type)
-        negative_edge_type = EdgeType(node_type, NEGATIVE_LABEL_RELATION, node_type)
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
                 [
@@ -91,9 +101,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         partition_output = PartitionOutput(
             node_partition_book=to_heterogeneous_node(torch.zeros(14)),
             edge_partition_book={
-                DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.zeros(6),
-                positive_edge_type: torch.zeros(3),
-                negative_edge_type: torch.zeros(3),
+                e_type: torch.zeros(e_idx.size(1))
+                for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
                 etype: GraphPartitionData(
@@ -162,6 +171,104 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 4057)
+
+    @parameterized.expand(
+        [
+            param(
+                "Positive and Negative edges",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10], [16]]),
+                },
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16]),
+                expected_y=torch.tensor([[15, 16]]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14]),
+            ),
+            param(
+                "Positive edges",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15]),
+                expected_y=torch.tensor([[15]]),
+                expected_srcs=torch.tensor([10, 10, 15, 15]),
+                expected_dsts=torch.tensor([11, 12, 13, 14]),
+            ),
+        ]
+    )
+    def test_distributed_neighbor_loader_with_supervision_edges(
+        self,
+        _,
+        labeled_edges,
+        expected_node,
+        expected_y,
+        expected_srcs,
+        expected_dsts,
+    ):
+        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        # Graph looks like:
+        # 10 -> {11, 12}
+        # 11 -> {13, 17}
+        # 15 -> {13, 14}
+        # 16 -> {12, 14}
+        # 10 -> 15 # Positive
+        # 10 -> 16 # Negative
+        # https://dreampuf.github.io/GraphvizOnline/?engine=dot#digraph%20G%20%7B%0A%0A%20%20%20%2010%20-%3E%20%7B11%2C%2012%7D%0A%20%20%20%2011%20-%3E%20%7B13%2C%2017%7D%0A%20%20%20%2015%20-%3E%20%7B13%2C%2014%7D%0A%20%20%20%2016%20-%3E%20%7B12%2C%2014%7D%0A%20%20%20%2010%20-%3E%2015%20%5Bcolor%3D%22blue%22%5D%0A%20%20%20%2010%20-%3E%2016%20%5Bcolor%3D%22red%22%5D%0A%7D
+
+        edge_index = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [
+                    [10, 10, 11, 11, 15, 15, 16, 16],
+                    [11, 12, 13, 17, 13, 14, 12, 14],
+                ]
+            ),
+        }
+        edge_index.update(labeled_edges)
+
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(17)),
+            edge_partition_book={
+                e_type: torch.zeros(e_idx.size(1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+        )
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        loader = DistNeighborLoader(
+            dataset=dataset,
+            num_neighbors=[2],
+            input_nodes=(node_type, torch.tensor([10])),
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+            message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+
+        count = 0
+        for datum in loader:
+            self.assertIsInstance(datum, Data)
+            count += 1
+
+        self.assertEqual(count, 1)
+        assert_tensor_equality(
+            datum.node,
+            expected_node,
+            dim=0,
+        )
+        assert_tensor_equality(datum.y, expected_y)
+        dsts, srcs, *_ = datum.coo()
+        assert_tensor_equality(datum.node[srcs], expected_srcs)
+        assert_tensor_equality(datum.node[dsts], expected_dsts)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,12 @@
 from collections import abc
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
+from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.data import Graph
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
@@ -17,6 +20,8 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
+from gigl.types.graph import NEGATIVE_LABEL_RELATION, POSITIVE_LABEL_RELATION
+from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 logger = Logger()
 
@@ -40,6 +45,52 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
         return _BatchedNodeSamplerInput(self.node[index].view(-1), self.input_type)
 
 
+class _UDLToHomogeneous:
+    """Transform class to convert a heterogeneous graph to a homogeneous graph."""
+
+    def __init__(
+        self,
+        message_passing_edge_type: EdgeType,
+        num_source_nodes: int,
+    ):
+        """
+        Args:
+            message_passing_edge_type (EdgeType): The edge type to use for message passing.
+            num_source_nodes (int): The number of source nodes to sample from. E.g The "anchor node" and all of it's labels.
+        """
+
+        self._message_passing_edge_type = message_passing_edge_type
+        self._num_source_nodes = num_source_nodes
+
+    def __call__(self, data: HeteroData) -> Data:
+        """Transform the heterogeneous graph to a homogeneous graph."""
+        homogeneous_data = data.edge_type_subgraph(
+            [self._message_passing_edge_type]
+        ).to_homogeneous(add_edge_type=False, add_node_type=False)
+        # "batch" gets flatted out - we need to select the labels from it
+        if len(homogeneous_data.batch) % self._num_source_nodes != 0:
+            raise ValueError(
+                f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {self._num_source_nodes}."
+            )
+        # batch starts off like, `[node_id_0, positive_label_0, negative_label_0, node_id_1, positive_label_1, negative_label_1]`
+        # per_batch view transforms it to:
+        # [
+        #   [node_id_0, positive_label_0, negative_label_0],
+        #   [node_id_1, positive_label_1, negative_label_1]
+        # ]
+        per_batch_view = homogeneous_data.batch.view(-1, self._num_source_nodes)
+        # Then we strip out the anchor node ids, which are the first column of the per_batch_view
+        # And get:
+        # [
+        #   [positive_label_0, negative_label_0],
+        #   [positive_label_1, negative_label_1]
+        # ]
+        without_anchors = per_batch_view[:, 1:]
+        homogeneous_data.y = without_anchors
+        # Which become our labels.
+        return homogeneous_data
+
+
 class DistNeighborLoader(DistLoader):
     def __init__(
         self,
@@ -60,6 +111,7 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        message_passing_edge_type: Optional[EdgeType] = None,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -109,6 +161,7 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            message_passing_edge_type (EdgeType): The edge type to use for message passing.
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -200,6 +253,11 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
+        # Eventually - we should expose this as an arg to be passed in.
+        self._transforms: list[
+            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
+        ] = []
+
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -219,9 +277,55 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
+        if message_passing_edge_type is not None:
+            if len(node_ids.shape) != 1:
+                raise ValueError(
+                    f"node_ids must be a 1D tensor when supervision_edge_types are provided, got {node_ids.shape}."
+                )
+            positive_label_edge_type = None
+            negative_label_edge_type = None
+            if isinstance(dataset.graph, Graph):
+                raise ValueError("Heterogeneous graphs are not supported.")
+            for edge_type in dataset.graph:
+                if (
+                    edge_type[1] == POSITIVE_LABEL_RELATION
+                    and edge_type[0] == message_passing_edge_type[0]
+                    and edge_type[2] == message_passing_edge_type[2]
+                ):
+                    positive_label_edge_type = edge_type
+                elif (
+                    edge_type[1] == NEGATIVE_LABEL_RELATION
+                    and edge_type[0] == message_passing_edge_type[0]
+                    and edge_type[2] == message_passing_edge_type[2]
+                ):
+                    negative_label_edge_type = edge_type
+            supervision_edge_types = (
+                (positive_label_edge_type, negative_label_edge_type)
+                if negative_label_edge_type
+                else positive_label_edge_type
+            )
+            positive, negative = get_labels_for_anchor_nodes(
+                dataset, node_ids, supervision_edge_types
+            )
+            if negative is not None:
+                node_ids = torch.cat([node_ids.unsqueeze(1), positive, negative], dim=1)
+            else:
+                node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
+            self._transforms.append(
+                _UDLToHomogeneous(
+                    message_passing_edge_type=message_passing_edge_type,
+                    num_source_nodes=node_ids.shape[1],
+                )
+            )
         input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
 
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        data = super()._collate_fn(msg)
+        for transform in self._transforms:
+            data = transform(data)
+        return data
 
 
 def _shard_nodes_by_process(
