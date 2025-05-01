@@ -77,7 +77,7 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
                 self.partition_book = None
 
 
-class DistLinkPredictionDataPartitioner:
+class DistPartitioner:
     """
     This class is based on GLT's DistRandomPartitioner class (https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_random_partitioner.py)
     and has been optimized for better flexibility and memory management. We assume that init_rpc() and init_worker_group have been called to initialize the rpc and context,
@@ -97,10 +97,10 @@ class DistLinkPredictionDataPartitioner:
     Option 1: User wants to Partition just the nodes of a graph
 
     ```
-    partitioner = DistLinkPredictionDataPartitioner()
+    partitioner = DistPartitioner()
     # Customer doesn't have to pass in excessive amounts of parameters to the constructor to partition only nodes
     partitioner.register_nodes(node_ids)
-    del node_ids # Del reference to node_ids outside of DistLinkPredictionDataPartitioner to allow memory cleanup within the class
+    del node_ids # Del reference to node_ids outside of DistPartitioner to allow memory cleanup within the class
     partitioner.partition_nodes()
     # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up, which may happen in cases where only a subset of inputs are partitioned (i.e no feats or labels)
     gc.collect()
@@ -109,7 +109,7 @@ class DistLinkPredictionDataPartitioner:
     Option 2: User wants to partition all parts of a graph together and in sequence
 
     ```
-    partitioner = DistLinkPredictionDataPartitioner(node_ids, edge_index, node_features, edge_features, pos_labels, neg_labels)
+    partitioner = DistPartitioner(node_ids, edge_index, node_features, edge_features, pos_labels, neg_labels)
     # Register is called in the __init__ functions and doesn't need to be called at all outside the class.
     del (
         node_ids,
@@ -118,7 +118,7 @@ class DistLinkPredictionDataPartitioner:
         edge_features,
         pos_labels,
         neg_labels
-    ) # Del reference to tensors outside of DistLinkPredictionDataPartitioner to allow memory cleanup within the class
+    ) # Del reference to tensors outside of DistPartitioner to allow memory cleanup within the class
     partitioner.partition()
     # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up, which may happen in cases where only a subset of inputs are partitioned (i.e no feats or labels)
     gc.collect()
@@ -196,6 +196,8 @@ class DistLinkPredictionDataPartitioner:
         self._edge_feat: Optional[Dict[EdgeType, torch.Tensor]] = None
         self._edge_feat_dim: Optional[Dict[EdgeType, int]] = None
 
+        # TODO (mkolodner-sc): Deprecate the need for explicitly storing labels are part of this class, leveraging
+        # heterogeneous support instead
         self._positive_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
         self._negative_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
 
