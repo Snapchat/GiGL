@@ -8,17 +8,17 @@ from graphlearn_torch.partition import PartitionBook
 from gigl.common.logger import Logger
 
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
-from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 
-DEFAULT_HOMOGENEOUS_NODE_TYPE = NodeType("default_homogeneous_node_type")
+DEFAULT_HOMOGENEOUS_NODE_TYPE = "default_homogeneous_node_type"
 DEFAULT_HOMOGENEOUS_EDGE_TYPE = EdgeType(
     src_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    relation=Relation("to"),
+    relation="to",
     dst_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-POSITIVE_LABEL_RELATION = Relation("positive_label")
-NEGATIVE_LABEL_RELATION = Relation("negative_label")
+POSITIVE_LABEL_RELATION = "positive_label"
+NEGATIVE_LABEL_RELATION = "negative_label"
 
 # TODO(kmonte, mkolodner): Move SerializedGraphMetadata and maybe convert_pb_to_serialized_graph_metadata here.
 

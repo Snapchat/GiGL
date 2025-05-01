@@ -7,9 +7,9 @@ from typing import NamedTuple, NewType, Tuple
 from gigl.common.utils.func_tools import lru_cache
 
 # Unique identifier for the node for a specific NodeType
-NodeId = NewType("NodeId", int)
-NodeType = NewType("NodeType", str)
-Relation = NewType("Relation", str)
+NodeId = int
+NodeType = str
+Relation = str
 
 
 class EdgeUsageType(str, Enum):

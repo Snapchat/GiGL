@@ -3,7 +3,7 @@ import unittest
 import torch
 from parameterized import param, parameterized
 
-from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.src.common.types.graph_data import EdgeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -38,8 +38,8 @@ class GraphTypesTyest(unittest.TestCase):
             param("none_input", None, None),
             param(
                 "custom_edge_type",
-                {EdgeType(NodeType("src"), Relation("rel"), NodeType("dst")): "value"},
-                {EdgeType(NodeType("src"), Relation("rel"), NodeType("dst")): "value"},
+                {EdgeType("src", "rel", "dst"): "value"},
+                {EdgeType("src", "rel", "dst"): "value"},
             ),
             param(
                 "default_edge_type", "value", {DEFAULT_HOMOGENEOUS_EDGE_TYPE: "value"}
@@ -54,7 +54,7 @@ class GraphTypesTyest(unittest.TestCase):
             param("none_input", None, None),
             param(
                 "single_value_input",
-                {EdgeType(NodeType("src"), Relation("rel"), NodeType("dst")): "value"},
+                {EdgeType("src", "rel", "dst"): "value"},
                 "value",
             ),
             param("direct_value_input", "value", "value"),
@@ -67,7 +67,7 @@ class GraphTypesTyest(unittest.TestCase):
         [
             param(
                 "multiple_keys_input",
-                {NodeType("src"): "src_value", NodeType("dst"): "dst_value"},
+                {"src": "src_value", "dst": "dst_value"},
             ),
             param(
                 "empty_dict_input",
@@ -149,12 +149,10 @@ class GraphTypesTyest(unittest.TestCase):
             ),
             param(
                 "heterogeneous_inputs",
-                node_ids={NodeType("type1"): torch.tensor([0, 1])},
+                node_ids={"type1": torch.tensor([0, 1])},
                 node_features=None,
                 edge_index={
-                    EdgeType(
-                        NodeType("node1"), Relation("relation"), NodeType("node2")
-                    ): torch.tensor([[0, 1]])
+                    EdgeType("node1", "relation", "node2"): torch.tensor([[0, 1]])
                 },
                 edge_features=None,
                 positive_label=torch.tensor([[0, 2]]),
