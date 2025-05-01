@@ -13,6 +13,9 @@ from gigl.distributed import DistributedContext
 logger = Logger()
 
 
+_VAI_EXCEPTION = Exception("Not running in Vertex AI job.")
+
+
 def is_currently_running_in_vertex_ai_job() -> bool:
     """
     Check if the code is running in a Vertex AI job.
@@ -28,6 +31,8 @@ def get_vertex_ai_job_id() -> str:
     Get the Vertex AI job ID.
     Throws if not on Vertex AI.
     """
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
     return os.environ["CLOUD_ML_JOB_ID"]
 
 
@@ -36,6 +41,8 @@ def get_host_name() -> str:
     Get the current machines hostname.
     Throws if not on Vertex AI.
     """
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
     return os.environ["HOSTNAME"]
 
 
@@ -43,26 +50,42 @@ def get_leader_hostname() -> str:
     """
     Hostname of the machine that will host the process with rank 0. It is used
     to synchronize the workers.
+
+    VAI does not automatically set this for single-replica jobs, hence the
+    default value of "localhost".
     Throws if not on Vertex AI.
     """
-    return os.environ["MASTER_ADDR"]
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
+    return os.environ.get("MASTER_ADDR", "localhost")
 
 
 def get_leader_port() -> int:
     """
     A free port on the machine that will host the process with rank 0.
+
+    VAI does not automatically set this for single-replica jobs, hence the
+    default value of 29500. This is a PyTorch convention:
+    https://github.com/pytorch/pytorch/blob/main/torch/distributed/run.py#L585
     Throws if not on Vertex AI.
     """
-    return int(os.environ["MASTER_PORT"])
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
+    return int(os.environ.get("MASTER_PORT", 29500))
 
 
 def get_world_size() -> int:
     """
     The total number of processes that VAI creates. Note that VAI only creates one process per machine.
     It is the user's responsibility to create multiple processes per machine.
+
+    VAI does not automatically set this for single-replica jobs, hence the
+    default value of 1.
     Throws if not on Vertex AI.
     """
-    return int(os.environ["WORLD_SIZE"])
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
+    return int(os.environ.get("WORLD_SIZE", 1))
 
 
 def get_rank() -> int:
@@ -71,9 +94,14 @@ def get_rank() -> int:
     Note: that VAI only creates one process per machine. It is the user's responsibility to
     create multiple processes per machine. Meaning, this function will only return one integer
     for the main process that VAI creates.
+
+    VAI does not automatically set this for single-replica jobs, hence the
+    default value of 0.
     Throws if not on Vertex AI.
     """
-    return int(os.environ["RANK"])
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
+    return int(os.environ.get("RANK", 0))
 
 
 def connect_worker_pool() -> DistributedContext:
