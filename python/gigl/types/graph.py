@@ -29,8 +29,8 @@ class FeaturePartitionData:
 
     # node/edge feature tensor
     feats: torch.Tensor
-    # node/edge ids tensor corresponding to `feats`
-    ids: torch.Tensor
+    # node/edge ids tensor corresponding to `feats`. This is Optional since we do not need this field for range-based partitioning
+    ids: Optional[torch.Tensor]
 
 
 @dataclass(frozen=True)
