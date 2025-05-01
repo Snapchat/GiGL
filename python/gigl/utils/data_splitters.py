@@ -1,9 +1,10 @@
 import gc
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from typing import Callable, Literal, Optional, Protocol, Tuple, Union, overload
+from typing import Callable, Final, Literal, Optional, Protocol, Tuple, Union, overload
 
 import torch
+from graphlearn_torch.data import Dataset, Topology
 
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -13,6 +14,8 @@ from gigl.types.graph import (
 )
 
 logger = Logger()
+
+PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
 
 
 class NodeAnchorLinkSplitter(Protocol):
@@ -256,6 +259,115 @@ class HashedNodeAnchorLinkSplitter:
             return splits
         else:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+
+
+def get_labels_for_anchor_nodes(
+    dataset: Dataset,
+    node_ids: torch.Tensor,
+    supervision_edge_types: Union[EdgeType, tuple[EdgeType, EdgeType]],
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Selects labels for the given node ids based on the provided edge types.
+
+    The labels returned are padded with `PADDING_NODE` to the maximum number of labels, so that we don't need to work with jagged tensors.
+    The labels are N x M, where N is the number of nodes and M is the max number of labels.
+    For a given ith node id, the ith row of the labels tensor will contain the labels for the given node id.
+    e.g. if we have node_ids = [0, 1, 2] and the following topology:
+        0 -> 1 -> 2
+        0 -> 2
+    and we provide node_ids = [0, 1]
+    then the returned tensor will be:
+        [
+            [
+                1, # Positive node (0 -> 1)
+                2, # Positive node (0 -> 2)
+            ],
+            [
+                2, # Positive node (1 -> 2)
+                -1, # Positive node (padded)
+            ],
+        ]
+
+    Args:
+        dataset (Dataset): The dataset storing the graph info.
+        node_ids (torch.Tensor): The node ids to use for the labels. [N]
+        supervision_edge_types (Union[EdgeType, tuple[EdgeType, EdgeType]]): The edge types to use for the labels.
+            If a single edge type is provided, then the dataset must be heterogeneous,
+            and the edge type provided will be used to generate positive labels.
+            If two edge types are provided, then the dataset must be heterogeneous,
+            the first edge type will be used to generate positive labels, and the second edge type will be used to generate negative labels.
+    Returns:
+        Tuple of (positive labels, negative_labels?)
+        negative labels may be None depending on supervision_edge_types.
+        The returned tensors are of shape N x M where N is the number of nodes and M is the max number of labels, per type.
+    """
+    if isinstance(supervision_edge_types, EdgeType):
+        if not isinstance(dataset.graph, Mapping):
+            raise ValueError(
+                f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."
+            )
+        positive_node_topo = dataset.graph[supervision_edge_types].topo
+        negative_node_topo = None
+    elif isinstance(supervision_edge_types, tuple):
+        if not isinstance(dataset.graph, Mapping):
+            raise ValueError(
+                f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."
+            )
+        positive_edge_type, negative_edge_type = supervision_edge_types
+        positive_node_topo = dataset.graph[positive_edge_type].topo
+        negative_node_topo = dataset.graph[negative_edge_type].topo
+    else:
+        raise ValueError(
+            f"Got unknown type for supervision_edge_types: {type(supervision_edge_types)}"
+        )
+
+    # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
+    positive_labels = _get_padded_labels(node_ids, positive_node_topo)
+
+    if negative_node_topo is not None:
+        # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
+        negative_labels = _get_padded_labels(node_ids, negative_node_topo)
+    else:
+        negative_labels = None
+
+    return positive_labels, negative_labels
+
+
+def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.Tensor:
+    """Returns the padded labels and the max range of labels.
+
+    Given anchor node ids and a topology, this function returns a tensor
+    which contains all of the node ids that are connected to the anchor node ids.
+    The tensor is padded with `PADDING_NODE` to the maximum number of labels.
+
+    Args:
+        anchor_node_ids (torch.Tensor): The anchor node ids to use for the labels. [N]
+        topo (Topology): The topology to use for the labels.
+    Returns:
+        The shape of the returned tensor is [N, max_number_of_labels].
+    """
+    # indptr is the ROW_INDEX of a CSR matrix.
+    # and indices is the COL_INDEX of a CSR matrix.
+    # See https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
+    # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
+    indptr = topo.indptr  # [N]
+    indices = topo.indices  # [M]
+    starts = indptr[anchor_node_ids]  # [N]
+    ends = indptr[anchor_node_ids + 1]  # [N]
+
+    max_range = int(torch.max(ends - starts).item())
+
+    # Sample all labels based on the CSR start/stop indices.
+    # Creates "indices" for us to us, e.g [[0, 1], [2, 3]]
+    ranges = starts.unsqueeze(1) + torch.arange(max_range)  # [N, max_range]
+    # Clamp the ranges to be valid indices into `indices`.
+    ranges.clamp_(min=0, max=ends.max().item() - 1)
+    # Mask out the parts of "ranges" that are not applicable to the current label
+    # filling out the rest with `PADDING_NODE`.
+    mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
+    labels = torch.where(
+        mask, torch.full_like(ranges, PADDING_NODE.item()), indices[ranges]
+    )
+    return labels
 
 
 def _check_sampling_direction(sampling_direction: str):
