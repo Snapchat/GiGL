@@ -1,5 +1,5 @@
 """
-This file contains an example for how to run inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
+This file contains an example for how to run homogeneous inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
 GLT (GraphLearn-for-PyTorch) bindings that GiGL has. Note that example should be applied to use cases which already have
 some pretrained `nn.Module` and are looking to utilize cost-savings with GLT. While `run_example_inference` is coupled with
 GiGL orchestration, the `_inference_process` function is generic and can be used as references
@@ -56,7 +56,7 @@ from gigl.src.inference.lib.assets import InferenceAssets
 logger = Logger()
 
 
-def _init_example_gigl_model(
+def _init_example_gigl_homogeneous_model(
     state_dict: Dict[str, torch.Tensor],
     node_feature_dim: int,
     edge_feature_dim: int,
@@ -64,7 +64,7 @@ def _init_example_gigl_model(
     device: Optional[torch.device] = None,
 ) -> LinkPredictionGNN:
     """
-    Initializes a hard-coded GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
+    Initializes a hard-coded homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
     any `nn.Module` subclass can work with GLT.
     This model is trained based on the following CORA UDL E2E config:
     `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
@@ -122,7 +122,7 @@ def _inference_process(
     inference_batch_size: int,
     dataset: DistLinkPredictionDataset,
     inferencer_args: Dict[str, str],
-    node_types: List[NodeType],
+    inference_node_type: NodeType,
     node_feature_dim: int,
     edge_feature_dim: int,
 ):
@@ -141,7 +141,7 @@ def _inference_process(
         inference_batch_size (int): Batch size to use for inference
         dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
         inferencer_args (Dict[str, str]): Additional arguments for inferencer
-        node_types (List[NodeType]): Node Types in Graph
+        inference_node_type (NodeType): Homogeneous node type to do inference for
         node_feature_dim (int): Input node feature dimension for the model
         edge_feature_dim (int): Input edge feature dimension for the model
     """
@@ -169,9 +169,6 @@ def _inference_process(
 
     log_every_n_batch = int(inferencer_args.get("log_every_n_batch", "50"))
 
-    # This value defines the `node_type` tag that will be used for writing to GCS and BQ. We default to "user".
-    embedding_type = inferencer_args.get("embedding_type", "user")
-
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=process_number_on_current_machine,
     )  # The device is automatically inferred based off the local process rank and the available devices
@@ -194,7 +191,7 @@ def _inference_process(
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_state_dict_uri, device=device
     )
-    model: nn.Module = _init_example_gigl_model(
+    model: nn.Module = _init_example_gigl_homogeneous_model(
         state_dict=model_state_dict,
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
@@ -245,9 +242,9 @@ def _inference_process(
 
         # These arguments to forward are specific to the GiGL LinkPredictionGNN model.
         # If just using a nn.Module, you can just use output = model(data)
-        output = model(data=data, output_node_types=node_types, device=device)[
-            node_types[0]
-        ]
+        output = model(
+            data=data, output_node_types=[inference_node_type], device=device
+        )[inference_node_type]
 
         # The anchor node IDs are contained inside of the .batch field of the data
         node_ids = data.batch.cpu()
@@ -259,7 +256,7 @@ def _inference_process(
         exporter.add_embedding(
             id_batch=node_ids,
             embedding_batch=node_embeddings,
-            embedding_type=embedding_type,
+            embedding_type=str(inference_node_type),
         )
 
         cumulative_inference_time += time.time() - inference_start_time
@@ -390,7 +387,7 @@ def _run_example_inference(
             inference_batch_size,
             dataset,
             inferencer_args,
-            list(gbml_config_pb_wrapper.graph_metadata_pb_wrapper.node_types),
+            graph_metadata.homogeneous_node_type,
             node_feature_dim,
             edge_feature_dim,
         ),
