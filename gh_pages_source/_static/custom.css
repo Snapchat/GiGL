@@ -1,0 +1,6 @@
+.center-image {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+    pointer-events: none;
+  }
