@@ -13,7 +13,6 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.src.common.types.graph_data import NodeType
-from gigl.src.common.types.graph_data import NodeType
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -23,8 +22,6 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     GraphPartitionData,
     PartitionOutput,
-    message_passing_to_negative_label,
-    message_passing_to_positive_label,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
     to_heterogeneous_node,
@@ -50,7 +47,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def _test_distributed_neighbor_loader(self):
+    def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -83,7 +80,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def _test_distributed_neighbor_loader_batched(self):
+    def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -134,7 +131,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_distributed_neighbor_loader_heterogeneous(self):
+    def test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -173,7 +170,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 "Positive and Negative edges",
                 labeled_edges={
                     _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
-                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 11], [16, 13]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 11], [16, 14]]),
                 },
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
@@ -198,13 +195,18 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     ):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         # Graph looks like:
+        # Message passing
         # 10 -> {11, 12}
         # 11 -> {13, 17}
         # 15 -> {13, 14}
         # 16 -> {12, 14}
-        # 10 -> 15 # Positive
-        # 10 -> 16 # Negative
-        # https://dreampuf.github.io/GraphvizOnline/?engine=dot#digraph%20G%20%7B%0A%0A%20%20%20%2010%20-%3E%20%7B11%2C%2012%7D%0A%20%20%20%2011%20-%3E%20%7B13%2C%2017%7D%0A%20%20%20%2015%20-%3E%20%7B13%2C%2014%7D%0A%20%20%20%2016%20-%3E%20%7B12%2C%2014%7D%0A%20%20%20%2010%20-%3E%2015%20%5Bcolor%3D%22blue%22%5D%0A%20%20%20%2010%20-%3E%2016%20%5Bcolor%3D%22red%22%5D%0A%7D
+        # Positive labels
+        # 10 -> 15
+        # 15 -> 16
+        # Negative labels
+        # 10 -> 16
+        # 11 -> 14
+        # https://dreampuf.github.io/GraphvizOnline/?engine=dot#digraph%20G%20%7B%0A%0A%20%20%20%2010%20-%3E%20%7B11%2C%2012%7D%0A%20%20%20%2011%20-%3E%20%7B13%2C%2017%7D%0A%20%20%20%2015%20-%3E%20%7B13%2C%2014%7D%0A%20%20%20%2016%20-%3E%20%7B12%2C%2014%7D%0A%20%20%20%2010%20-%3E%2015%20%5Bcolor%3D%22blue%22%5D%0A%20%20%20%2015%20-%3E%2016%20%5Bcolor%3D%22blue%22%5D%0A%20%20%20%2010%20-%3E%2016%20%5Bcolor%3D%22red%22%5D%0A%20%20%20%2011%20-%3E%2014%20%5Bcolor%3D%22red%22%5D%0A%7D
 
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -252,15 +254,12 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 1)
-        print(f"{datum.node=}")
         assert_tensor_equality(
             datum.node,
             expected_node,
             dim=0,
         )
         dsts, srcs, *_ = datum.coo()
-        print(f"{datum.node[srcs]=}")
-        print(f"{datum.node[dsts]=}")
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
 

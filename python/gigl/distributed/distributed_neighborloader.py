@@ -16,7 +16,6 @@ from gigl.distributed.constants import (
     DEFAULT_MASTER_SAMPLING_PORT,
 )
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.src.common.types.graph_data import EdgeType as GiGLEdgeType
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
