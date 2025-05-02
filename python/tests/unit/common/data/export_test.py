@@ -6,6 +6,7 @@ from typing import List, Optional
 from unittest.mock import ANY, MagicMock, patch
 
 import fastavro
+import requests
 import torch
 from google.cloud.exceptions import GoogleCloudError
 from parameterized import param, parameterized
@@ -243,7 +244,9 @@ class TestEmbeddingExporter(unittest.TestCase):
                 # We want to ensure that the buffer gets reset on retry.
                 buffer.read()
                 self._mock_call_count += 1
-                raise GoogleCloudError("GCS upload failed")
+                google_cloud_error = GoogleCloudError("GCS upload failed")
+                google_cloud_error.code = 503  # Service Unavailable
+                raise google_cloud_error
             elif self._mock_call_count == 1:
                 with test_file.open("wb") as f:
                     f.write(buffer.read())
@@ -271,7 +274,7 @@ class TestEmbeddingExporter(unittest.TestCase):
 
     @patch("time.sleep")
     @patch("gigl.common.data.export.GcsUtils")
-    def test_write_embeddings_to_gcs_upload_retries_and_fails(
+    def test_write_embeddings_to_gcs_upload_retries_on_google_cloud_error_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
         # Mock inputs
@@ -281,15 +284,39 @@ class TestEmbeddingExporter(unittest.TestCase):
         embedding_type = "test_type"
 
         mock_gcs_utils = MagicMock()
-        mock_gcs_utils.upload_from_filelike.side_effect = GoogleCloudError(
-            "GCS upload failed"
-        )
+        google_cloud_error = GoogleCloudError("GCS upload failed")
+        google_cloud_error.code = 503  # Service Unavailable
+        mock_gcs_utils.upload_from_filelike.side_effect = google_cloud_error
         mock_gcs_utils_class.return_value = mock_gcs_utils
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
         exporter.add_embedding(id_batch, embedding_batch, embedding_type)
 
         # Assertions
         with self.assertRaisesRegex(RetriesFailedException, "GCS upload failed"):
+            exporter.flush_embeddings()
+        self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
+
+    @patch("time.sleep")
+    @patch("gigl.common.data.export.GcsUtils")
+    def test_write_embeddings_to_gcs_upload_retries_on_request_exception_and_fails(
+        self, mock_gcs_utils_class, mock_sleep
+    ):
+        # Mock inputs
+        gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
+        id_batch = torch.tensor([1])
+        embedding_batch = torch.tensor([[1, 11]])
+        embedding_type = "test_type"
+
+        mock_gcs_utils = MagicMock()
+        mock_gcs_utils.upload_from_filelike.side_effect = (
+            requests.exceptions.RequestException("Connection aborted")
+        )
+        mock_gcs_utils_class.return_value = mock_gcs_utils
+        exporter = EmbeddingExporter(export_dir=gcs_base_uri)
+        exporter.add_embedding(id_batch, embedding_batch, embedding_type)
+
+        # Assertions
+        with self.assertRaisesRegex(RetriesFailedException, "Connection aborted"):
             exporter.flush_embeddings()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 

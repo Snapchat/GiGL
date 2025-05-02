@@ -13,6 +13,7 @@ from typing import Final, Optional, Sequence
 
 import fastavro
 import fastavro.types
+import requests
 import torch
 from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
@@ -146,7 +147,11 @@ class EmbeddingExporter:
             )
             self.flush_embeddings()
 
-    @retry(exception_to_check=GoogleCloudError, tries=5, max_delay_s=60)
+    @retry(
+        exception_to_check=(GoogleCloudError, requests.exceptions.RequestException),
+        tries=5,
+        max_delay_s=60,
+    )
     def _flush(self):
         """Flushes the in-memory buffer to GCS, retrying on failure."""
         logger.info(
