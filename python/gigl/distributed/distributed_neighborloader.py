@@ -269,6 +269,7 @@ class DistNeighborLoader(DistLoader):
                     message_passing_edge_type=message_passing_edge_type,
                 )
             )
+            # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
             zero_samples = [0] * len(num_neighbors)
             num_neighbors = {
                 message_passing_edge_type: num_neighbors,
