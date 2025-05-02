@@ -19,9 +19,10 @@ from gigl.distributed.constants import (
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
+    EdgeType as GiGLEdgeType,
 )
-from gigl.types.graph import NEGATIVE_LABEL_RELATION, POSITIVE_LABEL_RELATION
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.types.graph import select_label_edge_types, DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
 
@@ -51,6 +52,8 @@ class _UDLToHomogeneous:
     def __init__(
         self,
         message_passing_edge_type: EdgeType,
+        positive_label_edge_type: EdgeType,
+        negative_label_edge_type: Optional[EdgeType],
         num_source_nodes: int,
     ):
         """
@@ -60,10 +63,16 @@ class _UDLToHomogeneous:
         """
 
         self._message_passing_edge_type = message_passing_edge_type
+        self._positive_label_edge_type = positive_label_edge_type
+        self._negative_label_edge_type = negative_label_edge_type
         self._num_source_nodes = num_source_nodes
 
     def __call__(self, data: HeteroData) -> Data:
         """Transform the heterogeneous graph to a homogeneous graph."""
+        print(f"Transforming data: {data}")
+        print(f"batch: {data[DEFAULT_HOMOGENEOUS_NODE_TYPE].batch}")
+        main_edge = data[self._message_passing_edge_type]
+        print(f"main edge: {main_edge.edge=}\n {main_edge.edge_index=}")
         homogeneous_data = data.edge_type_subgraph(
             [self._message_passing_edge_type]
         ).to_homogeneous(add_edge_type=False, add_node_type=False)
@@ -72,6 +81,12 @@ class _UDLToHomogeneous:
             raise ValueError(
                 f"Batch size of {len(homogeneous_data.batch)} is not divisible by the number of labels per sample {self._num_source_nodes}."
             )
+        positive_labels = []
+        negative_labels = [] if self._negative_label_edge_type is not None else None
+        batch_idx = 0
+        print(f"{data.num_sampled_edges=}")
+        print(f"{data[self._positive_label_edge_type].edge_index=}")
+        print(f"{data[self._positive_label_edge_type].edge_index=}")
         # batch starts off like, `[node_id_0, positive_label_0, negative_label_0, node_id_1, positive_label_1, negative_label_1]`
         # per_batch view transforms it to:
         # [
@@ -258,6 +273,46 @@ class DistNeighborLoader(DistLoader):
             Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
         ] = []
 
+        if isinstance(curr_process_nodes, torch.Tensor):
+            node_ids = curr_process_nodes
+            node_type = None
+        else:
+            node_type, node_ids = curr_process_nodes
+
+        # TODO(kmonte): Once GLT sampling works more generally, we should only sample against message_passing_edge_type for this code path.
+        if message_passing_edge_type is not None:
+            if len(node_ids.shape) != 1:
+                raise ValueError(
+                    f"node_ids must be a 1D tensor when supervision_edge_types are provided, got {node_ids.shape}."
+                )
+            if not isinstance(dataset.graph, abc.Mapping):
+                raise ValueError("Heterogeneous graphs are not supported.")
+            supervision_edge_types = select_label_edge_types(message_passing_edge_type, dataset.graph.keys())
+            if supervision_edge_types[1] is None:
+                supervision_edge_types = supervision_edge_types[0]
+            positive, negative = get_labels_for_anchor_nodes(
+                dataset, node_ids, supervision_edge_types
+            )
+            if negative is not None:
+                node_ids = torch.cat([node_ids.unsqueeze(1), positive, negative], dim=1)
+            else:
+                node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
+            positive_label_edge_type, negative_label_edge_type = supervision_edge_types
+            self._transforms.append(
+                _UDLToHomogeneous(
+                    message_passing_edge_type=message_passing_edge_type,
+                    positive_label_edge_type=positive_label_edge_type,
+                    negative_label_edge_type=negative_label_edge_type,
+                    num_source_nodes=node_ids.shape[1],
+                )
+            )
+            zero_samples = [0] * len(num_neighbors)
+            num_neighbors = {message_passing_edge_type: num_neighbors, positive_label_edge_type: zero_samples}
+            if negative_label_edge_type is not None:
+                num_neighbors[negative_label_edge_type] = zero_samples
+
+        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
+
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -271,54 +326,6 @@ class DistNeighborLoader(DistLoader):
             edge_dir=dataset.edge_dir,
             seed=None,  # it's actually optional - None means random.
         )
-        if isinstance(curr_process_nodes, torch.Tensor):
-            node_ids = curr_process_nodes
-            node_type = None
-        else:
-            node_type, node_ids = curr_process_nodes
-
-        if message_passing_edge_type is not None:
-            if len(node_ids.shape) != 1:
-                raise ValueError(
-                    f"node_ids must be a 1D tensor when supervision_edge_types are provided, got {node_ids.shape}."
-                )
-            positive_label_edge_type = None
-            negative_label_edge_type = None
-            if isinstance(dataset.graph, Graph):
-                raise ValueError("Heterogeneous graphs are not supported.")
-            for edge_type in dataset.graph:
-                if (
-                    edge_type[1] == POSITIVE_LABEL_RELATION
-                    and edge_type[0] == message_passing_edge_type[0]
-                    and edge_type[2] == message_passing_edge_type[2]
-                ):
-                    positive_label_edge_type = edge_type
-                elif (
-                    edge_type[1] == NEGATIVE_LABEL_RELATION
-                    and edge_type[0] == message_passing_edge_type[0]
-                    and edge_type[2] == message_passing_edge_type[2]
-                ):
-                    negative_label_edge_type = edge_type
-            supervision_edge_types = (
-                (positive_label_edge_type, negative_label_edge_type)
-                if negative_label_edge_type
-                else positive_label_edge_type
-            )
-            positive, negative = get_labels_for_anchor_nodes(
-                dataset, node_ids, supervision_edge_types
-            )
-            if negative is not None:
-                node_ids = torch.cat([node_ids.unsqueeze(1), positive, negative], dim=1)
-            else:
-                node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
-            self._transforms.append(
-                _UDLToHomogeneous(
-                    message_passing_edge_type=message_passing_edge_type,
-                    num_source_nodes=node_ids.shape[1],
-                )
-            )
-        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
-
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
