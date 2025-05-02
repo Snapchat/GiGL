@@ -13,6 +13,7 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import NodeType
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -22,6 +23,8 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     GraphPartitionData,
     PartitionOutput,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
     to_heterogeneous_node,
