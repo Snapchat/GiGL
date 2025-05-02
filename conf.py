@@ -30,6 +30,13 @@ myst_enable_extensions = [
     "html_image", # Convert <img> tags in markdown files; https://myst-parser.readthedocs.io/en/latest/syntax/optional.html#html-images
 ]
 
+include_patterns = [
+    "docs/**",
+    "python/**",
+    "snapchat/**",
+    "index.rst",
+]
+
 
 templates_path = [
     'gh_pages_source/_templates'
