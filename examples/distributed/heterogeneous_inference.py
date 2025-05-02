@@ -145,7 +145,6 @@ def _inference_process(
         node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
         edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension for the model
     """
-    edge_types: List[EdgeType] = sorted(edge_type_to_feature_dim.keys())
     fanout_per_hop = int(inferencer_args.get("fanout_per_hop", "10"))
     # This fanout is defaulted to match the fanout provided in the CORA UDL E2E Config:
     # `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`
@@ -262,7 +261,7 @@ def _inference_process(
 
         # These arguments to forward are specific to the GiGL LinkPredictionGNN model.
         # If just using a nn.Module, you can just use output = model(data)
-        output = model(data=data, output_node_types=inference_node_type, device=device)[
+        output = model(data=data, output_node_types=[inference_node_type], device=device)[
             inference_node_type
         ]
 
