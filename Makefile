@@ -355,6 +355,7 @@ run_cora_glt_udl_kfp_test: _run_e2e_kfp_test
 run_dblp_glt_kfp_test: job_name_prefixes_str:="dblp_glt_test_on"
 run_dblp_glt_kfp_test: task_config_uris_str:="examples/distributed/configs/e2e_dblp_glt_task_config.yaml"
 run_dblp_glt_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
+run_dblp_glt_kfp_test: should_compile_then_run_str:="false"
 run_dblp_glt_kfp_test: _run_e2e_kfp_test
 
 # Spawns a background job for each e2e test defined by job_name_prefix, task_config_uri, and resource_config_uri
