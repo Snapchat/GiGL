@@ -28,6 +28,3 @@ CURR_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 make install_dev_deps
 
 source ~/.profile
-
-# Setting up docker with `us-central1-docker.pkg.dev`
-gcloud auth configure-docker us-central1-docker.pkg.dev
