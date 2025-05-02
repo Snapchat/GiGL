@@ -65,7 +65,6 @@ check_if_valid_env:
 
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
-	@# Install docker driver that will allow us to build multi-arch images
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
