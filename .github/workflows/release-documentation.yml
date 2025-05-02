@@ -1,0 +1,56 @@
+name: Release Documentation
+
+on:
+  # Runs on pushes targeting the default branch
+  push:
+    branches: ["main", "svij/migrate-docs"] # svij/migrate-docs for testing
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # Single deploy job since we're just deploying
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Machine for releasing documentation
+        uses: snapchat/gigl/.github/actions/setup-python-tools@main
+        with:
+            install_dev_deps: "true"
+            setup_gcloud: "true"
+            gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+            workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+            gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+      - name: Install necessary doc dependencies
+        run: |
+          pip install -e "./python[docs]"
+      - name: Sphinx build
+        run: |
+          make build_docs
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload the output folder which contains all static assets for gh-pages
+          path: 'gh_pages_build/'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
