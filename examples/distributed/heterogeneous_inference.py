@@ -151,9 +151,7 @@ def _inference_process(
     # `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`
     # Users can feel free to parse this argument from `inferencer_args` however they want if they want more
     # customizability for their fanout strategy for the current node type.
-    subgraph_fanout: Dict[EdgeType, List[int]] = {
-        edge_type: [fanout_per_hop, fanout_per_hop] for edge_type in edge_types
-    }
+    num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # production pipeline. We default this value to `4` here for simplicity.
@@ -195,7 +193,7 @@ def _inference_process(
 
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         context=distributed_context,
         local_process_rank=process_number_on_current_machine,
         local_process_world_size=num_inference_processes_per_machine,
