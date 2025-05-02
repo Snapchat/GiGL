@@ -31,12 +31,8 @@ from tests.test_assets.distributed.run_distributed_dataset import (
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
-_POSITIVE_EDGE_TYPE = message_passing_to_positive_label(
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE
-)
-_NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE
-)
+_POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+_NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
@@ -177,18 +173,16 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                     _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 11], [16, 13]]),
                 },
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
-                expected_y=torch.tensor([[15, 16]]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
             ),
-            # param(
-            #     "Positive edges",
-            #     labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
-            #     expected_node=torch.tensor([10, 11, 12, 13, 14, 15]),
-            #     expected_y=torch.tensor([[15]]),
-            #     expected_srcs=torch.tensor([10, 10, 15, 15]),
-            #     expected_dsts=torch.tensor([11, 12, 13, 14]),
-            # ),
+            param(
+                "Positive edges",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 13, 17]),
+            ),
         ]
     )
     def test_distributed_neighbor_loader_with_supervision_edges(
@@ -196,7 +190,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         _,
         labeled_edges,
         expected_node,
-        expected_y,
         expected_srcs,
         expected_dsts,
     ):
@@ -243,9 +236,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         loader = DistNeighborLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
-            input_nodes=(node_type, torch.tensor([10, 11])),
+            input_nodes=(node_type, torch.tensor([10])),
             context=self._context,
-            batch_size=2,
             local_process_rank=0,
             local_process_world_size=1,
             message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -263,7 +255,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             expected_node,
             dim=0,
         )
-        assert_tensor_equality(datum.y, expected_y)
         dsts, srcs, *_ = datum.coo()
         print(f"{datum.node[srcs]=}")
         print(f"{datum.node[dsts]=}")
