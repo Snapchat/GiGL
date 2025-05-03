@@ -50,7 +50,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           # Upload the output folder which contains all static assets for gh-pages
-          path: 'gh_pages_build/'
+          path: 'gh_pages_build/html/'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
