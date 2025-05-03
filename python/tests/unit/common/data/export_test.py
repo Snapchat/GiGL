@@ -301,6 +301,9 @@ class TestEmbeddingExporter(unittest.TestCase):
     def test_write_embeddings_to_gcs_upload_retries_on_request_exception_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
+        # Constant message of request exception.
+        CONNECTION_ABORTED_MESSAGE = "Connection aborted"
+
         # Mock inputs
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
         id_batch = torch.tensor([1])
@@ -309,14 +312,14 @@ class TestEmbeddingExporter(unittest.TestCase):
 
         mock_gcs_utils = MagicMock()
         mock_gcs_utils.upload_from_filelike.side_effect = (
-            requests.exceptions.RequestException("Connection aborted")
+            requests.exceptions.RequestException(CONNECTION_ABORTED_MESSAGE)
         )
         mock_gcs_utils_class.return_value = mock_gcs_utils
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
         exporter.add_embedding(id_batch, embedding_batch, embedding_type)
 
         # Assertions
-        with self.assertRaisesRegex(RetriesFailedException, "Connection aborted"):
+        with self.assertRaisesRegex(RetriesFailedException, CONNECTION_ABORTED_MESSAGE):
             exporter.flush_embeddings()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
