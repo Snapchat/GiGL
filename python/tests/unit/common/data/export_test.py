@@ -347,7 +347,9 @@ class TestEmbeddingExporter(unittest.TestCase):
         mock_bigquery_client.return_value = mock_client
 
         # Call the function
-        load_embeddings_to_bigquery(gcs_folder, project_id, dataset_id, table_id)
+        load_job = load_embeddings_to_bigquery(
+            gcs_folder, project_id, dataset_id, table_id
+        )
 
         # Assertions
         mock_bigquery_client.assert_called_once_with(project=project_id)
@@ -356,6 +358,7 @@ class TestEmbeddingExporter(unittest.TestCase):
             destination=mock_client.dataset.return_value.table.return_value,
             job_config=ANY,
         )
+        self.assertEqual(load_job.output_rows, 1000)
 
 
 if __name__ == "__main__":
