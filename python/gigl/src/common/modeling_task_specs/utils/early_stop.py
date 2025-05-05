@@ -33,16 +33,16 @@ class EarlyStopper:
             bool: Whether there was improved over previous best criteiron
         """
         if self._has_metric_improved(value=value):
-            self.early_stop_counter = 0
+            self._early_stop_counter = 0
             logger.info(
                 f"Validation criteria improved to {value:.4f} over previous best {self.prev_best}. Resetting early stop counter."
             )
             self.prev_best = value
             return True
         else:
-            self.early_stop_counter += 1
+            self._early_stop_counter += 1
             logger.info(
-                f"Got validation {value}, which is worse than previous best {self.prev_best}. No improvement in validation criteria for {self.early_stop_counter} consecutive checks. Early Stop Counter: {self.early_stop_counter}"
+                f"Got validation {value}, which is worse than previous best {self.prev_best}. No improvement in validation criteria for {self._early_stop_counter} consecutive checks. Early Stop Counter: {self._early_stop_counter}"
             )
             return False
 
@@ -54,7 +54,7 @@ class EarlyStopper:
         """
         if self._early_stop_counter >= self._early_stop_patience:
             logger.info(
-                f"Early stopping triggered after {self.early_stop_counter} checks without improvement"
+                f"Early stopping triggered after {self._early_stop_counter} checks without improvement"
             )
             return True
         else:

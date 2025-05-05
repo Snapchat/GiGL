@@ -24,13 +24,13 @@ class EarlyStopTests(unittest.TestCase):
                     50.0,
                     80.0,
                 ],
-                improvement_steps=[0, 1, 4],
+                improvement_steps=[0, 1, 2, 5],
                 should_maximize=False,
             ),
             param(
                 "Test MRR early stopping",
                 mocked_criteria_values=[0.1, 0.3, 0.5, 0.45, 0.4, 0.6, 0.5, 0.4, 0.3],
-                improvement_steps=[0, 1, 4],
+                improvement_steps=[0, 1, 2, 5],
                 should_maximize=True,
             ),
         ]
