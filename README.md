@@ -1,6 +1,6 @@
 # GiGL: Gigantic Graph Learning
-GiGL is an open-source library for training and inference of Graph Neural Networks at very large (billion) scale.
 
+GiGL is an open-source library for training and inference of Graph Neural Networks at very large (billion) scale.
 
 ## Key Features 🌟
 
@@ -27,7 +27,7 @@ The components are as follows:
 | Subgraph Sampler  | [here](scala/subgraph_sampler/src/main/scala/Main.scala)       | [here](docs/sphinx/source/components/subgraph_sampler.md)  |
 | Split Generator   | [here](scala/split_generator/src/main/scala/Main.scala)        | [here](docs/sphinx/source/components/split_generator.md)   |
 | Trainer           | [here](python/gigl/src/training/trainer.py)                    | [here](docs/sphinx/source/components/trainer.md)           |
-| Inferencer        | [here](python/gigl/src/inference/inferencer.py)            | [here](docs/sphinx/source/components/inferencer.md)        |
+| Inferencer        | [here](python/gigl/src/inference/inferencer.py)                | [here](docs/sphinx/source/components/inferencer.md)        |
 
 The figure below illustrates at a high level how all the components work together.
 (<span style="color:purple">Purple</span> items are work-in-progress.)
@@ -223,8 +223,8 @@ Please see our [Contributing Guide](https://github.com/Snapchat/GiGL/blob/main/C
 
 ## Additional Resources ❗
 
-You may still have unanswered questions or may be facing issues. If so please see our [FAQ](docs/user_guide/trouble_shooting/faq.md) or our
-[User Guide](docs/user_guide/index.md) for further guidance.
+You may still have unanswered questions or may be facing issues. If so please see our
+[FAQ](docs/user_guide/trouble_shooting/faq.md) or our [User Guide](docs/user_guide/index.md) for further guidance.
 
 ## Citation
 
