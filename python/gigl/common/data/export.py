@@ -233,6 +233,10 @@ def load_embeddings_to_bigquery(
         project_id (str): The GCP project ID.
         dataset_id (str): The BigQuery dataset ID.
         table_id (str): The BigQuery table ID.
+
+    Returns:
+        LoadJob: A BigQuery LoadJob object representing the load operation, which allows
+        user to monitor and retrieve details about the job status and result.
     """
     start = time.perf_counter()
     logger.info(f"Loading embeddings from {gcs_folder} to BigQuery.")
