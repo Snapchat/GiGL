@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from graphlearn_torch.distributed import barrier, shutdown_rpc
+from graphlearn_torch.distributed import barrier, global_barrier, shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -203,6 +203,7 @@ def _inference_process(
         pin_memory_device=device,
         worker_concurrency=sampling_workers_per_inference_process,
         channel_size=sampling_worker_shared_channel_size,
+        process_start_gap_seconds=0,
     )
 
     # Initialize a LinkPredictionGNN model and load parameters from
@@ -261,15 +262,15 @@ def _inference_process(
 
         # These arguments to forward are specific to the GiGL LinkPredictionGNN model.
         # If just using a nn.Module, you can just use output = model(data)
-        output = model(data=data, output_node_types=[inference_node_type], device=device)[
-            inference_node_type
-        ]
+        output = model(
+            data=data, output_node_types=[inference_node_type], device=device
+        )[inference_node_type]
 
         # The anchor node IDs are contained inside of the .batch field of the data
-        node_ids = data.batch.cpu()
+        node_ids = data[inference_node_type].batch.cpu()
 
         # Only the first `batch_size` rows of the node embeddings contain the embeddings of the anchor nodes
-        node_embeddings = output[: data.batch_size].cpu()
+        node_embeddings = output[: data[inference_node_type].batch_size].cpu()
 
         # We add ids and embeddings to the in-memory buffer
         exporter.add_embedding(
@@ -317,6 +318,10 @@ def _inference_process(
     logger.info(
         f"--- All machines local rank {process_number_on_current_machine} finished inference. Deleted data loader"
     )
+
+    global_barrier()
+
+    logger.info(f"--- All machines finished inference.")
 
     # Clean up for a graceful exit
     shutdown_rpc()
