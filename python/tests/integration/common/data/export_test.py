@@ -68,7 +68,7 @@ class EmbeddingExportIntergrationTest(unittest.TestCase):
         logger.info(
             f"Will try exporting to {self.embedding_output_dir} to BQ: {bq_export_table_path}"
         )
-        load_embeddings_to_bigquery(
+        load_job = load_embeddings_to_bigquery(
             gcs_folder=self.embedding_output_dir,
             project_id=self.embedding_output_bq_project,
             dataset_id=self.embedding_output_bq_dataset,
@@ -76,6 +76,10 @@ class EmbeddingExportIntergrationTest(unittest.TestCase):
         )
 
         # Check that data in BQ is as expected...
+        self.assertEqual(
+            load_job.output_rows,
+            num_nodes * 2,
+        )
         self.assertEqual(
             bq_client.count_number_of_rows_in_bq_table(bq_export_table_path),
             num_nodes * 2,
