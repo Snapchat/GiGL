@@ -61,6 +61,7 @@ class EarlyStopper:
                 self._best_model = {}
                 for identifier, layer in best_model.items():
                     self._best_model[identifier] = layer.cpu()
+                    del best_model[identifier]
                 gc.collect()
             return True
         else:
