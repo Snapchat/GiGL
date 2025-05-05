@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from graphlearn_torch.distributed import barrier, global_barrier, shutdown_rpc
+from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -298,10 +298,6 @@ def _inference_process(
     logger.info(
         f"--- All machines local rank {process_number_on_current_machine} finished inference. Deleted data loader"
     )
-
-    global_barrier()
-
-    logger.info(f"--- All machines finished inference.")
 
     # Clean up for a graceful exit
     shutdown_rpc()

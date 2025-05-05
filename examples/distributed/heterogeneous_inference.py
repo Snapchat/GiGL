@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from graphlearn_torch.distributed import barrier, global_barrier, shutdown_rpc
+from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -179,17 +179,6 @@ def _inference_process(
     ), f"Node IDs must be a dictionary for heterogeneous inference, got {type(node_type_to_input_node_ids)}"
     input_node_ids = node_type_to_input_node_ids[inference_node_type]
 
-    num_node_ids_per_process = (
-        input_node_ids.size(0) // num_inference_processes_per_machine
-    )
-    start_index = process_number_on_current_machine * num_node_ids_per_process
-    end_index = (
-        input_node_ids.size(0)
-        if process_number_on_current_machine == num_inference_processes_per_machine - 1
-        else start_index + num_node_ids_per_process
-    )
-    node_ids_for_current_process = input_node_ids[start_index:end_index]
-
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -197,7 +186,7 @@ def _inference_process(
         local_process_rank=process_number_on_current_machine,
         local_process_world_size=num_inference_processes_per_machine,
         # We must pass in a tuple of (node_type, node_ids_on_current_process) for heterogeneous input
-        input_nodes=(inference_node_type, node_ids_for_current_process),
+        input_nodes=(inference_node_type, input_node_ids),
         num_workers=sampling_workers_per_inference_process,
         batch_size=inference_batch_size,
         pin_memory_device=device,
@@ -294,7 +283,7 @@ def _inference_process(
         data_loading_start_time = time.time()
 
     logger.info(
-        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished inference."
+        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished inference for node type {inference_node_type}."
     )
 
     write_embedding_start_time = time.time()
@@ -302,7 +291,7 @@ def _inference_process(
     exporter.flush_embeddings()
 
     logger.info(
-        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished writing embeddings to GCS for node type {inference_node_type}, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
@@ -315,12 +304,8 @@ def _inference_process(
     gc.collect()
 
     logger.info(
-        f"--- All machines local rank {process_number_on_current_machine} finished inference. Deleted data loader"
+        f"--- All machines local rank {process_number_on_current_machine} finished inference for node type {inference_node_type}. Deleted data loader"
     )
-
-    global_barrier()
-
-    logger.info(f"--- All machines finished inference.")
 
     # Clean up for a graceful exit
     shutdown_rpc()
