@@ -25,6 +25,8 @@ class EarlyStopper:
         Args:
             early_stop_patience (int): Maximum allowed number of steps for consecutive decreases in performance
             should_maximize (bool): Whether we minimize or maximize the provided criterion
+            model (Optional[nn.Module]): Optional model to provide to early stopper class. If provided, will
+                keep track of the state dict of the best model.
         """
         self._should_maximize = should_maximize
         self._early_stop_counter = 0
@@ -83,9 +85,9 @@ class EarlyStopper:
             return False
 
     @property
-    def best_model_state_dict(self):
+    def best_model_state_dict(self) -> Optional[dict[str, torch.Tensor]]:
         return self._best_model
 
     @property
-    def best_criterion(self):
+    def best_criterion(self) -> float:
         return self._prev_best

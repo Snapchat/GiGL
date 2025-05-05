@@ -104,7 +104,7 @@ class EarlyStopTests(unittest.TestCase):
             else:
                 self.assertTrue(early_stopper.should_early_stop())
         if model is not None:
-            self.assertIsNotNone(early_stopper.best_model_state_dict)
+            assert early_stopper.best_model_state_dict is not None
             assert_tensor_equality(
                 early_stopper.best_model_state_dict["foo"], torch.tensor(5.0)
             )
