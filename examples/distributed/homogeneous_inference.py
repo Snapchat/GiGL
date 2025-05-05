@@ -185,7 +185,6 @@ def _inference_process(
         pin_memory_device=device,
         worker_concurrency=sampling_workers_per_inference_process,
         channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=0,
     )
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
