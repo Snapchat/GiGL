@@ -1,6 +1,6 @@
 import time
 from functools import wraps
-from typing import Callable, Optional, Tuple, Type, TypeVar
+from typing import Callable, Optional, Tuple, Type, TypeVar, Union
 from xmlrpc.client import Boolean
 
 from gigl.common.logger import Logger
@@ -21,7 +21,7 @@ class __RetriableTimeoutException(Exception):
 
 
 def retry(
-    exception_to_check: Type = Exception,
+    exception_to_check: Union[Type, Tuple[Type, ...]] = Exception,
     tries: int = 5,
     delay_s: int = 3,
     backoff: int = 2,
@@ -34,7 +34,7 @@ def retry(
     Decorator that can be added around a function to retry incase it fails i.e. throws some exceptions
 
     Args:
-        exception_to_check (Optional[Type]): the exception to check. may be a tuple of
+        exception_to_check (Union[Type, Tuple[Type, ...]]): the exception to check. Could also be a tuple of
         exceptions to check. Defaults to Exception. i.e. catches everything
         tries (Optional[int]): [description]. number of times to try (not retry) before giving up. Defaults to 5.
         delay_s (Optional[int]): [description]. initial delay between retries in seconds. Defaults to 3.

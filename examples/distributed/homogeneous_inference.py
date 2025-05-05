@@ -407,7 +407,10 @@ def _run_example_inference(
         logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
         load_embedding_start_time = time.time()
 
-        load_embeddings_to_bigquery(
+        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
+        # representing the load operation, which allows user to monitor and retrieve
+        # details about the job status and result.
+        _ = load_embeddings_to_bigquery(
             gcs_folder=embedding_output_gcs_folder,
             project_id=bq_project_id,
             dataset_id=bq_dataset_id,
