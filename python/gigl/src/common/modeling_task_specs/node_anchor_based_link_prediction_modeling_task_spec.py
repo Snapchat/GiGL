@@ -1,4 +1,5 @@
 from contextlib import ExitStack
+from copy import deepcopy
 from distutils.util import strtobool
 from time import time
 from typing import Any, Dict, Optional, OrderedDict, Type
@@ -172,12 +173,18 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         )
 
         # Early Stop Arguments
-        early_stop_criterion = kwargs.get("early_stop_criterion", "loss")
+        self._early_stop_criterion = EvalMetricType[
+            kwargs.get("early_stop_criterion", "loss")
+        ]
         early_stop_patience = int(kwargs.get("early_stop_patience", 3))
-        self.early_stopper = EarlyStopper(
-            early_stop_criterion=EvalMetricType[early_stop_criterion],
-            early_stop_patience=early_stop_patience,
+        should_maximize = (
+            False if self._early_stop_criterion == EvalMetricType.loss else True
         )
+        self._early_stopper = EarlyStopper(
+            early_stop_patience=early_stop_patience,
+            should_maximize=should_maximize,
+        )
+        self._best_val_model: Optional[Dict[str, Any]] = None
 
         # Loading Task
         self.tasks = NodeAnchorBasedLinkPredictionTasks()
@@ -429,21 +436,27 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
                         num_batches=self.num_val_batches,
                     )
 
+                    has_improved = self._early_stopper.step(
+                        value=eval_metrics[self._early_stop_criterion]
+                    )
+                    if has_improved:
+                        self._best_val_model = deepcopy(self.model.state_dict())
+
                     # Check if we need to early stop based on patience
-                    if self.early_stopper.should_early_stop(eval_metrics, self.model):
+                    if self._early_stopper.should_early_stop():
                         break
 
                 profiler.step() if profiler else None  # type: ignore
 
         logger.info(
-            f"Reverting model to parameters which achieved best val {self.early_stopper.criterion.name}: {self.early_stopper.prev_best:.3f}."
+            f"Reverting model to parameters which achieved best val {self._early_stop_criterion.name}: {self._early_stopper.prev_best:.3f}."
         )
 
         # Asserting our model has improved for at least one validation check
-        assert len(self.early_stopper.best_val_model) > 0
+        assert self._best_val_model is not None
 
         # Loading model with highest validation performance
-        self.model.load_state_dict(self.early_stopper.best_val_model)
+        self.model.load_state_dict(self._best_val_model)
 
         if is_distributed_available_and_initialized():
             torch.distributed.barrier()
