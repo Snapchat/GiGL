@@ -1,11 +1,13 @@
 name: Release Documentation
+# Workflow used for building and deploying GiGL documentation to GitHub Pages:
+# https://snapchat.github.io/GiGL/
 
 on:
   # Runs on pushes targeting the default branch
   push:
     branches: ["main"]
 
-  # In case we need to run manually.
+  # In case we need to run manually for testing, or if push to main fails deploying documentation.
   workflow_dispatch:
 
 permissions:
@@ -28,6 +30,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      # autodoc analyses the code and docstrings by introspection after importing the modules.
+      # For importing to work, we have to make sure that your modules can be found by Sphinx and
+      # that dependencies can be resolved.
       - name: Setup Machine for releasing documentation
         uses: snapchat/gigl/.github/actions/setup-python-tools@main
         with:
@@ -36,6 +41,7 @@ jobs:
             gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
             workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
             gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+      # We also make gigl available w/ editable install `-e` so that autodoc can find it.
       - name: Install necessary doc dependencies
         run: |
           pip install -e "./python[docs]"
