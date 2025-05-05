@@ -265,7 +265,8 @@ class HashedNodeAnchorLinkSplitter:
 def get_labels_for_anchor_nodes(
     dataset: Dataset,
     node_ids: torch.Tensor,
-    supervision_edge_types: Union[PyGEdgeType, tuple[PyGEdgeType, PyGEdgeType]],
+    positive_label_edge_type: PyGEdgeType,
+    negative_label_edge_type: Optional[PyGEdgeType] = None,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Selects labels for the given node ids based on the provided edge types.
 
@@ -289,37 +290,25 @@ def get_labels_for_anchor_nodes(
         ]
 
     Args:
-        dataset (Dataset): The dataset storing the graph info.
+        dataset (Dataset): The dataset storing the graph info, must be heterogeneous.
         node_ids (torch.Tensor): The node ids to use for the labels. [N]
-        supervision_edge_types (Union[EdgeType, tuple[EdgeType, EdgeType]]): The edge types to use for the labels.
-            If a single edge type is provided, then the dataset must be heterogeneous,
-            and the edge type provided will be used to generate positive labels.
-            If two edge types are provided, then the dataset must be heterogeneous,
-            the first edge type will be used to generate positive labels, and the second edge type will be used to generate negative labels.
+        positive_label_edge_type (PyGEdgeType): The edge type to use for the positive labels.
+        negative_label_edge_type (Optional[PyGEdgeType]): The edge type to use for the negative labels.
+            Defaults to None. If not provided no negative labels will be returned.
     Returns:
         Tuple of (positive labels, negative_labels?)
-        negative labels may be None depending on supervision_edge_types.
+        negative labels may be None depending on if negative_label_edge_type is provided.
         The returned tensors are of shape N x M where N is the number of nodes and M is the max number of labels, per type.
     """
-    if len(supervision_edge_types) == 3:
-        if not isinstance(dataset.graph, Mapping):
-            raise ValueError(
-                f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."
-            )
-        positive_node_topo = dataset.graph[supervision_edge_types].topo
-        negative_node_topo = None
-    elif len(supervision_edge_types) == 2:
-        if not isinstance(dataset.graph, Mapping):
-            raise ValueError(
-                f"Got a single supervision edge type {supervision_edge_types} but dataset is homogeneous."
-            )
-        positive_edge_type, negative_edge_type = supervision_edge_types
-        positive_node_topo = dataset.graph[positive_edge_type].topo
-        negative_node_topo = dataset.graph[negative_edge_type].topo
-    else:
+    if not isinstance(dataset.graph, Mapping):
         raise ValueError(
-            f"Got unknown type for supervision_edge_types: {type(supervision_edge_types)}"
+            "The dataset must be heterogeneous to select labels for anchor nodes."
         )
+    positive_node_topo = dataset.graph[positive_label_edge_type].topo
+    if negative_label_edge_type is not None:
+        negative_node_topo = dataset.graph[negative_label_edge_type].topo
+    else:
+        negative_node_topo = None
 
     # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
     positive_labels = _get_padded_labels(node_ids, positive_node_topo)

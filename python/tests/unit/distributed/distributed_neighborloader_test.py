@@ -194,7 +194,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         expected_dsts,
     ):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        # Graph looks like:
+        # Graph looks like https://is.gd/w2oEVp:
         # Message passing
         # 10 -> {11, 12}
         # 11 -> {13, 17}
@@ -206,7 +206,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # Negative labels
         # 10 -> 16
         # 11 -> 14
-        # https://dreampuf.github.io/GraphvizOnline/?engine=dot#digraph%20G%20%7B%0A%0A%20%20%20%2010%20-%3E%20%7B11%2C%2012%7D%0A%20%20%20%2011%20-%3E%20%7B13%2C%2017%7D%0A%20%20%20%2015%20-%3E%20%7B13%2C%2014%7D%0A%20%20%20%2016%20-%3E%20%7B12%2C%2014%7D%0A%20%20%20%2010%20-%3E%2015%20%5Bcolor%3D%22blue%22%5D%0A%20%20%20%2015%20-%3E%2016%20%5Bcolor%3D%22blue%22%5D%0A%20%20%20%2010%20-%3E%2016%20%5Bcolor%3D%22red%22%5D%0A%20%20%20%2011%20-%3E%2014%20%5Bcolor%3D%22red%22%5D%0A%7D
 
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -245,7 +244,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
-            message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            message_passing_edge_type_to_get_labels_from=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
         )
 
         count = 0

@@ -88,7 +88,7 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
-        message_passing_edge_type: Optional[EdgeType] = None,
+        message_passing_edge_type_to_get_labels_from: Optional[EdgeType] = None,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -138,7 +138,10 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
-            message_passing_edge_type (EdgeType): The edge type to use for message passing.
+            message_passing_edge_type_to_get_labels_from (Optional[EdgeType]): The edge type to use for message passing, only needs to be passed in for training.
+                If passed in, then the dataset must be heterogenneous.
+                If passed in, supervision edge types will be automatically selected based on the message passing edge type,
+                and the labels for each node will be accordingly sampled.
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -242,37 +245,43 @@ class DistNeighborLoader(DistLoader):
             node_type, node_ids = curr_process_nodes
 
         # TODO(kmonte): Once GLT sampling works more generally, we should only sample against message_passing_edge_type for this code path.
-        if message_passing_edge_type is not None:
+        if message_passing_edge_type_to_get_labels_from is not None:
             if len(node_ids.shape) != 1:
                 raise ValueError(
                     f"node_ids must be a 1D tensor when supervision_edge_types are provided, got {node_ids.shape}."
                 )
-            if not isinstance(dataset.graph, abc.Mapping):
-                raise ValueError("Heterogeneous graphs are not supported.")
-            supervision_edge_types = select_label_edge_types(
-                message_passing_edge_type, dataset.graph.keys()
-            )
-            positive_label_edge_type, negative_label_edge_type = supervision_edge_types
 
-            if supervision_edge_types[1] is None:
-                supervision_edge_types = supervision_edge_types[0]
-            positive, negative = get_labels_for_anchor_nodes(
-                dataset, node_ids, supervision_edge_types
+            if not isinstance(dataset.graph, abc.Mapping):
+                raise ValueError(
+                    "When `message_passing_edge_type` is provided, the dataset must be heterogeneous."
+                )
+            (
+                positive_label_edge_type,
+                negative_label_edge_type,
+            ) = select_label_edge_types(
+                message_passing_edge_type_to_get_labels_from, dataset.graph.keys()
             )
-            if negative is not None:
-                node_ids = torch.cat([node_ids.unsqueeze(1), positive, negative], dim=1)
+
+            positive_labels, negative_labels = get_labels_for_anchor_nodes(
+                dataset, node_ids, positive_label_edge_type, negative_label_edge_type
+            )
+            if negative_labels is not None:
+                node_ids = torch.cat(
+                    [node_ids.unsqueeze(1), positive_labels, negative_labels], dim=1
+                )
             else:
-                node_ids = torch.cat([node_ids.unsqueeze(1), positive], dim=1)
+                node_ids = torch.cat([node_ids.unsqueeze(1), positive_labels], dim=1)
 
             self._transforms.append(
                 _UDLToHomogeneous(
-                    message_passing_edge_type=message_passing_edge_type,
+                    message_passing_edge_type=message_passing_edge_type_to_get_labels_from,
                 )
             )
+
             # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
             zero_samples = [0] * len(num_neighbors)
             num_neighbors = {
-                message_passing_edge_type: num_neighbors,
+                message_passing_edge_type_to_get_labels_from: num_neighbors,
                 positive_label_edge_type: zero_samples,
             }
             if negative_label_edge_type is not None:
