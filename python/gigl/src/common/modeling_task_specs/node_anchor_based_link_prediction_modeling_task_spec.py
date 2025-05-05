@@ -1,5 +1,4 @@
 from contextlib import ExitStack
-from copy import deepcopy
 from distutils.util import strtobool
 from time import time
 from typing import Any, Dict, Optional, OrderedDict, Type
@@ -176,15 +175,10 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         self._early_stop_criterion = EvalMetricType[
             kwargs.get("early_stop_criterion", "loss")
         ]
-        early_stop_patience = int(kwargs.get("early_stop_patience", 3))
-        should_maximize = (
+        self._early_stop_patience = int(kwargs.get("early_stop_patience", 3))
+        self._should_maximize = (
             False if self._early_stop_criterion == EvalMetricType.loss else True
         )
-        self._early_stopper = EarlyStopper(
-            early_stop_patience=early_stop_patience,
-            should_maximize=should_maximize,
-        )
-        self._best_val_model: Optional[Dict[str, Any]] = None
 
         # Loading Task
         self.tasks = NodeAnchorBasedLinkPredictionTasks()
@@ -320,6 +314,12 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         self.tasks = model.tasks
         self._graph_backend = model.graph_backend
 
+        self._early_stopper = EarlyStopper(
+            early_stop_patience=self._early_stop_patience,
+            should_maximize=self._should_maximize,
+            model=self.model,
+        )
+
         return self.model
 
     # function for setting up things like optimizer, scheduler, criterion etc.
@@ -436,12 +436,9 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
                         num_batches=self.num_val_batches,
                     )
 
-                    has_improved = self._early_stopper.step(
+                    self._early_stopper.step(
                         value=eval_metrics[self._early_stop_criterion]
                     )
-                    if has_improved:
-                        self._best_val_model = deepcopy(self.model.state_dict())
-
                     # Check if we need to early stop based on patience
                     if self._early_stopper.should_early_stop():
                         break
@@ -449,14 +446,14 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
                 profiler.step() if profiler else None  # type: ignore
 
         logger.info(
-            f"Reverting model to parameters which achieved best val {self._early_stop_criterion.name}: {self._early_stopper.prev_best:.3f}."
+            f"Reverting model to parameters which achieved best val {self._early_stop_criterion.name}: {self._early_stopper.best_criterion:.3f}."
         )
 
         # Asserting our model has improved for at least one validation check
-        assert self._best_val_model is not None
+        assert self._early_stopper.best_model_state_dict is not None
 
         # Loading model with highest validation performance
-        self.model.load_state_dict(self._best_val_model)
+        self.model.load_state_dict(self._early_stopper.best_model_state_dict)
 
         if is_distributed_available_and_initialized():
             torch.distributed.barrier()
