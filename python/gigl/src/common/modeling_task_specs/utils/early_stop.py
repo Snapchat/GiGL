@@ -1,4 +1,3 @@
-import gc
 from copy import deepcopy
 from typing import Optional, Tuple
 
@@ -52,6 +51,7 @@ class EarlyStopper:
             bool: Whether early stop patience has been reached, indicating early stopping
         """
         has_metric_improved: bool
+        should_early_stop: bool
         if self._has_metric_improved(value=value):
             self._early_stop_counter = 0
             logger.info(
@@ -59,11 +59,7 @@ class EarlyStopper:
             )
             self._prev_best = value
             if self._model is not None:
-                # Making a deep copy of the best model and moving to CPU to save GPU memory
-                self._best_model = {}
-                for identifier, layer in self._model.state_dict().items():
-                    self._best_model[identifier] = deepcopy(layer).cpu()
-                gc.collect()
+                self._best_model = deepcopy(self._model.state_dict())
             has_metric_improved = True
         else:
             self._early_stop_counter += 1
