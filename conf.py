@@ -7,14 +7,14 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 import pathlib
-import os
+import datetime
 
 
 curr_file_dir = pathlib.Path(__file__).parent.resolve()
 
-project = 'GiGL'
-copyright = '2025, Snap Inc'
-author = 'Snap Inc'
+project = "GiGL"
+author = "Snap Inc"
+copyright = f"{datetime.datetime.now().year}, {author}"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -52,6 +52,8 @@ html_static_path = [
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 html_theme = "pydata_sphinx_theme" # https://pydata-sphinx-theme.readthedocs.io/en/stable/
+# Disable showing the rst source link - its not useful, neither is it asthetically pleasing.
+# We enable the edit button instead so the src code can be seen and edited conveniently; see use of use_edit_page_button below.
 html_show_sourcelink = False # https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/source-buttons.html#view-source-link
 html_logo = "docs/assets/images/gigl.png"
 

@@ -1,10 +1,12 @@
 .. _user_guide:
 
-.. If you are viewing this on GitHub, you probably won't have a pleasant experience as it contains MyST Markdown
-.. to allow us to generate rich navigation. Instead, please navigate to our published user guide:
-.. https://snapchat.github.io/GiGL/docs/user_guide
-.. Alternatively, our full documentation is available at:
-.. https://snapchat.github.io/GiGL
+.. only:: not html
+   .. note::
+      If you are viewing this on GitHub, you probably won't have a pleasant experience as it contains MyST Markdown
+      to allow us to generate rich navigation. Instead, please navigate to our published user guide:
+      https://snapchat.github.io/GiGL/docs/user_guide.
+      Alternatively, our full documentation is available at:
+      https://snapchat.github.io/GiGL
 
 ==========
 User Guide
