@@ -57,11 +57,9 @@ class EarlyStopper:
             self._prev_best = value
             if self._model is not None:
                 # Making a deep copy of the best model and moving to CPU to save GPU memory
-                best_model = deepcopy(self._model.state_dict())
                 self._best_model = {}
-                for identifier, layer in best_model.items():
-                    self._best_model[identifier] = layer.cpu()
-                    del best_model[identifier]
+                for identifier, layer in self._model.state_dict().items():
+                    self._best_model[identifier] = deepcopy(layer).cpu()
                 gc.collect()
             return True
         else:
