@@ -38,8 +38,14 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import GraphPartitionData
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    GraphPartitionData,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+)
 from gigl.utils.data_splitters import (
+    HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
     select_ssl_positive_label_edges,
 )
@@ -54,6 +60,7 @@ def _load_and_build_partitioned_dataset(
     edge_dir: Literal["in", "out"],
     partitioner_class: Optional[Type[DistPartitioner]],
     tf_dataset_options: TFDatasetOptions,
+    should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
@@ -93,6 +100,8 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         tf_dataset_options=tf_dataset_options,
     )
+    if should_treat_as_heterogeneous:
+        loaded_graph_tensors.treat_labels_as_edges()
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
@@ -201,6 +210,7 @@ def _build_dataset_process(
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]],
     tf_dataset_options: TFDatasetOptions,
+    should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
@@ -257,6 +267,7 @@ def _build_dataset_process(
         edge_dir=sample_edge_direction,
         partitioner_class=partitioner_class,
         tf_dataset_options=tf_dataset_options,
+        should_treat_as_heterogeneous=should_treat_as_heterogeneous,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
     )
@@ -276,6 +287,7 @@ def build_dataset(
     should_load_tensors_in_parallel: bool = True,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: int = DEFAULT_MASTER_DATA_BUILDING_PORT,
@@ -324,6 +336,7 @@ def build_dataset(
             should_load_tensors_in_parallel,
             partitioner_class,
             tf_dataset_options,
+            should_treat_as_heterogeneous,
             splitter,
             _ssl_positive_label_percentage,
         ),
@@ -363,13 +376,24 @@ def build_dataset_from_task_config_uri(
     )
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
+        sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "inferencerConfig.inferencerArgs"
+        should_convert_to_heterogeneous = False
+        splitter = None
     else:
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
+        sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "trainerConfig.trainerArgs"
-
-    # Should be a string which is either "in" or "out"
-    sample_edge_direction = args.get("sample_edge_direction", "in")
+        should_convert_to_heterogeneous = bool(
+            strtobool(args.get("should_convert_to_heterogeneous", "False"))
+        )
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction=sample_edge_direction,
+            edge_types=[
+                message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+                message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+            ],
+        )
 
     assert sample_edge_direction in (
         "in",
@@ -413,6 +437,8 @@ def build_dataset_from_task_config_uri(
         distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
         partitioner_class=partitioner_class,
+        should_treat_as_heterogeneous=should_convert_to_heterogeneous,
+        splitter=splitter,
     )
 
     return dataset
