@@ -314,12 +314,6 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         self.tasks = model.tasks
         self._graph_backend = model.graph_backend
 
-        self._early_stopper = EarlyStopper(
-            early_stop_patience=self._early_stop_patience,
-            should_maximize=self._should_maximize,
-            model=self.model,
-        )
-
         return self.model
 
     # function for setting up things like optimizer, scheduler, criterion etc.
@@ -358,6 +352,12 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
             graph_backend=self._graph_backend,
             device=device,
+        )
+
+        self._early_stopper = EarlyStopper(
+            early_stop_patience=self._early_stop_patience,
+            should_maximize=self._should_maximize,
+            model=self.model,
         )
 
         main_data_loader = data_loaders.train_main

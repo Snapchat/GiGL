@@ -1,10 +1,9 @@
 import gc
 from copy import deepcopy
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel
 
 from gigl.common.logger import Logger
 
@@ -20,13 +19,13 @@ class EarlyStopper:
         self,
         early_stop_patience: int,
         should_maximize: bool,
-        model: Optional[Union[nn.Module, DistributedDataParallel]] = None,
+        model: Optional[nn.Module] = None,
     ):
         """
         Args:
             early_stop_patience (int): Maximum allowed number of steps for consecutive decreases in performance
             should_maximize (bool): Whether we minimize or maximize the provided criterion
-            model (Optional[Union[nn.Module, DistributedDataParallel]]): Optional model to provide to early stopper class. If provided, will
+            model (Optional[nn.Module]): Optional model to provide to early stopper class. If provided, will
                 keep track of the state dict of the best model.
         """
         self._should_maximize = should_maximize
@@ -61,13 +60,9 @@ class EarlyStopper:
             )
             self._prev_best = value
             if self._model is not None:
-                if isinstance(self._model, DistributedDataParallel):
-                    model = self._model.module
-                else:
-                    model = self._model
                 # Making a deep copy of the best model and moving to CPU to save GPU memory
                 self._best_model = {}
-                for identifier, layer in model.state_dict().items():
+                for identifier, layer in self._model.state_dict().items():
                     self._best_model[identifier] = deepcopy(layer).cpu()
                 gc.collect()
             has_metric_improved = True
