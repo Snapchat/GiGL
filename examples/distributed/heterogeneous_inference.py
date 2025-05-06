@@ -141,7 +141,8 @@ def _inference_process(
         inference_batch_size (int): Batch size to use for inference
         dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
         inferencer_args (Dict[str, str]): Additional arguments for inferencer
-        inference_node_type (NodeType): Node Type that embeddings should be generated for in current inference process
+        inference_node_type (NodeType): Node Type that embeddings should be generated for in current inference process. This is used to
+            tag the embeddings written to GCS.
         node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
         edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
     """
