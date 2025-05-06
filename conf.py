@@ -41,6 +41,7 @@ include_patterns = [
 ]
 
 
+
 templates_path = [
     'gh_pages_source/_templates'
 ]
@@ -51,7 +52,9 @@ html_static_path = [
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 html_theme = "pydata_sphinx_theme" # https://pydata-sphinx-theme.readthedocs.io/en/stable/
+html_show_sourcelink = False # https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/source-buttons.html#view-source-link
 html_logo = "docs/assets/images/gigl.png"
+
 html_theme_options = {
     # https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/header-links.html#icon-links
     "icon_links": [
@@ -64,5 +67,17 @@ html_theme_options = {
     "logo": {
         "text": "GiGL",
         "image_dark": "docs/assets/images/gigl.png",
-    }
+    },
+    # Allow user to directly edit the documentation
+    # https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/source-buttons.html#add-an-edit-button
+    "use_edit_page_button": True,
+}
+
+# Allow user to directly edit the documentation
+# https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/source-buttons.html#github
+html_context = {
+    "github_user": "Snapchat",
+    "github_repo": "GiGL",
+    "github_version": "main",
+    "doc_path": "/",
 }

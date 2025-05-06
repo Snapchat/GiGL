@@ -44,33 +44,14 @@ the model is trained with triplet-style contrastive loss on a set of anchor node
 
 See [Installation Instructions](docs/user_guide/getting_started/installation.md)
 
-## Getting Started / Docts
-
-See our detailed [User Guide](docs/user_guide/index.rst) to get started.
-
-Also, see our [API reference](docs/api_reference/index.rst)
-
-## Configuration 📄
-
-Before getting started with running components in GiGL, it’s important to set up your config files. These are necessary
-files required for each component to operate. The two required files are:
-
-- **Resource Config**: Details the resource allocation and environmental settings across all GiGL components. This
-  encompasses shared resources for all components, as well as component-specific settings.
-
-- **Task Config**: Specifies task-related configurations, guiding the behavior of components according to the needs of
-  your machine learning task.
-
-To configure these files and customize your GiGL setup, follow our step-by-step guides:
-
-- [Resource Config Guide](%22todo/%22)
-- [Task Config Guide](%22todo/%22)
-
 ## Usage 🚀
+
+The best way to get more familiar with GiGL is to go through our detailed [User Guide](docs/user_guide/index.rst) and
+[API reference](docs/api_reference/index.rst)
 
 GiGL offers 3 primiary methods of usage to run the components for your graph machine learning tasks.
 
-### 1. Importable GiGL
+#### 1. Importable GiGL
 
 To easily get started or incorporate GiGL into your existing workflows, you can simply `import gigl` and call the
 `.run()` method on its components.
@@ -87,7 +68,7 @@ trainer.run(task_config_uri, resource_config_uri, job_name)
 
 </details>
 
-### 2. Command-Line Execution
+#### 2. Command-Line Execution
 
 Each GiGL component can be executed as a standalone module from the command line. This method is useful for batch
 processing or when integrating into shell scripts.
@@ -105,47 +86,130 @@ python -m \
 
 </details>
 
-### 3. Kubeflow Pipeline Orchestration
+#### 3. Orchestration
 
-GiGL also supports pipeline orchestration using Kubeflow. This allows you to easily kick off an end-to-end run with
-little to no code. See [Kubeflow Orchestration](%22todo%22) for more information
+GiGL also supports pipeline orchestration using different orchestrators. Currently supported include local, and Vertex
+AI (backed by Kubeflow Pipelines). This allows you to easily kick off an end-to-end run with little to no code.
 
-\
-The best way to get more familiar with GiGL is to go through the various [examples](%22todo%22) or for specific details
-see our [user guide](%22todo%22).
+See [Orchestration Guide](docs/user_guide/getting_started/orchestration.md) for more information
+
+#### Configuration 📄
+
+Before getting started with running components in GiGL, it’s important to set up your config files. These are necessary
+files required for each component to operate. The two required files are:
+
+- **Resource Config**: Details the resource allocation and environmental settings across all GiGL components. This
+  encompasses shared resources for all components, as well as component-specific settings.
+
+- **Task Config**: Specifies task-related configurations, guiding the behavior of components according to the needs of
+  your machine learning task.
+
+To configure these files and customize your GiGL setup, follow our step-by-step guides:
+
+- [Resource Config Guide](docs/user_guide/config_guides/resource_config_guide.md)
+- [Task Config Guide](docs/user_guide/config_guides/task_config_guide.md)
 
 ## Tests 🔧
 
-Testing in GiGL is designed to ensure reliability and robustness across different components of the library. We support
-three types of tests: unit tests, local integration tests, and cloud integration end-to-end tests.
+Testing in GiGL is designed to ensure reliability and robustness across different components of the library. We maintain
+a wide collection of linting/formatting, unit, integration, cloud end-to-end integration tests, and large scale
+performance testing.
 
-### Unit Tests
+One your PR is "Added to the merge queue", the changes will only merge once our CI
+[runs these tests](https://github.com/Snapchat/GiGL/blob/main/.github/workflows/on-pr-merge.yml) and all of their status
+checks succeed. The only caveat to this is the large scale performance testing that runs @ some regular cadence but is
+not visible to open source users currently.
 
-GiGL's unit tests focus on validating the functionality of individual components and high-level utilities. They also
-check for proper formatting, typing, and linting standards.
+If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments: **Note:
+For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
+instructions on how to run the tests locally, or ask a maintainer to run them for you.**
+
+Run all unit tests:
+
+```
+/unit_test
+```
+
+Run all integration tests:
+
+```
+/integration_test
+```
+
+Run all end-to-end tests:
+
+```
+/e2e_test
+```
+
+### Running tests locally
+
+The entry point for running all tests is from the `Makefile`. We provide some documentation below on how you can run
+these tests locally.
 
 <details>
-<summary>More Details</summary>
+<summary><bold>Makefile:</bold></summary>
 
-- No external assets or a GCP project are required.
-- Unit tests run on every commit on a pull request via Github Actions
-
-To run unit tests locally, execute the following command:
-
-```bash
-# Runs both Scala and Python unit tests.
-make unit_test
-
-# Runs just Python unit tests
-make unit_test_py
-
-# Runs just Scala unit tests
-make unit_test_scala
+```{literalinclude} Makefile
+:language: make
 ```
 
 </details>
 
-### Local Integration Test
+#### Lint/Formatting & Unit Tests
+
+You can run all the linting & Formatting tests by calling
+
+```bash
+make check_format
+```
+
+You can run unit tests locally by calling
+
+```bash
+make unit_test
+```
+
+<details>
+<summary>More Commands</summary>
+
+```bash
+# Runs both Scala and Python unit tests, and the python static type checker
+make unit_test
+
+# Runs just Python unit tests
+make unit_test_py
+# You can also test specific files w/ PY_TEST_FILES=<TEST_FILE_NAME_GLOB>. e.g.:
+make unit_test_py PY_TEST_FILES="eval_metrics_test.py"
+
+# Runs just Scala unit tests
+make unit_test_scala
+
+# Run the python static type checker `mypy`
+make type_check
+
+# Run all formatting/linting tests
+make check_format
+
+# Runing Formatting/Linting tests individually
+make check_format_py
+make check_format_scala
+make check_format_md
+
+# Try fixing all formatting/linting issues
+make format
+
+# Try fixing Individual formatting/linting issues
+make format_py
+make format_scala
+make format_md
+```
+
+</details>
+
+#### Local Integration Test
+
+TODO: (svij) - This section will be updated soon.
 
 GiGL's local integration tests simulate the pipeline behavior of GiGL components. These tests are crucial for verifying
 that components function correctly in sequence and that outputs from one component are correctly handled by the next.
@@ -166,6 +230,8 @@ make integration_test resource_config_uri="gs://your-project-bucket/resource_con
 </details>
 
 ### Cloud Integration Test (End-to-End)
+
+TODO: (svij) - This section will be updated soon.
 
 Cloud integration tests run a full end-to-end GiGL pipeline within GCP, also leveraging cloud services such as Dataflow,
 Dataproc, and Vertex AI.

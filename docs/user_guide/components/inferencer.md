@@ -18,7 +18,7 @@ The Inferencer undertakes the following actions:
 - Reads frozen `GbmlConfig` proto yaml. This proto contains a pointer to a class instance which implements the
   `BaseInferencer` protocol (see `inferencerClsPath` field of `inferencerConfig` in `GbmlConfig`). This class houses
   logic which dictates how to run inference for a batch of samples (see `infer_batch` in
-  [modeling task spec](../../../../python/gigl/src/common/modeling_task_specs/node_anchor_based_link_prediction_modeling_task_spec.py))
+  {py:class}`gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec`)
   -- the types of these samples are determined by the `taskMetadata` in the frozen `GbmlConfig`.
 
   Custom arguments can also be passed into the class instance by including them in the `inferencerArgs` field inside

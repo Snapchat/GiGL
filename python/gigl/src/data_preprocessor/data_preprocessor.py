@@ -79,7 +79,6 @@ class PreprocessedMetadataReferences(NamedTuple):
 
 
 class DataPreprocessor:
-
     __gbml_config_pb_wrapper: GbmlConfigPbWrapper
     __data_preprocessor_config: DataPreprocessorConfig
     __custom_worker_image_uri: Optional[str]

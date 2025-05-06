@@ -37,8 +37,6 @@ logger = Logger()
 
 
 class ConfigPopulator:
-
-
     __template_gbml_config: gbml_config_pb2.GbmlConfig
     __applied_task_identifier: AppliedTaskIdentifier
 

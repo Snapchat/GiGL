@@ -2,7 +2,7 @@
 
 GiGL is designed to support easy end to end orchestration of your GNN tasks/workflows with minimal setup required. This
 page outlines three ways to orchestrate GiGL for after you have set up your configs (See:
-[quick start](../config_guides/task_config_guide.md) if you have not done so).
+[quick start](./quick_start.md) if you have not done so).
 
 ## Local Runner
 
@@ -51,7 +51,9 @@ Example:
 Runner.run_data_preprocessor(pipeline_config=pipeline_config)
 ```
 
-## Kubeflow Orchestration
+## VertexAI (Kubeflow) Orchestration
+
+TODO: (svij) - This section will be updated soon.
 
 GiGL also supports orchestration of your workflows using
 [Kubeflow Pipelines](https://www.kubeflow.org/docs/components/pipelines/v2/) using a `KfpOrchestrator` class. We make

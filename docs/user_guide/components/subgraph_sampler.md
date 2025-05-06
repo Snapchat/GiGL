@@ -190,7 +190,7 @@ python -m gigl.src.subgraph_sampler.subgraph_sampler \
   --resource_config_uri="gs://MY TEMP ASSETS BUCKET/resource_config.yaml"
 ```
 
-The python entry point `split_generator.py` performs the following:
+The python entry point {py:class}`gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler` performs the following:
 
 - Create a Dataproc cluster suitable for the scale of the graph at hand,
 - Install Spark and Scala dependencies,
