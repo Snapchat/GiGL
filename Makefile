@@ -10,6 +10,7 @@ DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
 
 
+
 # You can override GIGL_PROJECT by setting it in your environment i.e.
 # adding `export GIGL_PROJECT=your_project` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_PROJECT?=external-snap-ci-github-gigl
