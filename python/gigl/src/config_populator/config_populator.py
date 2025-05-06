@@ -37,14 +37,14 @@ logger = Logger()
 
 
 class ConfigPopulator:
+    """
+    GiGL Component that takes in a template GbmlConfig and outputs a frozen GbmlConfig by populating all job related metadata paths in sharedConfig.
+    """
+
     __template_gbml_config: gbml_config_pb2.GbmlConfig
     __applied_task_identifier: AppliedTaskIdentifier
 
     def __init__(self) -> None:
-        """
-        GiGL Component that takes in a template GbmlConfig and outputs a frozen GbmlConfig by populating all job related metadata paths in sharedConfig.
-        Once initialized, use the :py:meth:`run` method to run the component.
-        """
         self.__proto_utils = ProtoUtils()
 
     @property
