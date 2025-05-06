@@ -1,5 +1,4 @@
-import gc
-from copy import deepcopy
+import io
 from typing import Optional, Tuple
 
 import torch
@@ -33,7 +32,7 @@ class EarlyStopper:
         self._early_stop_patience = early_stop_patience
         self._prev_best = float("-inf") if self._should_maximize else float("inf")
         self._model = model
-        self._best_model: Optional[dict[str, torch.Tensor]] = None
+        self._best_model_buffer: Optional[io.BytesIO] = None
 
     def _has_metric_improved(self, value: float) -> bool:
         if self._should_maximize:
@@ -60,11 +59,9 @@ class EarlyStopper:
             )
             self._prev_best = value
             if self._model is not None:
-                # Making a deep copy of the best model and moving to CPU to save GPU memory
-                self._best_model = {}
-                for identifier, layer in self._model.state_dict().items():
-                    self._best_model[identifier] = deepcopy(layer).cpu()
-                gc.collect()
+                self._best_model_buffer = io.BytesIO()
+                self._best_model_buffer.seek(0)
+                torch.save(self._model.state_dict(), self._best_model_buffer)
             has_metric_improved = True
         else:
             self._early_stop_counter += 1
@@ -85,7 +82,11 @@ class EarlyStopper:
 
     @property
     def best_model_state_dict(self) -> Optional[dict[str, torch.Tensor]]:
-        return self._best_model
+        if self._best_model_buffer is None:
+            return None
+        else:
+            self._best_model_buffer.seek(0)
+            return torch.load(self._best_model_buffer)
 
     @property
     def best_criterion(self) -> float:
