@@ -1,9 +1,10 @@
 import gc
 from copy import deepcopy
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+from torch.nn.parallel import DistributedDataParallel
 
 from gigl.common.logger import Logger
 
@@ -19,13 +20,13 @@ class EarlyStopper:
         self,
         early_stop_patience: int,
         should_maximize: bool,
-        model: Optional[nn.Module] = None,
+        model: Optional[Union[nn.Module, DistributedDataParallel]] = None,
     ):
         """
         Args:
             early_stop_patience (int): Maximum allowed number of steps for consecutive decreases in performance
             should_maximize (bool): Whether we minimize or maximize the provided criterion
-            model (Optional[nn.Module]): Optional model to provide to early stopper class. If provided, will
+            model (Optional[Union[nn.Module, DistributedDataParallel]]): Optional model to provide to early stopper class. If provided, will
                 keep track of the state dict of the best model.
         """
         self._should_maximize = should_maximize
@@ -60,7 +61,7 @@ class EarlyStopper:
             )
             self._prev_best = value
             if self._model is not None:
-                if isinstance(self._model, torch.nn.parallel.DistributedDataParallel):
+                if isinstance(self._model, DistributedDataParallel):
                     model = self._model.module
                 else:
                     model = self._model
