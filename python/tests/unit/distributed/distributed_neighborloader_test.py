@@ -4,6 +4,7 @@ from typing import MutableMapping
 
 import graphlearn_torch as glt
 import torch
+import torch.distributed.rpc
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
