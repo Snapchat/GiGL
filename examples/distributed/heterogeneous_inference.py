@@ -193,7 +193,6 @@ def _inference_process(
         worker_concurrency=sampling_workers_per_inference_process,
         channel_size=sampling_worker_shared_channel_size,
     )
-
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
@@ -345,6 +344,10 @@ def _run_example_inference(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
 
+    model_uri = UriFactory.create_uri(
+        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
+    )
+
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
     node_type_to_feature_dim: Dict[NodeType, int] = {
@@ -363,10 +366,6 @@ def _run_example_inference(
 
     inference_node_types = sorted(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
-    )
-
-    model_uri = UriFactory.create_uri(
-        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
