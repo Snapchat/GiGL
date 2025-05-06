@@ -64,9 +64,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             local_process_rank=0,
             local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
-            # TODO (mkolodner-sc): Dynamically infer free ports and remove this argument
-            _main_inference_port=30000,
-            _main_sampling_port=40000,
         )
 
         count = 0
@@ -122,9 +119,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
-            # TODO (mkolodner-sc): Dynamically infer free ports and remove this argument
-            _main_inference_port=50000,
-            _main_sampling_port=60000,
         )
         count = 0
         for datum in loader:
@@ -163,9 +157,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             local_process_rank=0,
             local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
-            # TODO (mkolodner-sc): Dynamically infer free ports and remove this argument
-            _main_inference_port=70000,
-            _main_sampling_port=80000,
         )
 
         count = 0
