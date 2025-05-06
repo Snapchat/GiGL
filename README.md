@@ -20,14 +20,14 @@ ______________________________________________________________________
 GiGL contains six components, each designed to facilitate the platforms end-to-end graph machine learning (ML) tasks.
 The components are as follows:
 
-| Component         | Source Code                                                    | Documentation                                              |
-| ----------------- | -------------------------------------------------------------- | ---------------------------------------------------------- |
-| Config Populator  | [here](python/gigl/src/config_populator/config_populator.py)   | [here](docs/sphinx/source/components/config_populator.md)  |
-| Data Preprocessor | [here](python/gigl/src/data_preprocessor/data_preprocessor.py) | [here](docs/sphinx/source/components/data_preprocessor.md) |
-| Subgraph Sampler  | [here](scala/subgraph_sampler/src/main/scala/Main.scala)       | [here](docs/sphinx/source/components/subgraph_sampler.md)  |
-| Split Generator   | [here](scala/split_generator/src/main/scala/Main.scala)        | [here](docs/sphinx/source/components/split_generator.md)   |
-| Trainer           | [here](python/gigl/src/training/trainer.py)                    | [here](docs/sphinx/source/components/trainer.md)           |
-| Inferencer        | [here](python/gigl/src/inference/inferencer.py)                | [here](docs/sphinx/source/components/inferencer.md)        |
+| Component         | Source Code                                                               | Documentation                                           |
+| ----------------- | ------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Config Populator  | {py:class}`gigl.src.config_populator.config_populator.ConfigPopulator`    | [here](docs/user_guide/components/config_populator.md)  |
+| Data Preprocessor | {py:class}`gigl.src.data_preprocessor.data_preprocessor.DataPreprocessor` | [here](docs/user_guide/components/data_preprocessor.md) |
+| Subgraph Sampler  | {py:class}`gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler`    | [here](docs/user_guide/components/subgraph_sampler.md)  |
+| Split Generator   | {py:class}`gigl.src.split_generator.split_generator.SplitGenerator`       | [here](docs/user_guide/components/split_generator.md)   |
+| Trainer           | {py:class}`gigl.src.training.trainer.Trainer`                             | [here](docs/user_guide/components/trainer.md)           |
+| Inferencer        | {py:class}`gigl.src.inference.inferencer.Inferencer`                      | [here](docs/user_guide/components/inferencer.md)        |
 
 The figure below illustrates at a high level how all the components work together.
 (<span style="color:purple">Purple</span> items are work-in-progress.)
@@ -42,39 +42,13 @@ the model is trained with triplet-style contrastive loss on a set of anchor node
 
 ## Installation ⚙️
 
-There are various ways to use GiGL. The recommended solution is to set up a conda environment and use some handy
-commands:
+See [Installation Instructions](docs/user_guide/getting_started/installation.md)
 
-From the root directory:
+## Getting Started / Docts
 
-```bash
-make initialize_environment
-conda activate gnn
-```
+See our detailed [User Guide](docs/user_guide/index.rst) to get started.
 
-This creates a Python 3.9 environment with some basic utilities. Next, to install all user dependencies:
-
-```bash
-make install_deps
-```
-
-If you *instead* want a developer-install which includes some extra tooling useful for contributions:
-
-```bash
-make install_dev_deps
-```
-
-<details>
-<summary>Local Repo Setup</summary>
-TODO
-</details>
-
-<details>
-<summary>Using Docker</summary>
-todo
-</details>
-
-<br />
+Also, see our [API reference](docs/api_reference/index.rst)
 
 ## Configuration 📄
 
@@ -224,7 +198,7 @@ Please see our [Contributing Guide](https://github.com/Snapchat/GiGL/blob/main/C
 ## Additional Resources ❗
 
 You may still have unanswered questions or may be facing issues. If so please see our
-[FAQ](docs/user_guide/trouble_shooting/faq.md) or our [User Guide](docs/user_guide/index.md) for further guidance.
+[FAQ](docs/user_guide/trouble_shooting/faq.md) or our [User Guide](docs/user_guide/index.rst) for further guidance.
 
 ## Citation
 

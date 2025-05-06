@@ -79,15 +79,18 @@ class PreprocessedMetadataReferences(NamedTuple):
 
 
 class DataPreprocessor:
-    """
-    GiGL Component to read node, edge and respective feature data from multiple data sources, and produce preprocessed / transformed versions of all this data, for subsequent components to use.
-    """
 
     __gbml_config_pb_wrapper: GbmlConfigPbWrapper
     __data_preprocessor_config: DataPreprocessorConfig
     __custom_worker_image_uri: Optional[str]
 
     def __init__(self) -> None:
+        """
+        GiGL Component to read node, edge and respective feature data from multiple data sources,
+        and produce preprocessed / transformed versions of all this data, for subsequent components to use.
+        Once initialized, use the :py:meth:`run` method to kick off the data preprocessing.
+
+        """
         self.__proto_utils = ProtoUtils()
 
     @property

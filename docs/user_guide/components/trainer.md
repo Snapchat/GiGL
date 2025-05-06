@@ -1,4 +1,4 @@
-## Trainer
+# Trainer
 
 The Trainer component reads the outputs of split generator (which paths are specified in the frozen config), and trains
 a GNN model on the training set, early stops on the performance of the validation set, and finally evaluates on the test

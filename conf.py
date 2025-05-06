@@ -7,6 +7,8 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 import pathlib
+import os
+
 
 curr_file_dir = pathlib.Path(__file__).parent.resolve()
 
@@ -21,6 +23,7 @@ author = 'Snap Inc'
 # https://www.sphinx-doc.org/en/master/usage/extensions/index.html
 extensions = [
     "sphinx.ext.autodoc",  # Pull in documentation from docstrings
+    "sphinx.ext.viewcode",  # Add links to the source code
     "sphinx.ext.autosummary", # Generates function/method/attribute summary lists
     "myst_parser", # Parsing markdown files: https://myst-parser.readthedocs.io/en/v0.15.1/sphinx/intro.html
     "sphinx_design", # needed by themes

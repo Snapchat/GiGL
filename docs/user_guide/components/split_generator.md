@@ -1,4 +1,4 @@
-## Split Generator
+# Split Generator
 
 The Split Generator reads localized subgraph samples produced by Subgraph Sampler, and executes logic to split the data
 into training, validation and test sets. The semantics of which nodes and edges end up in which data split depends on
