@@ -77,8 +77,9 @@ def get_resource_config(
             required=False,
         )
         args, _ = parser.parse_known_args()
-        resource_config_str = args.resource_config_uri or os.getenv(
-            "RESOURCE_CONFIG_PATH"
+        print(f"os.environ: {os.environ}")
+        resource_config_str = (
+            os.getenv("RESOURCE_CONFIG_PATH") or args.resource_config_uri
         )
 
         if resource_config_str is None:
@@ -89,6 +90,8 @@ def get_resource_config(
                 raise ValueError(
                     "No resource config provided, either via command-line argument or environment variable."
                 )
+
+    logger.info(f"Loading resource config from: {resource_config_str}")
 
     os.environ["RESOURCE_CONFIG_PATH"] = resource_config_str
     resource_config_path = UriFactory.create_uri(uri=resource_config_str)

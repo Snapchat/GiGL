@@ -146,7 +146,7 @@ class KfpOrchestrator:
             run_keyword_args["stop_after"] = stop_after
 
         logger.info(f"Running pipeline with args: {run_keyword_args}")
-        resource_config = get_resource_config(resource_config_uri=resource_config_uri)
+        resource_config = get_resource_config()
         vertex_ai_service = VertexAIService(
             project=resource_config.project,
             location=resource_config.region,
