@@ -47,7 +47,7 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
         return _BatchedNodeSamplerInput(self.node[index].view(-1), self.input_type)
 
 
-class _UDLToHomogeneous:
+class _SupervisedToHomogeneous:
     """Transform class to convert a heterogeneous graph to a homogeneous graph."""
 
     def __init__(
@@ -201,9 +201,10 @@ class DistNeighborLoader(DistLoader):
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
             message_passing_edge_type_to_get_labels_from (Optional[EdgeType]): The edge type to use for message passing, only needs to be passed in for training.
-                If passed in, then the dataset must be heterogenneous.
+                If passed in, then the dataset must be heterogeneous.
                 If passed in, supervision edge types will be automatically selected based on the message passing edge type,
                 and the labels for each node will be accordingly sampled.
+                # TODO(kmonte): Add comment for how inferred
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -300,6 +301,7 @@ class DistNeighborLoader(DistLoader):
             Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
         ] = []
 
+        # Determines if the node ids passed in are heterogeneous or homogeneous.
         if isinstance(curr_process_nodes, torch.Tensor):
             node_ids = curr_process_nodes
             node_type = None
@@ -315,7 +317,7 @@ class DistNeighborLoader(DistLoader):
 
             if not isinstance(dataset.graph, abc.Mapping):
                 raise ValueError(
-                    "When `message_passing_edge_type` is provided, the dataset must be heterogeneous."
+                    "When `message_passing_edge_type_to_get_labels_from` is provided, the dataset must be heterogeneous."
                 )
             (
                 positive_label_edge_type,
@@ -345,7 +347,7 @@ class DistNeighborLoader(DistLoader):
                 node_ids = torch.cat([extracted_node_ids, positive_labels], dim=1)
 
             self._transforms.append(
-                _UDLToHomogeneous(
+                _SupervisedToHomogeneous(
                     message_passing_edge_type=message_passing_edge_type_to_get_labels_from,
                     padding_node_id=-1,
                     anchor_sentinel=-2,
