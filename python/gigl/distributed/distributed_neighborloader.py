@@ -20,7 +20,7 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
-from gigl.types.graph import select_label_edge_types, DEFAULT_HOMOGENEOUS_NODE_TYPE, message_passing_to_positive_label, message_passing_to_negative_label
+from gigl.types.graph import select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 logger = Logger()
@@ -42,8 +42,6 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
         if not isinstance(index, torch.Tensor):
             index = torch.tensor(index, dtype=torch.long)
         index = index.to(self.node.device)
-        print(f"index: {index}")
-        print(f"{self.node[index].view(-1)=}")
         return _BatchedNodeSamplerInput(self.node[index].view(-1), self.input_type)
 
 
@@ -53,9 +51,9 @@ class _SupervisedToHomogeneous:
     def __init__(
         self,
         message_passing_edge_type: EdgeType,
-        padding_node_id: Optional[int] = None,
-        anchor_sentinel: Optional[int] = None,
-        positive_label_sentinel: Optional[int] = None,
+        padding_node_id: int,
+        anchor_sentinel: int,
+        positive_label_sentinel: int,
         negative_label_sentinel: Optional[int] = None,
     ):
         """
@@ -71,42 +69,37 @@ class _SupervisedToHomogeneous:
 
     def __call__(self, data: HeteroData) -> Data:
         """Transform the heterogeneous graph to a homogeneous graph."""
-        print(f'input: {data}')
-        print(f"{data.num_sampled_nodes[DEFAULT_HOMOGENEOUS_NODE_TYPE]=}") 
-        print(f"{data[DEFAULT_HOMOGENEOUS_NODE_TYPE].node=}")
-        print(f"{data[DEFAULT_HOMOGENEOUS_NODE_TYPE].batch=}")
-        node = data[DEFAULT_HOMOGENEOUS_NODE_TYPE].node
-        pos_edge_idx = data[message_passing_to_positive_label(self._message_passing_edge_type)].edge_index
-        neg_edge_idx = data[message_passing_to_negative_label(self._message_passing_edge_type)].edge_index
-        print(f"pos_edge_idx: {node[pos_edge_idx]}")
-        print(f"neg_edge_idx: {node[neg_edge_idx]}")
         homogeneous_data = data.edge_type_subgraph(
             [self._message_passing_edge_type]
         ).to_homogeneous(add_edge_type=False, add_node_type=False)
 
-        
+        full_batch: torch.Tensor = data.input_seeds
         achor_node_sentinels = torch.nonzero(
-            homogeneous_data.batch == self._anchor_sentinel
+            full_batch == self._anchor_sentinel
         ).squeeze(1)
         positive_label_sentinels = torch.nonzero(
-            homogeneous_data.batch == self._positive_label_sentinel
+            full_batch == self._positive_label_sentinel
         ).squeeze(1)
-        negative_label_sentinels = torch.nonzero(
-            homogeneous_data.batch == self._negative_label_sentinel
-        ).squeeze(1)
-        print(f"{homogeneous_data.batch=}")
-        print(f"{achor_node_sentinels=}")
-        print(f"{positive_label_sentinels=}")
-        print(f"{negative_label_sentinels=}")
+
         pos_labels = []
-        neg_labels = []
-        for anchor, positive, negative in zip(
-            achor_node_sentinels, positive_label_sentinels, negative_label_sentinels
-        ):
-            pos_batch= homogeneous_data.batch[anchor + 1 : positive].view(-1)
-            pos_labels.append(pos_batch[pos_batch != self._padding_node_id])
-            neg_batch = homogeneous_data.batch[positive + 1 : negative].view(-1)
-            neg_labels.append(neg_batch[neg_batch != self._padding_node_id])
+        if self._negative_label_sentinel is not None:
+            negative_label_sentinels = torch.nonzero(
+                full_batch == self._negative_label_sentinel
+            ).squeeze(1)
+            neg_labels = []
+            for anchor, positive, negative in zip(
+                achor_node_sentinels, positive_label_sentinels, negative_label_sentinels
+            ):
+                pos_batch = full_batch[anchor + 1 : positive].view(-1)
+                pos_labels.append(pos_batch[pos_batch != self._padding_node_id])
+                neg_batch = full_batch[positive + 1 : negative].view(-1)
+                neg_labels.append(neg_batch[neg_batch != self._padding_node_id])
+        else:
+            neg_labels = None
+            for anchor, positive in zip(achor_node_sentinels, positive_label_sentinels):
+                pos_batch = full_batch[anchor + 1 : positive].view(-1)
+                pos_labels.append(pos_batch[pos_batch != self._padding_node_id])
+
         node_mask = (
             (homogeneous_data.node == self._anchor_sentinel)
             | (homogeneous_data.node == self._positive_label_sentinel)
@@ -123,10 +116,8 @@ class _SupervisedToHomogeneous:
         homogeneous_data.edge_attr = edge_attr
         homogeneous_data.node = homogeneous_data.node[~node_mask]
 
-        
         homogeneous_data.y_positive = pos_labels
         homogeneous_data.y_negative = neg_labels
-        # TODO(kmonte): Add labels to the returned data.
         return homogeneous_data
 
 
@@ -330,34 +321,47 @@ class DistNeighborLoader(DistLoader):
                 dataset, node_ids, positive_label_edge_type, negative_label_edge_type
             )
             extracted_node_ids = node_ids.unsqueeze(1)
-            print(f"node_ids: {node_ids}")
             if negative_labels is not None:
+                anchor_sentinel = -2
+                positive_sentinel = -3
+                negative_sentinel = -4
                 node_ids = torch.cat(
                     [
                         extracted_node_ids,
-                        torch.full_like(extracted_node_ids, -2),
+                        torch.full_like(extracted_node_ids, anchor_sentinel),
                         positive_labels,
-                        torch.full_like(extracted_node_ids, -3),
+                        torch.full_like(extracted_node_ids, positive_sentinel),
                         negative_labels,
-                        torch.full_like(extracted_node_ids, -4),
+                        torch.full_like(extracted_node_ids, negative_sentinel),
                     ],
                     dim=1,
                 )
             else:
-                node_ids = torch.cat([extracted_node_ids, positive_labels], dim=1)
+                anchor_sentinel = -2
+                positive_sentinel = -3
+                negative_sentinel = None
+                node_ids = torch.cat(
+                    [
+                        extracted_node_ids,
+                        torch.full_like(extracted_node_ids, anchor_sentinel),
+                        positive_labels,
+                        torch.full_like(extracted_node_ids, positive_sentinel),
+                    ],
+                    dim=1,
+                )
 
             self._transforms.append(
                 _SupervisedToHomogeneous(
                     message_passing_edge_type=message_passing_edge_type_to_get_labels_from,
                     padding_node_id=-1,
-                    anchor_sentinel=-2,
-                    positive_label_sentinel=-3,
-                    negative_label_sentinel=-4,
+                    anchor_sentinel=anchor_sentinel,
+                    positive_label_sentinel=positive_sentinel,
+                    negative_label_sentinel=negative_sentinel,
                 )
             )
 
             # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
-            zero_samples = [1] + ([0] * (len(num_neighbors) -1))
+            zero_samples = [0] * len(num_neighbors)
             num_neighbors = {
                 message_passing_edge_type_to_get_labels_from: num_neighbors,
                 positive_label_edge_type: zero_samples,
@@ -365,7 +369,6 @@ class DistNeighborLoader(DistLoader):
             if negative_label_edge_type is not None:
                 num_neighbors[negative_label_edge_type] = zero_samples
             logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
-        print(f"node_ids: {node_ids}")
         input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
 
         sampling_config = SamplingConfig(
@@ -384,7 +387,6 @@ class DistNeighborLoader(DistLoader):
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        print(f"msg: {msg}")
         data = super()._collate_fn(msg)
         for transform in self._transforms:
             data = transform(data)

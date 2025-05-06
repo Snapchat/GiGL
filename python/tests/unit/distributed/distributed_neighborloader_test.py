@@ -170,19 +170,21 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 "Positive and Negative edges",
                 labeled_edges={
                     _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
-                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 10, 11, 15], [13, 16, 14, 17]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
                 },
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
             ),
-            # param(
-            #     "Positive edges",
-            #     labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
-            #     expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 17]),
-            #     expected_srcs=torch.tensor([10, 10, 15, 15, 11, 11]),
-            #     expected_dsts=torch.tensor([11, 12, 13, 14, 13, 17]),
-            # ),
+            param(
+                "Positive edges",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])},
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+            ),
         ]
     )
     def test_distributed_neighbor_loader_with_supervision_edges(
@@ -220,7 +222,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         partition_output = PartitionOutput(
             node_partition_book=to_heterogeneous_node(torch.zeros(18)),
             edge_partition_book={
-                e_type: torch.zeros(e_idx.max().item() + 1)
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -262,7 +264,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             dim=0,
         )
         print(f"{datum.y_positive=}")
-        print(f"{datum.y_negative=}")
+        if _NEGATIVE_EDGE_TYPE in labeled_edges:
+            print(f"{datum.y_negative=}")
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)

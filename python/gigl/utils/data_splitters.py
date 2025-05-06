@@ -341,8 +341,6 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
-    print(f"indptr: {indptr}")
-    print(f"indices: {indices}")
     starts = indptr[anchor_node_ids]  # [N]
     ends = indptr[anchor_node_ids + 1]  # [N]
 
