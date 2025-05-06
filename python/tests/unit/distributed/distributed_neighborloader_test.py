@@ -64,6 +64,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             local_process_rank=0,
             local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
+            # TODO (mkolodner-sc): Dynamically infer free ports and remove this argument
+            _main_inference_port=30000,
+            _main_sampling_port=40000,
         )
 
         count = 0
@@ -74,8 +77,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # Cora has 2708 nodes, make sure we go over all of them.
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
-
-        glt.distributed.rpc.shutdown_rpc()
 
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -121,6 +122,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
+            # TODO (mkolodner-sc): Dynamically infer free ports and remove this argument
+            _main_inference_port=50000,
+            _main_sampling_port=60000,
         )
         count = 0
         for datum in loader:
@@ -132,8 +136,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             datum[node_type].node, torch.tensor([10, 11, 12, 14]), dim=0
         )
         assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
-
-        glt.distributed.rpc.shutdown_rpc()
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
@@ -161,6 +163,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             local_process_rank=0,
             local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
+            # TODO (mkolodner-sc): Dynamically infer free ports and remove this argument
+            _main_inference_port=70000,
+            _main_sampling_port=80000,
         )
 
         count = 0
@@ -169,8 +174,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 4057)
-
-        glt.distributed.rpc.shutdown_rpc()
 
 
 if __name__ == "__main__":
