@@ -186,6 +186,9 @@ def _inference_process(
         pin_memory_device=device,
         worker_concurrency=sampling_workers_per_inference_process,
         channel_size=sampling_worker_shared_channel_size,
+        # For large-scale settings, consider setting this field to 30-60 seconds to ensure dataloaders
+        # don't compete for memory during initialization, causing OOM
+        process_start_gap_seconds=0,
     )
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.

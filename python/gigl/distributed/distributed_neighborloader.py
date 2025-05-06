@@ -56,7 +56,7 @@ class DistNeighborLoader(DistLoader):
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
-        process_start_gap_seconds: int = 0,
+        process_start_gap_seconds: int = 60,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -103,7 +103,7 @@ class DistNeighborLoader(DistLoader):
                 (default: "4GB").
             process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
                 it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
-                attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM. Defaults to `0`.
+                attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.

@@ -16,7 +16,7 @@ inferencerConfig:
 featureFlags:
   should_run_glt_backend: 'True'
 
-You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test` from GiGL root.
+You can run this example in a full pipeline with `make run_dblp_glt_kfp_test` from GiGL root.
 """
 
 import argparse
@@ -66,7 +66,7 @@ def _init_example_gigl_heterogeneous_model(
     """
     Initializes a hard-coded GiGL heterogeneous LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
     any `nn.Module` subclass can work with GLT.
-    This model is trained based on the following CORA UDL E2E config:
+    This model is trained based on the following DBLP E2E config:
     `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`
 
     Args:
@@ -147,7 +147,7 @@ def _inference_process(
         edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
     """
     fanout_per_hop = int(inferencer_args.get("fanout_per_hop", "10"))
-    # This fanout is defaulted to match the fanout provided in the CORA UDL E2E Config:
+    # This fanout is defaulted to match the fanout provided in the DBLP E2E Config:
     # `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`
     # Users can feel free to parse this argument from `inferencer_args` however they want if they want more
     # customizability for their fanout strategy for the current node type.
@@ -193,6 +193,9 @@ def _inference_process(
         pin_memory_device=device,
         worker_concurrency=sampling_workers_per_inference_process,
         channel_size=sampling_worker_shared_channel_size,
+        # For large-scale settings, consider setting this field to 30-60 seconds to ensure dataloaders
+        # don't compete for memory during initialization, causing OOM
+        process_start_gap_seconds=0,
     )
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
@@ -271,9 +274,9 @@ def _inference_process(
 
         if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"Local rank {process_number_on_current_machine} processed {batch_idx} batches. "
-                f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds. "
-                f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
+                f"Local rank {process_number_on_current_machine} processed {batch_idx} batches for node type {inference_node_type}. "
+                f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds for node type {inference_node_type}. "
+                f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds."
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
             t = time.time()
@@ -424,7 +427,7 @@ def _run_example_inference(
         # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
         if distributed_context.global_rank == 0:
             logger.info(
-                "--- Machine 0 triggers loading embeddings from GCS to BigQuery"
+                f"--- Machine 0 triggers loading embeddings from GCS to BigQuery for node type {inference_node_type}"
             )
             load_embedding_start_time = time.time()
 
@@ -435,7 +438,7 @@ def _run_example_inference(
                 table_id=bq_table_name,
             )
             logger.info(
-                f"Finished loading embeddings to BigQuery, which took {time.time()-load_embedding_start_time:.2f} seconds"
+                f"Finished loading embeddings to BigQuery, which took {time.time()-load_embedding_start_time:.2f} seconds for node type {inference_node_type}"
             )
 
     logger.info(
