@@ -43,7 +43,8 @@ class EarlyStopper:
 
     def step(self, value: float) -> Tuple[bool, bool]:
         """
-        Steps through the early stopper provided some criterion. Returns whether the provided criterion improved over the previous best criterion.
+        Steps through the early stopper provided some criterion. Returns whether the provided criterion improved over the previous best criterion and
+        whether we should early stop.
         Args:
             value (float): Criterion used for stepping through early stopper
         Returns:
