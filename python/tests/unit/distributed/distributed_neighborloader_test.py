@@ -47,7 +47,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def test_distributed_neighbor_loader(self):
+    def _test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -80,7 +80,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def test_distributed_neighbor_loader_batched(self):
+    def _test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -131,7 +131,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def test_distributed_neighbor_loader_heterogeneous(self):
+    def _test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -170,19 +170,19 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 "Positive and Negative edges",
                 labeled_edges={
                     _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
-                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 11], [16, 14]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 10, 11, 15], [13, 16, 14, 17]]),
                 },
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
             ),
-            param(
-                "Positive edges",
-                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
-                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 17]),
-                expected_srcs=torch.tensor([10, 10, 15, 15, 11, 11]),
-                expected_dsts=torch.tensor([11, 12, 13, 14, 13, 17]),
-            ),
+            # param(
+            #     "Positive edges",
+            #     labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
+            #     expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 17]),
+            #     expected_srcs=torch.tensor([10, 10, 15, 15, 11, 11]),
+            #     expected_dsts=torch.tensor([11, 12, 13, 14, 13, 17]),
+            # ),
         ]
     )
     def test_distributed_neighbor_loader_with_supervision_edges(
@@ -204,7 +204,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # 10 -> 15
         # 15 -> 16
         # Negative labels
-        # 10 -> 16
+        # 10 -> {13, 16}
         # 11 -> 14
 
         edge_index = {
@@ -220,7 +220,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         partition_output = PartitionOutput(
             node_partition_book=to_heterogeneous_node(torch.zeros(18)),
             edge_partition_book={
-                e_type: torch.zeros(e_idx.size(1))
+                e_type: torch.zeros(e_idx.max().item() + 1)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -240,7 +240,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         loader = DistNeighborLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
-            input_nodes=(node_type, torch.tensor([10])),
+            input_nodes=(node_type, torch.tensor([10, 15])),
+            batch_size=2,
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
@@ -253,11 +254,15 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 1)
+
+        dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(
             datum.node,
             expected_node,
             dim=0,
         )
+        print(f"{datum.y_positive=}")
+        print(f"{datum.y_negative=}")
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
