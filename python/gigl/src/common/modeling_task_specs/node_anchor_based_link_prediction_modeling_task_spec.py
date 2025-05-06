@@ -436,11 +436,11 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
                         num_batches=self.num_val_batches,
                     )
 
-                    self._early_stopper.step(
+                    has_metric_improved, should_early_stop = self._early_stopper.step(
                         value=eval_metrics[self._early_stop_criterion]
                     )
                     # Check if we need to early stop based on patience
-                    if self._early_stopper.should_early_stop():
+                    if should_early_stop:
                         break
 
                 profiler.step() if profiler else None  # type: ignore

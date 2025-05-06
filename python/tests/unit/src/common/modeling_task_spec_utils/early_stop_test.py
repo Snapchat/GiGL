@@ -92,7 +92,7 @@ class EarlyStopTests(unittest.TestCase):
             model=model,
         )
         for step_num, value in enumerate(mocked_criteria_values):
-            has_metric_improved = early_stopper.step(value=value)
+            has_metric_improved, should_early_stop = early_stopper.step(value=value)
             if model is not None:
                 model.foo += 1
             if step_num in improvement_steps:
@@ -100,9 +100,9 @@ class EarlyStopTests(unittest.TestCase):
             else:
                 self.assertFalse(has_metric_improved)
             if step_num < len(mocked_criteria_values) - 1:
-                self.assertFalse(early_stopper.should_early_stop())
+                self.assertFalse(should_early_stop)
             else:
-                self.assertTrue(early_stopper.should_early_stop())
+                self.assertTrue(should_early_stop)
         if model is not None:
             assert early_stopper.best_model_state_dict is not None
             assert_tensor_equality(

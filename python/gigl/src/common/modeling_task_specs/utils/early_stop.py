@@ -1,6 +1,6 @@
 import gc
 from copy import deepcopy
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -41,14 +41,16 @@ class EarlyStopper:
         else:
             return value < self._prev_best
 
-    def step(self, value: float) -> bool:
+    def step(self, value: float) -> Tuple[bool, bool]:
         """
         Steps through the early stopper provided some criterion. Returns whether the provided criterion improved over the previous best criterion.
         Args:
             value (float): Criterion used for stepping through early stopper
         Returns:
-            bool: Whether there was improvement over previous best criteiron
+            bool: Whether there was improvement over previous best criterion
+            bool: Whether early stop patience has been reached, indicating early stopping
         """
+        has_metric_improved: bool
         if self._has_metric_improved(value=value):
             self._early_stop_counter = 0
             logger.info(
@@ -61,27 +63,23 @@ class EarlyStopper:
                 for identifier, layer in self._model.state_dict().items():
                     self._best_model[identifier] = deepcopy(layer).cpu()
                 gc.collect()
-            return True
+            has_metric_improved = True
         else:
             self._early_stop_counter += 1
             logger.info(
                 f"Got validation {value}, which is worse than previous best {self._prev_best}. No improvement in validation criteria for {self._early_stop_counter} consecutive checks. Early Stop Counter: {self._early_stop_counter}"
             )
-            return False
+            has_metric_improved = False
 
-    def should_early_stop(self) -> bool:
-        """
-        Identifies whether early stopping should occur based on provided early stop patience
-        Returns:
-            bool: Whether the `early_stop_patience` number of consecutive steps have occured without improvement
-        """
         if self._early_stop_counter >= self._early_stop_patience:
             logger.info(
                 f"Early stopping triggered after {self._early_stop_counter} checks without improvement"
             )
-            return True
+            should_early_stop = True
         else:
-            return False
+            should_early_stop = False
+
+        return has_metric_improved, should_early_stop
 
     @property
     def best_model_state_dict(self) -> Optional[dict[str, torch.Tensor]]:
