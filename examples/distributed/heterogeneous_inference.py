@@ -143,7 +143,7 @@ def _inference_process(
         inferencer_args (Dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for in current inference process
         node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
-        edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension for the model
+        edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
     """
     fanout_per_hop = int(inferencer_args.get("fanout_per_hop", "10"))
     # This fanout is defaulted to match the fanout provided in the CORA UDL E2E Config:
