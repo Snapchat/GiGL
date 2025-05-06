@@ -1,3 +1,4 @@
+import gc
 from copy import deepcopy
 from typing import Optional, Tuple
 
@@ -59,7 +60,15 @@ class EarlyStopper:
             )
             self._prev_best = value
             if self._model is not None:
-                self._best_model = deepcopy(self._model.state_dict())
+                if isinstance(self._model, torch.nn.parallel.DistributedDataParallel):
+                    model = self._model.module
+                else:
+                    model = self._model
+                # Making a deep copy of the best model and moving to CPU to save GPU memory
+                self._best_model = {}
+                for identifier, layer in model.state_dict().items():
+                    self._best_model[identifier] = deepcopy(layer).cpu()
+                gc.collect()
             has_metric_improved = True
         else:
             self._early_stop_counter += 1
