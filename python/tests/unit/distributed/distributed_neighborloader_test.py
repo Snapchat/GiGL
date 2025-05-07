@@ -11,7 +11,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import NodeType
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -19,10 +19,10 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    NEGATIVE_LABEL_RELATION,
-    POSITIVE_LABEL_RELATION,
     GraphPartitionData,
     PartitionOutput,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
     to_heterogeneous_node,
 )
 from tests.test_assets.distributed.run_distributed_dataset import (
@@ -78,8 +78,12 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        positive_edge_type = EdgeType(node_type, POSITIVE_LABEL_RELATION, node_type)
-        negative_edge_type = EdgeType(node_type, NEGATIVE_LABEL_RELATION, node_type)
+        positive_edge_type = message_passing_to_positive_label(
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        )
+        negative_edge_type = message_passing_to_negative_label(
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        )
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
                 [

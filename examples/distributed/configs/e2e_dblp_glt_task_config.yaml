@@ -1,4 +1,6 @@
 graphMetadata:
+  # We have 3 nodes types in the DBLP Dataset: author, paper, and term. We also have 3
+  # edge types: author -> paper, paper -> author, and term -> paper
   condensedEdgeTypeMap:
     '0':
       dstNodeType: paper
@@ -32,6 +34,7 @@ graphMetadata:
   - term
 taskMetadata:
   nodeAnchorBasedLinkPredictionTaskMetadata:
+    # We aim to predict paper -> author links in the graph.
     supervisionEdgeTypes:
     - dstNodeType: author
       relation: to
@@ -41,7 +44,9 @@ datasetConfig:
     dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
     dataPreprocessorArgs:
       mocked_dataset_name: 'dblp_node_anchor_edge_features_lp'
-  # Below not used for GLT Inference
+  # Below not used for GLT Inference and is only used for non-GLT workflows. These are provided here since this is a requirement of
+  # config validator, but will be removed in the future once this is no longer required.
+  # TODO (mkolodner-sc): Remove below arguments once they are no longer needed
   subgraphSamplerConfig:
     numPositiveSamples: 1
     subgraphSamplingStrategy:

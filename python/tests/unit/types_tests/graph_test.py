@@ -7,9 +7,10 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    NEGATIVE_LABEL_RELATION,
-    POSITIVE_LABEL_RELATION,
     LoadedGraphTensors,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+    select_label_edge_types,
     to_heterogeneous_edge,
     to_heterogeneous_node,
     to_homogeneous,
@@ -91,15 +92,11 @@ class GraphTypesTyest(unittest.TestCase):
                 negative_label=torch.tensor([[1, 0]]),
                 expected_edge_index={
                     DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor([[0, 1], [1, 2]]),
-                    EdgeType(
-                        DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                        POSITIVE_LABEL_RELATION,
-                        DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                    message_passing_to_positive_label(
+                        DEFAULT_HOMOGENEOUS_EDGE_TYPE
                     ): torch.tensor([[0, 2]]),
-                    EdgeType(
-                        DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                        NEGATIVE_LABEL_RELATION,
-                        DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                    message_passing_to_negative_label(
+                        DEFAULT_HOMOGENEOUS_EDGE_TYPE
                     ): torch.tensor([[1, 0]]),
                 },
             ),
@@ -185,6 +182,46 @@ class GraphTypesTyest(unittest.TestCase):
 
         with self.assertRaises(raises):
             graph_tensors.treat_labels_as_edges()
+
+    def test_select_label_edge_types(self):
+        message_passing_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        edge_types = [
+            message_passing_edge_type,
+            message_passing_to_positive_label(message_passing_edge_type),
+            message_passing_to_negative_label(message_passing_edge_type),
+            EdgeType(NodeType("foo"), Relation("bar"), NodeType("baz")),
+            EdgeType(
+                DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                Relation("bar"),
+                DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            ),
+        ]
+
+        self.assertEqual(
+            (
+                message_passing_to_positive_label(message_passing_edge_type),
+                message_passing_to_negative_label(message_passing_edge_type),
+            ),
+            select_label_edge_types(message_passing_edge_type, edge_types),
+        )
+
+    def test_select_label_edge_types_pyg(self):
+        message_passing_edge_type = ("node", "to", "node")
+        edge_types = [
+            message_passing_edge_type,
+            message_passing_to_positive_label(message_passing_edge_type),
+            message_passing_to_negative_label(message_passing_edge_type),
+            ("other", "to", "node"),
+            ("other", "to", "other"),
+        ]
+
+        self.assertEqual(
+            (
+                message_passing_to_positive_label(message_passing_edge_type),
+                message_passing_to_negative_label(message_passing_edge_type),
+            ),
+            select_label_edge_types(message_passing_edge_type, edge_types),
+        )
 
 
 if __name__ == "__main__":
