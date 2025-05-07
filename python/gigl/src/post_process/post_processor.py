@@ -85,7 +85,7 @@ class PostProcessor:
             logger.info(
                 f"Will automatically cleanup the temporary assets directory: ${temp_dir_gcs_path}"
             )
-            gcs_utils.delete_files_in_bucket_dir(gcs_path=temp_dir_gcs_path)
+            # gcs_utils.delete_files_in_bucket_dir(gcs_path=temp_dir_gcs_path)
 
     def __write_post_processor_metrics_to_uri(
         self,
