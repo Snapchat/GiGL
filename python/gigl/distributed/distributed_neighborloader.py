@@ -119,6 +119,13 @@ class DistNeighborLoader(DistLoader):
                 Currently defaults to: gigl.distributed.constants.DEFAULT_MASTER_SAMPLING_PORT
         """
 
+        # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
+        # then we can properly clean up and don't get extraneous error messages.
+        # We set to `True` as we don't need to cleanup right away, and this will get set
+        # to `False` in super().__init__()` e.g.
+        # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
+        self._shutdowned = True
+
         if input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
