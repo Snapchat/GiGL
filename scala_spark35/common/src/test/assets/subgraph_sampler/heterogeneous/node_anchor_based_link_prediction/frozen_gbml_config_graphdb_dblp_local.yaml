@@ -1,6 +1,6 @@
 # Assets in this config are generated with dataset_asset_mocking_suite.py - mock_toy_graph_heterogeneous_node_anchor_based_link_prediction_dataset()
 # The assets in this config are used for local testing and unit tests.
-# See docs/sphinx/source/components/subgraph_sampler.md for more info on how to configure subgraph sampler.
+# See docs/user_guide/components/subgraph_sampler.md for more info on how to configure subgraph sampler.
 datasetConfig:
   dataPreprocessorConfig:
     dataPreprocessorArgs:

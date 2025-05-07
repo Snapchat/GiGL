@@ -1,5 +1,7 @@
 # Quick Start Guide
 
+TODO: (svij) - This section will be updated soon.
+
 GiGL is a flexible framework that allows customization for many graph ML tasks in its components like data data
 pre-processing, training logic, inference.
 

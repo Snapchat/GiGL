@@ -1,4 +1,6 @@
-# What is GiGL?
+# Overview
+
+## What is GiGL?
 
 GiGL (Gigantic Graph Learning) is an open-source library designed for training and inference of Graph Neural Networks
 (GNNs) at a very large scale, capable of handling billion-scale heterogeneous and feature-rich graph data. This library
@@ -17,7 +19,7 @@ At high level, GiGL abstracts the complicated and distributed processing of the 
 users, such that users can focus on the graph ML modeling with the open-source libraries that they might already be
 familiar with (PyG, DGL, etc). For more background, please check out our [research blog](<>) and [paper](<>).
 
-# Why use GiGL?
+## Why use GiGL?
 
 GiGL was designed to address a single need: to enable ML researchers, engineers, and practitioners explore and iterate
 on state-of-the-art graph ML models on large-scale graph data without having to stray far from the familiarities of
@@ -38,7 +40,7 @@ iterating on models or multiple production inference pipelines are running.
 If you are a ML practitioner, engineer, and/or enthusiast who is interested in working with and deploying GNNs on very
 large-scale graph data, you will find GiGL useful.
 
-# Why *not* use GiGL?
+## Why *not* use GiGL?
 
 GiGL is designed with large-scale GNN settings in mind. For academic benchmarking and experimentation on smaller graphs
 (ones that can be easily fit in RAM), open-source modeling libraries and built-in abstractions within PyG and DGL for
@@ -47,7 +49,7 @@ directly. There is overhead introduced in GiGL compared to these libraries for d
 execution, and while this overhead is marginal in proportion to the benefits in large-scale scenarios, it may be
 outsized in small-scale ones.
 
-# How does GiGL work?
+## How does GiGL work?
 
 GiGL is designed with **horizontal-scaling** across many compute resources in mind, which makes it a good fit to run on
 custom compute clusters and cloud-offerings. While vertically scaled GNN solutions are feasible to a limit, thanks to

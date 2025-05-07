@@ -1,4 +1,4 @@
-## Split Generator
+# Split Generator
 
 The Split Generator reads localized subgraph samples produced by Subgraph Sampler, and executes logic to split the data
 into training, validation and test sets. The semantics of which nodes and edges end up in which data split depends on
@@ -84,7 +84,7 @@ python -m gigl.src.split_generator.split_generator \
   --resource_config_uri="gs://MY TEMP ASSETS BUCKET/resource_config.yaml"
 ```
 
-The python entry point `split_generator.py` performs the following:
+The python entry point {py:class}`gigl.src.split_generator.split_generator.SplitGenerator` performs the following:
 
 - Create a Dataproc cluster suitable for the scale of the graph at hand,
 - Install Spark and Scala dependencies,

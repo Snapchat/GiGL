@@ -92,7 +92,7 @@ labels, etc. `PreprocessedMetadata` will be read from this URI by other componen
   user-provided `DataPreprocessorConfig` class instance. This leaves much to user control. Please take a look at the
   instance provided at the `dataPreprocessorConfigClsPath` field of `datasetConfig`.`dataPreprocessorConfig` in order to
   learn more. For an example `dataPreprocessorConfig`, see
-  [here](../../../../python/gigl/src/mocking/mocking_assets/passthrough_preprocessor_config_for_mocked_assets.py)
+  {py:class}`gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets`
 
 - In order to customize transformation logic for existing node features, take a look at preprocessing functions in
   [Tensorflow Transform ](https://www.tensorflow.org/tfx/transform/get_started) documentation. In order to add or remove
