@@ -1,6 +1,7 @@
 from torch_geometric.datasets.planetoid import Planetoid
 
 from gigl.common.logger import Logger
+from gigl.src.mocking.lib.pyg_datasets_forks import CoraFromGCS
 
 logger = Logger()
 
@@ -44,5 +45,5 @@ def get_pyg_cora_dataset(store_at: str = "/tmp/Cora") -> Planetoid:
         torch_geometric.datasets.planetoid.Planetoid
     """
     # Fetch the dataset
-    dataset = Planetoid(root=store_at, name="Cora")
+    dataset = CoraFromGCS(root=store_at, name="Cora")
     return dataset

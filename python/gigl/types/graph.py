@@ -10,6 +10,8 @@ from gigl.common.logger import Logger
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 
+logger = Logger()
+
 DEFAULT_HOMOGENEOUS_NODE_TYPE = NodeType("default_homogeneous_node_type")
 DEFAULT_HOMOGENEOUS_EDGE_TYPE = EdgeType(
     src_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -17,8 +19,13 @@ DEFAULT_HOMOGENEOUS_EDGE_TYPE = EdgeType(
     dst_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-POSITIVE_LABEL_RELATION = Relation("positive_label")
-NEGATIVE_LABEL_RELATION = Relation("negative_label")
+_POSITIVE_LABEL_TAG = "gigl_positive"
+_NEGATIVE_LABEL_TAG = "gigl_negative"
+
+# We really should support PyG EdgeType natively but since we type ignore it that's not ideal atm...
+# We can use this TypeVar to try and stem the bleeding (hopefully).
+_EdgeType = TypeVar("_EdgeType", EdgeType, tuple[str, str, str])
+
 
 # TODO(kmonte, mkolodner): Move SerializedGraphMetadata and maybe convert_pb_to_serialized_graph_metadata here.
 
@@ -82,9 +89,6 @@ class PartitionOutput:
     ]
 
 
-logger = Logger()
-
-
 # This dataclass should not be frozen, as we are expected to delete its members once they have been registered inside of the partitioner
 # in order to save memory.
 @dataclass
@@ -131,17 +135,9 @@ class LoadedGraphTensors:
         logger.info(
             f"Basing positive and negative labels on edge types on main label edge type: {main_edge_type}."
         )
-        positive_label_edge_type = EdgeType(
-            main_edge_type.src_node_type,
-            POSITIVE_LABEL_RELATION,
-            main_edge_type.dst_node_type,
-        )
+        positive_label_edge_type = message_passing_to_positive_label(main_edge_type)
         edge_index_with_labels[positive_label_edge_type] = self.positive_label
-        negative_label_edge_type = EdgeType(
-            main_edge_type.src_node_type,
-            NEGATIVE_LABEL_RELATION,
-            main_edge_type.dst_node_type,
-        )
+        negative_label_edge_type = message_passing_to_negative_label(main_edge_type)
         edge_index_with_labels[negative_label_edge_type] = self.negative_label
         logger.info(
             f"Treating positive labels as edge type {positive_label_edge_type} and negative labels as edge type {negative_label_edge_type}."
@@ -153,6 +149,80 @@ class LoadedGraphTensors:
         self.edge_features = to_heterogeneous_edge(self.edge_features)
         self.positive_label = None
         self.negative_label = None
+
+
+def message_passing_to_positive_label(
+    message_passing_edge_type: _EdgeType,
+) -> _EdgeType:
+    """Convert a message passing edge type to a positive label edge type.
+
+    Args:
+        message_passing_edge_type (EdgeType): The message passing edge type.
+
+    Returns:
+        EdgeType: The positive label edge type.
+    """
+    edge_type = (
+        str(message_passing_edge_type[0]),
+        f"{message_passing_edge_type[1]}_{_POSITIVE_LABEL_TAG}",
+        str(message_passing_edge_type[2]),
+    )
+    if isinstance(message_passing_edge_type, EdgeType):
+        return EdgeType(
+            NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
+        )
+    else:
+        return edge_type
+
+
+def message_passing_to_negative_label(
+    message_passing_edge_type: _EdgeType,
+) -> _EdgeType:
+    """Convert a message passing edge type to a negative label edge type.
+
+    Args:
+        message_passing_edge_type (EdgeType): The message passing edge type.
+
+    Returns:
+        EdgeType: The negative label edge type.
+    """
+    edge_type = (
+        str(message_passing_edge_type[0]),
+        f"{message_passing_edge_type[1]}_{_NEGATIVE_LABEL_TAG}",
+        str(message_passing_edge_type[2]),
+    )
+    if isinstance(message_passing_edge_type, EdgeType):
+        return EdgeType(
+            NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
+        )
+    else:
+        return edge_type
+
+
+def select_label_edge_types(
+    message_passing_edge_type: _EdgeType, edge_entities: abc.Iterable[_EdgeType]
+) -> tuple[_EdgeType, Optional[_EdgeType]]:
+    """Select label edge types for a given message passing edge type.
+
+    Args:
+        message_passing_edge_type (EdgeType): The message passing edge type.
+        edge_entities (abc.Iterable[EdgeType]): The edge entities to select from.
+
+    Returns:
+        tuple[EdgeType, Optional[EdgeType]]: A tuple containing the positive label edge type and optionally the negative label edge type.
+    """
+    positive_label_type = None
+    negative_label_type = None
+    for edge_type in edge_entities:
+        if message_passing_to_positive_label(message_passing_edge_type) == edge_type:
+            positive_label_type = edge_type
+        if message_passing_to_negative_label(message_passing_edge_type) == edge_type:
+            negative_label_type = edge_type
+    if positive_label_type is None:
+        raise ValueError(
+            f"Could not find positive label edge type for message passing edge type {message_passing_edge_type} from edge entities {edge_entities}."
+        )
+    return positive_label_type, negative_label_type
 
 
 _T = TypeVar("_T")
@@ -171,6 +241,18 @@ def to_heterogeneous_node(x: Union[_T, dict[NodeType, _T]]) -> dict[NodeType, _T
 def to_heterogeneous_node(
     x: Optional[Union[_T, dict[NodeType, _T]]]
 ) -> Optional[dict[NodeType, _T]]:
+    """Convert a value to a heterogeneous node representation.
+
+    If the input is None, return None.
+    If the input is a dictionary, return it as is.
+    If the input is a single value, return it as a dictionary with the default homogeneous node type as the key.
+
+    Args:
+        x (Optional[Union[_T, dict[NodeType, _T]]]): The input value to convert.
+
+    Returns:
+        Optional[dict[NodeType, _T]]: The converted heterogeneous node representation.
+    """
     if x is None:
         return None
     if isinstance(x, dict):
@@ -191,6 +273,18 @@ def to_heterogeneous_edge(x: Union[_T, dict[EdgeType, _T]]) -> dict[EdgeType, _T
 def to_heterogeneous_edge(
     x: Optional[Union[_T, dict[EdgeType, _T]]]
 ) -> Optional[dict[EdgeType, _T]]:
+    """Convert a value to a heterogeneous edge representation.
+
+    If the input is None, return None.
+    If the input is a dictionary, return it as is.
+    If the input is a single value, return it as a dictionary with the default homogeneous edge type as the key.
+
+    Args:
+        x (Optional[Union[_T, dict[EdgeType, _T]]]): The input value to convert.
+
+    Returns:
+        Optional[dict[EdgeType, _T]]: The converted heterogeneous edge representation.
+    """
     if x is None:
         return None
     if isinstance(x, dict):
@@ -211,6 +305,18 @@ def to_homogeneous(x: Union[_T, dict[Union[NodeType, EdgeType], _T]]) -> _T:
 def to_homogeneous(
     x: Optional[Union[_T, dict[Union[NodeType, EdgeType], _T]]]
 ) -> Optional[_T]:
+    """Convert a value to a homogeneous representation.
+
+    If the input is None, return None.
+    If the input is a dictionary, return the single value in the dictionary.
+    If the input is a single value, return it as is.
+
+    Args:
+        x (Optional[Union[_T, dict[Union[NodeType, EdgeType], _T]]]): The input value to convert.
+
+    Returns:
+        Optional[_T]: The converted homogeneous representation.
+    """
     if x is None:
         return None
     if isinstance(x, dict):

@@ -18,8 +18,9 @@ then
     brew install sbt
 else
     echo "Setting up Scala Deps for Linux Environment"
+    gsutil cp gs://public-gigl/tools/scala/coursier/cs-x86_64-pc-linux.gz cs-x86_64-pc-linux.gz
     mkdir -p tools/scala/coursier
-    curl -fL https://github.com/coursier/coursier/releases/download/v2.1.23/cs-x86_64-pc-linux.gz | gzip -d > tools/scala/coursier/cs && chmod +x tools/scala/coursier/cs && tools/scala/coursier/cs setup -y
+    gunzip -c cs-x86_64-pc-linux.gz > tools/scala/coursier/cs && chmod +x tools/scala/coursier/cs && tools/scala/coursier/cs setup -y
 fi
 
 source ~/.profile
