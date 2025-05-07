@@ -19,11 +19,9 @@
          .. rubric:: {{ _('Functions') }}
 
          .. autosummary::
-            :toctree:
             :nosignatures:
-            :template: base.rst
             {% for item in functions %}
-               {{ item }}
+               .. autofunction:: {{ item }}
             {%- endfor %}
       {% endif %}
    {% endblock %}
@@ -33,11 +31,21 @@
          .. rubric:: {{ _('Classes') }}
 
          .. autosummary::
-            :toctree:
             :nosignatures:
-            :template: class.rst
             {% for item in classes %}
-               {{ item }}
+            .. autoclass:: {{ objname }}
+               :members:
+               :show-inheritance:
+               :inherited-members:
+               {% block methods %}
+                  {% if methods %}
+                     .. rubric:: {{ _('Methods') }}
+                     .. autosummary::
+                        {% for item in methods %}
+                           ~{{ name }}.{{ item }}
+                        {%- endfor %}
+                  {% endif %}
+               {% endblock %}
             {%- endfor %}
       {% endif %}
    {% endblock %}
@@ -47,11 +55,11 @@
          .. rubric:: {{ _('Exceptions') }}
 
          .. autosummary::
-            :toctree:
             :nosignatures:
-            :template: base.rst
             {% for item in exceptions %}
-               {{ item }}
+               .. autoclass:: {{ item }}
+                  :members:
+                  :show-inheritance:
             {%- endfor %}
       {% endif %}
    {% endblock %}

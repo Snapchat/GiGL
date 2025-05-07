@@ -1,4 +1,4 @@
-{{ fullname | replace(module.split(".")[-1] + ".", "") }}
+{{ fullname }}
 {{ underline }}
 
 .. currentmodule:: {{ module }}

@@ -40,7 +40,18 @@ include_patterns = [
     "index.rst",
 ]
 
-
+autodoc_default_options = {
+    # Generate automatic documentation for all members of the target module
+    'members': True,
+    # Generate automatic documentation for members of the target module that don’t have a docstring or doc-comment
+    'undoc-members': True,
+    # Insert the class’s base classes after the class signature
+    'show-inheritance': True,
+   # Generate automatic documentation for special members of the target module
+    'special-members': '__init__',
+    # Exclude the given names from the members to document
+    'exclude-members': "__weakref__,__dict__,__module__,__class__,__abstractmethods__",
+}
 
 templates_path = [
     'gh_pages_source/_templates'
