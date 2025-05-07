@@ -1,4 +1,6 @@
 graphMetadata:
+  # We have 3 nodes types in the DBLP Dataset: author, paper, and term. We also have 3
+  # edge types: author -> paper, paper -> author, and term -> paper
   condensedEdgeTypeMap:
     '0':
       dstNodeType: paper
@@ -32,6 +34,7 @@ graphMetadata:
   - term
 taskMetadata:
   nodeAnchorBasedLinkPredictionTaskMetadata:
+    # We aim to predict paper -> author links in the graph.
     supervisionEdgeTypes:
     - dstNodeType: author
       relation: to
