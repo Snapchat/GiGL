@@ -59,13 +59,17 @@ class KfpOrchestrator:
     ) -> Uri:
         """
         Compiles the GiGL Kubeflow pipeline.
+
         Args:
             cuda_container_image (str): Container image for CUDA (see: containers/Dockerfile.cuda).
             cpu_container_image (str): Container image for CPU.
             dataflow_container_image (str): Container image for Dataflow.
-            dst_compiled_pipeline_path (Uri): Destination path for where to store the compiled pipeline yaml.
-            additional_job_args: Optional additional arguments to be passed into components, by component.
-            tag: Optional tag, which is provided will be used to tag the pipeline description.
+            dst_compiled_pipeline_path (Uri): Destination path for the compiled pipeline YAML file.
+            additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
+            tag (Optional[str]): Optional tag to include in the pipeline description.
+
+        Returns:
+            Uri: The URI of the compiled pipeline.
         """
         local_pipeline_bundle_path: LocalUri = (
             dst_compiled_pipeline_path
@@ -114,20 +118,17 @@ class KfpOrchestrator:
     ) -> aiplatform.PipelineJob:
         """
         Runs the GiGL Kubeflow pipeline.
+
         Args:
             applied_task_identifier (AppliedTaskIdentifier): Identifier for the task.
-            task_config_uri (Uri): URI for the task config.
-            resource_config_uri (Uri): URI for the resource config.
-            start_at (str): Component to start at.
-            stop_after (str): Component to stop after.
-            compiled_pipeline_path (Uri): Path to the compiled pipeline.
-                If compile is False, this should be provided and is directly used to run the pipeline and skip compilation.
-                If compile is True, this flag is optional and if provided, is used as the destination path for where to
-                store the compiled pipeline yaml.
-            additional_job_args: Optional additional arguements to be passed into components, by component.
+            task_config_uri (Uri): URI of the task configuration file.
+            resource_config_uri (Uri): URI of the resource configuration file.
+            start_at (str): Component to start the pipeline at. Defaults to 'config_populator'.
+            stop_after (Optional[str]): Component to stop the pipeline after. Defaults to None i.e. run entire pipeline.
+            compiled_pipeline_path (Uri): Path to the compiled pipeline YAML file.
 
         Returns:
-            aiplatform.PipelineJob: The job that was created.
+            aiplatform.PipelineJob: The created pipeline job.
         """
         check_if_kfp_pipeline_job_name_valid(str(applied_task_identifier))
         file_loader = FileLoader()
@@ -162,6 +163,15 @@ class KfpOrchestrator:
         return run
 
     def wait_for_completion(self, run: Union[aiplatform.PipelineJob, str]):
+        """
+        Waits for the completion of a pipeline run.
+
+        Args:
+            run (Union[aiplatform.PipelineJob, str]): The pipeline job or its resource name.
+
+        Returns:
+            None
+        """
         resource_name = run if isinstance(run, str) else run.resource_name
         VertexAIService.wait_for_run_completion(resource_name)
         logger.info(f"Pipeline run {resource_name} completed successfully.")

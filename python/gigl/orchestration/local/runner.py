@@ -48,6 +48,16 @@ class Runner:
         pipeline_config: PipelineConfig,
         start_at: str = GiGLComponents.ConfigPopulator.value,
     ):
+        """
+        Runs the GiGL pipeline locally starting from the specified component.
+
+        Args:
+            pipeline_config (PipelineConfig): Configuration for the pipeline.
+            start_at (str): Component to start the pipeline from. Defaults to 'config_populator'.
+
+        Returns:
+            None
+        """
         logger.info(
             f"Running pipeline from component {start_at} with parameters: \n"
             f"job_name: {pipeline_config.applied_task_identifier}\n"
