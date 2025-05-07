@@ -1,0 +1,60 @@
+name: Release Documentation
+# Workflow used for building and deploying GiGL documentation to GitHub Pages:
+# https://snapchat.github.io/GiGL/
+
+on:
+  # Runs on pushes targeting the default branch
+  push:
+    branches: ["main"]
+
+  # In case we need to run manually for testing, or if push to main fails deploying documentation.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # autodoc analyses the code and docstrings by introspection after importing the modules.
+      # For importing to work, we have to make sure that your modules can be found by Sphinx and
+      # that dependencies can be resolved.
+      - name: Setup Machine for releasing documentation
+        uses: snapchat/gigl/.github/actions/setup-python-tools@main
+        with:
+            install_dev_deps: "true"
+            setup_gcloud: "true"
+            gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+            workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+            gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+      # We also make gigl available w/ editable install `-e` so that autodoc can find it.
+      - name: Install necessary doc dependencies
+        run: |
+          pip install -e "./python[docs]"
+      - name: Sphinx build
+        run: |
+          make build_docs
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload the output folder which contains all static assets
+          path: 'gh_pages_build/html/'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

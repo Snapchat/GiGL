@@ -478,3 +478,7 @@ release_gigl:
 
 publish_docs:
 	@echo "This needs to be implemented"
+
+build_docs:
+	sphinx-build -M clean . gh_pages_build
+	sphinx-build -M html . gh_pages_build
