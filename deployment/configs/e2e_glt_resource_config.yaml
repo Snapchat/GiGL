@@ -5,10 +5,10 @@ shared_resource_config:
   common_compute_config:
     project: "external-snap-ci-github-gigl"
     region: "us-central1"
-    temp_assets_bucket: "gs://gigl-cicd-temp"
-    temp_regional_assets_bucket: "gs://gigl-cicd-temp"
+    temp_assets_bucket: "gs://gigl-cicd-perm"
+    temp_regional_assets_bucket: "gs://gigl-cicd-perm"
     perm_assets_bucket: "gs://gigl-cicd-perm"
-    temp_assets_bq_dataset_name: "gigl_temp_assets"
+    temp_assets_bq_dataset_name: "gigl_embeddings"
     embedding_bq_dataset_name: "gigl_embeddings"
     gcp_service_account_email: "untrusted-external-github-gigl@external-snap-ci-github-gigl.iam.gserviceaccount.com"
     dataflow_runner: "DataflowRunner"
