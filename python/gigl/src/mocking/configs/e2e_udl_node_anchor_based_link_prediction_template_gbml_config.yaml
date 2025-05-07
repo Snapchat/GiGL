@@ -1,3 +1,5 @@
+sharedConfig:
+  should_skip_automatic_temp_asset_cleanup: "True"
 graphMetadata:
   edgeTypes:
   - dstNodeType: paper
