@@ -1,3 +1,4 @@
+import gc
 import time
 import traceback
 from dataclasses import dataclass
@@ -290,10 +291,10 @@ def load_torch_tensors_from_tf_record(
     else:
         # In this setting, we start and join each process one-at-a-time in order to achieve sequential tensor loading
         logger.info("Loading Serialized TFRecord Data in Sequence ...")
-        node_data_loading_process.start()
-        node_data_loading_process.join()
         edge_data_loading_process.start()
         edge_data_loading_process.join()
+        node_data_loading_process.start()
+        node_data_loading_process.join()
         if serialized_graph_metadata.positive_label_entity_info is not None:
             positive_label_data_loading_process.start()
             positive_label_data_loading_process.join()
@@ -329,6 +330,12 @@ def load_torch_tensors_from_tf_record(
             f"Rank {rank} has finished loading data in {time.time() - start_time:.2f} seconds. Wait for other ranks to finish loading data from tfrecords"
         )
         barrier()
+
+    del node_output_dict, edge_output_dict, error_dict
+
+    manager.shutdown()
+
+    gc.collect()
 
     logger.info(
         f"All ranks have finished loading data from tfrecords, rank {rank} finished in {time.time() - start_time:.2f} seconds"
