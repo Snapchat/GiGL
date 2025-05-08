@@ -587,12 +587,12 @@ class DistPartitioner:
         chunk_length = chunk_end_pos - chunk_start_pos
         chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
 
+        input_indices = torch.arange(chunk_length, dtype=torch.int64)
+
         for rank in range(self._world_size):
             # Filtering for items in chunk which are on the current partition `rank`
             current_rank_mask = chunk_rank == rank
-            per_rank_indices = torch.masked_select(
-                torch.arange(chunk_length, dtype=torch.long), current_rank_mask
-            )
+            per_rank_indices = torch.masked_select(input_indices, current_rank_mask)
             chunk_res.append(
                 (
                     index_select(input_data, per_rank_indices),
