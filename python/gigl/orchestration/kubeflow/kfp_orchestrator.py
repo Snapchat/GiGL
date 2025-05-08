@@ -64,7 +64,8 @@ class KfpOrchestrator:
             cuda_container_image (str): Container image for CUDA (see: containers/Dockerfile.cuda).
             cpu_container_image (str): Container image for CPU.
             dataflow_container_image (str): Container image for Dataflow.
-            dst_compiled_pipeline_path (Uri): Destination path for the compiled pipeline YAML file.
+            dst_compiled_pipeline_path (Uri): Destination path for the compiled pipeline YAML file. Defaults to
+            :data:`~gigl.constants.DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH`.
             additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
             tag (Optional[str]): Optional tag to include in the pipeline description.
 

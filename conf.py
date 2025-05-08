@@ -23,11 +23,40 @@ copyright = f"{datetime.datetime.now().year}, {author}"
 # https://www.sphinx-doc.org/en/master/usage/extensions/index.html
 extensions = [
     "sphinx.ext.autodoc",  # Pull in documentation from docstrings
+    "sphinx_autodoc_typehints",  # Use Python annotations for documenting acceptable argument and return types
+    "sphinx.ext.napoleon",  # Support for Google style docstrings
     "sphinx.ext.viewcode",  # Add links to the source code
     "sphinx.ext.autosummary", # Generates function/method/attribute summary lists
+    "autoapi.extension",
     "myst_parser", # Parsing markdown files: https://myst-parser.readthedocs.io/en/v0.15.1/sphinx/intro.html
     "sphinx_design", # needed by themes
 ]
+
+autoapi_type = 'python'
+autoapi_dirs = ['python']
+autoapi_root = "docs/api"
+autoapi_ignore = [
+    "*migrations*", # Default value: https://sphinx-autoapi.readthedocs.io/en/latest/reference/config.html#confval-autoapi_ignore
+    "**/setup.py",
+    "**/tests/**",
+    "**/__pycache__/**",
+]
+# autoapi_add_toctree_entry = False
+
+
+autodoc_typehints = "description"
+autoapi_options = [
+    'members',
+    'undoc-members',
+    'show-inheritance',
+    'show-module-summary',
+    'imported-members'
+]
+typehints_fully_qualified = True
+typehints_document_rtype = True
+autoapi_python_class_content = "both" # Include both class and module docstrings in the output
+autoapi_member_order = "groupwise" # Group members by class, functions, properties, etc.
+
 
 myst_enable_extensions = [
     "html_image", # Convert <img> tags in markdown files; https://myst-parser.readthedocs.io/en/latest/syntax/optional.html#html-images
@@ -35,7 +64,8 @@ myst_enable_extensions = [
 
 include_patterns = [
     "docs/**",
-    "python/**",
+    "python/gigl/**",
+    "python/snapchat/**",
     "snapchat/**",
     "index.rst",
 ]
@@ -52,6 +82,7 @@ autodoc_default_options = {
     # Exclude the given names from the members to document
     'exclude-members': "__weakref__,__dict__,__module__,__class__,__abstractmethods__",
 }
+# autodoc_typehints = "description"
 
 templates_path = [
     'gh_pages_source/_templates'
@@ -94,3 +125,17 @@ html_context = {
     "github_version": "main",
     "doc_path": "/",
 }
+
+def skip_util_classes(app, what, name, obj, skip, options):
+    """
+    Skip any attribute literally named 'logger'.
+    We only intercept when Sphinx thinks it’s an attribute.
+    """
+    # if it’s an attribute and its unqualified name is 'logger', always skip
+    if what == "attribute" and name.rsplit(".", 1)[-1] == "logger":
+        return True
+    # otherwise, fall back to Sphinx’s own decision
+    return skip
+
+def setup(sphinx):
+    sphinx.connect("autoapi-skip-member", skip_util_classes)

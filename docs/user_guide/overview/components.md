@@ -1,5 +1,28 @@
 # GiGL Components
 
+GiGL contains six components, each designed to facilitate the platforms end-to-end graph machine learning (ML) tasks.
+The components are as follows:
+
+| Component         | Source Code                                                               | Documentation                                           |
+| ----------------- | ------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Config Populator  | {py:class}`gigl.src.config_populator.config_populator.ConfigPopulator`    | [here](docs/user_guide/components/config_populator.md)  |
+| Data Preprocessor | {py:class}`gigl.src.data_preprocessor.data_preprocessor.DataPreprocessor` | [here](docs/user_guide/components/data_preprocessor.md) |
+| Subgraph Sampler  | {py:class}`gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler`    | [here](docs/user_guide/components/subgraph_sampler.md)  |
+| Split Generator   | {py:class}`gigl.src.split_generator.split_generator.SplitGenerator`       | [here](docs/user_guide/components/split_generator.md)   |
+| Trainer           | {py:class}`gigl.src.training.trainer.Trainer`                             | [here](docs/user_guide/components/trainer.md)           |
+| Inferencer        | {py:class}`gigl.src.inference.inferencer.Inferencer`                      | [here](docs/user_guide/components/inferencer.md)        |
+
+The figure below illustrates at a high level how all the components work together.
+(<span style="color:purple">Purple</span> items are work-in-progress.)
+
+<img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" width="50%" />
+
+The figure below is a example GiGL workflow with tabularized subgraph sampling for the task of link prediction, in which
+the model is trained with triplet-style contrastive loss on a set of anchor nodes along with their positives and
+(in-batch) negatives.
+
+![gigl_nablp](docs/assets/images/gigl_nablp.png)
+
 ## Config Populator
 
 <img src="../../assets/images/config_populator_icon.png" height="100px">

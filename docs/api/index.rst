@@ -7,15 +7,3 @@
       Alternatively, our full documentation is available at:
       https://snapchat.github.io/GiGL
       See: `conf.py` for configuration options on autodoc generation.
-
-=============
-API Reference
-=============
-
-.. autosummary::
-   :toctree: _autosummary
-   :template: module.rst
-   :recursive:
-
-   gigl
-   snapchat
