@@ -191,7 +191,7 @@ class DistRangePartitioner(DistPartitioner):
             partition_function=edge_partition_fn,
         )
 
-        del edge_index, target_indices, edge_feat
+        del input_data, edge_index, target_indices, edge_feat
         del self._edge_index[edge_type]
         if self._edge_feat is not None and edge_type in self._edge_feat:
             del self._edge_feat[edge_type]
@@ -215,6 +215,16 @@ class DistRangePartitioner(DistPartitioner):
                 ),
                 dim=0,
             )
+
+        if edge_feat_dim is not None:
+            if len(res_list) == 0:
+                partitioned_edge_features = torch.empty(0, edge_feat_dim)
+            else:
+                partitioned_edge_features = torch.cat([r[2] for r in res_list])
+
+        res_list.clear()
+
+        gc.collect()
 
         # Generating edge partition book
 
@@ -246,18 +256,9 @@ class DistRangePartitioner(DistPartitioner):
         if edge_feat_dim is None:
             current_feat_part = None
         else:
-            if len(res_list) == 0:
-                partitioned_edge_features = torch.empty(0, edge_feat_dim)
-            else:
-                partitioned_edge_features = torch.cat([r[2] for r in res_list])
-            # We don't need to store the partitioned edge feature ids for range-based partitioning, since this is available from the edge partition book
             current_feat_part = FeaturePartitionData(
                 feats=partitioned_edge_features, ids=None
             )
-
-        res_list.clear()
-
-        gc.collect()
 
         logger.info(
             f"Got edge range-based partition book for edge type {edge_type} on rank {self._rank} with partition bounds: {edge_partition_book.partition_bounds}"
