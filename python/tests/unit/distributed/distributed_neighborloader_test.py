@@ -11,7 +11,10 @@ from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.distributed_neighborloader import (
+    DistNABLPLoader,
+    DistNeighborLoader,
+)
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -237,14 +240,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        loader = DistNeighborLoader(
+        loader = DistNABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
-            input_nodes=(node_type, torch.tensor([10])),
+            input_nodes=torch.tensor([10]),
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
-            message_passing_edge_type_to_get_labels_from=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
         )
 
         count = 0
