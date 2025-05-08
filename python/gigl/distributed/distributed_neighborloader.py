@@ -179,6 +179,10 @@ class DistNeighborLoader(DistLoader):
             # 1. We need to treat `EdgeType` as a proper tuple, not the GiGL`EdgeType`.
             # 2. There are (likely) some GLT bugs around https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
             # Where if num_neighbors is a dict then we index into it improperly.
+            if not isinstance(dataset.graph, abc.Mapping):
+                raise ValueError(
+                    "When num_neighbors is a dict, the dataset must be heterogeneous."
+                )
             if num_neighbors.keys() != dataset.graph.keys():
                 raise ValueError(
                     f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset.graph.keys()}"
