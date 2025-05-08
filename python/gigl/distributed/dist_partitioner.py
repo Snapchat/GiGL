@@ -568,6 +568,7 @@ class DistPartitioner:
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         chunk_start_pos: int,
         chunk_end_pos: int,
+        generate_pb: bool,
     ) -> None:
         """
         Partitions a single chunk of data across multiple machines. First, the partition function is used to lookup or compute the rank of the current input.
@@ -583,7 +584,9 @@ class DistPartitioner:
             chunk_end_pos (int): The ending position of the current chunk being partitioned
         """
         # chunk_res is a list where index `i` corresponds to Tuple[input_data_on_i, rank_indices_on_i]
-        chunk_res: List[Tuple[Optional[Tuple[torch.Tensor, ...]], torch.Tensor]] = []
+        chunk_res: List[
+            Tuple[Optional[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
+        ] = []
         chunk_length = chunk_end_pos - chunk_start_pos
         chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
 
@@ -596,7 +599,7 @@ class DistPartitioner:
             chunk_res.append(
                 (
                     index_select(input_data, per_rank_indices),
-                    rank_indices[per_rank_indices],
+                    rank_indices[per_rank_indices] if generate_pb else None,
                 )
             )
         self._partition_mgr.process(chunk_res)
@@ -660,6 +663,7 @@ class DistPartitioner:
                 partition_function=partition_function,
                 chunk_start_pos=chunk_start_pos,
                 chunk_end_pos=chunk_end_pos,
+                generate_pb=generate_pb,
             )
 
             chunk_start_pos = chunk_end_pos
