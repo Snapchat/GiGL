@@ -33,7 +33,7 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
     """
 
     def __init__(
-        self, world_size: int, total_val_size: int = 1, generate_pb: bool = True
+        self, world_size: int, total_val_size: int = 0, generate_pb: bool = False
     ):
         """
         Initializes the partition manager.
