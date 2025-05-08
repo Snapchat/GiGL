@@ -1,3 +1,4 @@
+import itertools
 from collections import abc
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -33,6 +34,15 @@ DEFAULT_NUM_CPU_THREADS = 2
 # from multiple nodes in a single batch.
 # See https://github.com/alibaba/graphlearn-for-pytorch/pull/155/files for more info.
 class _BatchedNodeSamplerInput(NodeSamplerInput):
+    def __init__(
+        self,
+        node: torch.Tensor,
+        input_type: Optional[NodeType],
+        message_passing: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
+    ):
+        super().__init__(node, input_type)
+        self.message_passing = message_passing
+
     def __len__(self) -> int:
         return self.node.shape[0]
 
@@ -42,7 +52,18 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
         if not isinstance(index, torch.Tensor):
             index = torch.tensor(index, dtype=torch.long)
         index = index.to(self.node.device)
-        return _BatchedNodeSamplerInput(self.node[index].view(-1), self.input_type)
+        full_batch = self.node[index].view(-1)
+        nodes_to_sample = full_batch[full_batch >= 0]
+        if self.message_passing is not None:
+            nodes = tuple(
+                dict(zip(nodes_to_sample.tolist(), itertools.cycle([None]))).keys()
+            )
+            if nodes in self.message_passing:
+                raise ValueError(
+                    f"Node {nodes} already exists in message_passing. Please use a different node id."
+                )
+            self.message_passing[nodes] = full_batch
+        return _BatchedNodeSamplerInput(nodes_to_sample, self.input_type)
 
 
 class _SupervisedToHomogeneous:
@@ -55,6 +76,7 @@ class _SupervisedToHomogeneous:
         anchor_sentinel: int,
         positive_label_sentinel: int,
         negative_label_sentinel: Optional[int] = None,
+        message_passing: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
     ):
         """
         Args:
@@ -66,6 +88,7 @@ class _SupervisedToHomogeneous:
         self._anchor_sentinel = anchor_sentinel
         self._positive_label_sentinel = positive_label_sentinel
         self._negative_label_sentinel = negative_label_sentinel
+        self._message_passing = message_passing
 
     def __call__(self, data: HeteroData) -> Data:
         """Transform the heterogeneous graph to a homogeneous graph."""
@@ -73,7 +96,9 @@ class _SupervisedToHomogeneous:
             [self._message_passing_edge_type]
         ).to_homogeneous(add_edge_type=False, add_node_type=False)
 
-        full_batch: torch.Tensor = data.input_seeds
+        full_batch: torch.Tensor = self._message_passing[
+            tuple(homogeneous_data.batch.tolist())
+        ]
         achor_node_sentinels = torch.nonzero(
             full_batch == self._anchor_sentinel
         ).squeeze(1)
@@ -350,6 +375,10 @@ class DistNeighborLoader(DistLoader):
                     dim=1,
                 )
 
+            node_batches_by_sampled_nodes: dict[
+                tuple[int, ...], torch.Tensor
+            ] = torch.multiprocessing.Manager().dict()
+
             self._transforms.append(
                 _SupervisedToHomogeneous(
                     message_passing_edge_type=message_passing_edge_type_to_get_labels_from,
@@ -357,6 +386,7 @@ class DistNeighborLoader(DistLoader):
                     anchor_sentinel=anchor_sentinel,
                     positive_label_sentinel=positive_sentinel,
                     negative_label_sentinel=negative_sentinel,
+                    message_passing=node_batches_by_sampled_nodes,
                 )
             )
 
@@ -369,7 +399,14 @@ class DistNeighborLoader(DistLoader):
             if negative_label_edge_type is not None:
                 num_neighbors[negative_label_edge_type] = zero_samples
             logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
-        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
+            print(f"{dataset.graph.keys()=}")
+        else:
+            node_batches_by_sampled_nodes = None
+        input_data = _BatchedNodeSamplerInput(
+            node=node_ids,
+            input_type=node_type,
+            message_passing=node_batches_by_sampled_nodes,
+        )
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,

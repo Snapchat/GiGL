@@ -1,5 +1,6 @@
 import unittest
 from collections import abc
+from pathlib import Path
 from typing import MutableMapping
 
 import graphlearn_torch as glt
@@ -9,6 +10,8 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
+from gigl.common.types.uri.uri_factory import UriFactory
+from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -47,7 +50,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def _test_distributed_neighbor_loader(self):
+    def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -80,7 +83,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def _test_distributed_neighbor_loader_batched(self):
+    def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -131,7 +134,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_distributed_neighbor_loader_heterogeneous(self):
+    def test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -269,6 +272,32 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
+
+    def test_udl(self):
+        dataset = build_dataset_from_task_config_uri(
+            UriFactory.create_uri(Path(__file__).parent / "config.yaml"),
+            distributed_context=self._context,
+            is_inference=False,
+        )
+        loader = DistNeighborLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            # input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, torch.tensor([0, 1, 2, 3])),
+            input_nodes=(
+                DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                dataset.train_node_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            ),
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+            message_passing_edge_type_to_get_labels_from=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+        count = 0
+        for datum in loader:
+            # print(f"datum: {datum}")
+            self.assertIsInstance(datum, Data)
+            count += 1
+        print(f"count: {count}")
 
 
 if __name__ == "__main__":
