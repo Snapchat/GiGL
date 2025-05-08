@@ -228,9 +228,8 @@ class DistRangePartitioner(DistPartitioner):
 
         # Generating edge partition book
 
-        num_of_edges_on_current_rank = partitioned_edge_index.size(1)
         num_edges_on_each_rank: list[tuple[int, int]] = sorted(
-            all_gather((self._rank, num_of_edges_on_current_rank)).values(),
+            all_gather((self._rank, partitioned_edge_index.size(1))).values(),
             key=lambda x: x[0],
         )
 
