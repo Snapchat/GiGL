@@ -1,15 +1,6 @@
-<!-- To align the logo with the text on the sphinx page -->
-
-<div align="center">
-  <img src="docs/assets/images/gigl.png" alt="GiGL Logo" style="vertical-align: middle; width: px; height: 80px;"/>
-  <h1 style="display: inline-block; vertical-align: middle; margin-left: 20px; font-size: 48px; line-height: 80px;">
-    GiGL: Gigantic Graph Learning
-  </h1>
-</div>
+# GiGL: Gigantic Graph Learning
 
 GiGL is an open-source library for training and inference of Graph Neural Networks at very large (billion) scale.
-
-See 📖 [Documentation](docs/) for more details
 
 ## Key Features 🌟
 
@@ -36,12 +27,12 @@ The components are as follows:
 | Subgraph Sampler  | [here](scala/subgraph_sampler/src/main/scala/Main.scala)       | [here](docs/sphinx/source/components/subgraph_sampler.md)  |
 | Split Generator   | [here](scala/split_generator/src/main/scala/Main.scala)        | [here](docs/sphinx/source/components/split_generator.md)   |
 | Trainer           | [here](python/gigl/src/training/trainer.py)                    | [here](docs/sphinx/source/components/trainer.md)           |
-| Inferencer        | [here](python/gigl/src/inference/gnn_inferencer.py)            | [here](docs/sphinx/source/components/inferencer.md)        |
+| Inferencer        | [here](python/gigl/src/inference/inferencer.py)                | [here](docs/sphinx/source/components/inferencer.md)        |
 
 The figure below illustrates at a high level how all the components work together.
 (<span style="color:purple">Purple</span> items are work-in-progress.)
 
-<img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" style="width: 50%; display: block; margin: 0 auto;" />
+<img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" width="50%" />
 
 The figure below is a example GiGL workflow with tabularized subgraph sampling for the task of link prediction, in which
 the model is trained with triplet-style contrastive loss on a set of anchor nodes along with their positives and
@@ -75,9 +66,7 @@ make install_dev_deps
 
 <details>
 <summary>Local Repo Setup</summary>
-
-For developing on GiGL see our [development guide](Development.md) and [contribution guidelines](Contributing.md)
-
+TODO
 </details>
 
 <details>
@@ -223,29 +212,19 @@ one of our Cora examples (See: [Examples](%22todo%22))
 
 ## Contribution 🔥
 
-Your contributions are always welcome and appreciated. The following are the things you can do to contribute to this
-project.
-
-1. **Report a bug** <br> If you think you have encountered a bug please feel free to report it
-   [here](%22todo_point_to_issues%22) and someone from the team will take a look.
-
-1. **Request a feature** <br> Feature requests are always welcome! You can request a feature by adding it
-   [here](%22todo_point_to_feature_req%22)
-
-1. **Create a pull request** <br> Pull request are always greatly appreciated. You can get started by picking up any
-   open issues from [here](%22todo_point_to_issues%22) and making a pull request.
+Your contributions are always welcome and appreciated.
 
 > If you are new to open-source, make sure to check read more about it
 > [here](https://www.digitalocean.com/community/tutorial_series/an-introduction-to-open-source) and learn more about
 > creating a pull request
 > [here](https://www.digitalocean.com/community/tutorials/how-to-create-a-pull-request-on-github).
 
-For more information, see our [Contributing Guide](%22todo%22)
+Please see our [Contributing Guide](https://github.com/Snapchat/GiGL/blob/main/CONTRIBUTING.md) for more info.
 
 ## Additional Resources ❗
 
-You may still have unanswered questions or may be facing issues. If so please see our [FAQ](%22todo%22) or our
-[User Guide](%22todo%22) for further guidance.
+You may still have unanswered questions or may be facing issues. If so please see our
+[FAQ](docs/user_guide/trouble_shooting/faq.md) or our [User Guide](docs/user_guide/index.md) for further guidance.
 
 ## Citation
 
@@ -262,4 +241,4 @@ If you use GiGL in publications, we would appreciate citations to [our paper](ht
 
 ## License 🔒
 
-[MIT License](LICENSE)
+[MIT License](https://github.com/snapchat/gigl?tab=License-1-ov-file#readme)
