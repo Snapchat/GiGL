@@ -40,6 +40,6 @@ bash scripts/setup_environment.sh
 
 These are the current environments supported by GiGL
 
-| Python | Mac (Arm64) CPU    | Linux CPU       | Linux CUDA | PyTorch | PyG |
-| ------ | --------------- | --------- | ---- | ------- | --- |
-| 3.9    | Partial Support | Supported | 12.1 | 2.5     | 2.5 |
+| Python | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
+| ------ | --------------- | --------- | ---------- | ------- | --- |
+| 3.9    | Partial Support | Supported | 12.1       | 2.5     | 2.5 |

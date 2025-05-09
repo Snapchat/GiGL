@@ -29,7 +29,8 @@ see our [API documentation](docs/api/index.rst)
 ### Architecture
 
 GiGL includes a range of components, each built to support the platform’s end-to-end GraphML workflows. For an overview
-of the architecture and detailed information, please refer to [GiGL Components](docs/user_guide/overview/architecture.md). Below, we provide a brief summary for quick reference.
+of the architecture and detailed information, please refer to
+[GiGL Components](docs/user_guide/overview/architecture.md). Below, we provide a brief summary for quick reference.
 
 The figure below illustrates at a high level how components of GiGL work together.
 (<span style="color:purple">Purple</span> items are work-in-progress.)
@@ -117,8 +118,7 @@ not visible to open source users currently.
 
 If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments:
 
-**Note:
-For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
+**Note: For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
 instructions on how to run the tests locally, or ask a maintainer to run them for you.**
 
 Run all unit tests:
@@ -200,7 +200,6 @@ make format_md
 ```{note}
 This section will be updated soon. TODO (svij)
 ```
-
 
 GiGL's local integration tests simulate the pipeline behavior of GiGL components. These tests are crucial for verifying
 that components function correctly in sequence and that outputs from one component are correctly handled by the next.

@@ -3,6 +3,7 @@
 ```{note}
 This section will be updated soon. TODO (svij)
 ```
+
 GiGL is a flexible framework that allows customization for many graph ML tasks in its components like data data
 pre-processing, training logic, inference.
 
@@ -13,7 +14,6 @@ simple local setup to more complex cloud-based operations.
 
 Before proceeding, make sure you have correctly installed `gigl` by following the
 [installation guide](./installation.md).
-
 
 This section outlines the steps needed to get up and running an end to end pipeline (via GCP) on an in-built sample
 task: training and inference for transductive node-anchor based link prediction task on Cora (homogeneous). Running in
@@ -54,8 +54,8 @@ The path for the template task config is:
 
 Now that we have our two config files setup, we can now kick off an end to end GiGL run.
 
-GiGL supports various ways to orchestrate an end to end run such as KFP Orchestration, GiGL Runner, and manual
-component import and running as needed. For more details see [here](./orchestration.md)
+GiGL supports various ways to orchestrate an end to end run such as KFP Orchestration, GiGL Runner, and manual component
+import and running as needed. For more details see [here](./orchestration.md)
 
 ## Quick Start: Digging Deeper and Advanced Usage
 
