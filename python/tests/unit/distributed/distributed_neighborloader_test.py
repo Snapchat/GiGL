@@ -12,7 +12,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import (
-    DistNABLPLoader,
+    DistABLPLoader,
     DistNeighborLoader,
 )
 from gigl.src.common.types.graph_data import NodeType
@@ -240,7 +240,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        loader = DistNABLPLoader(
+        loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
             input_nodes=torch.tensor([10]),

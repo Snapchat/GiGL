@@ -291,7 +291,7 @@ class DistNeighborLoader(DistLoader):
         return data
 
 
-class DistNABLPLoader(DistNeighborLoader):
+class DistABLPLoader(DistNeighborLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
@@ -313,7 +313,7 @@ class DistNABLPLoader(DistNeighborLoader):
         drop_last: bool = False,
     ):
         """
-        Neighbor loader for Node Anchor Based Link Prediction (NABLP) tasks.
+        Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
 
         Note that for this class, the dataset must *always* be heterogeneous,
         as we need separate edge types for positive and negative labels.
@@ -322,6 +322,7 @@ class DistNABLPLoader(DistNeighborLoader):
         Then we will attempt to infer the positive and optional negative labels
         from the dataset.
         In this case, the output of the loader will be a torch_geometric.data.Data object.
+        Otherwise, the output will be a torch_geometric.data.HeteroData object.
 
            Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
