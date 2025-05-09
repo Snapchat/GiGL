@@ -331,6 +331,10 @@ def build_dataset(
 
     output_dataset: DistLinkPredictionDataset = output_dict["dataset"]
 
+    del output_dict
+
+    manager.shutdown()
+
     logger.info(
         f"--- Dataset Building finished on rank {distributed_context.global_rank}, which took {time.time()-dataset_building_start_time:.2f} seconds"
     )
