@@ -623,7 +623,7 @@ class DistPartitioner:
                 the specified indices in the chunk range while the second argument is the chunk start and end values. It returns a tuple indicating the rank
                 of each item in the chunk.
             total_val_size (int): The size of the partition book. Defaults to 0 in the case where there should be no partition book generated.
-            generate_pb (bool): Whether a partition book should be generated, defaults to False. This should only be set to true if partitioning nodes or edges for,
+            generate_pb (bool): Whether a partition book should be generated, defaults to False. This should only be set to true if partitioning nodes or edges for
                 tensor-based partitioning and should be false if partitioning node features or edge features or if doing range-based partitioning.
         Return:
             List[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
