@@ -536,7 +536,7 @@ class TestDataSplitters(unittest.TestCase):
         positive, negative = get_labels_for_anchor_nodes(
             dataset=ds,
             node_ids=node_ids,
-            supervision_edge_types=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            positive_label_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
         )
         expected_positive = torch.tensor(
             [
@@ -576,7 +576,7 @@ class TestDataSplitters(unittest.TestCase):
         # TODO(kmonte): Update to use a splitter once we've migrated splitter API.
         node_ids = torch.tensor([10])
         positive, negative = get_labels_for_anchor_nodes(
-            dataset=ds, node_ids=node_ids, supervision_edge_types=a_to_b
+            dataset=ds, node_ids=node_ids, positive_label_edge_type=a_to_b
         )
         expected = torch.tensor([[10, 11]])
         assert_close(positive, expected, rtol=0, atol=0)
@@ -611,7 +611,8 @@ class TestDataSplitters(unittest.TestCase):
         positive, negative = get_labels_for_anchor_nodes(
             dataset=ds,
             node_ids=node_ids,
-            supervision_edge_types=(a_to_b, a_to_c),
+            positive_label_edge_type=a_to_b,
+            negative_label_edge_type=a_to_c,
         )
 
         expected_positive = torch.tensor([[10, 11], [12, 13]])
