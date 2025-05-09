@@ -53,7 +53,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def _test_distributed_neighbor_loader(self):
+    def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -86,7 +86,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def _test_distributed_neighbor_loader_batched(self):
+    def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -137,7 +137,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_distributed_neighbor_loader_heterogeneous(self):
+    def test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -207,7 +207,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         expected_positive_labels,
         expected_negative_labels,
     ):
-        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         # Graph looks like https://is.gd/w2oEVp:
         # Message passing
         # 10 -> {11, 12}
@@ -283,9 +282,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
 
-    def _test_udl(self):
+    def test_udl(self):
         dataset = build_dataset_from_task_config_uri(
-            UriFactory.create_uri(Path(__file__).parent / "config.yaml"),
+            UriFactory.create_uri(Path(__file__).parent / "cora_udl_task_config.yaml"),
             distributed_context=self._context,
             is_inference=False,
         )
@@ -303,7 +302,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             # print(f"datum: {datum}")
             self.assertIsInstance(datum, Data)
             count += 1
-        print(f"count: {count}")
+        self.assertEqual(count, 2161)
 
 
 if __name__ == "__main__":
