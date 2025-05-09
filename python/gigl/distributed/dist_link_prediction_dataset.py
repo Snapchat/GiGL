@@ -373,7 +373,8 @@ class DistLinkPredictionDataset(DistDataset):
                 edge_type: graph_partition_data.edge_ids
                 for edge_type, graph_partition_data in partition_output.partitioned_edge_index.items()
             }
-
+        print(f"{partitioned_edge_index=}")
+        print(f"{partitioned_edge_ids=}")
         self.init_graph(
             edge_index=partitioned_edge_index,
             edge_ids=partitioned_edge_ids,
@@ -484,16 +485,20 @@ class DistLinkPredictionDataset(DistDataset):
                 for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()
             }
             edge_type_to_id2idx = {}
+            print(f"{partition_output.edge_partition_book.keys()=}")
+            print(f"{edge_type_to_partitioned_edge_feature_ids.keys()=}")
             for (
                 edge_type,
                 edge_partition_book,
             ) in partition_output.edge_partition_book.items():
                 if isinstance(edge_partition_book, RangePartitionBook):
                     edge_type_to_id2idx[edge_type] = edge_partition_book.id2index
-                else:
+                elif edge_type in edge_type_to_partitioned_edge_feature_ids:
                     edge_type_to_id2idx[edge_type] = id2idx(
                         edge_type_to_partitioned_edge_feature_ids[edge_type]
                     )
+                else:
+                    print(f"skipping {edge_type=}")
             self.init_edge_features(
                 edge_feature_data=edge_type_to_partitioned_edge_features,
                 id2idx=edge_type_to_id2idx,

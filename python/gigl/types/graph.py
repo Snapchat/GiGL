@@ -143,10 +143,20 @@ class LoadedGraphTensors:
             f"Treating positive labels as edge type {positive_label_edge_type} and negative labels as edge type {negative_label_edge_type}."
         )
 
+        print(f"self.edge_index: {self.edge_index.shape=}")
+        print(f"self.edge_features: {self.edge_features.shape=}")
         self.node_ids = to_heterogeneous_node(self.node_ids)
         self.node_features = to_heterogeneous_node(self.node_features)
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
+        # self.edge_features[positive_label_edge_type] = None
+        # self.edge_features[negative_label_edge_type] = None
+        self.edge_features[positive_label_edge_type] = torch.zeros(
+            (self.positive_label.shape[1], 1), dtype=torch.float32
+        )
+        self.edge_features[negative_label_edge_type] = torch.zeros(
+            (self.negative_label.shape[1], 1), dtype=torch.float32
+        )
         self.positive_label = None
         self.negative_label = None
 
@@ -168,10 +178,12 @@ def message_passing_to_positive_label(
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
+        print(f"returning {edge_type} as GiGL EdgeType")
         return EdgeType(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
+        print(f"returning {edge_type} as PyG EdgeType")
         return edge_type
 
 

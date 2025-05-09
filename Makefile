@@ -187,7 +187,7 @@ integration_test:
 	)
 
 mock_assets:
-	( cd python ; python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test)
+	( cd python ; python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="$(shell pwd)/deployment/configs/e2e_cicd_resource_config.yaml" --env test)
 
 format_py:
 	autoflake --config python/pyproject.toml ${PYTHON_DIRS}
