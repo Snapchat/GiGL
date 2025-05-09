@@ -138,7 +138,7 @@ dev = [
 ]
 
 docs = [
-    "sphinx==7.2.6",
+    "sphinx==7.4.7",
     "sphinx-rtd-theme==2.0.0",
     "pydata-sphinx-theme==0.16.1",
     "myst-parser==2.0.0",
