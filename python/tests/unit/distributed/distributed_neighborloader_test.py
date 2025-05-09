@@ -282,9 +282,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
 
-    def test_udl(self):
+    def test_cora_supervised(self):
         dataset = build_dataset_from_task_config_uri(
-            UriFactory.create_uri(Path(__file__).parent / "cora_udl_task_config.yaml"),
+            UriFactory.create_uri(Path(__file__).parent / "cora_ssl_task_config.yaml"),
             distributed_context=self._context,
             is_inference=False,
         )
