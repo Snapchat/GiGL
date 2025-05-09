@@ -32,7 +32,6 @@ message GbmlConfig {
     message LinkBasedTaskMetadata {
       repeated EdgeType supervision_edge_types = 1;
     }
-
   }
 
   message SharedConfig {
@@ -122,7 +121,7 @@ message GbmlConfig {
       // are no user defined hard negatives
       uint32 num_user_defined_negative_samples = 8 [deprecated=true];
 
-      // If specified, intention is to run ingestion into graphDB for subgraph sampler 
+      // If specified, intention is to run ingestion into graphDB for subgraph sampler
       GraphDBConfig graph_db_config = 9;
     }
 
@@ -146,12 +145,12 @@ message GbmlConfig {
 
   // Generic Configuration for a GraphDB connection.
   message GraphDBConfig {
-    // Python class path pointing to user-written 
+    // Python class path pointing to user-written
     // `BaseIngestion`` class definition. e.g. `my.team.graph_db.BaseInjectionImpl`.
     // This class is currently, as an implementation detail, used for injestion only.
     // We document this *purely* for information purposes and may change the implementation at any time.
     string graph_db_ingestion_cls_path = 1;
-    
+
     // Arguments to instantiate concrete BaseIngestion instance with.
     map<string, string> graph_db_ingestion_args = 2;
 
@@ -176,7 +175,7 @@ message GbmlConfig {
 
   message TrainerConfig {
     // (deprecated)
-    // Uri pointing to user-written BaseTrainer class definition. Used for the subgraph-sampling-based training process. 
+    // Uri pointing to user-written BaseTrainer class definition. Used for the subgraph-sampling-based training process.
     string trainer_cls_path = 1;
     // Arguments to parameterize training process with.
     map<string, string> trainer_args = 2;
@@ -194,7 +193,7 @@ message GbmlConfig {
   message InferencerConfig {
     map<string, string> inferencer_args = 1;
     // (deprecated)
-    // Path to modeling task spec class path to construct model for inference. Used for the subgraph-sampling-based inference process. 
+    // Path to modeling task spec class path to construct model for inference. Used for the subgraph-sampling-based inference process.
     string inferencer_cls_path = 2;
     // Specifies how to execute inference
     oneof executable {

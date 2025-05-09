@@ -16,6 +16,15 @@ logger = Logger()
 
 
 class PredefinedImageType(Enum):
+    """
+    Enum representing predefined Docker image types.
+
+    Attributes:
+        CPU: Represents a CPU-based Docker image. This is the default image type, which is also used by orchestration vms.
+        CUDA: Represents a CUDA-based Docker image. Will be used by distributed trainer/inferencer vms if cuda is available.
+        DATAFLOW: Represents a Dataflow-based Docker image. Is build off of the CPU image.
+    """
+
     CPU = "cpu"
     CUDA = "cuda"
     DATAFLOW = "dataflow"
@@ -24,6 +33,12 @@ class PredefinedImageType(Enum):
 def build_and_push_cpu_image(
     image_name: str,
 ) -> None:
+    """
+    Builds and pushes a CPU-based Docker image.
+
+    Args:
+        image_name (str): The name of the Docker image to build and push.
+    """
     build_and_push_image(
         base_image=DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
         image_name=image_name,
@@ -34,6 +49,12 @@ def build_and_push_cpu_image(
 def build_and_push_cuda_image(
     image_name: str,
 ) -> None:
+    """
+    Builds and pushes a CUDA-based Docker image.
+
+    Args:
+        image_name (str): The name of the Docker image to build and push.
+    """
     build_and_push_image(
         base_image=DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
         image_name=image_name,
@@ -44,6 +65,12 @@ def build_and_push_cuda_image(
 def build_and_push_dataflow_image(
     image_name: str,
 ) -> None:
+    """
+    Builds and pushes a Dataflow-based Docker image.
+
+    Args:
+        image_name (str): The name of the Docker image to build and push.
+    """
     build_and_push_image(
         base_image=DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG,
         image_name=image_name,
@@ -58,6 +85,15 @@ def build_and_push_image(
     dockerfile_name: str,
     multi_arch: bool = False,
 ) -> None:
+    """
+    Builds and pushes a Docker image.
+
+    Args:
+        base_image (Optional[str]): The base image to use for the build.
+        image_name (str): The name of the Docker image to build and push.
+        dockerfile_name (str): The name of the Dockerfile to use for the build.
+        multi_arch (bool): Whether to build a multi-architecture Docker image. Defaults to False.
+    """
     root_dir = Path(__file__).resolve().parent.parent
     dockerfile_path = root_dir / "containers" / dockerfile_name
 

@@ -32,4 +32,4 @@ prerequisites.
 
 ## AWS Project Setup Guide
 
-- TODO (Not yet supported)
+- Not yet supported

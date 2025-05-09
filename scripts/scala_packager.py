@@ -14,13 +14,34 @@ logger = Logger()
 
 
 class ScalaPackager:
-    def package_and_upload_jar(
+    """
+    A utility class for packaging the Scala JARs for different components.
+
+    Methods:
+        package_subgraph_sampler: Packages the Subgraph Sampler component.
+        package_split_generator: Packages the Split Generator component.
+    """
+
+    def __package_and_upload_jar(
         self,
         local_jar_directory: LocalUri,
         compiled_jar_path: LocalUri,
         component: GiGLComponents,
         use_spark35: bool = False,
     ) -> LocalUri:
+        """
+        Packages and uploads a JAR file for a specified GiGL component.
+
+        Args:
+            local_jar_directory (LocalUri): The local directory to store the JAR file
+            compiled_jar_path (LocalUri): The path to the compiled JAR file - i.e. where the JAR will be generated to generated.
+            component (GiGLComponents): The component for which the JAR is being packaged;
+                one off GiGLComponents.SubgraphSampler or GiGLComponents.SplitGenerator.
+            use_spark35 (bool)
+
+        Returns:
+            LocalUri: The local URI of the packaged JAR file.
+        """
         scala_folder_name = "scala_spark35" if use_spark35 else "scala"
         scala_folder_path = (
             pathlib.Path(__file__).parent.resolve().parent / scala_folder_name
@@ -68,8 +89,17 @@ class ScalaPackager:
         return LocalUri(jar_file_path)  # Return the local path to the jar file
 
     def package_subgraph_sampler(self, use_spark35: bool = False) -> LocalUri:
+        """
+        Packages the Subgraph Sampler component.
+
+        Args:
+            use_spark35 (bool): Whether to use the Spark 3.5 implementation. Defaults to False.
+
+        Returns:
+            LocalUri: The local URI of the packaged Subgraph Sampler JAR file.
+        """
         component = GiGLComponents.SubgraphSampler
-        return self.package_and_upload_jar(
+        return self.__package_and_upload_jar(
             local_jar_directory=dep_constants.get_local_jar_directory(
                 component=component, use_spark35=use_spark35
             ),
@@ -81,8 +111,17 @@ class ScalaPackager:
         )
 
     def package_split_generator(self, use_spark35: bool = False) -> LocalUri:
+        """
+        Packages the Split Generator component.
+
+        Args:
+            use_spark35 (bool): Whether to use the Spark 3.5 implementation. Defaults to False.
+
+        Returns:
+            LocalUri: The local URI of the packaged Split Generator JAR file.
+        """
         component = GiGLComponents.SplitGenerator
-        return self.package_and_upload_jar(
+        return self.__package_and_upload_jar(
             local_jar_directory=dep_constants.get_local_jar_directory(
                 component=component, use_spark35=use_spark35
             ),

@@ -13,6 +13,15 @@ PATH_BASE_IMAGES_VARIABLE_FILE: Final[Path] = Path.joinpath(
 
 
 def parse_makefile_vars(makefile_path: Path) -> Dict[str, str]:
+    """
+    Parse variables from a Makefile-like file.
+
+    Args:
+        makefile_path (Path): The path to the Makefile-like file.
+
+    Returns:
+        Dict[str, str]: A dictionary containing key-value pairs of variables defined in the file.
+    """
     vars_dict: Dict[str, str] = {}
     with open(makefile_path, "r") as f:
         for line in f.readlines():

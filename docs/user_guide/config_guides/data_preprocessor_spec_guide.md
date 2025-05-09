@@ -1,4 +1,4 @@
-# Example Walkthrough MAG240M
+# Data Preprocessor Spec Guide
 
 ```{note}
 This section will be updated soon. TODO (svij)

@@ -1,4 +1,16 @@
-# GraphMetadata specified what edge and node types are present in the graph.
+# ========
+# TaskMetadata:
+# Specifies the task we are going to perform on the graph.
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    # Specifying that we will perform node anchor based link prediction on edge of type: paper_or_author -> references -> paper_or_author
+    supervisionEdgeTypes:
+      - srcNodeType: paper_or_author
+        relation: references
+        dstNodeType: paper_or_author
+# ========
+# GraphMetadata:
+# Specifies what edge and node types are present in the graph.
 # Note all the edge / node types here should be referenced in the preprocessor_config
 graphMetadata:
   edgeTypes:
@@ -7,17 +19,15 @@ graphMetadata:
     srcNodeType: paper_or_author
   nodeTypes:
   - paper_or_author
-taskMetadata:
-  nodeAnchorBasedLinkPredictionTaskMetadata:
-    # Specifying that we will perform node anchor based link prediction on edge of type: paper_or_author -> references -> paper_or_author
-    supervisionEdgeTypes: 
-      - srcNodeType: paper_or_author
-        relation: references
-        dstNodeType: paper_or_author
-# Shared config specifies some extra metadata about the graph structure management of orchestration.
+# ========
+# SharedConfig:
+# Specifies some extra metadata about the graph structure management of orchestration.
 sharedConfig:
   isGraphDirected: True
-  shouldSkipAutomaticTempAssetCleanup: true
+  shouldSkipAutomaticTempAssetCleanup: true # Should we skip cleaning up the temporary assets after the run is complete?
+# ========
+# DatasetConfig:
+# Specifies information about the dataset. How to access it, how to process it, and how to sample subgraphs from it.
 datasetConfig:
   dataPreprocessorConfig:
     dataPreprocessorConfigClsPath: examples.MAG240M.preprocessor_config.Mag240DataPreprocessorConfig
@@ -34,10 +44,14 @@ datasetConfig:
       train_split: '0.7'
       val_split: '0.1'
     # Since the positive labels are user defined we use the following setup.
-    # More assigner and split strategies can be found in splitgenerator.lib.assigners and 
+    # More assigner and split strategies can be found in splitgenerator.lib.assigners and
     # splitgenerator.lib.split_strategies respectively.
     assignerClsPath: splitgenerator.lib.assigners.UserDefinedLabelsEdgeToLinkSplitHashingAssigner
     splitStrategyClsPath: splitgenerator.lib.split_strategies.UserDefinedLabelsNodeAnchorBasedLinkPredictionSplitStrategy
+# ========
+# TrainerConfig:
+# Specifies the training configuration. This includes the trainer class, the arguments to pass to it
+# The trainer class is responsible for training the model, and the arguments are passed to its constructor.
 trainerConfig:
   # GiGL provides a basic implementation of a NABLP trainer; customers are encouraged to extend this class to suit their needs.
   trainerClsPath: gigl.src.common.modeling_task_specs.NodeAnchorBasedLinkPredictionModelingTaskSpec
@@ -52,18 +66,23 @@ trainerConfig:
     val_every_num_batches: '100'  # Trains the model for 100 batches, evaluate it, and mark it as the best checkpoint.
     # More data loaders prefetch more data into memory, which significantly saves data read and preprocess time.
     # However, it also significantly increases CPU memory consumption and could lead to CPU memory OOM.
-    # The CPU memory consumption depends on both the number of data loaders and the batch size. 
+    # The CPU memory consumption depends on both the number of data loaders and the batch size.
     train_main_num_workers: '10'
     train_random_negative_num_workers: '10'
     val_main_num_workers: '4'
     val_random_negative_num_workers: '4'
     test_main_num_workers: '8'
     test_random_negative_num_workers: '8'
+# ========
+# InferencerConfig:
+# specifies the inference configuration. This includes the inferencer class, the arguments to pass to it
+# The inferencer class is responsible for running inference on the model, and the arguments are passed to its constructor.
 inferencerConfig:
   # inferencerArgs: We don't need to pass any special arguments for inferencer
   # Note: The inferencerClsPath is the same as the trainerClsPath
-  # This is because NodeAnchorBasedLinkPredictionModelingTaskSpec implements both BaseTrainer (interface class needs to implement for training) 
+  # This is because NodeAnchorBasedLinkPredictionModelingTaskSpec implements both BaseTrainer (interface class needs to implement for training)
   # and BaseInferencer (interface class needs to implement for inference). See their respective definitions for more information:
   # - gigl.src.training.v1.lib.base_trainer.BaseTrainer
   # - gigl.src.inference.v1.lib.base_inferencer.BaseInferencer
   inferencerClsPath: gigl.src.common.modeling_task_specs.NodeAnchorBasedLinkPredictionModelingTaskSpec
+# ========

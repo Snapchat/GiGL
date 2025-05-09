@@ -19,23 +19,18 @@ Welcome to the GiGL User Guide. This guide provides detailed documentation to he
    :caption: Overview
 
    overview/what_is_gigl
-   overview/components
+   overview/architecture
+
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    :caption: Getting Started
 
    getting_started/installation
    getting_started/quick_start
    getting_started/cloud_setup_guide
    getting_started/orchestration
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Custom Specs
-
-   custom_specs/data_preprocessor_spec_guide
-   custom_specs/modelling_task_spec_guide
+   examples/index
 
 .. toctree::
    :maxdepth: 1
@@ -43,20 +38,15 @@ Welcome to the GiGL User Guide. This guide provides detailed documentation to he
 
    config_guides/resource_config_guide
    config_guides/task_config_guide
+   config_guides/data_preprocessor_spec_guide
+
 
 .. toctree::
    :maxdepth: 1
-   :caption: Examples
+   :caption: Public Resources
 
-   examples/example1
-   examples/example2
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Public Assets
-
-   assets/docker_images
-   assets/public_data
+   public_resources/docker_images
+   public_resources/public_data
 
 .. toctree::
    :maxdepth: 1
