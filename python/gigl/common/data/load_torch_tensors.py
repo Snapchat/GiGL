@@ -291,6 +291,11 @@ def load_torch_tensors_from_tf_record(
     else:
         # In this setting, we start and join each process one-at-a-time in order to achieve sequential tensor loading
         logger.info("Loading Serialized TFRecord Data in Sequence ...")
+        # Sequentially launch node, edge, and label loading processes to
+        # reduce the peak memory usage. Here we launch edge loading process
+        # first since edge data is larger than node data, so launching edge
+        # before launching node reduces peak memosry usage compared with
+        # first launching node loading and then launching edge loading.
         edge_data_loading_process.start()
         edge_data_loading_process.join()
         node_data_loading_process.start()
@@ -330,6 +335,11 @@ def load_torch_tensors_from_tf_record(
             f"Rank {rank} has finished loading data in {time.time() - start_time:.2f} seconds. Wait for other ranks to finish loading data from tfrecords"
         )
         barrier()
+
+    # Shutdown manager process to remove dependencies on large tensors,
+    # so that when we delete them in partitioner they will be garbage
+    # collected. Note that just deleting or clearing these output dicts here is not
+    # enough, and we have to shutdown the manager process.
 
     del node_output_dict, edge_output_dict, error_dict
 
