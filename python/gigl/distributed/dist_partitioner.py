@@ -582,6 +582,9 @@ class DistPartitioner:
                 of each item in the chunk.
             chunk_start_pos (int): The starting position of the current chunk being partitioned
             chunk_end_pos (int): The ending position of the current chunk being partitioned
+            generate_pb (bool): Whether a partition book should be generated. If set to False, will not send the indexed `rank_indices`
+                for the current rank to the partition manager to make the rpc communication easier
+
         """
         # chunk_res is a list where index `i` corresponds to Tuple[input_data_on_i, rank_indices_on_i]
         chunk_res: List[
