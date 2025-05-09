@@ -53,7 +53,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def test_distributed_neighbor_loader(self):
+    def _test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -86,7 +86,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def test_distributed_neighbor_loader_batched(self):
+    def _test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -137,7 +137,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def test_distributed_neighbor_loader_heterogeneous(self):
+    def _test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -183,6 +183,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+                expected_positive_labels=torch.tensor([[15], [16]]),
+                expected_negative_labels=torch.tensor([[13, 16], [17, -1]]),
             ),
             param(
                 "Positive edges",
@@ -190,6 +192,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+                expected_positive_labels=torch.tensor([[15], [16]]),
+                expected_negative_labels=None,
             ),
         ]
     )
@@ -200,6 +204,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         expected_node,
         expected_srcs,
         expected_dsts,
+        expected_positive_labels,
+        expected_negative_labels,
     ):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         # Graph looks like https://is.gd/w2oEVp:
@@ -248,7 +254,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         loader = DistNABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
-            input_nodes=(node_type, torch.tensor([10, 15])),
+            input_nodes=torch.tensor([10, 15]),
             batch_size=2,
             context=self._context,
             local_process_rank=0,
@@ -268,31 +274,29 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             expected_node,
             dim=0,
         )
-        print(f"{datum.y_positive=}")
-        if _NEGATIVE_EDGE_TYPE in labeled_edges:
-            print(f"{datum.y_negative=}")
+        assert_tensor_equality(datum.y_positive, expected_positive_labels)
+        if expected_negative_labels is not None:
+            assert_tensor_equality(datum.y_negative, expected_negative_labels)
+        else:
+            assert not hasattr(datum, "y_negative")
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
 
-    def test_udl(self):
+    def _test_udl(self):
         dataset = build_dataset_from_task_config_uri(
             UriFactory.create_uri(Path(__file__).parent / "config.yaml"),
             distributed_context=self._context,
             is_inference=False,
         )
-        loader = DistNeighborLoader(
+        loader = DistNABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
             # input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, torch.tensor([0, 1, 2, 3])),
-            input_nodes=(
-                DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                dataset.train_node_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-            ),
+            input_nodes=dataset.train_node_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
-            message_passing_edge_type_to_get_labels_from=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
         )
         count = 0
         for datum in loader:

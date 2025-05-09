@@ -8,7 +8,6 @@ from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
-from torch_geometric.utils import subgraph
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
@@ -43,10 +42,10 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
         self,
         node: torch.Tensor,
         input_type: Optional[NodeType],
-        message_passing: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
+        batch_store: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
     ):
         super().__init__(node, input_type)
-        self.message_passing = message_passing
+        self._batch_store = batch_store
 
     def __len__(self) -> int:
         return self.node.shape[0]
@@ -59,15 +58,15 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
         index = index.to(self.node.device)
         full_batch = self.node[index].view(-1)
         nodes_to_sample = full_batch[full_batch >= 0]
-        if self.message_passing is not None:
+        if self._batch_store is not None:
             nodes = tuple(
                 dict(zip(nodes_to_sample.tolist(), itertools.cycle([None]))).keys()
             )
-            if nodes in self.message_passing:
+            if nodes in self._batch_store:
                 raise ValueError(
                     f"Node {nodes} already exists in message_passing. Please use a different node id."
                 )
-            self.message_passing[nodes] = full_batch
+            self._batch_store[nodes] = full_batch
         return _BatchedNodeSamplerInput(nodes_to_sample, self.input_type)
 
 
@@ -81,7 +80,7 @@ class _SupervisedToHomogeneous:
         anchor_sentinel: int,
         positive_label_sentinel: int,
         negative_label_sentinel: Optional[int] = None,
-        message_passing: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
+        _batch_store: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
     ):
         """
         Args:
@@ -93,7 +92,8 @@ class _SupervisedToHomogeneous:
         self._anchor_sentinel = anchor_sentinel
         self._positive_label_sentinel = positive_label_sentinel
         self._negative_label_sentinel = negative_label_sentinel
-        self._message_passing = message_passing
+        self._batch_store = _batch_store
+        self._printed_batch_store_warning = False
 
     def __call__(self, data: HeteroData) -> Data:
         """Transform the heterogeneous graph to a homogeneous graph."""
@@ -101,57 +101,52 @@ class _SupervisedToHomogeneous:
             [self._message_passing_edge_type]
         ).to_homogeneous(add_edge_type=False, add_node_type=False)
 
-        full_batch: torch.Tensor = self._message_passing[
-            tuple(homogeneous_data.batch.tolist())
-        ]
-        achor_node_sentinels = torch.nonzero(
-            full_batch == self._anchor_sentinel
-        ).squeeze(1)
-        positive_label_sentinels = torch.nonzero(
-            full_batch == self._positive_label_sentinel
-        ).squeeze(1)
-
-        pos_labels = []
-        if self._negative_label_sentinel is not None:
-            negative_label_sentinels = torch.nonzero(
-                full_batch == self._negative_label_sentinel
+        if self._batch_store is not None:
+            full_batch: torch.Tensor = self._batch_store[
+                tuple(homogeneous_data.batch.tolist())
+            ]
+            achor_node_sentinels = torch.nonzero(
+                full_batch == self._anchor_sentinel
             ).squeeze(1)
-            neg_labels = []
-            for anchor, positive, negative in zip(
-                achor_node_sentinels, positive_label_sentinels, negative_label_sentinels
-            ):
-                pos_batch = full_batch[anchor + 1 : positive].view(-1)
-                pos_labels.append(pos_batch[pos_batch != self._padding_node_id])
-                neg_batch = full_batch[positive + 1 : negative].view(-1)
-                neg_labels.append(neg_batch[neg_batch != self._padding_node_id])
-        else:
-            neg_labels = None
-            for anchor, positive in zip(achor_node_sentinels, positive_label_sentinels):
-                pos_batch = full_batch[anchor + 1 : positive].view(-1)
-                pos_labels.append(pos_batch[pos_batch != self._padding_node_id])
+            positive_label_sentinels = torch.nonzero(
+                full_batch == self._positive_label_sentinel
+            ).squeeze(1)
 
-        node_mask = (
-            (homogeneous_data.node == self._anchor_sentinel)
-            | (homogeneous_data.node == self._positive_label_sentinel)
-            | (homogeneous_data.node == self._negative_label_sentinel)
-            | (homogeneous_data.node == self._padding_node_id)
-        )
-        edge_index, edge_attr = subgraph(
-            subset=~node_mask,
-            edge_index=homogeneous_data.edge_index,
-            edge_attr=homogeneous_data.edge_attr,
-            relabel_nodes=True,
-        )
-        homogeneous_data.edge_index = edge_index
-        homogeneous_data.edge_attr = edge_attr
-        homogeneous_data.node = homogeneous_data.node[~node_mask]
+            pos_labels = []
+            if self._negative_label_sentinel is not None:
+                negative_label_sentinels = torch.nonzero(
+                    full_batch == self._negative_label_sentinel
+                ).squeeze(1)
+                neg_labels = []
+                for anchor, positive, negative in zip(
+                    achor_node_sentinels,
+                    positive_label_sentinels,
+                    negative_label_sentinels,
+                ):
+                    pos_batch = full_batch[anchor + 1 : positive].view(-1)
+                    pos_labels.append(pos_batch)
+                    neg_batch = full_batch[positive + 1 : negative].view(-1)
+                    neg_labels.append(neg_batch)
+            else:
+                neg_labels = None
+                for anchor, positive in zip(
+                    achor_node_sentinels, positive_label_sentinels
+                ):
+                    pos_batch = full_batch[anchor + 1 : positive].view(-1)
+                    pos_labels.append(pos_batch)
 
-        homogeneous_data.y_positive = pos_labels
-        homogeneous_data.y_negative = neg_labels
+            homogeneous_data.y_positive = torch.stack(pos_labels)
+            if neg_labels is not None:
+                homogeneous_data.y_negative = torch.stack(neg_labels)
+        elif not self._printed_batch_store_warning:
+            logger.info("Batch store is not set, will not set labels.")
+            self._printed_batch_store_warning = True
         return homogeneous_data
 
 
 class DistNeighborLoader(DistLoader):
+    _batch_store: dict[tuple[int, ...], torch.Tensor]
+
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
@@ -271,6 +266,10 @@ class DistNeighborLoader(DistLoader):
                     f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
                 )
 
+        if not hasattr(self, "_batch_store"):
+            logger.info("Setting batch store")
+            self._batch_store = torch.multiprocessing.Manager().dict()
+
         curr_process_nodes = _shard_nodes_by_process(
             input_nodes=input_nodes,
             local_process_rank=local_process_rank,
@@ -333,7 +332,6 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        # Eventually - we should expose this as an arg to be passed in.
         self._transforms: list[
             Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
         ] = list(transforms)
@@ -345,7 +343,9 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
-        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
+        input_data = _BatchedNodeSamplerInput(
+            node=node_ids, input_type=node_type, batch_store=self._batch_store
+        )
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
@@ -486,13 +486,41 @@ class DistNABLPLoader(DistNeighborLoader):
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset, input_nodes, positive_label_edge_type, negative_label_edge_type
         )
-
+        extracted_input_nodes = input_nodes.unsqueeze(1)
         if negative_labels is not None:
+            anchor_sentinel = -2
+            positive_sentinel = -3
+            negative_sentinel = -4
             input_nodes = torch.cat(
-                [input_nodes.unsqueeze(1), positive_labels, negative_labels], dim=1
+                [
+                    extracted_input_nodes,
+                    torch.full_like(extracted_input_nodes, anchor_sentinel),
+                    positive_labels,
+                    torch.full_like(extracted_input_nodes, positive_sentinel),
+                    negative_labels,
+                    torch.full_like(extracted_input_nodes, negative_sentinel),
+                ],
+                dim=1,
             )
         else:
-            input_nodes = torch.cat([input_nodes.unsqueeze(1), positive_labels], dim=1)
+            anchor_sentinel = -2
+            positive_sentinel = -3
+            negative_sentinel = None
+            input_nodes = torch.cat(
+                [
+                    extracted_input_nodes,
+                    torch.full_like(extracted_input_nodes, anchor_sentinel),
+                    positive_labels,
+                    torch.full_like(extracted_input_nodes, positive_sentinel),
+                ],
+                dim=1,
+            )
+
+        node_batches_by_sampled_nodes: dict[
+            tuple[int, ...], torch.Tensor
+        ] = torch.multiprocessing.Manager().dict()
+        self._batch_store = node_batches_by_sampled_nodes
+
         input_nodes = (DEFAULT_HOMOGENEOUS_NODE_TYPE, input_nodes)
         logger.info(
             f"Converted input nodes to tuple of ({DEFAULT_HOMOGENEOUS_NODE_TYPE}, {input_nodes[1].shape})."
@@ -500,6 +528,11 @@ class DistNABLPLoader(DistNeighborLoader):
         transforms = [
             _SupervisedToHomogeneous(
                 message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                anchor_sentinel=anchor_sentinel,
+                positive_label_sentinel=positive_sentinel,
+                negative_label_sentinel=negative_sentinel,
+                padding_node_id=-1,
+                _batch_store=node_batches_by_sampled_nodes,
             )
         ]
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
