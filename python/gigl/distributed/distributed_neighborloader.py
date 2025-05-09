@@ -89,7 +89,7 @@ class DistNeighborLoader(DistLoader):
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
-        process_start_gap_seconds: int = 60,
+        process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -255,7 +255,6 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        # Eventually - we should expose this as an arg to be passed in.
         self._transforms: list[
             Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
         ] = list(transforms)
@@ -307,7 +306,7 @@ class DistABLPLoader(DistNeighborLoader):
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
-        process_start_gap_seconds: int = 60,
+        process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -375,11 +374,11 @@ class DistABLPLoader(DistNeighborLoader):
         # TODO(kmonte): Remove these checks and support properly heterogeneous NABLP.
         if isinstance(input_nodes, tuple):
             raise ValueError(
-                "Heterogeneous NABLP is not supported yet. Provide node_ids as a tensor."
+                "Heterogeneous ABLP is not supported yet. Provide node_ids as a tensor."
             )
         if isinstance(num_neighbors, abc.Mapping):
             raise ValueError(
-                "Heterogeneous NABLP is not supported yet. Provide num_neighbors as a list of integers."
+                "Heterogeneous ABLP is not supported yet. Provide num_neighbors as a list of integers."
             )
         if input_nodes is None:
             if dataset.node_ids is None:
@@ -397,11 +396,11 @@ class DistABLPLoader(DistNeighborLoader):
             )
         if not isinstance(dataset.graph, abc.Mapping):
             raise ValueError(
-                f"The dataset must be heterogeneous for NABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
+                f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
             )
         if DEFAULT_HOMOGENEOUS_EDGE_TYPE not in dataset.graph:
             raise ValueError(
-                f"With Homogeneous NABLP, the graph must have {DEFAULT_HOMOGENEOUS_EDGE_TYPE} edge type, received {dataset.graph.keys()}."
+                f"With Homogeneous ABLP, the graph must have {DEFAULT_HOMOGENEOUS_EDGE_TYPE} edge type, received {dataset.graph.keys()}."
             )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             DEFAULT_HOMOGENEOUS_EDGE_TYPE, dataset.graph.keys()

@@ -188,7 +188,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_distributed_neighbor_loader_with_supervision_edges(
+    def test_ablp_dataloader(
         self,
         _,
         labeled_edges,
@@ -196,7 +196,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         expected_srcs,
         expected_dsts,
     ):
-        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         # Graph looks like https://is.gd/w2oEVp:
         # Message passing
         # 10 -> {11, 12}
