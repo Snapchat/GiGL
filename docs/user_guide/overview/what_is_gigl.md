@@ -17,7 +17,7 @@ provides:
 
 At high level, GiGL abstracts the complicated and distributed processing of the gigantic graph data aways from the
 users, such that users can focus on the graph ML modeling with the open-source libraries that they might already be
-familiar with (PyG, DGL, etc). For more background, please check out our [research blog](<>) and [paper](<>).
+familiar with (PyG, DGL, etc). For more background, please check out our [paper](https://arxiv.org/abs/2502.15054).
 
 ## Why use GiGL?
 
@@ -59,4 +59,4 @@ which in principle (and in practice, as we have found) allows for elastically sc
 particularly appealing when considering deployment settings where scale of data can change rapidly with e.g. user or
 platform growth.
 
-See [GiGL Components](./components.md) for architecture, and more information
+See [GiGL Components](./architecture.md) for architecture, and more information

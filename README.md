@@ -29,8 +29,7 @@ see our [API documentation](docs/api/index.rst)
 ### Architecture
 
 GiGL includes a range of components, each built to support the platform’s end-to-end GraphML workflows. For an overview
-of the architecture and detailed information, please refer to [GiGL Components](./components.md). Below, we provide a
-brief summary for quick reference.
+of the architecture and detailed information, please refer to [GiGL Components](docs/user_guide/overview/architecture.md). Below, we provide a brief summary for quick reference.
 
 The figure below illustrates at a high level how components of GiGL work together.
 (<span style="color:purple">Purple</span> items are work-in-progress.)
@@ -116,7 +115,9 @@ One your PR is "Added to the merge queue", the changes will only merge once our 
 checks succeed. The only caveat to this is the large scale performance testing that runs @ some regular cadence but is
 not visible to open source users currently.
 
-If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments: **Note:
+If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments:
+
+**Note:
 For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
 instructions on how to run the tests locally, or ask a maintainer to run them for you.**
 
@@ -142,15 +143,6 @@ Run all end-to-end tests:
 
 The entry point for running all tests is from the `Makefile`. We provide some documentation below on how you can run
 these tests locally.
-
-<details>
-<summary><bold>Makefile:</bold></summary>
-
-```{literalinclude} Makefile
-:language: make
-```
-
-</details>
 
 #### Lint/Formatting & Unit Tests
 
@@ -205,7 +197,10 @@ make format_md
 
 #### Local Integration Test
 
-TODO: (svij) - This section will be updated soon.
+```{note}
+This section will be updated soon. TODO (svij)
+```
+
 
 GiGL's local integration tests simulate the pipeline behavior of GiGL components. These tests are crucial for verifying
 that components function correctly in sequence and that outputs from one component are correctly handled by the next.
@@ -227,7 +222,9 @@ make integration_test resource_config_uri="gs://your-project-bucket/resource_con
 
 ### Cloud Integration Test (End-to-End)
 
-TODO: (svij) - This section will be updated soon.
+```{note}
+This section will be updated soon. TODO (svij)
+```
 
 Cloud integration tests run a full end-to-end GiGL pipeline within GCP, also leveraging cloud services such as Dataflow,
 Dataproc, and Vertex AI.

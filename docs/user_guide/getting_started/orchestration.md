@@ -8,14 +8,13 @@ page outlines three ways to orchestrate GiGL for after you have set up your conf
 
 The local runner provides a simple interface to kick off an end to end GiGL pipeline.
 
-1. Create a pipeline config. The pipeline config takes in:
+1. Create a {py:class}`gigl.orchestration.local.runner.PipelineConfig`.
 
-- applied_task_identifier: your job name (string)
-- template_task_config_uri: the URI to your template task config (Uri)
-- resource_config_uri: The URI to your resource config (URI)
-- custom_cuda_docker_uri: For custom training spec and GPU training on VertexAI (optional, string)
-- custom_cpu_docker_uri: For custom training spec and CPU training on VertexAI (optional, string)
-- dataflow_docker_uri: For custom datapreprocessor spec that will run in dataflow (optional, string)
+
+```{literalinclude} ../../../python/gigl/orchestration/local/runner.py
+:language: python
+:pyobject: PipelineConfig
+```
 
 Example:
 
@@ -100,4 +99,4 @@ trainer.run(
 )
 ```
 
-For component specific parameters/information, see [Components](../overview/components.md)
+For component specific parameters/information, see [Components](../overview/architecture.md)

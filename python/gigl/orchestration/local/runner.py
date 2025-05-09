@@ -26,6 +26,17 @@ logger = Logger()
 
 @dataclass
 class PipelineConfig:
+    """
+    Configuration for the GiGL pipeline.
+
+    Args:
+        applied_task_identifier (AppliedTaskIdentifier): your job name
+        task_config_uri (Uri): URI to your template task config
+        resource_config_uri (Uri): URI to your resource config
+        custom_cuda_docker_uri (Optional[str]): For custom training spec and GPU training on VertexAI
+        custom_cpu_docker_uri (Optional[str]): For custom training spec and CPU training on VertexAI
+        dataflow_docker_uri (Optional[str]): For custom datapreprocessor spec that will run in dataflow
+    """
     applied_task_identifier: AppliedTaskIdentifier
     task_config_uri: Uri
     resource_config_uri: Uri
