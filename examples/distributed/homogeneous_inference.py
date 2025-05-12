@@ -1,7 +1,7 @@
 """
 This file contains an example for how to run homogeneous inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
 GLT (GraphLearn-for-PyTorch) bindings that GiGL has. Note that example should be applied to use cases which already have
-some pretrained `nn.Module` and are looking to utilize cost-savings with GLT. While `run_example_inference` is coupled with
+some pretrained `nn.Module` and are looking to utilize cost-savings with distributed inference. While `run_example_inference` is coupled with
 GiGL orchestration, the `_inference_process` function is generic and can be used as references
 for writing inference for pipelines not dependent on GiGL orchestration.
 
@@ -65,9 +65,12 @@ def _init_example_gigl_homogeneous_model(
 ) -> LinkPredictionGNN:
     """
     Initializes a hard-coded homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
-    any `nn.Module` subclass can work with GLT.
+    any `nn.Module` subclass can work with GiGL inference.
     This model is trained based on the following CORA UDL E2E config:
     `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
+
+    To train a different model, you can launch a pipeline for training on CORA using the above config with `make run_cora_nalp_e2e_kfp_test`.
+
 
     Args:
         state_dict (Dict[str, torch.Tensor]): State dictionary for pretrained model
@@ -150,8 +153,8 @@ def _inference_process(
     fanout_per_hop = int(inferencer_args.get("fanout_per_hop", "10"))
     # This fanout is defaulted to match the fanout provided in the CORA UDL E2E Config:
     # `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
-    # Users can feel free to parse this argument from `inferencer_args` however they want if they want more
-    # customizability for their fanout strategy.
+    # Users can feel free to parse this argument from `inferencer_args`
+
     num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
@@ -217,8 +220,9 @@ def _inference_process(
     num_files_at_gcs_path = gcs_utils.count_blobs_in_gcs_path(gcs_base_uri)
     if num_files_at_gcs_path > 0:
         logger.warning(
-            f"{num_files_at_gcs_path} files already detected at base gcs path"
+            f"{num_files_at_gcs_path} files already detected at base gcs path. Cleaning up files at path ... "
         )
+        gcs_utils.delete_files_in_bucket_dir(gcs_base_uri)
 
     # GiGL class for exporting embeddings to GCS. This is achieved by writing ids and embeddings to an in-memory buffer which gets
     # flushed to GCS. Setting the min_shard_size_threshold_bytes field of this class sets the frequency of flushing to GCS, and defaults
@@ -238,7 +242,7 @@ def _inference_process(
 
     # Begin inference loop
 
-    # Iterating through the GLT dataloader yields a `torch_geometric.data.Data` type
+    # Iterating through the dataloader yields a `torch_geometric.data.Data` type
     for batch_idx, data in enumerate(data_loader):
         cumulative_data_loading_time += time.time() - data_loading_start_time
 
@@ -318,7 +322,7 @@ def _run_example_inference(
         task_config_uri (str): Path to frozen GBMLConfigPbWrapper
     """
     # All machines run this logic to connect together, and return a distributed context with:
-    # - the (GCP) internal IP address of the rank 0 machine, which will be used by GLT for building RPC connections.
+    # - the (GCP) internal IP address of the rank 0 machine, which will be used for building RPC connections.
     # - the current machine rank
     # - the total number of machines (world size)
 
@@ -428,7 +432,7 @@ def _run_example_inference(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Arguments for GLT distributed model inference on VertexAI"
+        description="Arguments for distributed model inference on VertexAI"
     )
     parser.add_argument(
         "--job_name",
@@ -437,7 +441,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--task_config_uri", type=str, help="Gbml config uri")
 
-    # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for GLT inference
+    # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for distributed inference
     args, unused_args = parser.parse_known_args()
     logger.info(f"Unused arguments: {unused_args}")
 
