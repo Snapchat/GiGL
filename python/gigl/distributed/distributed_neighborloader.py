@@ -1,6 +1,6 @@
 import itertools
 from collections import abc
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -25,6 +25,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     select_label_edge_types,
     to_heterogeneous_edge,
+    to_homogeneous,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
@@ -32,6 +33,8 @@ logger = Logger()
 
 # When using CPU based inference/training, we default cpu threads for neighborloading on top of the per process parallelism.
 DEFAULT_NUM_CPU_THREADS = 2
+
+_GraphData = TypeVar("_GraphData", Data, HeteroData)
 
 
 # By default GLT does not support per-example batching, so we add this to support sampling
@@ -41,8 +44,10 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
     def __init__(
         self,
         node: torch.Tensor,
-        input_type: Optional[NodeType],
-        batch_store: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
+        input_type: Optional[Union[str, NodeType]],
+        batch_store: Optional[
+            abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
+        ] = None,
     ):
         super().__init__(node, input_type)
         self._batch_store = batch_store
@@ -66,7 +71,7 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
                 raise ValueError(
                     f"Node {nodes} already exists in message_passing. Please use a different node id."
                 )
-            self._batch_store[nodes] = full_batch
+            self._batch_store[self.input_type, nodes] = full_batch
         return _BatchedNodeSamplerInput(nodes_to_sample, self.input_type)
 
 
@@ -76,11 +81,6 @@ class _SupervisedToHomogeneous:
     def __init__(
         self,
         message_passing_edge_type: EdgeType,
-        padding_node_id: int,
-        anchor_sentinel: int,
-        positive_label_sentinel: int,
-        negative_label_sentinel: Optional[int] = None,
-        _batch_store: Optional[dict[tuple[int, ...], torch.Tensor]] = None,
     ):
         """
         Args:
@@ -88,12 +88,6 @@ class _SupervisedToHomogeneous:
         """
 
         self._message_passing_edge_type = message_passing_edge_type
-        self._padding_node_id = padding_node_id
-        self._anchor_sentinel = anchor_sentinel
-        self._positive_label_sentinel = positive_label_sentinel
-        self._negative_label_sentinel = negative_label_sentinel
-        self._batch_store = _batch_store
-        self._printed_batch_store_warning = False
 
     def __call__(self, data: HeteroData) -> Data:
         """Transform the heterogeneous graph to a homogeneous graph."""
@@ -101,17 +95,46 @@ class _SupervisedToHomogeneous:
             [self._message_passing_edge_type]
         ).to_homogeneous(add_edge_type=False, add_node_type=False)
 
-        if self._batch_store is not None:
-            full_batch: torch.Tensor = self._batch_store[
-                tuple(homogeneous_data.batch.tolist())
-            ]
+        return homogeneous_data
+
+
+class _SetLabels:
+    def __init__(
+        self,
+        batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor],
+        anchor_node_sentinel: int,
+        positive_label_sentinel: int,
+        negative_label_sentinel: Optional[int] = None,
+    ):
+        self._batch_store = batch_store
+        self._anchor_node_sentinel = anchor_node_sentinel
+        self._positive_label_sentinel = positive_label_sentinel
+        self._negative_label_sentinel = negative_label_sentinel
+
+    def __call__(self, data: _GraphData) -> _GraphData:
+        """Transform the heterogeneous graph to a homogeneous graph."""
+        is_heterogeneous = isinstance(data, HeteroData)
+        positive_labels: dict[NodeType, torch.Tensor] = {}
+        negative_labels: dict[NodeType, torch.Tensor] = {}
+        node_types: list[NodeType]
+        if is_heterogeneous:
+            node_types = data.node_types
+        else:
+            node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
+        for node_type in node_types:
+            full_batch: torch.Tensor
+            if is_heterogeneous:
+                full_batch = self._batch_store[
+                    node_type, tuple(data[node_type].batch.tolist())
+                ]
+            else:
+                full_batch = self._batch_store[node_type, tuple(data.batch.tolist())]
             achor_node_sentinels = torch.nonzero(
-                full_batch == self._anchor_sentinel
+                full_batch == self._anchor_node_sentinel
             ).squeeze(1)
             positive_label_sentinels = torch.nonzero(
                 full_batch == self._positive_label_sentinel
             ).squeeze(1)
-
             pos_labels = []
             if self._negative_label_sentinel is not None:
                 negative_label_sentinels = torch.nonzero(
@@ -134,18 +157,23 @@ class _SupervisedToHomogeneous:
                 ):
                     pos_batch = full_batch[anchor + 1 : positive].view(-1)
                     pos_labels.append(pos_batch)
-
-            homogeneous_data.y_positive = torch.stack(pos_labels)
+            positive_labels[node_type] = torch.stack(pos_labels)
             if neg_labels is not None:
-                homogeneous_data.y_negative = torch.stack(neg_labels)
-        elif not self._printed_batch_store_warning:
-            logger.info("Batch store is not set, will not set labels.")
-            self._printed_batch_store_warning = True
-        return homogeneous_data
+                negative_labels[node_type] = torch.stack(neg_labels)
+        if is_heterogeneous:
+            data.y_positive = positive_labels
+            if negative_labels:
+                data.y_negative = negative_labels
+        else:
+            data.y_positive = to_homogeneous(positive_labels)
+            if negative_labels:
+                data.y_negative = to_homogeneous(negative_labels)
+        return data
 
 
 class DistNeighborLoader(DistLoader):
-    _batch_store: dict[tuple[int, ...], torch.Tensor]
+    _batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
+    _transforms: Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]
 
     def __init__(
         self,
@@ -162,13 +190,10 @@ class DistNeighborLoader(DistLoader):
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
-        process_start_gap_seconds: int = 60,
+        process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
-        transforms: Sequence[
-            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
-        ] = (),
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -218,7 +243,6 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
-            transforms (Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]): A sequence of transforms to apply to the data.
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -268,7 +292,10 @@ class DistNeighborLoader(DistLoader):
 
         if not hasattr(self, "_batch_store"):
             logger.info("Setting batch store")
-            self._batch_store = torch.multiprocessing.Manager().dict()
+            node_batches_by_sampled_nodes: abc.MutableMapping[
+                tuple[NodeType, tuple[int, ...]], torch.Tensor
+            ] = torch.multiprocessing.Manager().dict()
+            self._batch_store = node_batches_by_sampled_nodes
 
         curr_process_nodes = _shard_nodes_by_process(
             input_nodes=input_nodes,
@@ -332,9 +359,9 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        self._transforms: list[
-            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
-        ] = list(transforms)
+        # May be set by base classes.
+        if not hasattr(self, "_transforms"):
+            self._transforms = []
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         if isinstance(curr_process_nodes, torch.Tensor):
@@ -369,7 +396,7 @@ class DistNeighborLoader(DistLoader):
         return data
 
 
-class DistNABLPLoader(DistNeighborLoader):
+class DistABLPLoader(DistNeighborLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
@@ -378,20 +405,24 @@ class DistNABLPLoader(DistNeighborLoader):
         local_process_rank: int,  # TODO: Move this to DistributedContext
         local_process_world_size: int,  # TODO: Move this to DistributedContext
         input_nodes: Optional[
-            Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
+            Union[
+                torch.Tensor,
+                Tuple[NodeType, torch.Tensor],
+                abc.Mapping[NodeType, torch.Tensor],
+            ]
         ] = None,
         num_workers: int = 1,
         batch_size: int = 1,
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
-        process_start_gap_seconds: int = 60,
+        process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
     ):
         """
-        Neighbor loader for Node Anchor Based Link Prediction (NABLP) tasks.
+        Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
 
         Note that for this class, the dataset must *always* be heterogeneous,
         as we need separate edge types for positive and negative labels.
@@ -400,6 +431,7 @@ class DistNABLPLoader(DistNeighborLoader):
         Then we will attempt to infer the positive and optional negative labels
         from the dataset.
         In this case, the output of the loader will be a torch_geometric.data.Data object.
+        Otherwise, the output will be a torch_geometric.data.HeteroData object.
 
            Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
@@ -452,11 +484,11 @@ class DistNABLPLoader(DistNeighborLoader):
         # TODO(kmonte): Remove these checks and support properly heterogeneous NABLP.
         if isinstance(input_nodes, tuple):
             raise ValueError(
-                "Heterogeneous NABLP is not supported yet. Provide node_ids as a tensor."
+                "Heterogeneous ABLP is not supported yet. Provide node_ids as a tensor."
             )
         if isinstance(num_neighbors, abc.Mapping):
             raise ValueError(
-                "Heterogeneous NABLP is not supported yet. Provide num_neighbors as a list of integers."
+                "Heterogeneous ABLP is not supported yet. Provide num_neighbors as a list of integers."
             )
         if input_nodes is None:
             if dataset.node_ids is None:
@@ -468,17 +500,23 @@ class DistNABLPLoader(DistNeighborLoader):
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
             input_nodes = dataset.node_ids
+
+        if not isinstance(dataset.graph, abc.Mapping):
+            raise ValueError(
+                f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
+            )
+
+        if DEFAULT_HOMOGENEOUS_EDGE_TYPE not in dataset.graph:
+            raise ValueError(
+                f"With Homogeneous ABLP, the graph must have {DEFAULT_HOMOGENEOUS_EDGE_TYPE} edge type, received {dataset.graph.keys()}."
+            )
+
+        if isinstance(input_nodes, abc.Mapping):
+            input_nodes = input_nodes[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+
         if len(input_nodes.shape) != 1:
             raise ValueError(
                 f"input_nodes must be a 1D tensor, got {input_nodes.shape}."
-            )
-        if not isinstance(dataset.graph, abc.Mapping):
-            raise ValueError(
-                f"The dataset must be heterogeneous for NABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
-            )
-        if DEFAULT_HOMOGENEOUS_EDGE_TYPE not in dataset.graph:
-            raise ValueError(
-                f"With Homogeneous NABLP, the graph must have {DEFAULT_HOMOGENEOUS_EDGE_TYPE} edge type, received {dataset.graph.keys()}."
             )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             DEFAULT_HOMOGENEOUS_EDGE_TYPE, dataset.graph.keys()
@@ -516,8 +554,8 @@ class DistNABLPLoader(DistNeighborLoader):
                 dim=1,
             )
 
-        node_batches_by_sampled_nodes: dict[
-            tuple[int, ...], torch.Tensor
+        node_batches_by_sampled_nodes: abc.MutableMapping[
+            tuple[NodeType, tuple[int, ...]], torch.Tensor
         ] = torch.multiprocessing.Manager().dict()
         self._batch_store = node_batches_by_sampled_nodes
 
@@ -525,16 +563,20 @@ class DistNABLPLoader(DistNeighborLoader):
         logger.info(
             f"Converted input nodes to tuple of ({DEFAULT_HOMOGENEOUS_NODE_TYPE}, {input_nodes[1].shape})."
         )
-        transforms = [
+        transforms: Sequence[
+            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
+        ] = [
             _SupervisedToHomogeneous(
                 message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-                anchor_sentinel=anchor_sentinel,
+            ),
+            _SetLabels(
+                batch_store=node_batches_by_sampled_nodes,
+                anchor_node_sentinel=anchor_sentinel,
                 positive_label_sentinel=positive_sentinel,
                 negative_label_sentinel=negative_sentinel,
-                padding_node_id=-1,
-                _batch_store=node_batches_by_sampled_nodes,
-            )
+            ),
         ]
+        self._transforms = transforms
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
         zero_samples = [0] * len(num_neighbors)
         num_neighbors = to_heterogeneous_edge(num_neighbors)
@@ -559,7 +601,6 @@ class DistNABLPLoader(DistNeighborLoader):
             num_cpu_threads=num_cpu_threads,
             shuffle=shuffle,
             drop_last=drop_last,
-            transforms=transforms,
         )
 
 

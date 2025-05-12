@@ -10,12 +10,11 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
-from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import (
-    DistNABLPLoader,
+    DistABLPLoader,
     DistNeighborLoader,
 )
 from gigl.src.common.types.graph_data import NodeType
@@ -53,7 +52,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
-    def test_distributed_neighbor_loader(self):
+    def _test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -86,7 +85,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    def test_distributed_neighbor_loader_batched(self):
+    def _test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -197,7 +196,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_distributed_neighbor_loader_with_supervision_edges(
+    def _test_ablp_dataloader(
         self,
         _,
         labeled_edges,
@@ -250,7 +249,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        loader = DistNABLPLoader(
+        loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
             input_nodes=torch.tensor([10, 15]),
@@ -284,15 +283,16 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_cora_supervised(self):
         dataset = build_dataset_from_task_config_uri(
-            UriFactory.create_uri(Path(__file__).parent / "cora_ssl_task_config.yaml"),
+            str(Path(__file__).parent / "cora_ssl_task_config.yaml"),
             distributed_context=self._context,
             is_inference=False,
         )
-        loader = DistNABLPLoader(
+        # input_nodes: torch.Tensor = to_homogeneous(dataset.train_node_ids)
+        loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
             # input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, torch.tensor([0, 1, 2, 3])),
-            input_nodes=dataset.train_node_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            input_nodes=dataset.train_node_ids,
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,

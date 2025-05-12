@@ -143,20 +143,18 @@ class LoadedGraphTensors:
             f"Treating positive labels as edge type {positive_label_edge_type} and negative labels as edge type {negative_label_edge_type}."
         )
 
-        print(f"self.edge_index: {self.edge_index.shape=}")
-        print(f"self.edge_features: {self.edge_features.shape=}")
         self.node_ids = to_heterogeneous_node(self.node_ids)
         self.node_features = to_heterogeneous_node(self.node_features)
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
         # self.edge_features[positive_label_edge_type] = None
         # self.edge_features[negative_label_edge_type] = None
-        self.edge_features[positive_label_edge_type] = torch.zeros(
-            (self.positive_label.shape[1], 1), dtype=torch.float32
-        )
-        self.edge_features[negative_label_edge_type] = torch.zeros(
-            (self.negative_label.shape[1], 1), dtype=torch.float32
-        )
+        # self.edge_features[positive_label_edge_type] = torch.zeros(
+        #     (self.positive_label.shape[1], 1), dtype=torch.float32
+        # )
+        # self.edge_features[negative_label_edge_type] = torch.zeros(
+        #     (self.negative_label.shape[1], 1), dtype=torch.float32
+        # )
         self.positive_label = None
         self.negative_label = None
 
@@ -310,12 +308,12 @@ def to_homogeneous(x: None) -> None:
 
 
 @overload
-def to_homogeneous(x: Union[_T, dict[Union[NodeType, EdgeType], _T]]) -> _T:
+def to_homogeneous(x: Union[_T, abc.Mapping[Union[NodeType, EdgeType], _T]]) -> _T:
     ...
 
 
 def to_homogeneous(
-    x: Optional[Union[_T, dict[Union[NodeType, EdgeType], _T]]]
+    x: Optional[Union[_T, abc.Mapping[Union[NodeType, EdgeType], _T]]]
 ) -> Optional[_T]:
     """Convert a value to a homogeneous representation.
 
@@ -331,7 +329,7 @@ def to_homogeneous(
     """
     if x is None:
         return None
-    if isinstance(x, dict):
+    if isinstance(x, abc.Mapping):
         if len(x) != 1:
             raise ValueError(
                 f"Expected a single value in the dictionary, but got multiple keys: {x.keys()}"
