@@ -74,6 +74,8 @@ class _SupervisedToHomogeneous:
 
 
 class DistNeighborLoader(DistLoader):
+    _transforms: Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]
+
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
@@ -93,9 +95,6 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
-        transforms: Sequence[
-            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
-        ] = (),
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -145,7 +144,6 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
-            transforms (Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]): A sequence of transforms to apply to the data.
             _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
                 The port number to use for inference processes.
                 In future, the port will be automatically assigned based on availability.
@@ -255,9 +253,9 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        self._transforms: list[
-            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
-        ] = list(transforms)
+        # May be set by base classes.
+        if not hasattr(self, "_transforms"):
+            self._transforms = []
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         if isinstance(curr_process_nodes, torch.Tensor):
@@ -424,6 +422,7 @@ class DistABLPLoader(DistNeighborLoader):
                 message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
             )
         ]
+        self._transforms = transforms
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
         zero_samples = [0] * len(num_neighbors)
         num_neighbors = to_heterogeneous_edge(num_neighbors)
@@ -448,7 +447,6 @@ class DistABLPLoader(DistNeighborLoader):
             num_cpu_threads=num_cpu_threads,
             shuffle=shuffle,
             drop_last=drop_last,
-            transforms=transforms,
         )
 
 
