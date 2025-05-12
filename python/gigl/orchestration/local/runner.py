@@ -37,6 +37,7 @@ class PipelineConfig:
         custom_cpu_docker_uri (Optional[str]): For custom training spec and CPU training on VertexAI
         dataflow_docker_uri (Optional[str]): For custom datapreprocessor spec that will run in dataflow
     """
+
     applied_task_identifier: AppliedTaskIdentifier
     task_config_uri: Uri
     resource_config_uri: Uri

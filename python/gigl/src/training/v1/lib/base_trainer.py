@@ -14,6 +14,15 @@ logger = Logger()
 
 
 class BaseTrainer(BaseModelOperationsProtocol):
+    """
+    The Protocol that you need to implement for your trainer to function with Training
+    in tabularized mode.
+
+    Note: the BaseTrainer class also implements the BaseModelOperationsProtocol
+    which requires the init_model method, and the getter and setter for the model property.
+
+    """
+
     def train(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,

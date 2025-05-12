@@ -51,6 +51,14 @@ def no_grad_eval(f):
 
 @runtime_checkable
 class BaseInferencer(BaseModelOperationsProtocol, Protocol, Generic[T]):
+    """
+    The Protocol that you need to implement for your inferencer to function with automated Inference
+    in tabularized mode.
+
+    Note: the BaseInferencer class also implements the BaseModelOperationsProtocol
+    which requires the init_model method, and the getter and setter for the model property.
+    """
+
     def infer_batch(
         self, batch: T, device: torch.device = torch.device("cpu")
     ) -> InferBatchResults:

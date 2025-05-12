@@ -1,15 +1,35 @@
 # GiGL Architecture
 
 ## Components
+
 GiGL contains six components, each designed to facilitate the platforms end-to-end graph machine learning (ML) tasks.
 The components and there documentation (linked) are as follows:
 
-* <img src="../../assets/images/config_populator_icon.png" height="50px"  width="50px"> [**Config Populator**](components/config_populator.md): Processing template config files and updating with fields that are needed for downstream components.
-* <img src="../../assets/images/data_preprocessor_icon.png" height="50px" width="50px"> [**Data Preprocessor**](components/data_preprocessor.md): Reading and processing node, edge, and feature/data engineering.
-* <img src="../../assets/images/subgraph_sampler_icon.png" height="50px" width="50px"> [**Subgraph Sampler**](components/subgraph_sampler.md): Generate k-hop localized subgraphs for each node in the graph.
-* <img src="../../assets/images/split_generator_icon.png" height="50px" width="50px">[ **Split Generator**](components/split_generator.md): Split the data into training, validation, and test sets.
-* <img src="../../assets/images/trainer_icon.png" height="50px" width="50px"> [**Trainer**](components/trainer.md): Run distributed training either locally or on the cloud.
-* <img src="../../assets/images/inferencer_icon.png" height="50px" width="50px"> [**Inferencer**](components/inferencer.md): Runs inference to generate output embeddings and/or predictions.
+<img src="../../assets/images/config_populator_icon.png" height="50px"  width="50px">
+
+[**Config Populator**](components/config_populator.md): Processing template config files and updating with fields that
+are needed for downstream components.
+
+<img src="../../assets/images/data_preprocessor_icon.png" height="50px" width="50px">
+
+[**Data Preprocessor**](components/data_preprocessor.md): Reading and processing node, edge, and feature/data
+engineering.
+
+<img src="../../assets/images/subgraph_sampler_icon.png" height="50px" width="50px">
+
+[**Subgraph Sampler**](components/subgraph_sampler.md): Generate k-hop localized subgraphs for each node in the graph.
+
+<img src="../../assets/images/split_generator_icon.png" height="50px" width="50px">
+
+[**Split Generator**](components/split_generator.md): Split the data into training, validation, and test sets.
+
+<img src="../../assets/images/trainer_icon.png" height="50px" width="50px">
+
+[**Trainer**](components/trainer.md): Run distributed training either locally or on the cloud.
+
+<img src="../../assets/images/inferencer_icon.png" height="50px" width="50px">
+
+[**Inferencer**](components/inferencer.md): Runs inference to generate output embeddings and/or predictions.
 
 #### For convenience we link the source code pointers:
 
@@ -23,6 +43,7 @@ The components and there documentation (linked) are as follows:
 | Inferencer        | {py:class}`gigl.src.inference.inferencer.Inferencer`                      |
 
 ## Diagrams
+
 The figure below illustrates at a high level how all the components work together.
 (<span style="color:purple">Purple</span> items are work-in-progress.)
 
@@ -33,7 +54,6 @@ the model is trained with triplet-style contrastive loss on a set of anchor node
 (in-batch) negatives.
 
 ![gigl_nablp](../../assets/images/gigl_nablp.png)
-
 
 ```{toctree}
 :maxdepth: 2
