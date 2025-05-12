@@ -167,7 +167,7 @@ class GcsUtils:
     def __download_blob_from_gcs(blob: storage.Blob, dest_file_path: LocalUri):
         dest_file_path_str: str = dest_file_path.uri
         pathlib.Path(dest_file_path_str).parent.mkdir(parents=True, exist_ok=True)
-        logger.info(
+        logger.debug(
             f"Downloading gs://{blob.bucket.name}/{blob.name} to {dest_file_path_str}"
         )
         blob.download_to_filename(dest_file_path_str)
