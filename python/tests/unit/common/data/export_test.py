@@ -371,7 +371,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         )
 
         if should_run_async:
-            # Waiting for load job to finish without relying on `laod_job.result()`. This way, we ensure that job was able to start and finish
+            # Waiting for load job to finish without relying on `load_job.result()`. This way, we ensure that job was able to start and finish
             # asynchronously.
             while not load_job.done():
                 time.sleep(1)
