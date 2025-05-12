@@ -128,6 +128,9 @@ sharedConfig:
   shouldSkipTraining: true  # GLT Task does not have a training phase that is being tested right now
   shouldSkipModelEvaluation: true
   trainedModelMetadata:
+    # This is an example model trained on the DBLP dataset. To train a custom DBLP model, please refer to the
+    # `gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml` config template.
+    # You can run a pipeline for training on DBLP using `make run_dblp_nalp_e2e_kfp_test`.
     trainedModelUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_lp/trainer/models/model.pt
 featureFlags:
   should_run_glt_backend: 'True'
