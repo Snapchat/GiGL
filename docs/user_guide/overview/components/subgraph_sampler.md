@@ -58,7 +58,7 @@ Firstly, you can adjust the `subgraphSamplerConfig` parameters in the `GbmlConfi
 - The `samplingOp` essentially forms a DAG of edge types to sample, indicating how we should construct our sampled k-hop
   message passing graph, one for each root node type.
 - (Note: Note: Only node types which exist in `supervision_edge_types` need their own `MessagePassingPaths` define, see
-  [task_config_guide](../user_guide/config_guides/task_config_guide.md) for more details)
+  [task_config_guide](../../config_guides/task_config_guide.md) for more details)
 - We currently support the following sampling methods in `samplingOp`:
   - `randomUniform`: Random sample
   - `topK`: Sample top K, based on `edgeFeatName`

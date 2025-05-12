@@ -1,3 +1,5 @@
 # Example Walkthrough #1
 
-TODO: (svij) - This section will be updated soon.
+```{note}
+This section will be updated soon. TODO (svij)
+```

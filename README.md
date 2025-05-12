@@ -15,21 +15,24 @@ GiGL is an open-source library for training and inference of Graph Neural Networ
 
 ______________________________________________________________________
 
-## GiGL Components ⚡️
+## Installation ⚙️
 
-GiGL contains six components, each designed to facilitate the platforms end-to-end graph machine learning (ML) tasks.
-The components are as follows:
+See [Installation Instructions](docs/user_guide/getting_started/installation.md)
 
-| Component         | Source Code                                                               | Documentation                                           |
-| ----------------- | ------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Config Populator  | {py:class}`gigl.src.config_populator.config_populator.ConfigPopulator`    | [here](docs/user_guide/components/config_populator.md)  |
-| Data Preprocessor | {py:class}`gigl.src.data_preprocessor.data_preprocessor.DataPreprocessor` | [here](docs/user_guide/components/data_preprocessor.md) |
-| Subgraph Sampler  | {py:class}`gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler`    | [here](docs/user_guide/components/subgraph_sampler.md)  |
-| Split Generator   | {py:class}`gigl.src.split_generator.split_generator.SplitGenerator`       | [here](docs/user_guide/components/split_generator.md)   |
-| Trainer           | {py:class}`gigl.src.training.trainer.Trainer`                             | [here](docs/user_guide/components/trainer.md)           |
-| Inferencer        | {py:class}`gigl.src.inference.inferencer.Inferencer`                      | [here](docs/user_guide/components/inferencer.md)        |
+## Getting Started 🚀
 
-The figure below illustrates at a high level how all the components work together.
+If you like to get started right away, see our [Quick Start Guide](docs/user_guide/getting_started/quick_start.md)
+
+The best way to get more familiar with GiGL is to go through our detailed [User Guide](docs/user_guide/index.rst) and
+see our [API documentation](docs/api/index.rst)
+
+### Architecture
+
+GiGL includes a range of components, each built to support the platform’s end-to-end GraphML workflows. For an overview
+of the architecture and detailed information, please refer to
+[GiGL Components](docs/user_guide/overview/architecture.md). Below, we provide a brief summary for quick reference.
+
+The figure below illustrates at a high level how components of GiGL work together.
 (<span style="color:purple">Purple</span> items are work-in-progress.)
 
 <img src="docs/assets/images/gigl_system_fig.png" alt="GiGL System Figure" width="50%" />
@@ -40,14 +43,7 @@ the model is trained with triplet-style contrastive loss on a set of anchor node
 
 ![gigl_nablp](docs/assets/images/gigl_nablp.png)
 
-## Installation ⚙️
-
-See [Installation Instructions](docs/user_guide/getting_started/installation.md)
-
-## Usage 🚀
-
-The best way to get more familiar with GiGL is to go through our detailed [User Guide](docs/user_guide/index.rst) and
-[API reference](docs/api_reference/index.rst)
+### Usage
 
 GiGL offers 3 primiary methods of usage to run the components for your graph machine learning tasks.
 
@@ -120,8 +116,9 @@ One your PR is "Added to the merge queue", the changes will only merge once our 
 checks succeed. The only caveat to this is the large scale performance testing that runs @ some regular cadence but is
 not visible to open source users currently.
 
-If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments: **Note:
-For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
+If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments:
+
+**Note: For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
 instructions on how to run the tests locally, or ask a maintainer to run them for you.**
 
 Run all unit tests:
@@ -146,15 +143,6 @@ Run all end-to-end tests:
 
 The entry point for running all tests is from the `Makefile`. We provide some documentation below on how you can run
 these tests locally.
-
-<details>
-<summary><bold>Makefile:</bold></summary>
-
-```{literalinclude} Makefile
-:language: make
-```
-
-</details>
 
 #### Lint/Formatting & Unit Tests
 
@@ -209,7 +197,9 @@ make format_md
 
 #### Local Integration Test
 
-TODO: (svij) - This section will be updated soon.
+```{note}
+This section will be updated soon. TODO (svij)
+```
 
 GiGL's local integration tests simulate the pipeline behavior of GiGL components. These tests are crucial for verifying
 that components function correctly in sequence and that outputs from one component are correctly handled by the next.
@@ -231,7 +221,9 @@ make integration_test resource_config_uri="gs://your-project-bucket/resource_con
 
 ### Cloud Integration Test (End-to-End)
 
-TODO: (svij) - This section will be updated soon.
+```{note}
+This section will be updated soon. TODO (svij)
+```
 
 Cloud integration tests run a full end-to-end GiGL pipeline within GCP, also leveraging cloud services such as Dataflow,
 Dataproc, and Vertex AI.

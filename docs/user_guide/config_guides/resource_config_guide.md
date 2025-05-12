@@ -86,7 +86,7 @@ common_compute_config:
   gcp_service_account_email: "your-service-account-email"
 ```
 
-**Preprocessor Config**
+**[Preprocessor](../overview/components/data_preprocessor.md) Config**
 
 The `preprocessor_config` specifies settings for the Dataflow preprocessor component, includes number of workers,
 machine type, and disk size. You must specify both the `node_preprocessor_config` and `edge_preprocessor_config`. See
@@ -106,7 +106,7 @@ preprocessor_config:
     disk_size_gb: 100
 ```
 
-**Subgraph Sampler Config**
+**[Subgraph Sampler](../overview/components/subgraph_sampler.md) Config**
 
 The `subgraph_sampler_config` specifies settings for the Spark subgraph sampler component, includes machine type, local
 SSDs, and number of replicas. See example:
@@ -118,7 +118,7 @@ subgraph_sampler_config:
   num_replicas: 2
 ```
 
-**Split Generator Config**
+**[Split Generator](../overview/components/split_generator.md) Config**
 
 The `split_generator_config` specifies settings for the Spark split generator component, includes machine type, local
 SSDs, and number of replicas
@@ -130,7 +130,7 @@ split_generator_config:
   num_replicas: 2
 ```
 
-**Trainer Config**
+**[Trainer](../overview/components/trainer.md) Config**
 
 The `trainer_config` specifies settings for the trainer config, currently supporting Vertex AI training or Local
 Training.
@@ -150,7 +150,7 @@ Training.
 - **Local Trainer Config**: The `local_trainer_config` field of the trainer config just requires `num_workers` which can
   be used for data loaders.
 
-**Inferencer Config**
+**[Inferencer](../overview/components/inferencer.md) Config**
 
 The `inferencer_config` specifies settings for the Dataflow preprocessor component, includes number of workers, machine
 type, and disk size. See example:
