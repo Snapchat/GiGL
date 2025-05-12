@@ -1,7 +1,9 @@
+import time
 import unittest
 import uuid
 
 import torch
+from parameterized import param, parameterized
 
 from gigl.common import GcsUri
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
@@ -39,7 +41,19 @@ class EmbeddingExportIntergrationTest(unittest.TestCase):
             bq_table_path=bq_export_table_path,
         )
 
-    def test_embedding_export(self):
+    @parameterized.expand(
+        [
+            param(
+                "Test if we can load embeddings synchronously",
+                should_run_async=False,
+            ),
+            param(
+                "Test if we can load embeddings asynchronously",
+                should_run_async=True,
+            ),
+        ]
+    )
+    def test_embedding_export(self, _, should_run_async: bool):
         num_nodes = 1_000
         with EmbeddingExporter(export_dir=self.embedding_output_dir) as exporter:
             for i in torch.arange(num_nodes):
@@ -66,14 +80,21 @@ class EmbeddingExportIntergrationTest(unittest.TestCase):
             self.embedding_output_bq_table,
         )
         logger.info(
-            f"Will try exporting to {self.embedding_output_dir} to BQ: {bq_export_table_path}"
+            f"Will try exporting to {self.embedding_output_dir} to BQ: {bq_export_table_path} with `should_run_async={should_run_async}`"
         )
         load_job = load_embeddings_to_bigquery(
             gcs_folder=self.embedding_output_dir,
             project_id=self.embedding_output_bq_project,
             dataset_id=self.embedding_output_bq_dataset,
             table_id=self.embedding_output_bq_table,
+            should_run_async=should_run_async,
         )
+
+        if should_run_async:
+            # Waiting for load job to finish without relying on `load_job.result()`. This way, we ensure that job was able to start and finish
+            # asynchronously.
+            while not load_job.done():
+                time.sleep(1)
 
         # Check that data in BQ is as expected...
         self.assertEqual(

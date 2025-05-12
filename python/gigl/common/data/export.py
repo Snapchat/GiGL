@@ -241,7 +241,9 @@ def load_embeddings_to_bigquery(
 
     Returns:
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
-        user to monitor and retrieve details about the job status and result.
+        user to monitor and retrieve details about the job status and result. The return job will be done if
+        `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
+        `should_run_asnyc=True`.
     """
     start = time.perf_counter()
     logger.info(f"Loading embeddings from {gcs_folder} to BigQuery.")
