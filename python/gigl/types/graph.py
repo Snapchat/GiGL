@@ -5,6 +5,7 @@ from typing import Optional, TypeVar, Union, overload
 import torch
 from graphlearn_torch.partition import PartitionBook
 
+from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.logger import Logger
 
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
@@ -235,7 +236,7 @@ def select_label_edge_types(
     return positive_label_type, negative_label_type
 
 
-_T = TypeVar("_T")
+_T = TypeVar("_T", torch.Tensor, GraphPartitionData, FeaturePartitionData, SerializedTFRecordInfo, list, None)
 
 
 @overload
@@ -308,12 +309,19 @@ def to_homogeneous(x: None) -> None:
 
 
 @overload
-def to_homogeneous(x: Union[_T, abc.Mapping[Union[NodeType, EdgeType], _T]]) -> _T:
+def to_homogeneous(x: dict[NodeType, _T]) -> _T:
     ...
 
+@overload
+def to_homogeneous(x: dict[EdgeType, _T]) -> _T:
+    ...
+
+@overload
+def to_homogeneous(x: _T) -> _T:
+    ...
 
 def to_homogeneous(
-    x: Optional[Union[_T, abc.Mapping[Union[NodeType, EdgeType], _T]]]
+    x: Optional[Union[_T, dict[Union[NodeType, EdgeType], _T]]]
 ) -> Optional[_T]:
     """Convert a value to a homogeneous representation.
 
@@ -329,7 +337,7 @@ def to_homogeneous(
     """
     if x is None:
         return None
-    if isinstance(x, abc.Mapping):
+    if isinstance(x, dict):
         if len(x) != 1:
             raise ValueError(
                 f"Expected a single value in the dictionary, but got multiple keys: {x.keys()}"

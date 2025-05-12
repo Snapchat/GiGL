@@ -30,6 +30,7 @@ from gigl.types.graph import (
     message_passing_to_negative_label,
     message_passing_to_positive_label,
     to_heterogeneous_node,
+    to_homogeneous,
 )
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
@@ -292,7 +293,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             dataset=dataset,
             num_neighbors=[2, 2],
             # input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, torch.tensor([0, 1, 2, 3])),
-            input_nodes=dataset.train_node_ids,
+            input_nodes=to_homogeneous(dataset.train_node_ids),
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,

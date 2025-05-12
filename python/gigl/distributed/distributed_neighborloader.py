@@ -408,7 +408,6 @@ class DistABLPLoader(DistNeighborLoader):
             Union[
                 torch.Tensor,
                 Tuple[NodeType, torch.Tensor],
-                abc.Mapping[NodeType, torch.Tensor],
             ]
         ] = None,
         num_workers: int = 1,
