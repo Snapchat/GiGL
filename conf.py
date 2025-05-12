@@ -100,6 +100,7 @@ html_theme = "pydata_sphinx_theme" # https://pydata-sphinx-theme.readthedocs.io/
 # We enable the edit button instead so the src code can be seen and edited conveniently; see use of use_edit_page_button below.
 html_show_sourcelink = False # https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/source-buttons.html#view-source-link
 html_logo = "docs/assets/images/gigl.png"
+html_favicon = "docs/assets/images/favicon.ico"
 
 html_theme_options = {
     # https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/header-links.html#icon-links
