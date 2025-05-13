@@ -82,6 +82,13 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
             self.assertFalse(
                 gbml_config_pb_wrapper.shared_config.HasField("dataset_metadata")
             )
+
+            # GBML Config Pb Wrapper Checks
+            self.assertTrue(gbml_config_pb_wrapper.should_use_glt_backend)
+            self.assertIsNone(
+                gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
+            )
+            self.assertIsNone(gbml_config_pb_wrapper.dataset_metadata_pb_wrapper)
         else:
             # Assert the right flattened graph metadata was set.
             self.assertTrue(
@@ -117,6 +124,13 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
                 self.assertNotEqual(dataset_metadata_pb.train_data_uri, "")
                 self.assertNotEqual(dataset_metadata_pb.val_data_uri, "")
                 self.assertNotEqual(dataset_metadata_pb.test_data_uri, "")
+
+            # GBML Config Pb Wrapper Checks
+            self.assertFalse(gbml_config_pb_wrapper.should_use_glt_backend)
+            self.assertIsNotNone(
+                gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
+            )
+            self.assertIsNotNone(gbml_config_pb_wrapper.dataset_metadata_pb_wrapper)
 
         # Assert trainer metadata assets were set
         trained_model_metadata_pb: trained_model_metadata_pb2.TrainedModelMetadata = (
