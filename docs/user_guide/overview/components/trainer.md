@@ -1,4 +1,4 @@
-## Trainer
+# Trainer
 
 The Trainer component reads the outputs of split generator (which paths are specified in the frozen config), and trains
 a GNN model on the training set, early stops on the performance of the validation set, and finally evaluates on the test
@@ -31,19 +31,19 @@ following steps:
 - We start model training as indicated by the `BaseTrainer` instance. This may look something like:
 
   - We initialize training and validation dataloaders (See: `NodeAnchorBasedLinkPredictionDatasetDataloaders` in
-    [dataset_metadata_utils.py](../../python/gigl/src/common/types/pb_wrappers/dataset_metadata_utils.py))
+    [dataset_metadata_utils.py](../../../../python/gigl/src/common/types/pb_wrappers/dataset_metadata_utils.py))
   - Follow a standard distributed training scheme: each worker loads a batch of data and performs the normal forward and
     backward passes for model training in a distributed way.
   - Every fixed number of training batches(`val_every_num_batches`), we evaluate the current model on the validation set
     with a fixed number of validation batches (`num_val_batches`)
   - We follow a standard early-stopping strategy on the validation performances on offline metrics, with a configurable
     patience parameter (`early_stop_patience`) or see `EarlyStopper` utility class in
-    [early_stop.py](../../python/gigl/src/common/modeling_task_specs/utils/early_stop.py)
+    [early_stop.py](../../../../python/gigl/src/common/modeling_task_specs/utils/early_stop.py)
   - When early-stopping is triggered to end the training process, we reload the saved model at the best validation
     batch, and run evaluation (test) it with a fixed number of test batches (`num_test_batches`).
   - At the end, we return the model and its test performance (offline metrics) back to the Trainer.
 
-- The Trainer persists output metadata like model parameters and offline metrics (see [Output](#output)).
+- The Trainer persists output metadata like model parameters and offline metrics.
 
 ## How do I run it?
 

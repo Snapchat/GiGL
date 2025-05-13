@@ -2,20 +2,18 @@
 
 GiGL is designed to support easy end to end orchestration of your GNN tasks/workflows with minimal setup required. This
 page outlines three ways to orchestrate GiGL for after you have set up your configs (See:
-[quick start](../config_guides/task_config_guide.md) if you have not done so).
+[quick start](./quick_start.md) if you have not done so).
 
 ## Local Runner
 
 The local runner provides a simple interface to kick off an end to end GiGL pipeline.
 
-1. Create a pipeline config. The pipeline config takes in:
+1. Create a {py:class}`gigl.orchestration.local.runner.PipelineConfig`.
 
-- applied_task_identifier: your job name (string)
-- template_task_config_uri: the URI to your template task config (Uri)
-- resource_config_uri: The URI to your resource config (URI)
-- custom_cuda_docker_uri: For custom training spec and GPU training on VertexAI (optional, string)
-- custom_cpu_docker_uri: For custom training spec and CPU training on VertexAI (optional, string)
-- dataflow_docker_uri: For custom datapreprocessor spec that will run in dataflow (optional, string)
+```{literalinclude} ../../../python/gigl/orchestration/local/runner.py
+:language: python
+:pyobject: PipelineConfig
+```
 
 Example:
 
@@ -51,7 +49,9 @@ Example:
 Runner.run_data_preprocessor(pipeline_config=pipeline_config)
 ```
 
-## Kubeflow Orchestration
+## VertexAI (Kubeflow) Orchestration
+
+TODO: (svij) - This section will be updated soon.
 
 GiGL also supports orchestration of your workflows using
 [Kubeflow Pipelines](https://www.kubeflow.org/docs/components/pipelines/v2/) using a `KfpOrchestrator` class. We make
@@ -98,4 +98,4 @@ trainer.run(
 )
 ```
 
-For component specific parameters/information, see [Components](../overview/components.md)
+For component specific parameters/information, see [Components](../overview/architecture.md)
