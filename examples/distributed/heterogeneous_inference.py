@@ -433,8 +433,6 @@ def _run_example_inference(
             logger.info(
                 f"--- Machine 0 triggers loading embeddings from GCS to BigQuery for node type {inference_node_type}"
             )
-            load_embedding_start_time = time.time()
-
             # If we are on the last inference process, we should wait for this last write process to complete. Otherwise, we should
             # load embeddings to bigquery in the background so that we are not blocking the start of the next inference process
             should_run_async = process_num != len(inference_node_types) - 1
