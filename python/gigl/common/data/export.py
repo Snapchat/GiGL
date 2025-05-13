@@ -241,7 +241,7 @@ def load_embeddings_to_bigquery(
 
     Returns:
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
-        user to monitor and retrieve details about the job status and result. The return job will be done if
+        user to monitor and retrieve details about the job status and result. The returned job will be done if
         `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
         `should_run_asnyc=True`.
     """
@@ -269,7 +269,7 @@ def load_embeddings_to_bigquery(
 
     if should_run_async:
         logger.info(
-            f"Started loading process for {dataset_id}:{table_id}, running asynchronously"
+            f"Started loading process for {dataset_id}:{table_id} with job id {load_job.job_id}, running asynchronously"
         )
     else:
         load_job.result()  # Wait for the job to complete.

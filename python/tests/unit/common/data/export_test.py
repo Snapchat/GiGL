@@ -1,6 +1,5 @@
 import io
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from typing import List, Optional
@@ -369,12 +368,6 @@ class TestEmbeddingExporter(unittest.TestCase):
             table_id,
             should_run_async=should_run_async,
         )
-
-        if should_run_async:
-            # Waiting for load job to finish without relying on `load_job.result()`. This way, we ensure that job was able to start and finish
-            # asynchronously.
-            while not load_job.done():
-                time.sleep(1)
 
         # Assertions
         mock_bigquery_client.assert_called_once_with(project=project_id)
