@@ -333,8 +333,22 @@ class TestEmbeddingExporter(unittest.TestCase):
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
         exporter.flush_embeddings()
 
+    @parameterized.expand(
+        [
+            param(
+                "Test if we can load embeddings synchronously",
+                should_run_async=False,
+            ),
+            param(
+                "Test if we can load embeddings asynchronously",
+                should_run_async=True,
+            ),
+        ]
+    )
     @patch("gigl.common.data.export.bigquery.Client")
-    def test_load_embedding_to_bigquery(self, mock_bigquery_client):
+    def test_load_embedding_to_bigquery(
+        self, _, mock_bigquery_client, should_run_async: bool
+    ):
         # Mock inputs
         gcs_folder = GcsUri("gs://test-bucket/test-folder")
         project_id = "test-project"
@@ -348,7 +362,11 @@ class TestEmbeddingExporter(unittest.TestCase):
 
         # Call the function
         load_job = load_embeddings_to_bigquery(
-            gcs_folder, project_id, dataset_id, table_id
+            gcs_folder,
+            project_id,
+            dataset_id,
+            table_id,
+            should_run_async=should_run_async,
         )
 
         # Assertions

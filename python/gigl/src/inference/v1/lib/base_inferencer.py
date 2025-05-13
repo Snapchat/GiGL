@@ -51,6 +51,14 @@ def no_grad_eval(f):
 
 @runtime_checkable
 class BaseInferencer(BaseModelOperationsProtocol, Protocol, Generic[T]):
+    """
+    The Protocol that you need to implement for your inferencer to function with automated Inference
+    in tabularized mode.
+
+    Note: the BaseInferencer class also implements the :class:`gigl.src.common.types.model.BaseModelOperationsProtocol`
+    protocol, which requires the init_model method, and the getter and setter for the model property.
+    """
+
     def infer_batch(
         self, batch: T, device: torch.device = torch.device("cpu")
     ) -> InferBatchResults:
@@ -60,10 +68,18 @@ class BaseInferencer(BaseModelOperationsProtocol, Protocol, Generic[T]):
 class SupervisedNodeClassificationBaseInferencer(
     BaseInferencer[SupervisedNodeClassificationBatch]
 ):
-    pass
+    """
+    The protocol that you need to implement for inference for Supervised Node Classification tasks in tabularized mode.
+    Note: the protocol also implements :class:`BaseInferencer` protocol.
+
+    """
 
 
 class NodeAnchorBasedLinkPredictionBaseInferencer(
     BaseInferencer[RootedNodeNeighborhoodBatch]
 ):
-    pass
+    """
+    The protocol that you need to implement for inderence for Node Anchor Based Link Prediction tasks in tabularized mode.
+    Note: the protocol also implements :class:`BaseInferencer` protocol.
+
+    """

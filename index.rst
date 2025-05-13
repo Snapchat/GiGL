@@ -5,8 +5,7 @@
     :maxdepth: 3
     :hidden:
 
-    docs/api_reference/index.rst
-    docs/user_guide/index.md
+    docs/user_guide/index.rst
 
 .. ============= Main page content =============
 .. include:: README.md

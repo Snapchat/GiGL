@@ -17,7 +17,7 @@ Prerequiste: Ensure you have access to your own GCP project, and a service accou
 cli setup locally and/or running the notebook through a GCP VM. Some basic knowledge of GCP may be necessary here.
 
 Note: If you decided to follow step 1. you may need to subesequently modify paths in
-`examples/MAG240M/preprocessor_config.py`
+{py:class}`examples.MAG240M.preprocessor_config.Mag240DataPreprocessorConfig`
 
 Follow along `examples/MAG240M/mag240m.ipynb` to run an e2e GiGL pipeline on the MAG240M dataset. It will guide you
 through running each component: `config_populator` -> `data_preprocessor` -> `subgraph_sampler` -> `split_generator` ->
