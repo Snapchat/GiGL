@@ -29,13 +29,14 @@ def _log_spark_cluster(job_id: str) -> None:
 class DataprocService:
     """
     A service class that provides methods to interact with Google Cloud Dataproc.
-
-    Args:
-        project_id (str): The ID of the Google Cloud project.
-        region (str): The region where the Dataproc cluster is located.
     """
 
     def __init__(self, project_id: str, region: str) -> None:
+        """
+        Args:
+            project_id (str):  The ID of the Google Cloud project.
+            region (str):The region where the Dataproc cluster is located.
+        """
         self.project_id = project_id
         self.region = region
         client_options = {"api_endpoint": f"{self.region}-dataproc.googleapis.com:443"}

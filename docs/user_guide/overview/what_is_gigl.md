@@ -1,4 +1,6 @@
-# What is GiGL?
+# Overview
+
+## What is GiGL?
 
 GiGL (Gigantic Graph Learning) is an open-source library designed for training and inference of Graph Neural Networks
 (GNNs) at a very large scale, capable of handling billion-scale heterogeneous and feature-rich graph data. This library
@@ -9,15 +11,15 @@ provides:
 - abstracted designs to gracefully interface with modern ML libraries such as [PyTorch](https://pytorch.org/) and
   [TensorFlow](https://www.tensorflow.org/)
 - flexible GNNs modeling with commonly used graph ML modeling libraries such as
-  [PyG](https://github.com/pyg-team/pytorch_geometric) and [DGL](https://github.com/dmlc/dgl),
+  [PyG](https://github.com/pyg-team/pytorch_geometric),
 - utilities to enable data transformation, orchestration and pipelining of GNN workflows, which are particularly useful
   in large-scale deployments and recurrent applications.
 
 At high level, GiGL abstracts the complicated and distributed processing of the gigantic graph data aways from the
 users, such that users can focus on the graph ML modeling with the open-source libraries that they might already be
-familiar with (PyG, DGL, etc). For more background, please check out our [research blog](<>) and [paper](<>).
+familiar with (PyG, DGL, etc). For more background, please check out our [paper](https://arxiv.org/abs/2502.15054).
 
-# Why use GiGL?
+## Why use GiGL?
 
 GiGL was designed to address a single need: to enable ML researchers, engineers, and practitioners explore and iterate
 on state-of-the-art graph ML models on large-scale graph data without having to stray far from the familiarities of
@@ -38,7 +40,7 @@ iterating on models or multiple production inference pipelines are running.
 If you are a ML practitioner, engineer, and/or enthusiast who is interested in working with and deploying GNNs on very
 large-scale graph data, you will find GiGL useful.
 
-# Why *not* use GiGL?
+## Why *not* use GiGL?
 
 GiGL is designed with large-scale GNN settings in mind. For academic benchmarking and experimentation on smaller graphs
 (ones that can be easily fit in RAM), open-source modeling libraries and built-in abstractions within PyG and DGL for
@@ -47,7 +49,7 @@ directly. There is overhead introduced in GiGL compared to these libraries for d
 execution, and while this overhead is marginal in proportion to the benefits in large-scale scenarios, it may be
 outsized in small-scale ones.
 
-# How does GiGL work?
+## How does GiGL work?
 
 GiGL is designed with **horizontal-scaling** across many compute resources in mind, which makes it a good fit to run on
 custom compute clusters and cloud-offerings. While vertically scaled GNN solutions are feasible to a limit, thanks to
@@ -57,20 +59,4 @@ which in principle (and in practice, as we have found) allows for elastically sc
 particularly appealing when considering deployment settings where scale of data can change rapidly with e.g. user or
 platform growth.
 
-GiGL is comprised of the following 5 components ([more details on them](.components.md)):
-
-- **Data Preprocessor** Distributed feature transformation pipeline which allows for feature-scaling, normalization,
-  categorical-feature handling (encoding, vocabulary inference), and more.
-- **Subgraph Sampler** Distributed subgraph generation pipeline which enables custom graph sampling specifications to
-  dictate message-passing flow, and custom sample generation (e.g. handling positive/negative sampling) to facilitate
-  tasks like node classification and link prediction.
-- **Split Generator** Distributed data splitting routine to generate globally consistent train, validation and test
-  splits according to flexible split strategies (transductive, inductive, custom, time-based, etc.)
-- **Trainer** Distributed model trainer which consumes data output by Split Generator to do model training, validation
-  and testing dictated by user code to generate model artifacts.
-- **Inferencer** Distributed model inference which generates embeddings and/or class predictions dictated by user code.
-
-Each of these components is run in specification with some combination of user code for flexibility, and a configuration
-file which is partially user-specified and partially auto-generated with a precursor component called Config Populator
-which houses the details on what logic will run, and where the resulting intermediate and final assets (transformed
-data, splits, model artifact, inferences) will be stored.
+See [GiGL Components](./architecture.md) for architecture, and more information
