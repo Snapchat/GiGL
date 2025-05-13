@@ -413,7 +413,7 @@ class GbmlConfigPbWrapper:
         return self.gbml_config_pb.trainer_config
 
     @property
-    def should_use_experimental_glt_backend(self) -> bool:
+    def should_use_glt_backend(self) -> bool:
         """
         Allows access to should_use_glt_backend under GbmlConfig
 

@@ -48,15 +48,6 @@ def assert_trained_model_exists(
     """
     Check if trained model file exists.
     """
-    gbml_config_pb_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
-    if gbml_config_pb_wrapper.should_use_experimental_glt_backend:
-        logger.warning(
-            "Skipping trained model check since GLT Backend is being used."
-            + "Currently it is not expected that model be piped in through gigl specific configs. "
-            + "This will be updated in the future."
-        )
-        return
-
     assert_asset_exists(
         resource_name="trainedModelUri",
         uri=UriFactory.create_uri(
@@ -72,7 +63,7 @@ def assert_split_generator_output_exists(
     Check if split generator output files exist.
     """
     gbml_config_pb_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
-    if gbml_config_pb_wrapper.should_use_experimental_glt_backend:
+    if gbml_config_pb_wrapper.should_use_glt_backend:
         logger.warning(
             "Skipping split generator output check since GLT Backend is being used."
         )
@@ -195,7 +186,7 @@ def assert_subgraph_sampler_output_exists(
     Check if subgraph sampler output files exist.
     """
     gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
-    if gbml_config_wrapper.should_use_experimental_glt_backend:
+    if gbml_config_wrapper.should_use_glt_backend:
         logger.warning(
             "Skipping subgraph sampler output check since GLT Backend is being used."
         )
