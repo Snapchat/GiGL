@@ -5,6 +5,7 @@ from typing import Optional, TypeVar, Union, overload
 import torch
 from graphlearn_torch.partition import PartitionBook
 
+from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.logger import Logger
 
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
@@ -168,10 +169,12 @@ def message_passing_to_positive_label(
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
+        print(f"returning {edge_type} as GiGL EdgeType")
         return EdgeType(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
+        print(f"returning {edge_type} as PyG EdgeType")
         return edge_type
 
 
@@ -225,7 +228,20 @@ def select_label_edge_types(
     return positive_label_type, negative_label_type
 
 
-_T = TypeVar("_T")
+# Entities that represent a graph, somehow.
+# Ideally, this would be anything, e.g. `_T = TypeVar("_T")`, but we need to be more specific.
+# As if we type `to_homogeneous(x: _T | dict[NodeType, _T] | dict[EdgeType, _T]) -> _T`,
+# then `_T` captures the "dict" types, and the output type is not correctly narrowed.
+# e.g. `reveal_type(to_homogeneous(d: Tensor | dict[..., Tensor] | None]))` is `object`
+# Instead, we enumerate these types, as MyPy does not allow "not" in a TypeVar.
+_GraphEntity = TypeVar(
+    "_GraphEntity",
+    torch.Tensor,
+    GraphPartitionData,
+    FeaturePartitionData,
+    SerializedTFRecordInfo,
+    list,
+)
 
 
 @overload
@@ -234,13 +250,13 @@ def to_heterogeneous_node(x: None) -> None:
 
 
 @overload
-def to_heterogeneous_node(x: Union[_T, dict[NodeType, _T]]) -> dict[NodeType, _T]:
+def to_heterogeneous_node(x: Union[_GraphEntity, dict[NodeType, _GraphEntity]]) -> dict[NodeType, _GraphEntity]:
     ...
 
 
 def to_heterogeneous_node(
-    x: Optional[Union[_T, dict[NodeType, _T]]]
-) -> Optional[dict[NodeType, _T]]:
+    x: Optional[Union[_GraphEntity, dict[NodeType, _GraphEntity]]]
+) -> Optional[dict[NodeType, _GraphEntity]]:
     """Convert a value to a heterogeneous node representation.
 
     If the input is None, return None.
@@ -248,10 +264,10 @@ def to_heterogeneous_node(
     If the input is a single value, return it as a dictionary with the default homogeneous node type as the key.
 
     Args:
-        x (Optional[Union[_T, dict[NodeType, _T]]]): The input value to convert.
+        x (Optional[Union[_GraphEntity, dict[NodeType, _GraphEntity]]]): The input value to convert.
 
     Returns:
-        Optional[dict[NodeType, _T]]: The converted heterogeneous node representation.
+        Optional[dict[NodeType, _GraphEntity]]: The converted heterogeneous node representation.
     """
     if x is None:
         return None
@@ -266,13 +282,13 @@ def to_heterogeneous_edge(x: None) -> None:
 
 
 @overload
-def to_heterogeneous_edge(x: Union[_T, dict[EdgeType, _T]]) -> dict[EdgeType, _T]:
+def to_heterogeneous_edge(x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]]) -> dict[EdgeType, _GraphEntity]:
     ...
 
 
 def to_heterogeneous_edge(
-    x: Optional[Union[_T, dict[EdgeType, _T]]]
-) -> Optional[dict[EdgeType, _T]]:
+    x: Optional[Union[_GraphEntity, dict[EdgeType, _GraphEntity]]]
+) -> Optional[dict[EdgeType, _GraphEntity]]:
     """Convert a value to a heterogeneous edge representation.
 
     If the input is None, return None.
@@ -280,10 +296,10 @@ def to_heterogeneous_edge(
     If the input is a single value, return it as a dictionary with the default homogeneous edge type as the key.
 
     Args:
-        x (Optional[Union[_T, dict[EdgeType, _T]]]): The input value to convert.
+        x (Optional[Union[_GraphEntity, dict[EdgeType, _GraphEntity]]]): The input value to convert.
 
     Returns:
-        Optional[dict[EdgeType, _T]]: The converted heterogeneous edge representation.
+        Optional[dict[EdgeType, _GraphEntity]]: The converted heterogeneous edge representation.
     """
     if x is None:
         return None
@@ -298,13 +314,23 @@ def to_homogeneous(x: None) -> None:
 
 
 @overload
-def to_homogeneous(x: Union[_T, dict[Union[NodeType, EdgeType], _T]]) -> _T:
+def to_homogeneous(x: abc.Mapping[NodeType, _GraphEntity]) -> _GraphEntity:
+    ...
+
+
+@overload
+def to_homogeneous(x: abc.Mapping[EdgeType, _GraphEntity]) -> _GraphEntity:
+    ...
+
+
+@overload
+def to_homogeneous(x: _GraphEntity) -> _GraphEntity:
     ...
 
 
 def to_homogeneous(
-    x: Optional[Union[_T, dict[Union[NodeType, EdgeType], _T]]]
-) -> Optional[_T]:
+    x: Optional[Union[_GraphEntity, abc.Mapping[NodeType, _GraphEntity], abc.Mapping[EdgeType, _GraphEntity]]]
+) -> Optional[_GraphEntity]:
     """Convert a value to a homogeneous representation.
 
     If the input is None, return None.
@@ -319,7 +345,7 @@ def to_homogeneous(
     """
     if x is None:
         return None
-    if isinstance(x, dict):
+    if isinstance(x, abc.Mapping):
         if len(x) != 1:
             raise ValueError(
                 f"Expected a single value in the dictionary, but got multiple keys: {x.keys()}"
