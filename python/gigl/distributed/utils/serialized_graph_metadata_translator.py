@@ -1,4 +1,4 @@
-from typing import Dict, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
@@ -62,8 +62,8 @@ def convert_pb_to_serialized_graph_metadata(
 
     node_entity_info: Dict[NodeType, SerializedTFRecordInfo] = {}
     edge_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
-    positive_label_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
-    negative_label_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
+    positive_label_entity_info: Dict[EdgeType, Optional[SerializedTFRecordInfo]] = {}
+    negative_label_entity_info: Dict[EdgeType, Optional[SerializedTFRecordInfo]] = {}
 
     preprocessed_metadata_pb = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
 
@@ -136,6 +136,8 @@ def convert_pb_to_serialized_graph_metadata(
                 entity_key=edge_key,
                 tfrecord_uri_pattern=tfrecord_uri_pattern,
             )
+        else:
+            positive_label_entity_info[edge_type] = None
 
         if preprocessed_metadata_pb_wrapper.has_hard_neg_edge_features(
             condensed_edge_type=condensed_edge_type
@@ -152,6 +154,8 @@ def convert_pb_to_serialized_graph_metadata(
                 entity_key=edge_key,
                 tfrecord_uri_pattern=tfrecord_uri_pattern,
             )
+        else:
+            negative_label_entity_info[edge_type] = None
 
     if not graph_metadata_pb_wrapper.is_heterogeneous:
         # If our input is homogeneous, we remove the node/edge type component of the metadata fields.
@@ -166,9 +170,15 @@ def convert_pb_to_serialized_graph_metadata(
             node_entity_info=node_entity_info,
             edge_entity_info=edge_entity_info,
             positive_label_entity_info=positive_label_entity_info
-            if positive_label_entity_info
+            if not all(
+                entity_info is None
+                for entity_info in positive_label_entity_info.values()
+            )
             else None,
             negative_label_entity_info=negative_label_entity_info
-            if negative_label_entity_info
+            if not all(
+                entity_info is None
+                for entity_info in negative_label_entity_info.values()
+            )
             else None,
         )

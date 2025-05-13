@@ -82,10 +82,10 @@ class PostProcessor:
             temp_dir_gcs_path: GcsUri = gcs_constants.get_applied_task_temp_gcs_path(
                 applied_task_identifier=applied_task_identifier
             )
-            # logger.info(
-            #     f"Will automatically cleanup the temporary assets directory: ${temp_dir_gcs_path}"
-            # )
-            # gcs_utils.delete_files_in_bucket_dir(gcs_path=temp_dir_gcs_path)
+            logger.info(
+                f"Will automatically cleanup the temporary assets directory: ${temp_dir_gcs_path}"
+            )
+            gcs_utils.delete_files_in_bucket_dir(gcs_path=temp_dir_gcs_path)
 
     def __write_post_processor_metrics_to_uri(
         self,

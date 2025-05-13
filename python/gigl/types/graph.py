@@ -148,14 +148,6 @@ class LoadedGraphTensors:
         self.node_features = to_heterogeneous_node(self.node_features)
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
-        # self.edge_features[positive_label_edge_type] = None
-        # self.edge_features[negative_label_edge_type] = None
-        # self.edge_features[positive_label_edge_type] = torch.zeros(
-        #     (self.positive_label.shape[1], 1), dtype=torch.float32
-        # )
-        # self.edge_features[negative_label_edge_type] = torch.zeros(
-        #     (self.negative_label.shape[1], 1), dtype=torch.float32
-        # )
         self.positive_label = None
         self.negative_label = None
 
@@ -177,12 +169,10 @@ def message_passing_to_positive_label(
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
-        print(f"returning {edge_type} as GiGL EdgeType")
         return EdgeType(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
-        print(f"returning {edge_type} as PyG EdgeType")
         return edge_type
 
 
@@ -248,6 +238,9 @@ _GraphEntity = TypeVar(
     GraphPartitionData,
     FeaturePartitionData,
     SerializedTFRecordInfo,
+    Optional[
+        SerializedTFRecordInfo
+    ],  # Adding `None` here doesn't work for some reason...
     list,
 )
 
@@ -258,7 +251,9 @@ def to_heterogeneous_node(x: None) -> None:
 
 
 @overload
-def to_heterogeneous_node(x: Union[_GraphEntity, dict[NodeType, _GraphEntity]]) -> dict[NodeType, _GraphEntity]:
+def to_heterogeneous_node(
+    x: Union[_GraphEntity, dict[NodeType, _GraphEntity]]
+) -> dict[NodeType, _GraphEntity]:
     ...
 
 
@@ -290,7 +285,9 @@ def to_heterogeneous_edge(x: None) -> None:
 
 
 @overload
-def to_heterogeneous_edge(x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]]) -> dict[EdgeType, _GraphEntity]:
+def to_heterogeneous_edge(
+    x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]]
+) -> dict[EdgeType, _GraphEntity]:
     ...
 
 
@@ -337,7 +334,13 @@ def to_homogeneous(x: _GraphEntity) -> _GraphEntity:
 
 
 def to_homogeneous(
-    x: Optional[Union[_GraphEntity, abc.Mapping[NodeType, _GraphEntity], abc.Mapping[EdgeType, _GraphEntity]]]
+    x: Optional[
+        Union[
+            _GraphEntity,
+            abc.Mapping[NodeType, _GraphEntity],
+            abc.Mapping[EdgeType, _GraphEntity],
+        ]
+    ]
 ) -> Optional[_GraphEntity]:
     """Convert a value to a homogeneous representation.
 
