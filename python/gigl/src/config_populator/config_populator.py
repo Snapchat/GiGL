@@ -145,7 +145,7 @@ class ConfigPopulator:
             )
         else:
             raise TypeError(
-                f"Found un-supported training task type: {self.task_metadata_type}; it has to be one of {[option.value for option in TaskMetadataType]}"
+                f"Found un-supported training task type: {self.task_metadata_pb_wrapper.task_metadata_type}; it has to be one of {[option.value for option in TaskMetadataType]}"
             )
 
         flattened_graph_metadata_pb = (
