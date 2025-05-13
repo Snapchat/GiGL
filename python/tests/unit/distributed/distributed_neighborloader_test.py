@@ -25,11 +25,12 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_heterogeneous_node,
 )
+from tests.test_assets.distributed.decorator import run_in_seperate_process
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
-
+from gigl.common.logger import Logger
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
     def setUp(self):
@@ -43,6 +44,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
+    @run_in_seperate_process
     def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
@@ -76,6 +78,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
+        glt.distributed.rpc.shutdown_rpc()
+
+    @run_in_seperate_process
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         positive_edge_type = message_passing_to_positive_label(
@@ -112,7 +117,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
-
         loader = DistNeighborLoader(
             dataset=dataset,
             num_neighbors=[2],
@@ -121,6 +125,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             local_process_rank=0,
             local_process_world_size=1,
         )
+
         count = 0
         for datum in loader:
             self.assertIsInstance(datum, HeteroData)
@@ -132,8 +137,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
-    # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
+
+        glt.distributed.rpc.shutdown_rpc()
+
+    @run_in_seperate_process
     def test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
@@ -166,6 +173,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 4057)
+
+        glt.distributed.rpc.shutdown_rpc()
 
 
 if __name__ == "__main__":
