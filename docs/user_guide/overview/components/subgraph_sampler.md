@@ -58,7 +58,7 @@ Firstly, you can adjust the `subgraphSamplerConfig` parameters in the `GbmlConfi
 - The `samplingOp` essentially forms a DAG of edge types to sample, indicating how we should construct our sampled k-hop
   message passing graph, one for each root node type.
 - (Note: Note: Only node types which exist in `supervision_edge_types` need their own `MessagePassingPaths` define, see
-  [task_config_guide](../user_guide/config_guides/task_config_guide.md) for more details)
+  [task_config_guide](../../config_guides/task_config_guide.md) for more details)
 - We currently support the following sampling methods in `samplingOp`:
   - `randomUniform`: Random sample
   - `topK`: Sample top K, based on `edgeFeatName`
@@ -190,7 +190,7 @@ python -m gigl.src.subgraph_sampler.subgraph_sampler \
   --resource_config_uri="gs://MY TEMP ASSETS BUCKET/resource_config.yaml"
 ```
 
-The python entry point `split_generator.py` performs the following:
+The python entry point {py:class}`gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler` performs the following:
 
 - Create a Dataproc cluster suitable for the scale of the graph at hand,
 - Install Spark and Scala dependencies,
