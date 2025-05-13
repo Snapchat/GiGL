@@ -268,7 +268,7 @@ def check_if_trainer_cls_valid(
     Check if trainerArgs are all string.
     Check if trainerClsPath is valid and importable.
     """
-    logger.info("Config validation check: if trainerClsPath and its arggs are valid.")
+    logger.info("Config validation check: if trainerClsPath and its args are valid.")
     gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
     if gbml_config_wrapper.should_use_glt_backend:
         logger.warning(
