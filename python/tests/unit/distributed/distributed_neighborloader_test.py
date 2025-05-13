@@ -289,6 +289,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             is_inference=False,
         )
         # input_nodes: torch.Tensor = to_homogeneous(dataset.train_node_ids)
+        assert dataset.train_node_ids is not None
         loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
