@@ -33,7 +33,7 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
     """
 
     def __init__(
-        self, world_size: int, total_val_size: int = 1, generate_pb: bool = True
+        self, world_size: int, total_val_size: int = 0, generate_pb: bool = False
     ):
         """
         Initializes the partition manager.
@@ -568,6 +568,7 @@ class DistPartitioner:
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         chunk_start_pos: int,
         chunk_end_pos: int,
+        generate_pb: bool,
     ) -> None:
         """
         Partitions a single chunk of data across multiple machines. First, the partition function is used to lookup or compute the rank of the current input.
@@ -581,22 +582,27 @@ class DistPartitioner:
                 of each item in the chunk.
             chunk_start_pos (int): The starting position of the current chunk being partitioned
             chunk_end_pos (int): The ending position of the current chunk being partitioned
+            generate_pb (bool): Whether a partition book should be generated. If set to False, will not send the indexed `rank_indices`
+                for the current rank to the partition manager to make the rpc communication easier
+
         """
         # chunk_res is a list where index `i` corresponds to Tuple[input_data_on_i, rank_indices_on_i]
-        chunk_res: List[Tuple[Optional[Tuple[torch.Tensor, ...]], torch.Tensor]] = []
+        chunk_res: List[
+            Tuple[Optional[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
+        ] = []
         chunk_length = chunk_end_pos - chunk_start_pos
         chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
+
+        input_indices = torch.arange(chunk_length, dtype=torch.int64)
 
         for rank in range(self._world_size):
             # Filtering for items in chunk which are on the current partition `rank`
             current_rank_mask = chunk_rank == rank
-            per_rank_indices = torch.masked_select(
-                torch.arange(chunk_length, dtype=torch.long), current_rank_mask
-            )
+            per_rank_indices = torch.masked_select(input_indices, current_rank_mask)
             chunk_res.append(
                 (
                     index_select(input_data, per_rank_indices),
-                    rank_indices[per_rank_indices],
+                    rank_indices[per_rank_indices] if generate_pb else None,
                 )
             )
         self._partition_mgr.process(chunk_res)
@@ -617,8 +623,8 @@ class DistPartitioner:
                 the specified indices in the chunk range while the second argument is the chunk start and end values. It returns a tuple indicating the rank
                 of each item in the chunk.
             total_val_size (int): The size of the partition book. Defaults to 0 in the case where there should be no partition book generated.
-            generate_pb (bool): Whether a partition book should be generated, defaults to True. This should only be set to true if partitioning nodes or edges,
-                and should be false if partitioning node features or edge features.
+            generate_pb (bool): Whether a partition book should be generated, defaults to False. This should only be set to true if partitioning nodes or edges for
+                tensor-based partitioning and should be false if partitioning node features or edge features or if doing range-based partitioning.
         Return:
             List[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
             Optional[torch.Tensor]: Torch Tensor if `generate_pb` is True, returns None if `generate_pb` is False
@@ -660,6 +666,7 @@ class DistPartitioner:
                 partition_function=partition_function,
                 chunk_start_pos=chunk_start_pos,
                 chunk_end_pos=chunk_end_pos,
+                generate_pb=generate_pb,
             )
 
             chunk_start_pos = chunk_end_pos
