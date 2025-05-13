@@ -545,10 +545,8 @@ class ConfigPopulator:
             flattened_graph_metadata_pb = self.__populate_flattened_graph_metadata_pb()
             dataset_metadata_pb = self.__populate_dataset_metadata_pb()
         else:
-            flattened_graph_metadata_pb = (
-                flattened_graph_metadata_pb2.FlattenedGraphMetadata()
-            )
-            dataset_metadata_pb = dataset_metadata_pb2.DatasetMetadata()
+            flattened_graph_metadata_pb = None
+            dataset_metadata_pb = None
 
         trained_model_metadata_pb = self.__populate_trained_model_metadata_pb(
             template_trained_model_metadata_pb=template_gbml_config_pb.shared_config.trained_model_metadata
