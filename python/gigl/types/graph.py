@@ -169,12 +169,10 @@ def message_passing_to_positive_label(
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
-        print(f"returning {edge_type} as GiGL EdgeType")
         return EdgeType(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
-        print(f"returning {edge_type} as PyG EdgeType")
         return edge_type
 
 
@@ -234,12 +232,16 @@ def select_label_edge_types(
 # then `_T` captures the "dict" types, and the output type is not correctly narrowed.
 # e.g. `reveal_type(to_homogeneous(d: Tensor | dict[..., Tensor] | None]))` is `object`
 # Instead, we enumerate these types, as MyPy does not allow "not" in a TypeVar.
+# We should extend this as necessary, just make sure *never* add any Mapping types.
 _GraphEntity = TypeVar(
     "_GraphEntity",
     torch.Tensor,
     GraphPartitionData,
     FeaturePartitionData,
     SerializedTFRecordInfo,
+    Optional[
+        SerializedTFRecordInfo
+    ],  # Adding `None` here doesn't work for some reason...
     list,
 )
 
@@ -250,7 +252,9 @@ def to_heterogeneous_node(x: None) -> None:
 
 
 @overload
-def to_heterogeneous_node(x: Union[_GraphEntity, dict[NodeType, _GraphEntity]]) -> dict[NodeType, _GraphEntity]:
+def to_heterogeneous_node(
+    x: Union[_GraphEntity, dict[NodeType, _GraphEntity]]
+) -> dict[NodeType, _GraphEntity]:
     ...
 
 
@@ -282,7 +286,9 @@ def to_heterogeneous_edge(x: None) -> None:
 
 
 @overload
-def to_heterogeneous_edge(x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]]) -> dict[EdgeType, _GraphEntity]:
+def to_heterogeneous_edge(
+    x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]]
+) -> dict[EdgeType, _GraphEntity]:
     ...
 
 
@@ -329,7 +335,13 @@ def to_homogeneous(x: _GraphEntity) -> _GraphEntity:
 
 
 def to_homogeneous(
-    x: Optional[Union[_GraphEntity, abc.Mapping[NodeType, _GraphEntity], abc.Mapping[EdgeType, _GraphEntity]]]
+    x: Optional[
+        Union[
+            _GraphEntity,
+            abc.Mapping[NodeType, _GraphEntity],
+            abc.Mapping[EdgeType, _GraphEntity],
+        ]
+    ]
 ) -> Optional[_GraphEntity]:
     """Convert a value to a homogeneous representation.
 
