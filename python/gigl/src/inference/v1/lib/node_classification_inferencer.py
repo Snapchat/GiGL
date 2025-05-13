@@ -56,6 +56,7 @@ class NodeClassificationInferenceBlueprint(
         flattened_graph_metadata_pb_wrapper = (
             self.__gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
         )
+        assert flattened_graph_metadata_pb_wrapper is not None
         assert isinstance(
             flattened_graph_metadata_pb_wrapper.output_metadata,
             flattened_graph_metadata_pb2.SupervisedNodeClassificationOutput,

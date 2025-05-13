@@ -57,6 +57,7 @@ class SplitGenerator:
         )
         gcs_utils.delete_files_in_bucket_dir(gcs_path=split_gen_applied_task_dir)
 
+        assert gbml_config_pb_wrapper.dataset_metadata_pb_wrapper is not None
         split_gen_output_paths = (
             gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.get_output_paths()
         )

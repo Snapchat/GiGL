@@ -46,19 +46,19 @@ class GbmlConfigPbWrapper:
 
     gbml_config_pb: gbml_config_pb2.GbmlConfig
 
-    _dataset_metadata_pb_wrapper: DatasetMetadataPbWrapper = field(init=False)
+    _dataset_metadata_pb_wrapper: Optional[DatasetMetadataPbWrapper] = field(init=False)
     _graph_metadata_pb_wrapper: GraphMetadataPbWrapper = field(init=False)
     _preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper = field(init=False)
-    _flattened_graph_metadata_pb_wrapper: FlattenedGraphMetadataPbWrapper = field(
-        init=False
-    )
+    _flattened_graph_metadata_pb_wrapper: Optional[
+        FlattenedGraphMetadataPbWrapper
+    ] = field(init=False)
     _task_metadata_pb_wrapper: TaskMetadataPbWrapper = field(init=False)
     _trained_model_metadata_pb_wrapper: TrainedModelMetadataPbWrapper = field(
         init=False
     )
-    _subgraph_sampling_strategy_pb_wrapper: SubgraphSamplingStrategyPbWrapper = field(
-        init=False
-    )
+    _subgraph_sampling_strategy_pb_wrapper: Optional[
+        SubgraphSamplingStrategyPbWrapper
+    ] = field(init=False)
 
     def __post_init__(self):
         # Populate the _preprocessed_metadata_pb_wrapper field
@@ -66,17 +66,23 @@ class GbmlConfigPbWrapper:
             uri=self.gbml_config_pb.shared_config.preprocessed_metadata_uri
         )
         # Populate the _dataset_metadata_pb_wrapper field
-        self.__load_dataset_metadata_pb_wrapper(
-            dataset_metadata_pb=self.gbml_config_pb.shared_config.dataset_metadata
-        )
+        if self.gbml_config_pb.shared_config.HasField("dataset_metadata"):
+            dataset_metadata_pb = self.gbml_config_pb.shared_config.dataset_metadata
+        else:
+            dataset_metadata_pb = None
+        self.__load_dataset_metadata_pb_wrapper(dataset_metadata_pb)
         # Populate the _graph_metadata_pb_wrapper field
         self.__load_graph_metadata_pb_wrapper(
             graph_metadata_pb=self.gbml_config_pb.graph_metadata
         )
         # Populate the _flattened_graph_metadata_pb_wrapper field
-        self.__load_flattened_graph_metadata_pb_wrapper(
-            flattened_graph_metadata_pb=self.gbml_config_pb.shared_config.flattened_graph_metadata
-        )
+        if self.gbml_config_pb.shared_config.HasField("flattened_graph_metadata"):
+            flattened_graph_metadata_pb = (
+                self.gbml_config_pb.shared_config.flattened_graph_metadata
+            )
+        else:
+            flattened_graph_metadata_pb = None
+        self.__load_flattened_graph_metadata_pb_wrapper(flattened_graph_metadata_pb)
         # Populate the _task_metadata_pb_wrapper field
         self.__load_task_metadata_pb_wrapper(
             task_metadata_pb=self.gbml_config_pb.task_metadata
@@ -132,7 +138,7 @@ class GbmlConfigPbWrapper:
             )
 
     def __load_dataset_metadata_pb_wrapper(
-        self, dataset_metadata_pb: dataset_metadata_pb2.DatasetMetadata
+        self, dataset_metadata_pb: Optional[dataset_metadata_pb2.DatasetMetadata]
     ) -> None:
         """
         Load dataset_metadata_pb_wrapper with dataset_metadata_pb
@@ -140,9 +146,13 @@ class GbmlConfigPbWrapper:
         Args:
             dataset_metadata_pb (dataset_metadata_pb2.DatasetMetadata): The dataset metadata proto
         """
-        dataset_metadata_pb_wrapper: DatasetMetadataPbWrapper = (
-            DatasetMetadataPbWrapper(dataset_metadata_pb=dataset_metadata_pb)
-        )
+        dataset_metadata_pb_wrapper: Optional[DatasetMetadataPbWrapper]
+        if dataset_metadata_pb is None:
+            dataset_metadata_pb_wrapper = None
+        else:
+            dataset_metadata_pb_wrapper = DatasetMetadataPbWrapper(
+                dataset_metadata_pb=dataset_metadata_pb
+            )
         object.__setattr__(
             self, "_dataset_metadata_pb_wrapper", dataset_metadata_pb_wrapper
         )
@@ -170,7 +180,9 @@ class GbmlConfigPbWrapper:
 
     def __load_flattened_graph_metadata_pb_wrapper(
         self,
-        flattened_graph_metadata_pb: flattened_graph_metadata_pb2.FlattenedGraphMetadata,
+        flattened_graph_metadata_pb: Optional[
+            flattened_graph_metadata_pb2.FlattenedGraphMetadata
+        ],
     ) -> None:
         """
         Load flattened_graph_metadata_pb_wrapper with flattened_graph_metadata_pb
@@ -178,11 +190,13 @@ class GbmlConfigPbWrapper:
         Args:
             flattened_graph_metadata_pb (flattened_graph_metadata_pb2.FlattenedGraphMetadata): The flattened graph metadata proto
         """
-        flattened_graph_metadata_pb_wrapper: FlattenedGraphMetadataPbWrapper = (
-            FlattenedGraphMetadataPbWrapper(
+        flattened_graph_metadata_pb_wrapper: Optional[FlattenedGraphMetadataPbWrapper]
+        if flattened_graph_metadata_pb is None:
+            flattened_graph_metadata_pb_wrapper = None
+        else:
+            flattened_graph_metadata_pb_wrapper = FlattenedGraphMetadataPbWrapper(
                 flattened_graph_metadata_pb=flattened_graph_metadata_pb
             )
-        )
         object.__setattr__(
             self,
             "_flattened_graph_metadata_pb_wrapper",
@@ -271,12 +285,12 @@ class GbmlConfigPbWrapper:
         return GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
 
     @property
-    def dataset_metadata_pb_wrapper(self) -> DatasetMetadataPbWrapper:
+    def dataset_metadata_pb_wrapper(self) -> Optional[DatasetMetadataPbWrapper]:
         """
         Allows access to a dataset_metadata_pb_wrapper
 
         Returns:
-            DatasetMetadataPbWrapper: The dataset metadata pb wrapper
+            Optional[DatasetMetadataPbWrapper]: The dataset metadata pb wrapper or None if it doesn't exist
         """
         return self._dataset_metadata_pb_wrapper
 
@@ -298,7 +312,7 @@ class GbmlConfigPbWrapper:
         Allows access to a subgraph_sampling_strategy_pb_wrapper
 
         Returns:
-            Optional[SubgraphSamplingStrategyPbWrapper]: The subgraph sampling strategy pb wrapper or none if it does not exist
+            Optional[SubgraphSamplingStrategyPbWrapper]: The subgraph sampling strategy pb wrapper or None if it does not exist
         """
         return self._subgraph_sampling_strategy_pb_wrapper
 
@@ -313,12 +327,14 @@ class GbmlConfigPbWrapper:
         return self._task_metadata_pb_wrapper
 
     @property
-    def flattened_graph_metadata_pb_wrapper(self) -> FlattenedGraphMetadataPbWrapper:
+    def flattened_graph_metadata_pb_wrapper(
+        self,
+    ) -> Optional[FlattenedGraphMetadataPbWrapper]:
         """
         Allows access to a flattened_graph_metadata_pb_wrapper
 
         Returns:
-            FlattenedGraphMetadataPbWrapper: The flattened graph metadata pb wrapper
+            Optional[FlattenedGraphMetadataPbWrapper]: The flattened graph metadata pb wrapper or None if it doesn't exist
         """
         return self._flattened_graph_metadata_pb_wrapper
 

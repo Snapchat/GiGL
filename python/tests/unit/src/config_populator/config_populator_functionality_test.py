@@ -74,16 +74,23 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
         )
 
         if should_use_glt_backend:
-            self.assertTrue(gbml_config_pb_wrapper.should_use_glt_backend)
-            self.assertIsNone(
-                gbml_config_pb_wrapper.shared_config.flattened_graph_metadata
+            self.assertFalse(
+                gbml_config_pb_wrapper.shared_config.HasField(
+                    "flattened_graph_metadata"
+                )
             )
-            self.assertIsNone(gbml_config_pb_wrapper.shared_config.dataset_metadata)
+            self.assertFalse(
+                gbml_config_pb_wrapper.shared_config.HasField("dataset_metadata")
+            )
         else:
-            self.assertFalse(gbml_config_pb_wrapper.should_use_glt_backend)
             # Assert the right flattened graph metadata was set.
-            self.assertIsNotNone(
-                gbml_config_pb_wrapper.shared_config.flattened_graph_metadata
+            self.assertTrue(
+                gbml_config_pb_wrapper.shared_config.HasField(
+                    "flattened_graph_metadata"
+                )
+            )
+            assert (
+                gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper is not None
             )
             flattened_output_pb = (
                 gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata
@@ -96,9 +103,10 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
                 self.assertNotEqual(
                     flattened_output_pb.unlabeled_tfrecord_uri_prefix, ""
                 )
-
             # Assert the right dataset metadata was set
-            self.assertIsNotNone(gbml_config_pb_wrapper.shared_config.dataset_metadata)
+            self.assertTrue(
+                gbml_config_pb_wrapper.shared_config.HasField("dataset_metadata")
+            )
             dataset_metadata_pb = DatasetMetadataPbWrapper(
                 dataset_metadata_pb=gbml_config_pb_wrapper.shared_config.dataset_metadata
             ).output_metadata
