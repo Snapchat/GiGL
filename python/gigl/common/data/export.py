@@ -215,7 +215,11 @@ class EmbeddingExporter:
 
 # TODO(kmonte): We should migrate this over to `BqUtils.load_files_to_bq` once that is implemented.
 def load_embeddings_to_bigquery(
-    gcs_folder: GcsUri, project_id: str, dataset_id: str, table_id: str
+    gcs_folder: GcsUri,
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    should_run_async: bool = False,
 ) -> LoadJob:
     """
     Loads multiple Avro files containing GNN embeddings from GCS into BigQuery.
@@ -233,10 +237,13 @@ def load_embeddings_to_bigquery(
         project_id (str): The GCP project ID.
         dataset_id (str): The BigQuery dataset ID.
         table_id (str): The BigQuery table ID.
+        should_run_async (bool): Whether loading to bigquery step should happen asynchronously. Defaults to False.
 
     Returns:
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
-        user to monitor and retrieve details about the job status and result.
+        user to monitor and retrieve details about the job status and result. The returned job will be done if
+        `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
+        `should_run_asnyc=True`.
     """
     start = time.perf_counter()
     logger.info(f"Loading embeddings from {gcs_folder} to BigQuery.")
@@ -260,9 +267,14 @@ def load_embeddings_to_bigquery(
         job_config=job_config,
     )
 
-    load_job.result()  # Wait for the job to complete.
-    logger.info(
-        f"Loading {load_job.output_rows:,} rows into {dataset_id}:{table_id} in {time.perf_counter() - start:.2f} seconds."
-    )
+    if should_run_async:
+        logger.info(
+            f"Started loading process for {dataset_id}:{table_id} with job id {load_job.job_id}, running asynchronously"
+        )
+    else:
+        load_job.result()  # Wait for the job to complete.
+        logger.info(
+            f"Loading {load_job.output_rows:,} rows into {dataset_id}:{table_id} in {time.perf_counter() - start:.2f} seconds."
+        )
 
     return load_job
