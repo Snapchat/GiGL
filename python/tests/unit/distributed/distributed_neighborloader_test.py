@@ -132,8 +132,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
-    # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
