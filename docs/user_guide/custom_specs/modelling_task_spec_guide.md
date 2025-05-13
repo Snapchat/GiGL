@@ -1,1 +1,0 @@
-# Modeling Task Spec Guide

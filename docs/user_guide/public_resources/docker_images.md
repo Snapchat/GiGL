@@ -1,4 +1,4 @@
-# Example Walkthrough MAG240M
+# Docker Images
 
 ```{note}
 This section will be updated soon. TODO (svij)

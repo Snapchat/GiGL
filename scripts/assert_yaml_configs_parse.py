@@ -44,6 +44,21 @@ _IGNORE_COMMENT = "# yaml-check: disable"
 
 
 def assert_configs_parse(directories: List[str], ignore_regex: List[str] = []) -> None:
+    """
+    Validates YAML task spec and resource spec yaml files in the specified directories.
+
+    Args:
+        directories (List[str]): List of directories to search for YAML files.
+        ignore_regex (List[str]): List of regex patterns to ignore files.
+
+    Raises:
+        Exception: If any YAML file cannot be parsed as a valid configuration.
+
+    Logs:
+        - Successfully parsed files.
+        - Ignored files based on regex or comments.
+        - Errors for invalid YAML files.
+    """
     proto_utils = ProtoUtils()
     invalid_configs: Dict[Uri, str] = {}
     logger.info(f"Checking if configs in {directories} are valid.")
