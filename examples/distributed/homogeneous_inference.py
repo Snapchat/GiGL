@@ -410,7 +410,6 @@ def _run_example_inference(
     # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
     if distributed_context.global_rank == 0:
         logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
-        load_embedding_start_time = time.time()
 
         # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
         # representing the load operation, which allows user to monitor and retrieve
@@ -420,9 +419,6 @@ def _run_example_inference(
             project_id=bq_project_id,
             dataset_id=bq_dataset_id,
             table_id=bq_table_name,
-        )
-        logger.info(
-            f"Finished loading embeddings to BigQuery, which took {time.time()-load_embedding_start_time:.2f} seconds"
         )
 
     logger.info(

@@ -388,7 +388,7 @@ def _run_example_inference(
 
     inference_start_time = time.time()
 
-    for inference_node_type in inference_node_types:
+    for process_num, inference_node_type in enumerate(inference_node_types):
         logger.info(
             f"Starting inference process for node type {inference_node_type} ..."
         )
@@ -435,14 +435,19 @@ def _run_example_inference(
             )
             load_embedding_start_time = time.time()
 
-            load_embeddings_to_bigquery(
+            # If we are on the last inference process, we should wait for this last write process to complete. Otherwise, we should
+            # load embeddings to bigquery in the background so that we are not blocking the start of the next inference process
+            should_run_async = process_num != len(inference_node_types) - 1
+
+            # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
+            # representing the load operation, which allows user to monitor and retrieve
+            # details about the job status and result.
+            _ = load_embeddings_to_bigquery(
                 gcs_folder=embedding_output_gcs_folder,
                 project_id=bq_project_id,
                 dataset_id=bq_dataset_id,
                 table_id=bq_table_name,
-            )
-            logger.info(
-                f"Finished loading embeddings to BigQuery, which took {time.time()-load_embedding_start_time:.2f} seconds for node type {inference_node_type}"
+                should_run_async=should_run_async,
             )
 
     logger.info(
