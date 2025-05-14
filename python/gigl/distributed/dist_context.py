@@ -17,5 +17,3 @@ class DistributedContext:
 
     # Total number of machines
     global_world_size: int
-
-    dataset_building_port: int
