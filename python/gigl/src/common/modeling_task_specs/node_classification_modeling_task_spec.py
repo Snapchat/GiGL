@@ -275,10 +275,9 @@ class NodeClassificationModelingTaskSpec(
         device: torch.device,
     ) -> EvalMetricsCollection:
         logger.info("Start testing... ")
-        dataset_metadata_pb_wrapper: Optional[
-            DatasetMetadataPbWrapper
-        ] = gbml_config_pb_wrapper.dataset_metadata_pb_wrapper
-        assert dataset_metadata_pb_wrapper is not None
+        dataset_metadata_pb_wrapper: DatasetMetadataPbWrapper = (
+            gbml_config_pb_wrapper.dataset_metadata_pb_wrapper
+        )
         assert (
             dataset_metadata_pb_wrapper.output_metadata_type
             == dataset_metadata_pb2.SupervisedNodeClassificationDataset

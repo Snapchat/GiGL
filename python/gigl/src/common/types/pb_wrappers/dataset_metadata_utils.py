@@ -340,7 +340,6 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         data_loader_types: List[DataloaderTypes],
     ) -> Dict[DataloaderTypes, Union[str, Dict[str, str]]]:
-        assert gbml_config_pb_wrapper.dataset_metadata_pb_wrapper is not None
         dataset_pb: dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset = (
             gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.node_anchor_based_link_prediction_dataset
         )
