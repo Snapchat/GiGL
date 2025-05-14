@@ -99,6 +99,7 @@ class _SupervisedToHomogeneous:
 
 
 class _SetLabels:
+    """Transform class to set labels for the nodes in the graph."""
     def __init__(
         self,
         batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor],
@@ -106,6 +107,32 @@ class _SetLabels:
         positive_label_sentinel: int,
         negative_label_sentinel: Optional[int] = None,
     ):
+        """
+        Sets the labels for nodes in Data.y_positive and Data.y_negative.
+        The labels are set based on the anchor node and positive label sentinels.
+        We assume that the input batch is a 1D tensor of node ids, or fornat:
+            `[<anchor node>, <anchor node sentinel>, <posittuple in theive labels>, <positive label sentinel>, <negative label>, <negative label sentinel>]`
+
+        We expect that the batch store contains:
+            * `(node_type, node_ids)` as the key
+            * where `node_ids` is a 1D tensor of node ids
+            * where the sentinel values have been removed,
+            * the node ids have been de-duped
+            * and the node ids are in the same order as the input batch.
+
+        For example, if the input batch is:
+            `[0, -1, 1, -2, 3, 1 -3]`
+            for anchor node 0, positive label 1, and negative labels 3, 1,
+            and sentinal values are -1, -2, and -3,
+        then the batch store will have the key `(node_type, (0, 1, 3))`.
+
+        Args:
+            batch_store (abc.MutableMapping): The batch store to use for the graph.
+            anchor_node_sentinel (int): The sentinel value for the anchor node.
+            positive_label_sentinel (int): The sentinel value for the positive label.
+            negative_label_sentinel (Optional[int]): The sentinel value for the negative label.
+            If not provided, then negative labels will not be set.
+        """
         self._batch_store = batch_store
         self._anchor_node_sentinel = anchor_node_sentinel
         self._positive_label_sentinel = positive_label_sentinel
