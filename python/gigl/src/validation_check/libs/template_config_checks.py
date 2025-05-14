@@ -369,7 +369,7 @@ def check_if_subgraph_sampler_config_valid(
     gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
     if gbml_config_wrapper.should_use_glt_backend:
         logger.warning(
-            "Skipping subgraph sampler validation check since GLT Backend is being used."
+            "Skipping subgraph sampler (SGS) validation check since GLT Backend is being used."
         )
         return
     subgraph_sampler_config = gbml_config_pb.dataset_config.subgraph_sampler_config
