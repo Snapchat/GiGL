@@ -3,7 +3,6 @@ from collections import abc
 from pathlib import Path
 from typing import MutableMapping
 
-from attr import has
 import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc

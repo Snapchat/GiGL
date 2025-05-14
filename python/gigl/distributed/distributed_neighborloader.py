@@ -1,13 +1,11 @@
 import itertools
 from collections import abc
-from typing import Any, Callable, Callable, Dict, List, Optional, Sequence, Sequence, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
-from torch_geometric.data import Data, HeteroData
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -22,13 +20,6 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    select_label_edge_types,
-    to_heterogeneous_edge,
-)
-from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
