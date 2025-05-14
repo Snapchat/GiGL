@@ -293,7 +293,6 @@ class DistABLPLoader(DistNeighborLoader):
         num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
         context: DistributedContext,
         local_process_rank: int,  # TODO: Move this to DistributedContext
-        local_process_world_size: int,  # TODO: Move this to DistributedContext
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -434,7 +433,6 @@ class DistABLPLoader(DistNeighborLoader):
             num_neighbors=num_neighbors,
             context=context,
             local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
             input_nodes=input_nodes,
             num_workers=num_workers,
             batch_size=batch_size,

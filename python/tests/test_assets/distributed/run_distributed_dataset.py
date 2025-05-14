@@ -73,7 +73,6 @@ def run_distributed_dataset(
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         partitioner_class=partitioner_class,
         splitter=splitter,
-        _dataset_building_port=master_port,
     )
     output_dict[rank] = dataset
     return dataset
