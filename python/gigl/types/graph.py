@@ -233,15 +233,17 @@ def select_label_edge_types(
 # e.g. `reveal_type(to_homogeneous(d: Tensor | dict[..., Tensor] | None]))` is `object`
 # Instead, we enumerate these types, as MyPy does not allow "not" in a TypeVar.
 # We should extend this as necessary, just make sure *never* add any Mapping types.
+# NOTE: We have `Optional[SerializedTFRecordInfo]` in the type,
+# As adding `None` and `SerializedTFRecordInfo` separately do not accomplish the equivalent thing.
+# I believe this is due to the fact that the contraints on a `TypeVar` are not
+# are not treated as a union of the types, but rather each as their own case.
 _GraphEntity = TypeVar(
     "_GraphEntity",
     torch.Tensor,
     GraphPartitionData,
     FeaturePartitionData,
     SerializedTFRecordInfo,
-    Optional[
-        SerializedTFRecordInfo
-    ],  # Adding `None` here doesn't work for some reason...
+    Optional[SerializedTFRecordInfo],
     list,
 )
 
