@@ -577,7 +577,6 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         node_classification_split_type: supervised_node_classification.NodeClassificationSettingType,
         mocked_dataset_info: MockedDatasetInfo,
     ):
-        assert gbml_config_pb_wrapper.dataset_metadata_pb_wrapper is not None
         training_sample_cls = (
             gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.training_sample_type
         )
@@ -668,7 +667,6 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     ):
-        assert gbml_config_pb_wrapper.dataset_metadata_pb_wrapper is not None
         training_sample_cls = (
             gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.training_sample_type
         )

@@ -130,8 +130,6 @@ def _infer_supervised_node_classification_model(
         gbml_config_pb_wrapper=gbml_config_pb_wrapper,
     )
 
-    assert gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper is not None
-
     assert isinstance(
         gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata,
         flattened_graph_metadata_pb2.SupervisedNodeClassificationOutput,
@@ -259,8 +257,6 @@ def _infer_node_anchor_based_link_prediction_model(
         builder=builder,
         gbml_config_pb_wrapper=gbml_config_pb_wrapper,
     )
-
-    assert gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper is not None
 
     assert isinstance(
         gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata,

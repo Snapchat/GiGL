@@ -23,7 +23,6 @@ def train_model(
     trainer.setup_for_training()
 
     dataset_metadata_pb_wrapper = gbml_config_pb_wrapper.dataset_metadata_pb_wrapper
-    assert dataset_metadata_pb_wrapper is not None
     graph_metadata_pb_wrapper = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
     task_metadata_pb_wrapper = gbml_config_pb_wrapper.task_metadata_pb_wrapper
 

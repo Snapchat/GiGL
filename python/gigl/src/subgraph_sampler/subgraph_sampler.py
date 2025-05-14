@@ -53,7 +53,6 @@ class SubgraphSampler:
         # Some of these paths are inferred from paths specified in the GbmlConfig.
         # Other paths are inferred from the AppliedTaskIdentifier.
         logger.info("Preparing staging paths for Subgraph Sampler...")
-        assert gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper is not None
         paths_to_delete = (
             [
                 gcs_constants.get_subgraph_sampler_root_dir(
