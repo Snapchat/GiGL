@@ -33,20 +33,36 @@ logger = Logger()
 DEFAULT_NUM_CPU_THREADS = 2
 
 
-# By default GLT does not support per-example batching, so we add this to support sampling
-# from multiple nodes in a single batch.
-# See https://github.com/alibaba/graphlearn-for-pytorch/pull/155/files for more info.
-class _BatchedNodeSamplerInput(NodeSamplerInput):
+class _LabledNodeSamplerInput(NodeSamplerInput):
+    """
+    Allows for guaranteeing that all "label sets" are sampled together.
+
+    A "label set" is an anchor node, and it's positive and negative labels.
+    For instance if we have the graph:
+        # Message passing
+        A -> B -> C
+        # Positive label
+        A -> D
+        # Negative label
+        A -> E
+
+    Then the label set for A is (A, D, E).
+
+    If this is being used for labeled input, then the `node` input should be a tensor of shape N x M
+    where N is the number of label sets, and M is the number of nodes in each label set.
+
+    This class may also be given a tensor of shape N x 1, in which case there is no guarantee
+    a node and it's labels are sampled together.
+    """
+
     def __len__(self) -> int:
         return self.node.shape[0]
 
-    def __getitem__(
-        self, index: Union[torch.Tensor, Any]
-    ) -> "_BatchedNodeSamplerInput":
+    def __getitem__(self, index: Union[torch.Tensor, Any]) -> "_LabledNodeSamplerInput":
         if not isinstance(index, torch.Tensor):
             index = torch.tensor(index, dtype=torch.long)
         index = index.to(self.node.device)
-        return _BatchedNodeSamplerInput(self.node[index].view(-1), self.input_type)
+        return _LabledNodeSamplerInput(self.node[index].view(-1), self.input_type)
 
 
 class _SupervisedToHomogeneous:
@@ -264,7 +280,7 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
-        input_data = _BatchedNodeSamplerInput(node=node_ids, input_type=node_type)
+        input_data = _LabledNodeSamplerInput(node=node_ids, input_type=node_type)
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
