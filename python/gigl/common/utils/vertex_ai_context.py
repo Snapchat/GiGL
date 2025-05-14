@@ -1,8 +1,13 @@
 """Utility functions to be used by machines running on Vertex AI."""
 
+import json
+import logging
 import os
 import subprocess
 import time
+from dataclasses import asdict, dataclass
+
+from graphlearn_torch.utils import get_free_port
 
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
@@ -104,6 +109,12 @@ def get_rank() -> int:
     return int(os.environ.get("RANK", 0))
 
 
+@dataclass(frozen=True)
+class _LeaderInfo:
+    ip: str
+    dataset_port: int
+
+
 def connect_worker_pool() -> DistributedContext:
     """
     Used to connect the worker pool. This function should be called by all workers
@@ -122,8 +133,14 @@ def connect_worker_pool() -> DistributedContext:
         logger.info("Wait 180 seconds for the leader machine to settle down.")
         time.sleep(180)
         host_ip = subprocess.check_output(["hostname", "-i"]).decode().strip()
-        logger.info(f"Writing host IP address ({host_ip}) to {ip_file_uri}")
-        gcs_utils.upload_from_string(gcs_path=ip_file_uri, content=host_ip)
+        dataset_port = get_free_port()
+        logger.info(
+            f"Writing host IP address ({host_ip}) and dataset port ({dataset_port}) to {ip_file_uri}"
+        )
+        leader_info = _LeaderInfo(ip=host_ip, dataset_port=dataset_port)
+        gcs_utils.upload_from_string(
+            gcs_path=ip_file_uri, content=json.dumps(asdict(leader_info))
+        )
     else:
         max_retries = 60
         interval_s = 30
@@ -132,7 +149,10 @@ def connect_worker_pool() -> DistributedContext:
                 f"Checking if {ip_file_uri} exists and reading HOST_IP (attempt {attempt_num})..."
             )
             try:
-                host_ip = gcs_utils.read_from_gcs(ip_file_uri)
+                leader_info_json = json.loads(gcs_utils.read_from_gcs(ip_file_uri))
+                leader_info = _LeaderInfo(**leader_info_json)
+                logging.info(f"Leader info: {leader_info}")
+                host_ip = leader_info.ip
                 logger.info(f"Pinging host ip ({host_ip}) ...")
                 if _ping_host_ip(host_ip):
                     logger.info(f"Ping to host ip ({host_ip}) was successful.")
@@ -153,6 +173,7 @@ def connect_worker_pool() -> DistributedContext:
         main_worker_ip_address=host_ip,
         global_rank=global_rank,
         global_world_size=global_world_size,
+        dataset_building_port=leader_info.dataset_port,
     )
 
 

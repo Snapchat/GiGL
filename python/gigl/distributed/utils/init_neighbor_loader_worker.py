@@ -5,6 +5,7 @@ from typing import Optional
 import psutil
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
+from graphlearn_torch.utils import get_free_port
 
 from gigl.common.logger import Logger
 
@@ -20,6 +21,17 @@ def get_process_group_name(process_rank: int) -> str:
         str: The name of the process group.
     """
     return f"distributed-process-{process_rank}"
+
+
+def get_free_ports(num_ports: int) -> list[int]:
+    """
+    Returns a list of free ports on the local machine.
+    Args:
+        num_ports (int): The number of free ports to find.
+    Returns:
+        list[int]: A list of free ports.
+    """
+    return [get_free_port() for _ in range(num_ports)]
 
 
 # torch.set_num_interop_threads() can only be called once, otherwise we see:
