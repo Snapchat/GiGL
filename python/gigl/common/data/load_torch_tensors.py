@@ -174,7 +174,8 @@ def load_torch_tensors_from_tf_record(
     serialized_graph_metadata: SerializedGraphMetadata,
     should_load_tensors_in_parallel: bool,
     rank: int = 0,
-    tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
 ) -> LoadedGraphTensors:
     """
     Loads all torch tensors from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
@@ -188,7 +189,8 @@ def load_torch_tensors_from_tf_record(
         serialized_graph_metadata (SerializedGraphMetadata): Serialized graph metadata contained serialized information for loading tfrecords across node and edge types
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         rank (int): Rank on current machine
-        tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
+        node_tf_dataset_options (TFDatasetOptions): The options to use for nodes when building the dataset.
+        edge_tf_dataset_options (TFDatasetOptions): The options to use for edges when building the dataset.
     Returns:
         loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors
     """
@@ -222,7 +224,7 @@ def load_torch_tensors_from_tf_record(
             "entity_type": _NODE_KEY,
             "serialized_tf_record_info": serialized_graph_metadata.node_entity_info,
             "rank": rank,
-            "tf_dataset_options": tf_dataset_options,
+            "tf_dataset_options": node_tf_dataset_options,
         },
     )
 
@@ -235,7 +237,7 @@ def load_torch_tensors_from_tf_record(
             "entity_type": _EDGE_KEY,
             "serialized_tf_record_info": serialized_graph_metadata.edge_entity_info,
             "rank": rank,
-            "tf_dataset_options": tf_dataset_options,
+            "tf_dataset_options": edge_tf_dataset_options,
         },
     )
 
@@ -249,7 +251,6 @@ def load_torch_tensors_from_tf_record(
                 "entity_type": _POSITIVE_LABEL_KEY,
                 "serialized_tf_record_info": serialized_graph_metadata.positive_label_entity_info,
                 "rank": rank,
-                "tf_dataset_options": tf_dataset_options,
             },
         )
     else:
@@ -265,7 +266,6 @@ def load_torch_tensors_from_tf_record(
                 "entity_type": _NEGATIVE_LABEL_KEY,
                 "serialized_tf_record_info": serialized_graph_metadata.negative_label_entity_info,
                 "rank": rank,
-                "tf_dataset_options": tf_dataset_options,
             },
         )
     else:
@@ -290,10 +290,14 @@ def load_torch_tensors_from_tf_record(
     else:
         # In this setting, we start and join each process one-at-a-time in order to achieve sequential tensor loading
         logger.info("Loading Serialized TFRecord Data in Sequence ...")
-        node_data_loading_process.start()
-        node_data_loading_process.join()
+        # Here we launch edge loading process first since experimentally
+        # we have found that, since edge data is larger than node data,
+        # launching edge before launching node reduces peak memory usage
+        # compared with first launching node loading and then launching edge loading.
         edge_data_loading_process.start()
         edge_data_loading_process.join()
+        node_data_loading_process.start()
+        node_data_loading_process.join()
         if serialized_graph_metadata.positive_label_entity_info is not None:
             positive_label_data_loading_process.start()
             positive_label_data_loading_process.join()
