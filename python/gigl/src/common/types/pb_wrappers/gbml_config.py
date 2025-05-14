@@ -283,14 +283,14 @@ class GbmlConfigPbWrapper:
     @property
     def dataset_metadata_pb_wrapper(self) -> DatasetMetadataPbWrapper:
         """
-        Allows access to a dataset_metadata_pb_wrapper. If the underlying pb is empty, calling this property will instead throw an error.
+        Allows access to a dataset_metadata_pb_wrapper. If the underlying proto is empty, calling this property will instead throw an error.
 
         Returns:
-            DatasetMetadataPbWrapper: The dataset metadata pb wrapper
+            DatasetMetadataPbWrapper: The dataset metadata proto wrapper
         """
         if self._dataset_metadata_pb_wrapper is None:
             raise ValueError(
-                "Attempted to access the dataset metadata pb wrapper when it is not set. If using GLT backend, this field is expected to not be set, and "
+                "Attempted to access the dataset metadata proto wrapper when it is not set. If using GLT backend, this field is expected to not be set, and "
                 "should not be referenced. If using SGS backend, this field is expected to be set. Please ensure this property is only accessed when the underlying proto is set."
             )
         return self._dataset_metadata_pb_wrapper
@@ -301,7 +301,7 @@ class GbmlConfigPbWrapper:
         Allows access to a graph_metadata_pb_wrapper
 
         Returns:
-            GraphMetadataPbWrapper: The graph metadata pb wrapper
+            GraphMetadataPbWrapper: The graph metadata proto wrapper
         """
         return self._graph_metadata_pb_wrapper
 
@@ -310,14 +310,14 @@ class GbmlConfigPbWrapper:
         self,
     ) -> SubgraphSamplingStrategyPbWrapper:
         """
-        Allows access to a subgraph_sampling_strategy_pb_wrapper. If the underlying pb is empty, calling this property will instead throw an error.
+        Allows access to a subgraph_sampling_strategy_pb_wrapper. If the underlying proto is empty, calling this property will instead throw an error.
 
         Returns:
-            SubgraphSamplingStrategyPbWrapper: The subgraph sampling strategy pb wrapper
+            SubgraphSamplingStrategyPbWrapper: The subgraph sampling strategy proto wrapper
         """
         if self._subgraph_sampling_strategy_pb_wrapper is None:
             raise ValueError(
-                "Attempted to access the subgraph sampling strategy pb wrapper when it is not set. Please ensure this property is only accessed when the underlying proto is set"
+                "Attempted to access the subgraph sampling strategy proto wrapper when it is not set. Please ensure this property is only accessed when the underlying proto is set"
             )
         return self._subgraph_sampling_strategy_pb_wrapper
 
@@ -336,14 +336,14 @@ class GbmlConfigPbWrapper:
         self,
     ) -> FlattenedGraphMetadataPbWrapper:
         """
-        Allows access to a flattened_graph_metadata_pb_wrapper.  If the underlying pb is empty, calling this property will instead throw an error.
+        Allows access to a flattened_graph_metadata_pb_wrapper.  If the underlying proto is empty, calling this property will instead throw an error.
 
         Returns:
-            FlattenedGraphMetadataPbWrapper: The flattened graph metadata pb wrapper or None if it doesn't exist
+            FlattenedGraphMetadataPbWrapper: The flattened graph metadata proto wrapper or None if it doesn't exist
         """
         if self._flattened_graph_metadata_pb_wrapper is None:
             raise ValueError(
-                "Attempted to access the flattened graph metadata pb wrapper when it is not set. If using GLT backend, this field is expected to not be set, and "
+                "Attempted to access the flattened graph metadata proto wrapper when it is not set. If using GLT backend, this field is expected to not be set, and "
                 "should not be referenced. If using SGS backend, this field is expected to be set. Please ensure this property is only accessed when the underlying proto is set."
             )
         return self._flattened_graph_metadata_pb_wrapper
@@ -354,7 +354,7 @@ class GbmlConfigPbWrapper:
         Allows access to a preprocessed_metadata_pb_wrapper
 
         Returns:
-            PreprocessedMetadataPbWrapper: The preprocessed metadata pb wrapper
+            PreprocessedMetadataPbWrapper: The preprocessed metadata proto wrapper
         """
         return self._preprocessed_metadata_pb_wrapper
 
@@ -364,7 +364,7 @@ class GbmlConfigPbWrapper:
         Allows access to a trained_model_metadata_pb_wrapper
 
         Returns:
-            TrainedModelMetadataPbWrapper: The trained model metadata pb wrapper
+            TrainedModelMetadataPbWrapper: The trained model metadata proto wrapper
         """
         return self._trained_model_metadata_pb_wrapper
 
