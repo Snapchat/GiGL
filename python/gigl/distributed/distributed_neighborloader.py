@@ -33,7 +33,7 @@ logger = Logger()
 DEFAULT_NUM_CPU_THREADS = 2
 
 
-class _LabledNodeSamplerInput(NodeSamplerInput):
+class _LabeledNodeSamplerInput(NodeSamplerInput):
     """
     Allows for guaranteeing that all "label sets" are sampled together.
 
@@ -58,11 +58,13 @@ class _LabledNodeSamplerInput(NodeSamplerInput):
     def __len__(self) -> int:
         return self.node.shape[0]
 
-    def __getitem__(self, index: Union[torch.Tensor, Any]) -> "_LabledNodeSamplerInput":
+    def __getitem__(
+        self, index: Union[torch.Tensor, Any]
+    ) -> "_LabeledNodeSamplerInput":
         if not isinstance(index, torch.Tensor):
             index = torch.tensor(index, dtype=torch.long)
         index = index.to(self.node.device)
-        return _LabledNodeSamplerInput(self.node[index].view(-1), self.input_type)
+        return _LabeledNodeSamplerInput(self.node[index].view(-1), self.input_type)
 
 
 class _SupervisedToHomogeneous:
@@ -280,7 +282,7 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
-        input_data = _LabledNodeSamplerInput(node=node_ids, input_type=node_type)
+        input_data = _LabeledNodeSamplerInput(node=node_ids, input_type=node_type)
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
