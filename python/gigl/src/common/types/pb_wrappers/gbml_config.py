@@ -71,7 +71,7 @@ class GbmlConfigPbWrapper:
             self.__load_dataset_metadata_pb_wrapper(dataset_metadata_pb)
         else:
             logger.info(
-                "Skipping populating dataset_metadata_pb as the message is missing from the input config"
+                "Skipping populating dataset_metadata_pb_wrapper as the message is missing from the input config"
             )
 
         # Populate the _graph_metadata_pb_wrapper field
@@ -107,7 +107,7 @@ class GbmlConfigPbWrapper:
             )
         else:
             logger.info(
-                "Skipping populating subgraph_sampling_strategy_pb as the message is missing from the input config"
+                "Skipping populating subgraph_sampling_strategy_pb_wrapper as the message is missing from the input config"
             )
 
     def __load_preprocessed_metadata_pb_wrapper(self, uri: str) -> None:
