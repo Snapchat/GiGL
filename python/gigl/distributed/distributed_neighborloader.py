@@ -1,11 +1,13 @@
 import itertools
 from collections import abc
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Callable, Callable, Dict, List, Optional, Sequence, Sequence, Tuple, TypeVar, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -25,6 +27,13 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     select_label_edge_types,
     to_heterogeneous_edge,
+)
+from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    select_label_edge_types,
+    to_heterogeneous_edge,
     to_homogeneous,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -37,10 +46,28 @@ DEFAULT_NUM_CPU_THREADS = 2
 _GraphData = TypeVar("_GraphData", Data, HeteroData)
 
 
-# By default GLT does not support per-example batching, so we add this to support sampling
-# from multiple nodes in a single batch.
-# See https://github.com/alibaba/graphlearn-for-pytorch/pull/155/files for more info.
-class _BatchedNodeSamplerInput(NodeSamplerInput):
+class _LabeledNodeSamplerInput(NodeSamplerInput):
+    """
+    Allows for guaranteeing that all "label sets" are sampled together.
+
+    A "label set" is an anchor node, and it's positive and negative labels.
+    For instance if we have the graph:
+        # Message passing
+        A -> B -> C
+        # Positive label
+        A -> D
+        # Negative label
+        A -> E
+
+    Then the label set for A is (A, D, E).
+
+    If this is being used for labeled input, then the `node` input should be a tensor of shape N x M
+    where N is the number of label sets, and M is the number of nodes in each label set.
+
+    This class may also be given a tensor of shape N x 1, in which case there is no guarantee
+    a node and it's labels are sampled together.
+    """
+
     def __init__(
         self,
         node: torch.Tensor,
@@ -57,7 +84,7 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
 
     def __getitem__(
         self, index: Union[torch.Tensor, Any]
-    ) -> "_BatchedNodeSamplerInput":
+    ) -> "_LabeledNodeSamplerInput":
         if not isinstance(index, torch.Tensor):
             index = torch.tensor(index, dtype=torch.long)
         index = index.to(self.node.device)
@@ -75,7 +102,7 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
                 dict(zip(nodes_to_sample.tolist(), itertools.cycle([None]))).keys()
             )
             self._batch_store[self.input_type, nodes] = full_batch
-        return _BatchedNodeSamplerInput(nodes_to_sample, self.input_type)
+        return _LabeledNodeSamplerInput(nodes_to_sample, self.input_type)
 
 
 class _SupervisedToHomogeneous:
@@ -412,7 +439,7 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
-        input_data = _BatchedNodeSamplerInput(
+        input_data = _LabeledNodeSamplerInput(
             node=node_ids, input_type=node_type, batch_store=self._batch_store
         )
 

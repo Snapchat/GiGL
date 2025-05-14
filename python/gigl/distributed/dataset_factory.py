@@ -59,7 +59,8 @@ def _load_and_build_partitioned_dataset(
     should_load_tensors_in_parallel: bool,
     edge_dir: Literal["in", "out"],
     partitioner_class: Optional[Type[DistPartitioner]],
-    tf_dataset_options: TFDatasetOptions,
+    node_tf_dataset_options: TFDatasetOptions,
+    edge_tf_dataset_options: TFDatasetOptions,
     should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
@@ -74,7 +75,8 @@ def _load_and_build_partitioned_dataset(
         edge_dir (Literal["in", "out"]): Edge direction of the provided graph
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
-        tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized data is read.
+        node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
+        edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -98,7 +100,8 @@ def _load_and_build_partitioned_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         rank=rank,
-        tf_dataset_options=tf_dataset_options,
+        node_tf_dataset_options=node_tf_dataset_options,
+        edge_tf_dataset_options=edge_tf_dataset_options,
     )
     if should_treat_as_heterogeneous:
         loaded_graph_tensors.treat_labels_as_edges()
@@ -209,6 +212,8 @@ def _build_dataset_process(
     sample_edge_direction: Literal["in", "out"],
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]],
+    node_tf_dataset_options: TFDatasetOptions,
+    edge_tf_dataset_options: TFDatasetOptions,
     tf_dataset_options: TFDatasetOptions,
     should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
@@ -242,7 +247,8 @@ def _build_dataset_process(
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
-        tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized data is read.
+        node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
+        edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -258,7 +264,7 @@ def _build_dataset_process(
     init_rpc(
         master_addr=distributed_context.main_worker_ip_address,
         master_port=dataset_building_port,
-        num_rpc_threads=4,
+        num_rpc_threads=16,
     )
 
     output_dataset: DistLinkPredictionDataset = _load_and_build_partitioned_dataset(
@@ -266,6 +272,8 @@ def _build_dataset_process(
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         edge_dir=sample_edge_direction,
         partitioner_class=partitioner_class,
+        node_tf_dataset_options=node_tf_dataset_options,
+        edge_tf_dataset_options=edge_tf_dataset_options,
         tf_dataset_options=tf_dataset_options,
         should_treat_as_heterogeneous=should_treat_as_heterogeneous,
         splitter=splitter,
@@ -286,6 +294,8 @@ def build_dataset(
     sample_edge_direction: Union[Literal["in", "out"], str],
     should_load_tensors_in_parallel: bool = True,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
+    node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
@@ -302,7 +312,8 @@ def build_dataset(
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
-        tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized data is read.
+        node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
+        edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -335,6 +346,8 @@ def build_dataset(
             sample_edge_direction,
             should_load_tensors_in_parallel,
             partitioner_class,
+            node_tf_dataset_options,
+            edge_tf_dataset_options,
             tf_dataset_options,
             should_treat_as_heterogeneous,
             splitter,
