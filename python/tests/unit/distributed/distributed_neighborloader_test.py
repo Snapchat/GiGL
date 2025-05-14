@@ -3,6 +3,7 @@ from collections import abc
 from pathlib import Path
 from typing import MutableMapping
 
+from attr import has
 import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc
@@ -277,7 +278,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         if expected_negative_labels is not None:
             assert_tensor_equality(datum.y_negative, expected_negative_labels)
         else:
-            assert not hasattr(datum, "y_negative")
+            self.assertFalse(hasattr(datum, "y_negative"))
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
@@ -288,7 +289,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             distributed_context=self._context,
             is_inference=False,
         )
-        assert dataset.train_node_ids is not None
         loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
@@ -300,6 +300,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         count = 0
         for datum in loader:
             self.assertIsInstance(datum, Data)
+            self.assertTrue(hasattr(datum, "y_positive"))
+            self.assertTrue(hasattr(datum, "y_negative"))
             count += 1
         self.assertEqual(count, 2161)
 
