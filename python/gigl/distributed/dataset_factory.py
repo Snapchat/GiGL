@@ -422,7 +422,6 @@ def build_dataset_from_task_config_uri(
         distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
         partitioner_class=partitioner_class,
-        _dataset_building_port=distributed_context.dataset_building_port,
     )
 
     return dataset
