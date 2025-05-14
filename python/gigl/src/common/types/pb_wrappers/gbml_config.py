@@ -285,13 +285,17 @@ class GbmlConfigPbWrapper:
         return GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
 
     @property
-    def dataset_metadata_pb_wrapper(self) -> Optional[DatasetMetadataPbWrapper]:
+    def dataset_metadata_pb_wrapper(self) -> DatasetMetadataPbWrapper:
         """
-        Allows access to a dataset_metadata_pb_wrapper
+        Allows access to a dataset_metadata_pb_wrapper. If the underlying pb is empty, calling this property will instead throw an error.
 
         Returns:
-            Optional[DatasetMetadataPbWrapper]: The dataset metadata pb wrapper or None if it doesn't exist
+            DatasetMetadataPbWrapper: The dataset metadata pb wrapper
         """
+        if self._dataset_metadata_pb_wrapper is None:
+            raise ValueError(
+                "Attempted to access the dataset metadata pb wrapper when it is not set. Please ensure this property is only accessed when the underlying proto is set"
+            )
         return self._dataset_metadata_pb_wrapper
 
     @property
@@ -329,13 +333,17 @@ class GbmlConfigPbWrapper:
     @property
     def flattened_graph_metadata_pb_wrapper(
         self,
-    ) -> Optional[FlattenedGraphMetadataPbWrapper]:
+    ) -> FlattenedGraphMetadataPbWrapper:
         """
-        Allows access to a flattened_graph_metadata_pb_wrapper
+        Allows access to a flattened_graph_metadata_pb_wrapper.  If the underlying pb is empty, calling this property will instead throw an error.
 
         Returns:
-            Optional[FlattenedGraphMetadataPbWrapper]: The flattened graph metadata pb wrapper or None if it doesn't exist
+            FlattenedGraphMetadataPbWrapper: The flattened graph metadata pb wrapper or None if it doesn't exist
         """
+        if self._flattened_graph_metadata_pb_wrapper is None:
+            raise ValueError(
+                "Attempted to access the flattened graph metadata pb wrapper when it is not set. Please ensure this property is only accessed when the underlying proto is set"
+            )
         return self._flattened_graph_metadata_pb_wrapper
 
     @property
