@@ -253,7 +253,7 @@ def _build_dataset_process(
     init_rpc(
         master_addr=distributed_context.main_worker_ip_address,
         master_port=dataset_building_port,
-        num_rpc_threads=4,
+        num_rpc_threads=16,
     )
 
     output_dataset: DistLinkPredictionDataset = _load_and_build_partitioned_dataset(
