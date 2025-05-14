@@ -46,19 +46,21 @@ class GbmlConfigPbWrapper:
 
     gbml_config_pb: gbml_config_pb2.GbmlConfig
 
-    _dataset_metadata_pb_wrapper: Optional[DatasetMetadataPbWrapper] = None
+    _dataset_metadata_pb_wrapper: Optional[DatasetMetadataPbWrapper] = field(
+        default=None, init=False
+    )
     _graph_metadata_pb_wrapper: GraphMetadataPbWrapper = field(init=False)
     _preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper = field(init=False)
     _flattened_graph_metadata_pb_wrapper: Optional[
         FlattenedGraphMetadataPbWrapper
-    ] = None
+    ] = field(default=None, init=False)
     _task_metadata_pb_wrapper: TaskMetadataPbWrapper = field(init=False)
     _trained_model_metadata_pb_wrapper: TrainedModelMetadataPbWrapper = field(
         init=False
     )
     _subgraph_sampling_strategy_pb_wrapper: Optional[
         SubgraphSamplingStrategyPbWrapper
-    ] = None
+    ] = field(default=None, init=False)
 
     def __post_init__(self):
         # Populate the _preprocessed_metadata_pb_wrapper field
