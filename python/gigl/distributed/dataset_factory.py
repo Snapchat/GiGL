@@ -388,6 +388,7 @@ def build_dataset_from_task_config_uri(
         )
 
     if should_convert_to_heterogeneous:
+        # TODO(kmonte): Read train/val/test split counts from config.
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction=sample_edge_direction,
             edge_types=[
