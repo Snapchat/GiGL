@@ -299,7 +299,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         count = 0
         for datum in loader:
-            # print(f"datum: {datum}")
             self.assertIsInstance(datum, Data)
             count += 1
         self.assertEqual(count, 2161)

@@ -64,13 +64,16 @@ class _BatchedNodeSamplerInput(NodeSamplerInput):
         full_batch = self.node[index].view(-1)
         nodes_to_sample = full_batch[full_batch >= 0]
         if self._batch_store is not None:
+            # Dedup the nodes to sample.
+            # We use a `dict` here to dedup the nodes, as `set` does not preserve
+            # insertion order, which need to keep we can differentiate betwee:
+            # anchor: A, positive: B, negative: C
+            # and
+            # anchor: C, positive: B, negative: A
+            # We use a tuple so it can be a hash key.
             nodes = tuple(
                 dict(zip(nodes_to_sample.tolist(), itertools.cycle([None]))).keys()
             )
-            if nodes in self._batch_store:
-                raise ValueError(
-                    f"Node {nodes} already exists in message_passing. Please use a different node id."
-                )
             self._batch_store[self.input_type, nodes] = full_batch
         return _BatchedNodeSamplerInput(nodes_to_sample, self.input_type)
 
@@ -100,6 +103,7 @@ class _SupervisedToHomogeneous:
 
 class _SetLabels:
     """Transform class to set labels for the nodes in the graph."""
+
     def __init__(
         self,
         batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor],
@@ -143,19 +147,30 @@ class _SetLabels:
         is_heterogeneous = isinstance(data, HeteroData)
         positive_labels: dict[NodeType, torch.Tensor] = {}
         negative_labels: dict[NodeType, torch.Tensor] = {}
-        node_types: list[NodeType]
         if is_heterogeneous:
             node_types = data.node_types
         else:
             node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
+
+        # The approach here is:
+        # For each node type:
+        # 1. Get the "full batch" of node ids, containing the sentinels.
+        # e.g. [<anchor node>, <anchor node sentinel>, <positive labels>, <positive label sentinel>, <negative labels>, <negative label sentinel>]
+        # or [0, -1, 1, 2, -3, 3, -4]
+        # Where 0 is the anchor node, -1 is the anchor node sentinel, 1 and 2 are the positive labels,
+        # -3 is the positive label sentinel, 3 is the negative label, and -4 is the negative label sentinel.
+        # 2. Select the indices of all the sentinels.
+        # 3. Get the labels between the sentinels.
+        # 4. Set the labels in the data object.
+        # TODO(kmonte): Since the labels are padded, we should be able to vectorize this.
         for node_type in node_types:
             full_batch: torch.Tensor
+            # data.batch is already de-duped.
             if is_heterogeneous:
-                full_batch = self._batch_store[
-                    node_type, tuple(data[node_type].batch.tolist())
-                ]
+                batch = tuple(data[node_type].batch.tolist())
             else:
-                full_batch = self._batch_store[node_type, tuple(data.batch.tolist())]
+                batch = tuple(data.batch.tolist())
+            full_batch = self._batch_store.pop((node_type, batch))
             achor_node_sentinels = torch.nonzero(
                 full_batch == self._anchor_node_sentinel
             ).squeeze(1)
