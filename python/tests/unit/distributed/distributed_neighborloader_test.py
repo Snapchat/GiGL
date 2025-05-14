@@ -5,12 +5,16 @@ from typing import MutableMapping
 import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc
+from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.distributed_neighborloader import (
+    DistABLPLoader,
+    DistNeighborLoader,
+)
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -29,6 +33,9 @@ from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
+
+_POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+_NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
@@ -78,12 +85,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        positive_edge_type = message_passing_to_positive_label(
-            DEFAULT_HOMOGENEOUS_EDGE_TYPE
-        )
-        negative_edge_type = message_passing_to_negative_label(
-            DEFAULT_HOMOGENEOUS_EDGE_TYPE
-        )
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
                 [
@@ -95,9 +96,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         partition_output = PartitionOutput(
             node_partition_book=to_heterogeneous_node(torch.zeros(14)),
             edge_partition_book={
-                DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.zeros(6),
-                positive_edge_type: torch.zeros(3),
-                negative_edge_type: torch.zeros(3),
+                e_type: torch.zeros(e_idx.size(1))
+                for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
                 etype: GraphPartitionData(
@@ -166,6 +166,102 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 4057)
+
+    @parameterized.expand(
+        [
+            param(
+                "Positive and Negative edges",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 11], [16, 14]]),
+                },
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+            ),
+            param(
+                "Positive edges",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 13, 17]),
+            ),
+        ]
+    )
+    def test_ablp_dataloader(
+        self,
+        _,
+        labeled_edges,
+        expected_node,
+        expected_srcs,
+        expected_dsts,
+    ):
+        # Graph looks like https://is.gd/w2oEVp:
+        # Message passing
+        # 10 -> {11, 12}
+        # 11 -> {13, 17}
+        # 15 -> {13, 14}
+        # 16 -> {12, 14}
+        # Positive labels
+        # 10 -> 15
+        # 15 -> 16
+        # Negative labels
+        # 10 -> 16
+        # 11 -> 14
+
+        edge_index = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [
+                    [10, 10, 11, 11, 15, 15, 16, 16],
+                    [11, 12, 13, 17, 13, 14, 12, 14],
+                ]
+            ),
+        }
+        edge_index.update(labeled_edges)
+
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            edge_partition_book={
+                e_type: torch.zeros(e_idx.size(1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+        )
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        loader = DistABLPLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            input_nodes=torch.tensor([10]),
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+        )
+
+        count = 0
+        for datum in loader:
+            self.assertIsInstance(datum, Data)
+            count += 1
+
+        self.assertEqual(count, 1)
+        assert_tensor_equality(
+            datum.node,
+            expected_node,
+            dim=0,
+        )
+        dsts, srcs, *_ = datum.coo()
+        assert_tensor_equality(datum.node[srcs], expected_srcs)
+        assert_tensor_equality(datum.node[dsts], expected_dsts)
 
 
 if __name__ == "__main__":
