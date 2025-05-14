@@ -7,6 +7,7 @@ import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
 
 from gigl.common.logger import Logger
+from gigl.distributed import DistributedContext
 
 logger = Logger()
 
@@ -28,12 +29,8 @@ def get_process_group_name(process_rank: int) -> str:
 # That way the "side-effects" of the call are only executed once.
 @lru_cache(maxsize=1)
 def init_neighbor_loader_worker(
-    master_ip_address: str,
+    distributed_context: DistributedContext,
     local_process_rank: int,
-    local_process_world_size: int,
-    rank: int,
-    world_size: int,
-    master_worker_port: int,
     device: torch.device,
     should_use_cpu_workers: bool = False,
     num_cpu_threads: Optional[int] = None,
@@ -43,12 +40,8 @@ def init_neighbor_loader_worker(
     Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
     the memory overhead and CPU contention. Returns the torch device which current worker is assigned to.
     Args:
-        master_ip_address (str): Master IP Address to manage processes
+        distributed_context (DistributedContext): Distributed context information of the current process.
         local_process_rank (int): Process number on the current machine
-        local_process_world_size (int): Total number of processes on the current machine
-        rank (int): Rank of current machine
-        world_size (int): Total number of machines
-        master_worker_port (int): Master port to use for communicating between workers during training or inference
         device (torch.device): The device where you want to load the data onto - i.e. where is your model?
         should_use_cpu_workers (bool): Whether we should do CPU training or inference.
         num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training or inference.
@@ -66,10 +59,12 @@ def init_neighbor_loader_worker(
     # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
     # to smooth the memory usage. The definition of group is discussed below.
     logger.info(
-        f"---Machine {rank} local process number {local_process_rank} preparing to sleep for {process_start_gap_seconds * local_process_rank} seconds"
+        f"---Machine {distributed_context.global_rank} local process number {local_process_rank} preparing to sleep for {process_start_gap_seconds * local_process_rank} seconds"
     )
     time.sleep(process_start_gap_seconds * local_process_rank)
-    logger.info(f"---Machine {rank} local process number {local_process_rank} started")
+    logger.info(
+        f"---Machine {distributed_context.global_rank} local process number {local_process_rank} started"
+    )
     if not should_use_cpu_workers:
         assert (
             torch.cuda.device_count() > 0
@@ -85,11 +80,13 @@ def init_neighbor_loader_worker(
 
         # Compute the range of physical cores the process should run on.
         total_physical_cores = psutil.cpu_count(logical=False)
-        physical_cores_per_process = total_physical_cores // local_process_world_size
+        physical_cores_per_process = (
+            total_physical_cores // distributed_context.local_world_size
+        )
         start_physical_core = local_process_rank * physical_cores_per_process
         end_physical_core = (
             total_physical_cores
-            if local_process_rank == local_process_world_size - 1
+            if local_process_rank == distributed_context.local_world_size - 1
             else start_physical_core + physical_cores_per_process
         )
 
@@ -130,7 +127,7 @@ def init_neighbor_loader_worker(
         torch.cuda.set_device(device)
         torch.cuda.empty_cache()
         logger.info(
-            f"Machine {rank} local rank {local_process_rank} uses device {torch.cuda.current_device()} by default"
+            f"Machine {distributed_context.global_rank} local rank {local_process_rank} uses device {torch.cuda.current_device()} by default"
         )
 
     # Group of workers. Each process is a worker. Each
@@ -147,11 +144,11 @@ def init_neighbor_loader_worker(
 
     group_name = get_process_group_name(local_process_rank)
     logger.info(
-        f"Init worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
+        f"Init worker group with: world_size={distributed_context.global_world_size}, rank={distributed_context.global_rank}, group_name={group_name}, "
     )
     init_worker_group(
-        world_size=world_size,
-        rank=rank,
+        world_size=distributed_context.global_world_size,
+        rank=distributed_context.global_rank,
         group_name=group_name,
     )
 
@@ -164,11 +161,13 @@ def init_neighbor_loader_worker(
     # Note that different process groups are independent of each other. Therefore,
     # they have to use different master ports.
     logger.info(
-        f"Initing worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
+        f"Initing worker group with: world_size={distributed_context.global_world_size}, rank={distributed_context.global_rank}, group_name={group_name}, "
     )
     init_rpc(
-        master_addr=master_ip_address,
-        master_port=master_worker_port + local_process_rank,
+        master_addr=distributed_context.main_worker_ip_address,
+        master_port=distributed_context.local_rank_to_master_worker_port[
+            local_process_rank
+        ],
         rpc_timeout=600,
     )
 

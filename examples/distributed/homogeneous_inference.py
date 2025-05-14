@@ -115,7 +115,6 @@ def _inference_process(
     # When spawning processes, each process will be assigned a rank ranging
     # from [0, num_processes).
     process_number_on_current_machine: int,
-    num_inference_processes_per_machine: int,
     distributed_context: DistributedContext,
     embedding_gcs_path: GcsUri,
     model_state_dict_uri: GcsUri,
@@ -134,8 +133,7 @@ def _inference_process(
 
     Args:
         process_number_on_current_machine (int): Process number on the current machine
-        num_inference_processes_per_machine (int): Number of inference processes spawned by each machine
-        distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
+        distributed_context (DistributedContext): Distributed context containing information for current process
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
@@ -181,7 +179,6 @@ def _inference_process(
         num_neighbors=num_neighbors,
         context=distributed_context,
         local_process_rank=process_number_on_current_machine,
-        local_process_world_size=num_inference_processes_per_machine,
         input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
         num_workers=sampling_workers_per_inference_process,
         batch_size=inference_batch_size,
@@ -371,10 +368,6 @@ def _run_example_inference(
 
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
 
-    num_inference_processes_per_machine = int(
-        inferencer_args.get("num_inference_processes_per_machine", "4")
-    )  # Current large-scale setting sets this value to 4
-
     ## Inference Start
 
     inference_start_time = time.time()
@@ -383,7 +376,6 @@ def _run_example_inference(
     mp.spawn(
         fn=_inference_process,
         args=(
-            num_inference_processes_per_machine,
             distributed_context,
             embedding_output_gcs_folder,
             model_uri,
@@ -394,7 +386,7 @@ def _run_example_inference(
             node_feature_dim,
             edge_feature_dim,
         ),
-        nprocs=num_inference_processes_per_machine,
+        nprocs=distributed_context.local_world_size,
         join=True,
     )
 

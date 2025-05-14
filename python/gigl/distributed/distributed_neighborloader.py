@@ -11,10 +11,6 @@ from torch_geometric.typing import EdgeType
 import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed import DistributedContext
-from gigl.distributed.constants import (
-    DEFAULT_MASTER_INFERENCE_PORT,
-    DEFAULT_MASTER_SAMPLING_PORT,
-)
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -99,8 +95,7 @@ class DistNeighborLoader(DistLoader):
         dataset: DistLinkPredictionDataset,
         num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
         context: DistributedContext,
-        local_process_rank: int,  # TODO: Move this to DistributedContext
-        local_process_world_size: int,  # TODO: Move this to DistributedContext
+        local_process_rank: int,
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -113,8 +108,6 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
-        _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
-        _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
         """
         Note: We try to adhere to pyg dataloader api as much as possible.
@@ -131,7 +124,6 @@ class DistNeighborLoader(DistLoader):
                 the amount of neighbors to sample for each individual edge type.
             context (DistributedContext): Distributed context information of the current process.
             local_process_rank (int): The local rank of the current process within a node.
-            local_process_world_size (int): The total number of processes within a node.
             input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
                 indices of seed nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
@@ -162,14 +154,6 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
-            _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
-                The port number to use for inference processes.
-                In future, the port will be automatically assigned based on availability.
-                Currently defaults to: gigl.distributed.constants.DEFAULT_MASTER_INFERENCE_PORT
-            _main_sampling_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
-                The port number to use for sampling processes.
-                In future, the port will be automatically assigned based on availability.
-                Currently defaults to: gigl.distributed.constants.DEFAULT_MASTER_SAMPLING_PORT
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -212,7 +196,7 @@ class DistNeighborLoader(DistLoader):
         curr_process_nodes = _shard_nodes_by_process(
             input_nodes=input_nodes,
             local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
+            local_process_world_size=context.local_world_size,
         )
         device = (
             pin_memory_device
@@ -224,7 +208,7 @@ class DistNeighborLoader(DistLoader):
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
         logger.info(
-            f"Initializing neighbor loader worker in process: {local_process_rank}/{local_process_world_size} using device: {device}"
+            f"Initializing neighbor loader worker in process: {local_process_rank}/{context.local_world_size} using device: {device}"
         )
         should_use_cpu_workers = device.type == "cpu"
         if should_use_cpu_workers and num_cpu_threads is None:
@@ -234,12 +218,8 @@ class DistNeighborLoader(DistLoader):
             )
             num_cpu_threads = DEFAULT_NUM_CPU_THREADS
         gigl.distributed.utils.init_neighbor_loader_worker(
-            master_ip_address=context.main_worker_ip_address,
+            distributed_context=context,
             local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
-            rank=context.global_rank,
-            world_size=context.global_world_size,
-            master_worker_port=_main_inference_port,
             device=device,
             should_use_cpu_workers=should_use_cpu_workers,
             # Lever to explore tuning for CPU based inference
@@ -247,7 +227,7 @@ class DistNeighborLoader(DistLoader):
             process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
-            f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
+            f"Finished initializing neighbor loader worker:  {local_process_rank}/{context.local_world_size}"
         )
 
         # Sets up worker options for the dataloader
@@ -262,7 +242,7 @@ class DistNeighborLoader(DistLoader):
             # the sampling processes in different groups should be independent, and should
             # use different master ports.
             master_addr=context.main_worker_ip_address,
-            master_port=_main_sampling_port + local_process_rank,
+            master_port=context.local_rank_to_master_sampling_port[local_process_rank],
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
