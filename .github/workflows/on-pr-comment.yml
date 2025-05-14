@@ -14,8 +14,9 @@ permissions:
 
 jobs:
   unit-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test') }} 
+    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
     - name: Run Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -36,8 +37,9 @@ jobs:
         command: |
           make unit_test
   integration-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/integration_test') }} 
+    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/integration_test') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
     - name: Run Integration Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -54,8 +56,9 @@ jobs:
         command: |
             make integration_test
   integration-e2e-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/e2e_test') }} 
+    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/e2e_test') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
     - name: Run E2E Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -73,7 +76,7 @@ jobs:
           make run_all_e2e_tests
 
   lint-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }} 
+    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
     runs-on: ubuntu-latest
     steps:
     - name: Run Linting Tests
