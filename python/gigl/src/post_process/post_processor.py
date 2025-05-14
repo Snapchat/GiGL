@@ -112,7 +112,7 @@ class PostProcessor:
         """
         When using the experimental GLT backend, we should run unenumeration in the post processor.
         """
-        return gbml_config_wrapper.should_use_experimental_glt_backend
+        return gbml_config_wrapper.should_use_glt_backend
 
     def __run(
         self,

@@ -17,18 +17,33 @@ from snapchat.research.gbml import (
 
 logger = Logger()
 
+_TEMPLATE_CONFIG_FOR_SGS = gbml_config_pb2.GbmlConfig(
+    task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata(
+        node_based_task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata()
+    ),
+)
+
+_TEMPLATE_CONFIG_FOR_GLT = gbml_config_pb2.GbmlConfig(
+    task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata(
+        node_based_task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata()
+    ),
+    feature_flags={"should_run_glt_backend": "True"},
+)
+
 
 class ConfigPopulatorUnitTest(unittest.TestCase):
     """
     This test checks the completion of the ConfigPopulator step.
     """
 
-    def test_config_population_is_accurate(self):
+    def test_sgs_config_population_is_accurate(
+        self,
+    ):
         config_populator = ConfigPopulator()
 
         frozen_gbml_config_pb = config_populator._populate_frozen_gbml_config_pb(
             applied_task_identifier=self.applied_task_identifier,
-            template_gbml_config_pb=self.template_gbml_config_pb,
+            template_gbml_config_pb=_TEMPLATE_CONFIG_FOR_SGS,
         )
         gbml_config_pb_wrapper = GbmlConfigPbWrapper(
             gbml_config_pb=frozen_gbml_config_pb
@@ -40,8 +55,8 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
         )
 
         # Assert the right flattened graph metadata was set.
-        self.assertIsNotNone(
-            gbml_config_pb_wrapper.shared_config.flattened_graph_metadata
+        self.assertTrue(
+            gbml_config_pb_wrapper.shared_config.HasField("flattened_graph_metadata")
         )
         flattened_output_pb = (
             gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata
@@ -52,9 +67,10 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
         ):
             self.assertNotEqual(flattened_output_pb.labeled_tfrecord_uri_prefix, "")
             self.assertNotEqual(flattened_output_pb.unlabeled_tfrecord_uri_prefix, "")
-
         # Assert the right dataset metadata was set
-        self.assertIsNotNone(gbml_config_pb_wrapper.shared_config.dataset_metadata)
+        self.assertTrue(
+            gbml_config_pb_wrapper.shared_config.HasField("dataset_metadata")
+        )
         dataset_metadata_pb = DatasetMetadataPbWrapper(
             dataset_metadata_pb=gbml_config_pb_wrapper.shared_config.dataset_metadata
         ).output_metadata
@@ -65,6 +81,81 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
             self.assertNotEqual(dataset_metadata_pb.train_data_uri, "")
             self.assertNotEqual(dataset_metadata_pb.val_data_uri, "")
             self.assertNotEqual(dataset_metadata_pb.test_data_uri, "")
+
+        # GBML Config Pb Wrapper Checks
+        self.assertFalse(gbml_config_pb_wrapper.should_use_glt_backend)
+        # We should expect both of the below calls to happen successfully without error when they are set
+        gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
+        gbml_config_pb_wrapper.dataset_metadata_pb_wrapper
+
+        # Assert trainer metadata assets were set
+        trained_model_metadata_pb: trained_model_metadata_pb2.TrainedModelMetadata = (
+            gbml_config_pb_wrapper.shared_config.trained_model_metadata
+        )
+        self.assertTrue(
+            isinstance(
+                trained_model_metadata_pb,
+                trained_model_metadata_pb2.TrainedModelMetadata,
+            )
+        )
+        self.assertNotEqual(trained_model_metadata_pb.trained_model_uri, "")
+        self.assertNotEqual(trained_model_metadata_pb.scripted_model_uri, "")
+
+        # Assert inference metadata assets were set
+        inference_metadata_pb: inference_metadata_pb2.InferenceMetadata = (
+            gbml_config_pb_wrapper.shared_config.inference_metadata
+        )
+        self.assertTrue(
+            isinstance(inference_metadata_pb, inference_metadata_pb2.InferenceMetadata)
+        )
+        for node_type in inference_metadata_pb.node_type_to_inferencer_output_info_map:
+            self.assertNotEqual(
+                inference_metadata_pb.node_type_to_inferencer_output_info_map[
+                    node_type
+                ].embeddings_path,
+                "",
+            )
+            if (
+                gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_type
+                == TaskMetadataType.NODE_BASED_TASK
+            ):
+                self.assertNotEqual(
+                    inference_metadata_pb.node_type_to_inferencer_output_info_map[
+                        node_type
+                    ].predictions_path,
+                    "",
+                )
+
+    def test_glt_config_population_is_accurate(self):
+        config_populator = ConfigPopulator()
+        frozen_gbml_config_pb = config_populator._populate_frozen_gbml_config_pb(
+            applied_task_identifier=self.applied_task_identifier,
+            template_gbml_config_pb=_TEMPLATE_CONFIG_FOR_GLT,
+        )
+        gbml_config_pb_wrapper = GbmlConfigPbWrapper(
+            gbml_config_pb=frozen_gbml_config_pb
+        )
+
+        # Check that preprocessed metadata uri is set.
+        self.assertNotEqual(
+            gbml_config_pb_wrapper.shared_config.preprocessed_metadata_uri, ""
+        )
+
+        self.assertFalse(
+            gbml_config_pb_wrapper.shared_config.HasField("flattened_graph_metadata")
+        )
+        self.assertFalse(
+            gbml_config_pb_wrapper.shared_config.HasField("dataset_metadata")
+        )
+
+        # GBML Config Pb Wrapper Checks
+        self.assertTrue(gbml_config_pb_wrapper.should_use_glt_backend)
+        with self.assertRaises(ValueError):
+            # We should expect to throw an error when accessing the flattened graph metadata pb wrapper when it is not set
+            gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
+        with self.assertRaises(ValueError):
+            # We should expect to throw an error when accessing the dataset metadata pb wrapper when it is not set
+            gbml_config_pb_wrapper.dataset_metadata_pb_wrapper
 
         # Assert trainer metadata assets were set
         trained_model_metadata_pb: trained_model_metadata_pb2.TrainedModelMetadata = (
@@ -107,12 +198,6 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
     def setUp(self) -> None:
         self.applied_task_identifier = AppliedTaskIdentifier(
             f"test_config_populator_functionality_{current_formatted_datetime()}"
-        )
-
-        self.template_gbml_config_pb = gbml_config_pb2.GbmlConfig(
-            task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata(
-                node_based_task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata()
-            ),
         )
 
     def tearDown(self) -> None:

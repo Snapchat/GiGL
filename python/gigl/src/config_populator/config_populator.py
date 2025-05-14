@@ -145,7 +145,7 @@ class ConfigPopulator:
             )
         else:
             raise TypeError(
-                f"Found un-supported training task type: {self.task_metadata_type}; it has to be one of {[option.value for option in TaskMetadataType]}"
+                f"Found un-supported training task type: {self.task_metadata_pb_wrapper.task_metadata_type}; it has to be one of {[option.value for option in TaskMetadataType]}"
             )
 
         flattened_graph_metadata_pb = (
@@ -518,6 +518,12 @@ class ConfigPopulator:
         self.__applied_task_identifier = applied_task_identifier
         self.__template_gbml_config = template_gbml_config_pb
 
+        template_gbml_config_pb_wrapper = GbmlConfigPbWrapper(
+            gbml_config_pb=template_gbml_config_pb
+        )
+
+        should_use_glt_backend = template_gbml_config_pb_wrapper.should_use_glt_backend
+
         output_gbml_config_pb = gbml_config_pb2.GbmlConfig()
         output_gbml_config_pb.CopyFrom(self.template_gbml_config)
 
@@ -535,9 +541,13 @@ class ConfigPopulator:
                 applied_task_identifier=self.applied_task_identifier
             )
         )
+        if not should_use_glt_backend:
+            flattened_graph_metadata_pb = self.__populate_flattened_graph_metadata_pb()
+            dataset_metadata_pb = self.__populate_dataset_metadata_pb()
+        else:
+            flattened_graph_metadata_pb = None
+            dataset_metadata_pb = None
 
-        flattened_graph_metadata_pb = self.__populate_flattened_graph_metadata_pb()
-        dataset_metadata_pb = self.__populate_dataset_metadata_pb()
         trained_model_metadata_pb = self.__populate_trained_model_metadata_pb(
             template_trained_model_metadata_pb=template_gbml_config_pb.shared_config.trained_model_metadata
         )

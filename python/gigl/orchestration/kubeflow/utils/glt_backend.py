@@ -34,4 +34,4 @@ def _check_glt_backend_eligibility_component(
     config = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
-    return config.should_use_experimental_glt_backend
+    return config.should_use_glt_backend

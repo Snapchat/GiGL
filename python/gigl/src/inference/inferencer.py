@@ -46,7 +46,7 @@ class Inferencer:
             project=resource_config_wrapper.project,
         )
 
-        if gbml_config_wrapper.should_use_experimental_glt_backend:
+        if gbml_config_wrapper.should_use_glt_backend:
             inferencer_glt = GLTInferencer()
             inferencer_glt.run(
                 applied_task_identifier=applied_task_identifier,
