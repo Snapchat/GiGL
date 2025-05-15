@@ -8,6 +8,16 @@ from gigl.common.logger import Logger
 logger = Logger()
 
 
+def _get_local_world_size_from_env() -> int:
+    if "LOCAL_WORLD_SIZE" in os.environ:
+        local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
+        logger.info(f"Got local world size {local_world_size}")
+    else:
+        raise ValueError(
+            "No environment variable found for `LOCAL_WORLD_SIZE` and no local world size explicitly provided."
+        )
+
+
 @dataclass(frozen=True)
 class DistributedContext:
     """
@@ -25,7 +35,7 @@ class DistributedContext:
 
     # Total number of training or inference processes per machine. This defaults to the os environment var "LOCAL_WORLD_SIZE" if not explicitly provided.
     local_world_size: int = field(
-        default_factory=lambda: int(os.getenv("LOCAL_WORLD_SIZE", "1"))
+        default_factory=lambda: _get_local_world_size_from_env
     )
 
     # Master port for partitioning
