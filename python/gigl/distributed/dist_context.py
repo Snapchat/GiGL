@@ -24,7 +24,9 @@ class DistributedContext:
     global_world_size: int
 
     # Total number of training or inference processes per machine. This defaults to the os environment var "LOCAL_WORLD_SIZE" if not explicitly provided.
-    local_world_size: int = int(os.getenv("LOCAL_WORLD_SIZE", "1"))
+    local_world_size: int = field(
+        default_factory=lambda: int(os.getenv("LOCAL_WORLD_SIZE", "1"))
+    )
 
     # Master port for partitioning
     master_partitioning_port: int = field(init=False)
