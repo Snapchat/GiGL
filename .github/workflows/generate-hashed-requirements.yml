@@ -39,10 +39,12 @@ jobs:
           pr_number: ${{ inputs.pr_number }}
           should_leave_progress_comments: "false"
           command: |
-            make -j4 generate_dev_linux_cuda_hashed_requirements \
+            make -j6 generate_dev_linux_cuda_hashed_requirements \
               generate_linux_cuda_hashed_requirements \
               generate_dev_linux_cpu_hashed_requirements \
-              generate_linux_cpu_hashed_requirements
+              generate_linux_cpu_hashed_requirements \
+              generate_experimental_linux_cpu_hashed_requirements \ 
+              generate_experimental_linux_cuda_hashed_requirements
       # Step 4: Upload the computed hashed requirements file as an artifact.
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
