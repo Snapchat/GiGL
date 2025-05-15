@@ -7,7 +7,7 @@ import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
 
 from gigl.common.logger import Logger
-from gigl.distributed import DistributedContext
+from gigl.distributed.dist_context import DistributedContext
 
 logger = Logger()
 
