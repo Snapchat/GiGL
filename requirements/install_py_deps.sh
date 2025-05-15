@@ -3,6 +3,7 @@ set -e
 
 
 DEV=0  # Flag to install dev dependencies.
+EXPERIMENTAL=0  # Flag to install experimental dependencies.
 PIP_ARGS="--no-deps"  # We don't want to install dependencies when installing packages from hashed requirements files.
 PIP_CREDENTIALS_MOUNTED=0  # When running this script in Docker environments, we may wish to mount pip credentials to install packages from a private repository.
 
@@ -11,6 +12,10 @@ do
     case $arg in
     --dev)
         DEV=1
+        shift
+        ;;
+    --experimental)
+        EXPERIMENTAL=1
         shift
         ;;
     --no-pip-cache)
@@ -29,6 +34,12 @@ if [[ $DEV -eq 1 ]]
 then
   echo "Recognized '--dev' flag is set. Will also install dev dependencies."
   REQ_FILE_PREFIX="dev_"
+fi
+
+if [[ $EXPERIMENTAL -eq 1 ]]
+then
+  echo "Recognized '--experimental' flag is set. Will install both dev and experimental dependencies."
+  REQ_FILE_PREFIX="experimental_"
 fi
 
 if [[ $PIP_CREDENTIALS_MOUNTED -eq 1 ]]

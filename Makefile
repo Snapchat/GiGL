@@ -120,6 +120,20 @@ generate_dev_linux_cuda_hashed_requirements:
 	--extra torch25-cuda-121 --extra transform --extra dev \
 	./python/pyproject.toml
 
+# Can only be run on linux, otherwise generated hashed req file will be wrong
+generate_experimental_linux_cpu_hashed_requirements:
+	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
+	--output-file=requirements/experimental_linux_cpu_requirements_unified.txt \
+	--extra torch25-cpu --extra transform --extra dev --extra experimental \
+	./python/pyproject.toml
+
+# Can only be run on linux, otherwise generated hashed req file will be wrong
+generate_experimental_linux_cuda_hashed_requirements:
+	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
+	--output-file=requirements/experimental_linux_cuda_requirements_unified.txt \
+	--extra torch25-cuda-121 --extra transform --extra dev --extra experimental \
+	./python/pyproject.toml
+
 # These are a collection of tests that are run before anything is installed using tools abialable on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
