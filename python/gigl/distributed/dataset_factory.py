@@ -27,7 +27,6 @@ from gigl.common.data.load_torch_tensors import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
-from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
@@ -199,7 +198,6 @@ def _build_dataset_process(
     output_dict: MutableMapping[str, DistLinkPredictionDataset],
     serialized_graph_metadata: SerializedGraphMetadata,
     distributed_context: DistributedContext,
-    dataset_building_port: int,
     sample_edge_direction: Literal["in", "out"],
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]],
@@ -231,7 +229,6 @@ def _build_dataset_process(
             will be written to for use by the parent process
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
-        dataset_building_port (int): RPC port to use to build the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
@@ -252,7 +249,7 @@ def _build_dataset_process(
 
     init_rpc(
         master_addr=distributed_context.main_worker_ip_address,
-        master_port=dataset_building_port,
+        master_port=distributed_context.master_partitioning_port,
         num_rpc_threads=16,
     )
 
@@ -285,7 +282,6 @@ def build_dataset(
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
-    _dataset_building_port: int = DEFAULT_MASTER_DATA_BUILDING_PORT,
 ) -> DistLinkPredictionDataset:
     """
     Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some SerializedGraphMetadata
@@ -302,10 +298,6 @@ def build_dataset(
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
-        _dataset_building_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
-            The RPC port to use to build the dataset. In future, the port will be automatically assigned based on availability.
-            Currently defaults to: gigl.distributed.constants.DEFAULT_MASTER_DATA_BUILDING_PORT
-
     Returns:
         DistLinkPredictionDataset: Built GraphLearn-for-PyTorch Dataset class
     """
@@ -327,7 +319,6 @@ def build_dataset(
             output_dict,
             serialized_graph_metadata,
             distributed_context,
-            _dataset_building_port,
             sample_edge_direction,
             should_load_tensors_in_parallel,
             partitioner_class,

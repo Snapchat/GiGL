@@ -2,14 +2,13 @@ import unittest
 from collections import abc
 from typing import MutableMapping
 
-import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
-from gigl.distributed.dist_context import DistributedContext
+from gigl.distributed.dist_context import DistributedContext, get_free_ports
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import (
     DistABLPLoader,
@@ -29,6 +28,7 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_heterogeneous_node,
 )
+from tests.test_assets.distributed.decorator import run_in_seperate_process
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -44,14 +44,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         self._world_size = 1
         self._num_rpc_threads = 4
 
-        self._context = DistributedContext(
-            main_worker_ip_address=self._master_ip_address,
-            global_rank=0,
-            global_world_size=self._world_size,
-        )
-
+    @run_in_seperate_process
     def test_distributed_neighbor_loader(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
@@ -62,15 +56,31 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             output_dict=output_dict,
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
-            master_port=master_port,
+        )
+
+        (
+            master_partitioning_port,
+            master_worker_ports,
+            master_sampling_ports,
+        ) = get_free_ports(
+            main_worker_ip_address=self._master_ip_address, local_world_size=1
+        )
+
+        distributed_context = DistributedContext(
+            main_worker_ip_address=self._master_ip_address,
+            global_rank=0,
+            global_world_size=self._world_size,
+            local_world_size=1,
+            master_partitioning_port=master_partitioning_port,
+            master_worker_ports=master_worker_ports,
+            master_sampling_ports=master_sampling_ports,
         )
 
         loader = DistNeighborLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
-            context=self._context,
+            context=distributed_context,
             local_process_rank=0,
-            local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
         )
 
@@ -83,6 +93,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
+    @run_in_seperate_process
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
@@ -113,14 +124,32 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
+        (
+            master_partitioning_port,
+            master_worker_ports,
+            master_sampling_ports,
+        ) = get_free_ports(
+            main_worker_ip_address=self._master_ip_address, local_world_size=1
+        )
+
+        distributed_context = DistributedContext(
+            main_worker_ip_address=self._master_ip_address,
+            global_rank=0,
+            global_world_size=self._world_size,
+            local_world_size=1,
+            master_partitioning_port=master_partitioning_port,
+            master_worker_ports=master_worker_ports,
+            master_sampling_ports=master_sampling_ports,
+        )
+
         loader = DistNeighborLoader(
             dataset=dataset,
             num_neighbors=[2],
             input_nodes=(node_type, torch.tensor([[10, 12]])),
-            context=self._context,
+            context=distributed_context,
             local_process_rank=0,
-            local_process_world_size=1,
         )
+
         count = 0
         for datum in loader:
             self.assertIsInstance(datum, HeteroData)
@@ -132,10 +161,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
-    # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
+    @run_in_seperate_process
     def test_distributed_neighbor_loader_heterogeneous(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
@@ -146,17 +173,34 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             output_dict=output_dict,
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
-            master_port=master_port,
         )
 
         assert isinstance(dataset.node_ids, abc.Mapping)
+
+        (
+            master_partitioning_port,
+            master_worker_ports,
+            master_sampling_ports,
+        ) = get_free_ports(
+            main_worker_ip_address=self._master_ip_address, local_world_size=1
+        )
+
+        distributed_context = DistributedContext(
+            main_worker_ip_address=self._master_ip_address,
+            global_rank=0,
+            global_world_size=self._world_size,
+            local_world_size=1,
+            master_partitioning_port=master_partitioning_port,
+            master_worker_ports=master_worker_ports,
+            master_sampling_ports=master_sampling_ports,
+        )
+
         loader = DistNeighborLoader(
             dataset=dataset,
             input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),
             num_neighbors=[2, 2],
-            context=self._context,
+            context=distributed_context,
             local_process_rank=0,
-            local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
         )
 
@@ -188,6 +232,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
+    @run_in_seperate_process
     def test_ablp_dataloader(
         self,
         _,
@@ -239,13 +284,30 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
+        (
+            master_partitioning_port,
+            master_worker_ports,
+            master_sampling_ports,
+        ) = get_free_ports(
+            main_worker_ip_address=self._master_ip_address, local_world_size=1
+        )
+
+        distributed_context = DistributedContext(
+            main_worker_ip_address=self._master_ip_address,
+            global_rank=0,
+            global_world_size=self._world_size,
+            local_world_size=1,
+            master_partitioning_port=master_partitioning_port,
+            master_worker_ports=master_worker_ports,
+            master_sampling_ports=master_sampling_ports,
+        )
+
         loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
             input_nodes=torch.tensor([10]),
-            context=self._context,
+            context=distributed_context,
             local_process_rank=0,
-            local_process_world_size=1,
         )
 
         count = 0

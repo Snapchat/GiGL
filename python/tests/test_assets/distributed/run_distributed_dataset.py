@@ -1,6 +1,6 @@
 from typing import Literal, MutableMapping, Optional, Type
 
-from gigl.common.utils.vertex_ai_context import DistributedContext
+from gigl.common.utils.vertex_ai_context import DistributedContext, get_free_ports
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
@@ -23,7 +23,6 @@ def run_distributed_dataset(
     output_dict: MutableMapping[int, DistLinkPredictionDataset],
     should_load_tensors_in_parallel: bool,
     master_ip_address: str,
-    master_port: int,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
 ) -> DistLinkPredictionDataset:
@@ -36,7 +35,6 @@ def run_distributed_dataset(
         output_dict (MutableMapping[int, DistLinkPredictionDataset]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         master_ip_address (str): Master IP Address for performing distributed operations.
-        master_port (int) Master Port for performing distributed operations
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[NodeAnchorLinkSplitter]): Provided splitter for testing
     """
@@ -59,10 +57,20 @@ def run_distributed_dataset(
         tfrecord_uri_pattern=".*\.tfrecord(\.gz)?$",
     )
 
+    (
+        master_partitioning_port,
+        master_worker_ports,
+        master_sampling_ports,
+    ) = get_free_ports(main_worker_ip_address=master_ip_address, local_world_size=1)
+
     distributed_context = DistributedContext(
         main_worker_ip_address=master_ip_address,
         global_rank=rank,
         global_world_size=world_size,
+        local_world_size=1,
+        master_partitioning_port=master_partitioning_port,
+        master_worker_ports=master_worker_ports,
+        master_sampling_ports=master_sampling_ports,
     )
 
     sample_edge_direction: Literal["in", "out"] = "out"
@@ -73,7 +81,6 @@ def run_distributed_dataset(
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         partitioner_class=partitioner_class,
         splitter=splitter,
-        _dataset_building_port=master_port,
     )
     output_dict[rank] = dataset
     return dataset
