@@ -165,9 +165,7 @@ def init_neighbor_loader_worker(
     )
     init_rpc(
         master_addr=distributed_context.main_worker_ip_address,
-        master_port=distributed_context.local_rank_to_master_worker_port[
-            local_process_rank
-        ],
+        master_port=distributed_context.master_worker_ports[local_process_rank],
         rpc_timeout=600,
     )
 

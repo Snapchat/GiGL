@@ -2,13 +2,12 @@
 
 import os
 import subprocess
-import time
+from typing import List, Optional, Tuple
 
-from gigl.common import GcsUri
+import torch.distributed as dist
+
 from gigl.common.logger import Logger
-from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
-from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed import DistributedContext
+from gigl.distributed.dist_context import DistributedContext, get_free_ports
 
 logger = Logger()
 
@@ -122,70 +121,46 @@ def connect_worker_pool() -> DistributedContext:
     can all communicate with the leader worker.
     """
 
-    global_rank = get_rank()
-    global_world_size = get_world_size()
     local_world_size = get_local_world_size()
+    dist.init_process_group(backend="gloo")
+    global_rank = dist.get_rank()
+    global_world_size = dist.get_world_size()
 
     is_leader_worker = global_rank == 0
-    ip_file_uri = GcsUri(_get_leader_worker_internal_ip_file_path())
-    gcs_utils = GcsUtils()
-    host_ip: str
-    # Fetch the main worker ip address
+    broadcast_list: List[Optional[Tuple[str, int, List[int], List[int]]]]
     if is_leader_worker:
-        logger.info("Wait 180 seconds for the leader machine to settle down.")
-        time.sleep(180)
         host_ip = subprocess.check_output(["hostname", "-i"]).decode().strip()
-        logger.info(f"Writing host IP address ({host_ip}) to {ip_file_uri}")
-        gcs_utils.upload_from_string(gcs_path=ip_file_uri, content=host_ip)
+        (
+            master_partitioning_port,
+            master_worker_ports,
+            master_sampling_ports,
+        ) = get_free_ports(host_ip, local_world_size)
+        broadcast_list = [
+            (
+                host_ip,
+                master_partitioning_port,
+                master_worker_ports,
+                master_sampling_ports,
+            )
+        ]
     else:
-        max_retries = 60
-        interval_s = 30
-        for attempt_num in range(1, max_retries + 1):
-            logger.info(
-                f"Checking if {ip_file_uri} exists and reading HOST_IP (attempt {attempt_num})..."
-            )
-            try:
-                host_ip = gcs_utils.read_from_gcs(ip_file_uri)
-                logger.info(f"Pinging host ip ({host_ip}) ...")
-                if _ping_host_ip(host_ip):
-                    logger.info(f"Ping to host ip ({host_ip}) was successful.")
-                    break
-            except Exception as e:
-                logger.info(e)
-            logger.info(
-                f"Retrieving host information and/or ping failed, retrying in {interval_s} seconds..."
-            )
-            time.sleep(interval_s)
-        if attempt_num >= max_retries:
-            logger.info(
-                f"Failed to ping HOST_IP after {max_retries} attempts. Exiting."
-            )
-            raise Exception(f"Failed to ping HOST_IP after {max_retries} attempts.")
+        broadcast_list = [None]
 
+    dist.broadcast_object_list(object_list=broadcast_list, src=0)
+    main_worker_fields = broadcast_list[0]
+    assert main_worker_fields is not None
+    (
+        main_worker_ip_address,
+        master_partitioning_port,
+        master_worker_ports,
+        master_sampling_ports,
+    ) = main_worker_fields
     return DistributedContext(
-        main_worker_ip_address=host_ip,
+        main_worker_ip_address=main_worker_ip_address,
         global_rank=global_rank,
         global_world_size=global_world_size,
+        local_world_size=local_world_size,
+        master_partitioning_port=master_partitioning_port,
+        master_worker_ports=master_worker_ports,
+        master_sampling_ports=master_sampling_ports,
     )
-
-
-def _get_leader_worker_internal_ip_file_path() -> str:
-    """
-    Get the file path to the leader worker's internal IP address.
-    """
-    assert is_currently_running_in_vertex_ai_job(), "Not running in Vertex AI job."
-    internal_ip_file_path = os.getenv(LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY)
-    assert internal_ip_file_path is not None, (
-        f"Internal IP file path ({LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY}) "
-        + f"not found in environment variables. {os.environ}"
-    )
-
-    return internal_ip_file_path
-
-
-def _ping_host_ip(host_ip: str) -> bool:
-    try:
-        subprocess.check_output(["ping", "-c", "1", host_ip])
-        return True
-    except subprocess.CalledProcessError:
-        return False
