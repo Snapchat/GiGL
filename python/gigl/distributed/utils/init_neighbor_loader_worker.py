@@ -85,6 +85,8 @@ def init_neighbor_loader_worker(
 
         # Compute the range of physical cores the process should run on.
         total_physical_cores = psutil.cpu_count(logical=False)
+        if total_physical_cores is None:
+            raise ValueError("Was unable to determine the number of physical cores")
         physical_cores_per_process = total_physical_cores // local_process_world_size
         start_physical_core = local_process_rank * physical_cores_per_process
         end_physical_core = (
