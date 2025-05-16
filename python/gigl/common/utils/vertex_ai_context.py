@@ -74,6 +74,15 @@ def get_leader_port() -> int:
     return int(os.environ.get("MASTER_PORT", 29500))
 
 
+def get_local_world_size() -> int:
+    """
+    The total number of processes spun up on each VAI Machine. This may be set upon launching a VAI job manually
+    """
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
+    return int(os.environ.get("LOCAL_WORLD_SIZE", 1))
+
+
 def get_world_size() -> int:
     """
     The total number of processes that VAI creates. Note that VAI only creates one process per machine.
@@ -118,6 +127,7 @@ def connect_worker_pool() -> DistributedContext:
     ip_file_uri = GcsUri(_get_leader_worker_internal_ip_file_path())
     gcs_utils = GcsUtils()
     host_ip: str
+    # Fetch the main worker ip address
     if is_leader_worker:
         logger.info("Wait 180 seconds for the leader machine to settle down.")
         time.sleep(180)

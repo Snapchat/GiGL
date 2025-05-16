@@ -141,7 +141,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             output_dict=output_dict,
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
-            master_port=self._context.master_partitioning_port,
         )
 
         assert isinstance(dataset.node_ids, abc.Mapping)

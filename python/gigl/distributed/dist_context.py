@@ -39,13 +39,13 @@ class DistributedContext:
     )
 
     # Master port for partitioning
-    master_partitioning_port: int = field(init=False)
+    master_partitioning_port: int
 
-    # Map of local process rank to the corresponding master port for training or inference
-    local_rank_to_master_worker_port: dict[int, int] = field(init=False)
+    # Master ports for training or inference, where master_worker_ports[i] indicates the master worker port for the ith local process rank
+    master_worker_ports: list[int]
 
-    # Map of local process rank to the corresponding master port for sampling
-    local_rank_to_master_sampling_port: dict[int, int] = field(init=False)
+    # Master ports for sampling, where master_sampling_ports[i] indicates the master sampling port for the ith local process rank
+    master_sampling_ports: list[int]
 
     def __post_init__(self):
         num_ports_required = self.local_world_size * 2 + 1

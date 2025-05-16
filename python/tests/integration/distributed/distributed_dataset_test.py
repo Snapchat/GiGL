@@ -2,7 +2,6 @@ import unittest
 from collections import abc, defaultdict
 from typing import MutableMapping, Optional
 
-import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.data import Feature, Graph
@@ -72,7 +71,6 @@ class DistDatasetTestCase(unittest.TestCase):
         should_load_tensors_in_parallel: bool,
         is_heterogeneous: bool,
     ) -> None:
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
@@ -84,7 +82,6 @@ class DistDatasetTestCase(unittest.TestCase):
                 output_dict,
                 should_load_tensors_in_parallel,
                 self._master_ip_address,
-                master_port,
             ),
             nprocs=self._world_size,
             join=True,
@@ -182,7 +179,6 @@ class DistDatasetTestCase(unittest.TestCase):
         is_heterogeneous: bool,
         split_fn: Optional[NodeAnchorLinkSplitter],
     ) -> None:
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
@@ -194,7 +190,6 @@ class DistDatasetTestCase(unittest.TestCase):
                 output_dict,
                 True,  # should_load_tensors_in_parallel
                 self._master_ip_address,
-                master_port,
                 None,  # partitioner
                 split_fn,
             ),
