@@ -35,6 +35,19 @@ class DistributedContext:
     # Master ports for sampling, where master_sampling_ports[i] indicates the master sampling port for the ith local process rank
     master_sampling_ports: List[int]
 
+    def __hash__(self):
+        return hash(
+            (
+                self.main_worker_ip_address,
+                self.global_rank,
+                self.global_world_size,
+                self.local_world_size,
+                self.master_partitioning_port,
+                tuple(self.master_worker_ports),
+                tuple(self.master_sampling_ports),
+            )
+        )
+
 
 def get_free_ports(main_worker_ip_address: str, local_world_size):
     num_ports_required = local_world_size * 2 + 1

@@ -2,14 +2,16 @@ import os
 import unittest
 from unittest.mock import call, patch
 
+from graphlearn_torch.utils import get_free_port
+
 from gigl.common import GcsUri
-from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.vertex_ai_context import (
     DistributedContext,
     connect_worker_pool,
     get_host_name,
     get_leader_hostname,
     get_leader_port,
+    get_local_world_size,
     get_rank,
     get_vertex_ai_job_id,
     get_world_size,
@@ -49,6 +51,10 @@ class TestVertexAIContext(unittest.TestCase):
     def test_get_rank(self):
         self.assertEqual(get_rank(), 1)
 
+    @patch.dict(os.environ, VAI_JOB_ENV | {"LOCAL_WORLD_SIZE": "4"})
+    def test_get_local_world_size(self):
+        self.assertEqual(get_local_world_size(), 4)
+
     def test_throws_if_not_on_vai(self):
         with self.assertRaises(Exception):
             get_vertex_ai_job_id()
@@ -62,6 +68,8 @@ class TestVertexAIContext(unittest.TestCase):
             get_world_size()
         with self.assertRaises(Exception):
             get_rank()
+        with self.assertRaises(Exception):
+            get_local_world_size()
 
     @patch("subprocess.check_output", return_value=b"127.0.0.1")
     @patch("time.sleep", return_value=None)
@@ -71,7 +79,9 @@ class TestVertexAIContext(unittest.TestCase):
         {
             "RANK": "0",
             "WORLD_SIZE": "2",
-            LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: "gs://FAKE BUCKET DNE/some-file.txt",
+            "LOCAL_WORLD_SIZE": "4",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": get_free_port("localhost"),
             "CLOUD_ML_JOB_ID": "test_job_id",
         },
     )
@@ -94,7 +104,9 @@ class TestVertexAIContext(unittest.TestCase):
         {
             "RANK": "1",
             "WORLD_SIZE": "2",
-            LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: "gs://FAKE BUCKET DNE/some-file.txt",
+            "LOCAL_WORLD_SIZE": "4",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": get_free_port("localhost"),
             "CLOUD_ML_JOB_ID": "test_job_id",
         },
     )
