@@ -28,6 +28,7 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_heterogeneous_node,
 )
+from tests.test_assets.distributed.decorator import run_in_seperate_process
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -43,6 +44,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         self._world_size = 1
         self._num_rpc_threads = 4
 
+    @run_in_seperate_process
     def test_distributed_neighbor_loader(self):
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -91,6 +93,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
+    @run_in_seperate_process
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
@@ -158,6 +161,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
+    @run_in_seperate_process
     def test_distributed_neighbor_loader_heterogeneous(self):
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -228,6 +232,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
+    @run_in_seperate_process
     def test_ablp_dataloader(
         self,
         _,
