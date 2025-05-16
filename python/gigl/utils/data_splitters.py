@@ -143,6 +143,20 @@ class HashedNodeAnchorLinkSplitter:
             edge_types = [edge_types]
         self._supervision_edge_types: Sequence[EdgeType] = edge_types
 
+    @overload
+    def __call__(
+        self,
+        edge_index: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ...
+
+    @overload
+    def __call__(
+        self,
+        edge_index: Mapping[EdgeType, torch.Tensor],
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        ...
+
     def __call__(
         self,
         edge_index: Union[

@@ -490,7 +490,8 @@ class DistLinkPredictionDataset(DistDataset):
             ) in partition_output.edge_partition_book.items():
                 if isinstance(edge_partition_book, RangePartitionBook):
                     edge_type_to_id2idx[edge_type] = edge_partition_book.id2index
-                else:
+                # Not all edge types may have partitioned features.
+                elif edge_type in edge_type_to_partitioned_edge_feature_ids:
                     edge_type_to_id2idx[edge_type] = id2idx(
                         edge_type_to_partitioned_edge_feature_ids[edge_type]
                     )

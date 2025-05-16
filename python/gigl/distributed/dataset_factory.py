@@ -38,8 +38,14 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import GraphPartitionData
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    GraphPartitionData,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+)
 from gigl.utils.data_splitters import (
+    HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
     select_ssl_positive_label_edges,
 )
@@ -55,6 +61,7 @@ def _load_and_build_partitioned_dataset(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
+    should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
@@ -96,6 +103,8 @@ def _load_and_build_partitioned_dataset(
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
     )
+    if should_treat_as_heterogeneous:
+        loaded_graph_tensors.treat_labels_as_edges()
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
@@ -205,6 +214,7 @@ def _build_dataset_process(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
+    should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
@@ -263,6 +273,7 @@ def _build_dataset_process(
         partitioner_class=partitioner_class,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
+        should_treat_as_heterogeneous=should_treat_as_heterogeneous,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
     )
@@ -283,6 +294,7 @@ def build_dataset(
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    should_treat_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: int = DEFAULT_MASTER_DATA_BUILDING_PORT,
@@ -333,6 +345,7 @@ def build_dataset(
             partitioner_class,
             node_tf_dataset_options,
             edge_tf_dataset_options,
+            should_treat_as_heterogeneous,
             splitter,
             _ssl_positive_label_percentage,
         ),
@@ -372,13 +385,28 @@ def build_dataset_from_task_config_uri(
     )
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
+        sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "inferencerConfig.inferencerArgs"
+        should_convert_to_heterogeneous = False
     else:
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
+        sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "trainerConfig.trainerArgs"
+        should_convert_to_heterogeneous = bool(
+            strtobool(args.get("should_convert_to_heterogeneous", "False"))
+        )
 
-    # Should be a string which is either "in" or "out"
-    sample_edge_direction = args.get("sample_edge_direction", "in")
+    if should_convert_to_heterogeneous:
+        # TODO(kmonte): Read train/val/test split counts from config.
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction=sample_edge_direction,
+            edge_types=[
+                message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+                message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+            ],
+        )
+    else:
+        splitter = None
 
     assert sample_edge_direction in (
         "in",
@@ -422,6 +450,8 @@ def build_dataset_from_task_config_uri(
         distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
         partitioner_class=partitioner_class,
+        should_treat_as_heterogeneous=should_convert_to_heterogeneous,
+        splitter=splitter,
     )
 
     return dataset
