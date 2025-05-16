@@ -120,11 +120,10 @@ def connect_worker_pool() -> DistributedContext:
     to get the leader worker's internal IP address and to ensure that the workers
     can all communicate with the leader worker.
     """
-
+    global_rank = get_rank()
+    global_world_size = get_world_size()
     local_world_size = get_local_world_size()
     dist.init_process_group(backend="gloo")
-    global_rank = dist.get_rank()
-    global_world_size = dist.get_world_size()
 
     is_leader_worker = global_rank == 0
     broadcast_list: List[Optional[Tuple[str, int, List[int], List[int]]]]
