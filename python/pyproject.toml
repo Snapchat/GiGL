@@ -126,6 +126,7 @@ dev = [
     "mypy==1.8.0",
     "types-PyYAML~=6.0.12",
     "mypy-protobuf==3.3.0",
+    "types-requests==2.31.0.6",
     "types-tqdm==4.67.0.20250513",
     "types-psutil==7.0.0.20250401",
     "pyopenssl>=22.1.0 ; platform_system=='Linux'",
