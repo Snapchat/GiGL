@@ -16,7 +16,7 @@ jobs:
   unit-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 35 # Tests as of 2025-05-16 are taking ~25 mins to complete, 40% buffer
     steps:
     - name: Run Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -39,7 +39,7 @@ jobs:
   integration-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/integration_test') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 70 # Tests as of 2025-05-16 are taking ~50 mins to complete, 40% buffer
     steps:
     - name: Run Integration Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -58,7 +58,7 @@ jobs:
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/e2e_test') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
     - name: Run E2E Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -78,6 +78,7 @@ jobs:
   lint-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # Not sure how long these take but if it's more than 20 minutes something has gone very wrong...
     steps:
     - name: Run Linting Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
