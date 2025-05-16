@@ -36,7 +36,7 @@ class DistributedContext:
     master_sampling_ports: List[int]
 
 
-def get_free_ports(main_worker_ip_address: str, local_world_size: int):
+def get_free_ports(main_worker_ip_address: str, local_world_size):
     num_ports_required = local_world_size * 2 + 1
     free_ports: list[int] = []
     while len(free_ports) < num_ports_required:

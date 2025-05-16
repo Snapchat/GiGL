@@ -1,6 +1,6 @@
 from typing import Literal, MutableMapping, Optional, Type
 
-from gigl.common.utils.vertex_ai_context import DistributedContext
+from gigl.common.utils.vertex_ai_context import DistributedContext, get_free_ports
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
@@ -57,10 +57,20 @@ def run_distributed_dataset(
         tfrecord_uri_pattern=".*\.tfrecord(\.gz)?$",
     )
 
+    (
+        master_partitioning_port,
+        master_worker_ports,
+        master_sampling_ports,
+    ) = get_free_ports(main_worker_ip_address=master_ip_address, local_world_size=1)
+
     distributed_context = DistributedContext(
         main_worker_ip_address=master_ip_address,
         global_rank=rank,
         global_world_size=world_size,
+        local_world_size=1,
+        master_partitioning_port=master_partitioning_port,
+        master_worker_ports=master_worker_ports,
+        master_sampling_ports=master_sampling_ports,
     )
 
     sample_edge_direction: Literal["in", "out"] = "out"

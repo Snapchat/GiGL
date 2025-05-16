@@ -242,7 +242,7 @@ class DistNeighborLoader(DistLoader):
             # the sampling processes in different groups should be independent, and should
             # use different master ports.
             master_addr=context.main_worker_ip_address,
-            master_port=context.local_rank_to_master_sampling_port[local_process_rank],
+            master_port=context.master_sampling_ports[local_process_rank],
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
