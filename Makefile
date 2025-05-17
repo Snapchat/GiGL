@@ -121,7 +121,7 @@ generate_dev_linux_cuda_hashed_requirements:
 	--extra torch25-cuda-121 --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# These are a collection of tests that are run before anything is installed using tools abialable on host.
+# These are a collection of tests that are run before anything is installed using tools available on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
