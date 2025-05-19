@@ -164,10 +164,6 @@ class DistNeighborLoader(DistLoader):
                     f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
                 )
 
-        # if not hasattr(self, "_batch_store"):
-        #     logger.info("Setting batch store to None")
-        #     self._batch_store = None
-
         curr_process_nodes = _shard_nodes_by_process(
             input_nodes=input_nodes,
             local_process_rank=local_process_rank,
@@ -549,6 +545,12 @@ class _LabeledNodeSamplerInput(NodeSamplerInput):
             abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
         ] = None,
     ):
+        """
+        Args:
+            node (torch.Tensor): The node ids to sample.
+            input_type (Union[str, NodeType]): The type of the node.
+            batch_store (Optional[abc.MutableMapping[tuple[NodeType, tuple[int, ...]]]]): The batch store to use for the sampled nodes. Should be a multiprocessing dict.
+        """
         super().__init__(node, input_type)
         self._batch_store = batch_store
 
