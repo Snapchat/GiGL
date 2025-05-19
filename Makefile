@@ -79,42 +79,42 @@ install_deps:
 	bash ./requirements/install_scala_deps.sh
 	pip install -e ./python/
 
-# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
+# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong.
 generate_mac_arm64_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/darwin_arm64_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
+# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong.
 generate_dev_mac_arm64_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_darwin_arm64_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_linux_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/linux_cpu_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_dev_linux_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_linux_cpu_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_linux_cuda_hashed_requirements:
 	pip-compile  -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/linux_cuda_requirements_unified.txt \
 	--extra torch25-cuda-121 --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_dev_linux_cuda_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_linux_cuda_requirements_unified.txt \
