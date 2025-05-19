@@ -2,9 +2,15 @@ import functools
 import multiprocessing
 
 
-def run_in_seperate_process(func):
+def run_in_separate_process(func):
     """
-    Decorator to run a test function in a separate process.
+    Decorator to run a test function in a separate process. This is needed to ensure that certain operations, such as torch.set_num_interop_threads and init_rpc(),
+    don't interfere with each other when calling this function across multiple tests. For example, if we try to call torch.set_num_interop_threads without this
+    decorator, we may observe:
+
+    ```
+    RuntimeError: Error: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
+    ```
     """
 
     @functools.wraps(func)
