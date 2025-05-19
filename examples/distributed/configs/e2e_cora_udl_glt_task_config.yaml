@@ -1,11 +1,4 @@
 graphMetadata:
-  condensedEdgeTypeMap:
-    '0':
-      dstNodeType: paper
-      relation: cites
-      srcNodeType: paper
-  condensedNodeTypeMap:
-    '0': paper
   edgeTypes:
   - dstNodeType: paper
     relation: cites
@@ -27,7 +20,7 @@ inferencerConfig:
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false
-  shouldSkipTraining: true  # GLT Task does not have a training phase that is being tested right now
+  shouldSkipTraining: true  # Live subgraph sampling pipelines do not have a training phase that is being tested right now
   shouldSkipModelEvaluation: true
   trainedModelMetadata:
     trainedModelUri: gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features_user_defined_labels/trainer/models/model.pt
