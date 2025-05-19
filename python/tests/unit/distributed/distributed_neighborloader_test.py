@@ -209,7 +209,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         ]
     )
     # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
-    # @unittest.skip("Failing due to ports being already allocated - skiping for now")
+    @unittest.skip("Failing due to ports being already allocated - skiping for now")
     def test_ablp_dataloader(
         self,
         _,
@@ -304,6 +304,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
 
+    # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
+    @unittest.skip("Failing due to ports being already allocated - skiping for now")
     def test_cora_supervised(self):
         dataset = build_dataset_from_task_config_uri(
             str(Path(__file__).parent / "cora_ssl_task_config.yaml"),
