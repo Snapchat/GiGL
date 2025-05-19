@@ -1,6 +1,5 @@
 import unittest
 from collections import abc
-from pathlib import Path
 from typing import MutableMapping
 
 import graphlearn_torch as glt
@@ -18,8 +17,10 @@ from gigl.distributed.distributed_neighborloader import (
     DistNeighborLoader,
 )
 from gigl.src.common.types.graph_data import NodeType
+from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import (
@@ -307,10 +308,14 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
     @unittest.skip("Failing due to ports being already allocated - skiping for now")
     def test_cora_supervised(self):
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
         dataset = build_dataset_from_task_config_uri(
-            str(Path(__file__).parent / "cora_ssl_task_config.yaml"),
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri.uri,
             distributed_context=self._context,
             is_inference=False,
+            tfrecord_uri_pattern=".*\.tfrecord(\.gz)?$",
         )
         loader = DistABLPLoader(
             dataset=dataset,

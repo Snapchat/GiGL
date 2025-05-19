@@ -367,6 +367,7 @@ def build_dataset_from_task_config_uri(
     task_config_uri: str,
     distributed_context: DistributedContext,
     is_inference: bool = True,
+    tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
 ) -> DistLinkPredictionDataset:
     """
     Builds a dataset from a provided `task_config_uri` as part of GiGL orchestration. Parameters to
@@ -381,6 +382,7 @@ def build_dataset_from_task_config_uri(
             master_ip_address, rank, and world size
         is_inference (bool): Whether the run is for inference or training. If True, arguments will
             be read from inferenceArgs. Otherwise, arguments witll be read from trainerArgs.
+        tfrecord_uri_pattern (str): Regex pattern for loading serialized tf records
     """
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -395,10 +397,8 @@ def build_dataset_from_task_config_uri(
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
         sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "trainerConfig.trainerArgs"
-        # TODO(kmonte): Maybe we should always do this for training?
-        treat_ablp_graph_as_heterogeneous = bool(
-            strtobool(args.get("treat_ablp_graph_as_heterogeneous", "False"))
-        )
+        # TODO(kmonte): Maybe we should enable this as a flag?
+        treat_ablp_graph_as_heterogeneous = True
 
     if treat_ablp_graph_as_heterogeneous:
         # TODO(kmonte): Read train/val/test split counts from config.
@@ -446,6 +446,7 @@ def build_dataset_from_task_config_uri(
     serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
         preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        tfrecord_uri_pattern=tfrecord_uri_pattern,
     )
 
     if should_use_range_partitioning:
