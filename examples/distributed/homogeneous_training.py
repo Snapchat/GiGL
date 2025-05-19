@@ -30,8 +30,33 @@ from gigl.src.common.models.pyg.link_prediction import (
 )
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from snapchat.research.gbml.preprocessed_metadata_pb2 import PreprocessedMetadata
+from gigl.common.utils.torch_training import is_distributed_available_and_initialized
+from gigl.src.common.models.layers.loss import RetrievalLoss
 
 logger = Logger()
+
+def split_parameters_by_layer_names(
+    named_parameters: list[tuple[str, torch.nn.Parameter]],
+    layer_names_to_separate: list[str],
+) -> tuple[list[tuple[str, torch.nn.Parameter]], list[tuple[str, torch.nn.Parameter]]]:
+    """
+    Split layer parameters of our interest from the rest of the model parameters based on a given list of layer names.
+    Inputs:
+    - named_parameters: The full list of parameters we'd like to split
+    - layer_names_to_separate: Defines layers that we'd like to separate from the rest of the model parameters.
+    Returns:
+    - params_to_separate: A list of tuples containing the names and parameters of the layer to separate.
+    - params_left: A list of tuples containing the names and parameters of the layers left.
+    """
+    params_to_separate = []
+    params_left = []
+    for name, param in named_parameters:
+        # We match by substring to allow for matching a submodule of the model
+        if any([layer_name in name for layer_name in layer_names_to_separate]):
+            params_to_separate.append((name, param))
+        else:
+            params_left.append((name, param))
+    return params_to_separate, params_left
 
 def _init_example_gigl_model(
     state_dict: dict[str, torch.Tensor],
@@ -94,8 +119,12 @@ def _train_process(
     num_neighbors: list[int],
     negative_samples: torch.Tensor,
     model_state_dict_uri: str,
+    node_feature_dim: int,
+    edge_feature_dim: int,
 ) -> None:
     validate_every = 50
+    learning_rate = 0.005
+    num_epoch = 1
     device = get_available_device(process_number)
     train_loader = DistABLPLoader(
         dataset=dataset,
@@ -146,7 +175,7 @@ def _train_process(
         state_dict=model_state_dict,
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
-        inferencer_args=inferencer_args,
+        inferencer_args={},
         device=device,
     )
     ddp_model = DistributedDataParallel(model, device_ids=[device])
@@ -155,6 +184,39 @@ def _train_process(
         named_parameters=all_named_parameters,
         layer_names_to_separate=[".feature_embedding_layer."],
     )
+    param_groups = [
+        {
+            "params": [param for _, param in embedding_params],
+            "lr": learning_rate,
+            "weight_decay": 0.00005,
+        },
+        {
+            "params": [param for _, param in other_params],
+            "lr": learning_rate,
+            "weight_decay": 0.00005,
+        },
+    ]
+    optimizer = torch.optim.AdamW(param_groups)
+    loss = RetrievalLoss(
+        loss=torch.nn.CrossEntropyLoss(reduction="mean"),
+        temperature=0.07,
+        remove_accidental_hits=True,
+    )
+    logger.info(
+        f"Model initialized on machine {process_number} training device {device}\n{model}"
+    )
+    assert is_distributed_available_and_initialized()
+    # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
+    torch.distributed.barrier()
+    for epoch in range(num_epoch):
+        for batch_idx, (main_data, random_data) in enumerate(
+            zip(train_loader, random_negative_loader)
+        ):
+            # TODO enable early stop
+            # TODO enable AMP
+            main_embeddings = ddp_model(main_data)
+
+
 
 def train(
     task_config_uri: str,
@@ -177,6 +239,14 @@ def train(
     negative_samples = torch.arange(len(dataset.node_pb))
     negative_samples.share_memory_()
 
+    node_feature_dim = gbml_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
+        gbml_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_node_type
+    ]
+
+    edge_feature_dim = gbml_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map[
+        gbml_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_edge_type
+    ]
+
     mp.spawn(
         _train_process,
         args=(
@@ -186,6 +256,8 @@ def train(
             num_neighbors,
             negative_samples,
             gbml_pb_wrapper.trainer_config.trainer_cls_path,
+            node_feature_dim,
+            edge_feature_dim,
 
         ),
         nprocs=num_training_processes,
@@ -196,4 +268,15 @@ def train(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Distributed homogeneous training example"
+    )
+    parser.add_argument(
+        "--task_config_uri",
+        type=str,
+        required=True,
+        help="URI to the task config file",
+    )
+
+    args = parser.parse_args()
+    train(
+        task_config_uri=args.task_config_uri,
     )
