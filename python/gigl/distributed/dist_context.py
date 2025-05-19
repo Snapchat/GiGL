@@ -17,3 +17,6 @@ class DistributedContext:
 
     # Total number of machines
     global_world_size: int
+
+    # Total number of training / inference processes to launch per machine
+    local_world_size: int

@@ -48,6 +48,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             main_worker_ip_address=self._master_ip_address,
             global_rank=0,
             global_world_size=self._world_size,
+            local_world_size=1,
         )
 
     def test_distributed_neighbor_loader(self):
@@ -70,7 +71,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             num_neighbors=[2, 2],
             context=self._context,
             local_process_rank=0,
-            local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
         )
 
@@ -121,7 +121,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             input_nodes=(node_type, torch.tensor([[10, 12]])),
             context=self._context,
             local_process_rank=0,
-            local_process_world_size=1,
         )
         count = 0
         for datum in loader:
@@ -158,7 +157,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             num_neighbors=[2, 2],
             context=self._context,
             local_process_rank=0,
-            local_process_world_size=1,
             pin_memory_device=torch.device("cpu"),
         )
 
@@ -249,7 +247,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             input_nodes=torch.tensor([10]),
             context=self._context,
             local_process_rank=0,
-            local_process_world_size=1,
         )
 
         count = 0

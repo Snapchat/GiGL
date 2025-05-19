@@ -73,6 +73,17 @@ def get_leader_port() -> int:
     return int(os.environ.get("MASTER_PORT", 29500))
 
 
+def get_local_world_size() -> int:
+    """
+    The total number of processes spun up on each VAI Machine. This is currently is manually set upon launching a VAI job manually for GLT processes.
+    We should deprecate this in the future if we migrate VAI jobs to be spun up with torchrun instead.
+    Throws if not on Vertex AI.
+    """
+    if not is_currently_running_in_vertex_ai_job():
+        raise _VAI_EXCEPTION
+    return int(os.environ.get("LOCAL_WORLD_SIZE", 1))
+
+
 def get_world_size() -> int:
     """
     The total number of processes that VAI creates. Note that VAI only creates one process per machine.
@@ -111,6 +122,7 @@ def connect_worker_pool() -> DistributedContext:
     """
     global_rank = get_rank()
     global_world_size = get_world_size()
+    local_world_size = get_local_world_size()
     # Uses the VAI-set environment variables for `RANK`, `WORLD_SIZE`, `MASTER_IP_ADDRESS`, and `MASTER_PORT` for setting up the process group
     dist.init_process_group(backend="gloo")
 
@@ -132,4 +144,5 @@ def connect_worker_pool() -> DistributedContext:
         main_worker_ip_address=main_worker_ip_address,
         global_rank=global_rank,
         global_world_size=global_world_size,
+        local_world_size=local_world_size,
     )

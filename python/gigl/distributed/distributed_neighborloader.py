@@ -99,8 +99,7 @@ class DistNeighborLoader(DistLoader):
         dataset: DistLinkPredictionDataset,
         num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
         context: DistributedContext,
-        local_process_rank: int,  # TODO: Move this to DistributedContext
-        local_process_world_size: int,  # TODO: Move this to DistributedContext
+        local_process_rank: int,
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -131,7 +130,6 @@ class DistNeighborLoader(DistLoader):
                 the amount of neighbors to sample for each individual edge type.
             context (DistributedContext): Distributed context information of the current process.
             local_process_rank (int): The local rank of the current process within a node.
-            local_process_world_size (int): The total number of processes within a node.
             input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
                 indices of seed nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
@@ -212,7 +210,7 @@ class DistNeighborLoader(DistLoader):
         curr_process_nodes = _shard_nodes_by_process(
             input_nodes=input_nodes,
             local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
+            local_process_world_size=context.local_world_size,
         )
         device = (
             pin_memory_device
@@ -224,7 +222,7 @@ class DistNeighborLoader(DistLoader):
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
         logger.info(
-            f"Initializing neighbor loader worker in process: {local_process_rank}/{local_process_world_size} using device: {device}"
+            f"Initializing neighbor loader worker in process: {local_process_rank}/{context.local_world_size} using device: {device}"
         )
         should_use_cpu_workers = device.type == "cpu"
         if should_use_cpu_workers and num_cpu_threads is None:
@@ -236,7 +234,7 @@ class DistNeighborLoader(DistLoader):
         gigl.distributed.utils.init_neighbor_loader_worker(
             master_ip_address=context.main_worker_ip_address,
             local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
+            local_process_world_size=context.local_world_size,
             rank=context.global_rank,
             world_size=context.global_world_size,
             master_worker_port=_main_inference_port,
@@ -247,7 +245,7 @@ class DistNeighborLoader(DistLoader):
             process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
-            f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
+            f"Finished initializing neighbor loader worker:  {local_process_rank}/{context.local_world_size}"
         )
 
         # Sets up worker options for the dataloader
@@ -312,8 +310,7 @@ class DistABLPLoader(DistNeighborLoader):
         dataset: DistLinkPredictionDataset,
         num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
         context: DistributedContext,
-        local_process_rank: int,  # TODO: Move this to DistributedContext
-        local_process_world_size: int,  # TODO: Move this to DistributedContext
+        local_process_rank: int,
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -348,7 +345,6 @@ class DistABLPLoader(DistNeighborLoader):
                 the amount of neighbors to sample for each individual edge type.
             context (DistributedContext): Distributed context information of the current process.
             local_process_rank (int): The local rank of the current process within a node.
-            local_process_world_size (int): The total number of processes within a node.
             input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
                 indices of seed nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
@@ -454,7 +450,6 @@ class DistABLPLoader(DistNeighborLoader):
             num_neighbors=num_neighbors,
             context=context,
             local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
             input_nodes=input_nodes,
             num_workers=num_workers,
             batch_size=batch_size,
