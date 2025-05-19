@@ -123,6 +123,7 @@ def connect_worker_pool() -> DistributedContext:
     global_rank = get_rank()
     global_world_size = get_world_size()
     local_world_size = get_local_world_size()
+    # Uses the VAI-set environment variables for `RANK`, `WORLD_SIZE`, `MASTER_IP_ADDRESS`, and `MASTER_PORT` for setting up the process group
     dist.init_process_group(backend="gloo")
 
     is_leader_worker = global_rank == 0
