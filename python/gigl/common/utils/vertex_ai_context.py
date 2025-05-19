@@ -154,6 +154,12 @@ def connect_worker_pool() -> DistributedContext:
         master_worker_ports,
         master_sampling_ports,
     ) = main_worker_fields
+    logger.info(
+        f"Machine with rank {global_rank} got main worker ip address: {main_worker_ip_address}, local world size: {local_world_size}, master partitioning port: {master_partitioning_port}, master worker ports: {master_worker_ports}, and master sampling ports: {master_sampling_ports}"
+    )
+
+    # Tears down the process group, since we no longer need it for establishing communication between machines
+    dist.destroy_process_group()
     return DistributedContext(
         main_worker_ip_address=main_worker_ip_address,
         global_rank=global_rank,
