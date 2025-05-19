@@ -3,15 +3,12 @@ import getpass
 import os
 import pathlib
 import subprocess
+import tempfile
 
 import yaml
-from google.cloud import (  # Ensure required libraries are installed: pip install google-cloud-storage google-cloud-bigquery google-cloud-iam
-    bigquery,
-    storage,
-)
 
-from gigl.common.utils.gcs import GcsUtils
-from gigl.src.common.utils.bq import BqUtils
+from gigl.common import UriFactory
+from gigl.src.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
 TEMPLATE_SOURCE_RESOURCE_CONFIG = (
@@ -108,106 +105,139 @@ def assert_service_account_exists(service_account_email: str, project: str):
     print(f"Service account '{service_account_email}' exists.")
 
 
+def assert_bq_dataset_exists(dataset_name: str, project: str):
+    command = f"bq show --project_id {project} {dataset_name}"
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Command failed with error: {result.stderr}")
+        raise ValueError(
+            f"BigQuery dataset '{dataset_name}' does not exist in project '{project}' or you do not have access to it."
+        )
+    print(f"BigQuery dataset '{dataset_name}' exists.")
+
+
+def assert_gcs_bucket_exists(bucket_name: str):
+    command = f"gsutil ls gs://{bucket_name}"
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Command failed with error: {result.stderr}")
+        raise ValueError(
+            f"GCS bucket '{bucket_name}' does not exist or you do not have access to it."
+        )
+    print(f"GCS bucket '{bucket_name}' exists.")
+
+
 def main():
     # Source file path
 
     print("Welcome to the GiGL Cloud Environment Configuration Script!")
     print("This script will help you set up your cloud environment for GiGL.")
+    print(
+        "Before running this script, please ensure you have followed the GiGL Cloud Setup Guide:"
+    )
+    print(
+        "https://snapchat.github.io/GiGL/docs/user_guide/getting_started/cloud_setup_guide"
+    )
     print("======================================================")
 
     print(
         f"We will use `{TEMPLATE_SOURCE_RESOURCE_CONFIG}` as the template for your resource config YAML file."
     )
-    with open(TEMPLATE_SOURCE_RESOURCE_CONFIG, "r") as file:
-        config = yaml.safe_load(file)
 
     # Default values
-    _DEFAULT_REGION = "us-central1"
-
-    project = input("Enter the value for project: ").strip()
+    print("Please provide us Project information.")
+    project: str = input("GCP Project name that you are planning on using: ").strip()
     assert_gcp_project_exists(project)
-    region: str = (
-        input(f"Enter the value for region (default: {_DEFAULT_REGION}): ").strip()
-        or _DEFAULT_REGION
-    )
-
-    print(f"Project '{project}' exists.")
-
-    bq_utils = BqUtils(project)
-    gcs_utils = GcsUtils(project)
-
-    # Ask user for input values
-    temp_assets_gcs_bucket: str = input(
-        f"Enter the value for temp_assets_gcs_bucket: "
+    region: str = input(
+        f"The GCP region where you created your resources i.e. `us-central1`: "
     ).strip()
-    assert gcs_utils.does_gcs_bucket_exist(
-        temp_assets_gcs_bucket
-    ), f"Bucket '{temp_assets_gcs_bucket}' does not exist or you do not have access to it."
-    perm_assets_gcs_bucket: str = (
-        input(
-            f"Enter the value for perm_assets_gcs_bucket (default: {temp_assets_gcs_bucket}): "
-            + f"Please "
-        ).strip()
-        or temp_assets_gcs_bucket
-    )
-    assert gcs_utils.does_gcs_bucket_exist(
-        perm_assets_gcs_bucket
-    ), f"Bucket '{perm_assets_gcs_bucket}' does not exist or you do not have access to it."
-
-    temp_assets_bq_dataset_name: str = input(
-        "Enter the value for temp_assets_bq_dataset_name: "
-    ).strip()
-    assert bq_utils.does_bq_table_exist(
-        temp_assets_bq_dataset_name
-    ), f"Dataset '{temp_assets_bq_dataset_name}' does not exist or you do not have access to it."
-    embedding_bq_dataset_name: str = (
-        input(
-            f"Enter the value for embedding_bq_dataset_name (default: {temp_assets_bq_dataset_name}): "
-        ).strip()
-        or temp_assets_bq_dataset_name
-    )
-    assert bq_utils.does_bq_table_exist(
-        embedding_bq_dataset_name
-    ), f"Dataset '{embedding_bq_dataset_name}' does not exist or you do not have access to it."
-
-    gcp_service_account_email: str = input(
-        "Enter the value for gcp_service_account_email: "
-    ).strip()
+    gcp_service_account_email: str = input("The GCP Service account: ").strip()
     assert_service_account_exists(gcp_service_account_email, project)
+
+    print("Please provide us the information on the BQ Datasets you want to use")
+    temp_assets_bq_dataset_name: str = input(
+        "`temp_assets_bq_dataset_name` - Dataset name used for temporary assets: "
+    ).strip()
+    assert_bq_dataset_exists(dataset_name=temp_assets_bq_dataset_name, project=project)
+    embedding_bq_dataset_name: str = input(
+        f"`embedding_bq_dataset_name` - Dataset used of output embeddings: "
+    ).strip()
+    assert_bq_dataset_exists(dataset_name=embedding_bq_dataset_name, project=project)
+
+    print("Please provide us the information on the GCS Buckets you want to use")
+    temp_assets_bucket: str = input(
+        f"`temp_assets_bucket` - GCS Bucket for storing temporary assets: "
+    ).strip()
+    assert_gcs_bucket_exists(bucket_name=temp_assets_bucket)
+    perm_assets_bucket: str = input(
+        f"`perm_assets_bucket` - GCS Bucket for storing permanent assets: "
+    ).strip()
+    assert_gcs_bucket_exists(bucket_name=perm_assets_bucket)
 
     curr_datetime = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     curr_username = getpass.getuser()
-    default_destination_file_uri = f"gs://{perm_assets_gcs_bucket}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
+    resource_config_dest_path = f"gs://{perm_assets_bucket}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
 
-    destination_file_uri = (
+    destination_file_path = (
         input(
-            f"Enter the destination file URI (default: {default_destination_file_uri}): "
+            f"Output path for resource config (default: {resource_config_dest_path}); can be GCS or Local path: "
         ).strip()
-        or default_destination_file_uri
+        or resource_config_dest_path
     )
+
+    print("=======================================================")
+    print(f"Will now create the resource config file @ {destination_file_path}.")
+    print("Using the following values:")
+    update_fields_dict = {
+        "project": project,
+        "region": region,
+        "gcp_service_account_email": gcp_service_account_email,
+        "temp_assets_bucket": temp_assets_bucket,
+        "temp_regional_assets_bucket": temp_assets_bucket,
+        "perm_assets_bucket": perm_assets_bucket,
+        "temp_assets_bq_dataset_name": temp_assets_bq_dataset_name,
+        "embedding_bq_dataset_name": embedding_bq_dataset_name,
+    }
+    for key, value in update_fields_dict.items():
+        print(f"  {key}: {value}")
+
+    with open(TEMPLATE_SOURCE_RESOURCE_CONFIG, "r") as file:
+        config = yaml.safe_load(file)
 
     # # Update the YAML content
-    common_compute_config = config.get("shared_resource_config", {}).get(
-        "common_compute_config", {}
+    common_compute_config: dict = config.get("shared_resource_config").get(
+        "common_compute_config"
     )
-    common_compute_config["project"] = project
-    common_compute_config["region"] = region
-    common_compute_config["gcp_service_account_email"] = gcp_service_account_email
-    common_compute_config["temp_assets_bucket"] = temp_assets_gcs_bucket
-    common_compute_config["temp_regional_assets_bucket"] = temp_assets_gcs_bucket
-    common_compute_config["perm_assets_bucket"] = perm_assets_gcs_bucket
-    common_compute_config["temp_assets_bq_dataset_name"] = temp_assets_bq_dataset_name
-    common_compute_config["embedding_bq_dataset_name"] = embedding_bq_dataset_name
+    common_compute_config.update(update_fields_dict)
 
-    # # Save the updated YAML file
-    # with open(destination_file, "w") as file:
-    #     yaml.safe_dump(config, file)
+    tmp_file = tempfile.NamedTemporaryFile(delete=False)
+    with open(tmp_file.name, "w") as file:
+        yaml.safe_dump(config, file)
 
-    # print(f"Updated YAML file saved at '{destination_file}'")
+    file_loader = FileLoader(project=project)
+    file_uri_src = UriFactory.create_uri(uri=tmp_file.name)
+    file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
+    file_loader.load_file(file_uri_src=file_uri_src, file_uri_dst=file_uri_dest)
 
-    # # Update the user's shell configuration
-    # shell_config_path = infer_default_shell()
-    # update_shell_config(shell_config_path, destination_file, project)
+    print(f"Updated YAML file saved at '{destination_file_path}'")
+
+    # Update the user's shell configuration
+    should_update_shell_config = (
+        input(
+            "Do you want to update your shell configuration file so you can use this new resource config for tests? [y/n] (Default: y): "
+        )
+        .strip()
+        .lower()
+        or "y"
+    )
+    if should_update_shell_config == "y":
+        shell_config_path: str = infer_shell_file()
+        update_shell_config(shell_config_path, destination_file_path, project)
+    else:
+        print(
+            "Skipping shell configuration update. Please remember to set the environment variables manually "
+            + "if you want `make unit_test | integration_test` commands to work correctly."
+        )
 
 
 if __name__ == "__main__":

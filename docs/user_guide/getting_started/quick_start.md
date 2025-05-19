@@ -19,10 +19,9 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   ```bash
     python scripts/create_dev_instance.py
   ```
-  Next, ssh into your instance; clone the repo and install other pre-requisites needed before we can install GiGL:
-  ```bash
-  bash scripts/setup_dev_instance.sh`
-  ```
+  Next, ssh into your instance. It will most likely ask you to install gpu drivers, follow instructions and do so.
+  Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab off your instance click
+  the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
 ````
 
 ````{dropdown} Manual Setup

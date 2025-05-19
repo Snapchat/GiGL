@@ -86,7 +86,7 @@ gcloud storage buckets add-iam-policy-binding $BUCKET_NAME \
   --role="roles/storage.objectAdmin"
 ```
 
-10. Give your SA `roles/bigquery.dataOwner` on the dataset(s) you created. See
+10. Give your SA `roles/bigquery.dataOwner` on the datasets you created. See
     [instructions](https://cloud.google.com/bigquery/docs/control-access-to-resources-iam#bq_2).
 
 11. (Recommended) If you are planning on developing on a cloud instance,
