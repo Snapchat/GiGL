@@ -52,7 +52,7 @@ def check_pipeline_has_valid_start_and_stop_flags(
     )
     components = [start_at] if stop_after is None else [start_at, stop_after]
     for component in components:
-        if gbml_config_wrapper.should_use_experimental_glt_backend:
+        if gbml_config_wrapper.should_use_glt_backend:
             if component in GLT_BACKEND_UNSUPPORTED_COMPONENTS:
                 raise ValueError(
                     f"Invalid component {component} for GLT Backend"
@@ -270,7 +270,7 @@ def check_if_trainer_cls_valid(
     """
     logger.info("Config validation check: if trainerClsPath and its args are valid.")
     gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
-    if gbml_config_wrapper.should_use_experimental_glt_backend:
+    if gbml_config_wrapper.should_use_glt_backend:
         logger.warning(
             "Skipping trainer class validation as GLT Backend is not implemented yet. "
             + "Trainer class may actually be a path to a script so, the paradigm is different."
@@ -307,7 +307,7 @@ def check_if_inferencer_cls_valid(
     check_if_runtime_args_all_str(args_name="inferencerArgs", runtime_args=runtime_args)
 
     gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
-    if gbml_config_wrapper.should_use_experimental_glt_backend:
+    if gbml_config_wrapper.should_use_glt_backend:
         logger.warning(
             "Skipping inferencer class validation as GLT Backend is enabled. "
             + "Inferencer class may actually be a path to a script so, the paradigm is different."
@@ -335,7 +335,7 @@ def check_if_split_generator_config_valid(
     """
     logger.info("Config validation check: if splitGeneratorConfig is valid.")
     gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
-    if gbml_config_wrapper.should_use_experimental_glt_backend:
+    if gbml_config_wrapper.should_use_glt_backend:
         logger.warning(
             "Skipping splitGeneratorConfig validation as GLT Backend is enabled."
         )
@@ -366,6 +366,12 @@ def check_if_subgraph_sampler_config_valid(
     Check if subgraphSamplerConfig is valid.
     """
     logger.info("Config validation check: if subgraphSamplerConfig is valid.")
+    gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
+    if gbml_config_wrapper.should_use_glt_backend:
+        logger.warning(
+            "Skipping subgraph sampler (SGS) validation check since GLT Backend is being used."
+        )
+        return
     subgraph_sampler_config = gbml_config_pb.dataset_config.subgraph_sampler_config
 
     if subgraph_sampler_config.HasField("subgraph_sampling_strategy"):
