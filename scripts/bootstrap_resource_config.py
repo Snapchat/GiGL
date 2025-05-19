@@ -151,6 +151,7 @@ def main():
     region: str = input(
         f"The GCP region where you created your resources i.e. `us-central1`: "
     ).strip()
+    assert region, "Region cannot be empty"
     gcp_service_account_email: str = input("The GCP Service account: ").strip()
     assert_service_account_exists(gcp_service_account_email, project)
 
