@@ -67,7 +67,6 @@ def run_distributed_dataset(
         main_worker_ip_address=master_ip_address,
         global_rank=rank,
         global_world_size=world_size,
-        local_world_size=1,
         master_partitioning_port=master_partitioning_port,
         master_worker_ports=master_worker_ports,
         master_sampling_ports=master_sampling_ports,

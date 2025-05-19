@@ -23,9 +23,6 @@ class DistributedContext:
     # Total number of machines
     global_world_size: int
 
-    # Total number of training or inference processes per machine
-    local_world_size: int
-
     # Master port for partitioning
     master_partitioning_port: int
 
@@ -35,18 +32,29 @@ class DistributedContext:
     # Master ports for sampling, where master_sampling_ports[i] indicates the master sampling port for the ith local process rank
     master_sampling_ports: List[int]
 
+    def __post_init__(self):
+        if len(self.master_worker_ports) != len(self.master_sampling_ports):
+            raise ValueError(
+                f"Number of worker ports: {len(self.master_worker_ports)} and number of sampling ports: {len(self.master_sampling_ports)} on machine {self.global_rank} must be the same."
+            )
+        logger.info(f"Got distributed context: {self} ")
+
     def __hash__(self):
         return hash(
             (
                 self.main_worker_ip_address,
                 self.global_rank,
                 self.global_world_size,
-                self.local_world_size,
                 self.master_partitioning_port,
                 tuple(self.master_worker_ports),
                 tuple(self.master_sampling_ports),
             )
         )
+
+    # Total number of training or inference processes per machine
+    @property
+    def local_world_size(self):
+        return len(self.master_worker_ports)
 
 
 def get_free_ports(main_worker_ip_address: str, local_world_size):

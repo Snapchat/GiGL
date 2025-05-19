@@ -292,7 +292,7 @@ class DistABLPLoader(DistNeighborLoader):
         dataset: DistLinkPredictionDataset,
         num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
         context: DistributedContext,
-        local_process_rank: int,  # TODO: Move this to DistributedContext
+        local_process_rank: int,
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
