@@ -25,7 +25,6 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   ```
 ````
 
-
 ````{dropdown} Manual Setup
 :color: primary
 
@@ -61,25 +60,31 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 ## 2. Setup your Cloud Environment
 
-For GiGL to function you need to se up a few cloud resources including a Service Account, GCS Buckets, BQ tables and relevent permissions. Please follow instructions under the [Cloud Setup Guide](./cloud_setup_guide.md)
-
+For GiGL to function you need to se up a few cloud resources including a Service Account, GCS Buckets, BQ tables and
+relevent permissions. Please follow instructions under the [Cloud Setup Guide](./cloud_setup_guide.md)
 
 ## 3. Install GiGL
 
 Before proceeding, make sure you have correctly installed `gigl` by following the
 [installation guide](./installation.md).
 
-
 ## 4. Config Setup
 
-To run an end to end pipeline in GiGL, two configs are required: `resource config`, and `task config`. The `resource config` specifies the resource and environment configurations for each component in the GiGL. Whereas the `task config` specifies task-related configurations - guiding the behavior of components according to the needs of your machine learning task.
+To run an end to end pipeline in GiGL, two configs are required: `resource config`, and `task config`. The
+`resource config` specifies the resource and environment configurations for each component in the GiGL. Whereas the
+`task config` specifies task-related configurations - guiding the behavior of components according to the needs of your
+machine learning task.
 
 **Resource Config**:
 
 The resource config contains GCP project specific information (service account, buckets, etc.) as well as GiGL Component
-resource allocation. You will find some resource configs already in the repo, but these are either configured to run on our CI/CD systems, or not completely filled - meaning you will not be able to use them directly.
+resource allocation. You will find some resource configs already in the repo, but these are either configured to run on
+our CI/CD systems, or not completely filled - meaning you will not be able to use them directly.
 
-We will bootstrap a resource config to get you started using the `bootstrap_resource_config.py` script. The script creates a copy off the `deployment/configs/unittest_resource_config.yaml` config and swaps the compute resources to point them to resources you created when you [Setup your Cloud Environment](#2-setup-your-cloud-environment) - ensure you have done this before proceeding.
+We will bootstrap a resource config to get you started using the `bootstrap_resource_config.py` script. The script
+creates a copy off the `deployment/configs/unittest_resource_config.yaml` config and swaps the compute resources to
+point them to resources you created when you [Setup your Cloud Environment](#2-setup-your-cloud-environment) - ensure
+you have done this before proceeding.
 
 Run the following command and follow the steps:
 
@@ -87,10 +92,11 @@ Run the following command and follow the steps:
 python scripts/bootstrap_resource_config.py
 ```
 
-You will note that if the script finishes sucessfully, it will have added two environment variables to your main shell file i.e. (`~/.zshrc`); mainly
-`GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, and `GIGL_PROJECT`.
+You will note that if the script finishes sucessfully, it will have added two environment variables to your main shell
+file i.e. (`~/.zshrc`); mainly `GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, and `GIGL_PROJECT`.
 
-For detailed information on `resource config`, see our [resource config guide](../config_guides/resource_config_guide.md).
+For detailed information on `resource config`, see our
+[resource config guide](../config_guides/resource_config_guide.md).
 
 **Task Config**:
 
@@ -121,11 +127,11 @@ make \
 If the pipeline ran sucessfully, you should see a url to Vertex AI where your pipeline is running.
 
 Observe that once you run this command a few things happen:
+
 1. The relevent jars are compiled
 2. Docker images are built from the GiGL source code and uploaded to your project
 3. A KFP pipeline is compiled with references to the relevent jars, and docker iamges
 4. The compiled pipeline runs on Vertex AI on your project w/ the task and resource configs provided.
-
 
 ## Digging Deeper and Advanced Usage
 
