@@ -18,21 +18,6 @@ datasetConfig:
     dataPreprocessorArgs:
       # Supported keys in python/tests/test_assets/dataset_mocking/lib/mocked_dataset_artifact_metadata.json
       mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
-  # Below not used for GLT Inference
-  subgraphSamplerConfig:
-    numHops: 2
-    numNeighborsToSample: 10
-    numUserDefinedPositiveSamples: 1
-    numUserDefinedNegativeSamples: 1
-  splitGeneratorConfig:
-    assignerArgs:
-      seed: '42'
-      test_split: '0.2'
-      train_split: '0.7'
-      val_split: '0.1'
-    assignerClsPath: splitgenerator.lib.assigners.UserDefinedLabelsEdgeToLinkSplitHashingAssigner
-    splitStrategyClsPath: splitgenerator.lib.split_strategies.UserDefinedLabelsNodeAnchorBasedLinkPredictionSplitStrategy
-  # Above not used for GLT Inference
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer

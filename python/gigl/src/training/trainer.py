@@ -65,7 +65,7 @@ class Trainer:
                 applied_task_identifier=applied_task_identifier,
             )
 
-        if gbml_config_wrapper.should_use_experimental_glt_backend:
+        if gbml_config_wrapper.should_use_glt_backend:
             trainer_v2 = GLTTrainer()
             trainer_v2.run(
                 applied_task_identifier=applied_task_identifier,
