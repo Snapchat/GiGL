@@ -9,7 +9,7 @@ def run_in_seperate_process(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        def target(q, *args, **kwargs):
+        def target(q: multiprocessing.Queue, *args, **kwargs):
             try:
                 result = func(*args, **kwargs)
                 q.put((True, result))
