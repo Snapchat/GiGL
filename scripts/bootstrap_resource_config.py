@@ -166,7 +166,7 @@ def main():
 
     curr_datetime = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     curr_username = getpass.getuser()
-    resource_config_dest_path = f"gs://{perm_assets_bucket}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
+    resource_config_dest_path = f"{perm_assets_bucket}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
 
     destination_file_path = (
         input(
