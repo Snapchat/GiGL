@@ -45,10 +45,10 @@ def update_shell_config(
     start_marker = "# ====== GiGL ENV Config - Begin ====="
     end_marker = "# ====== GiGL ENV Config - End====="
     export_lines = [
-        start_marker,
-        f"export GIGL_TEST_DEFAULT_RESOURCE_CONFIG={gigl_test_default_resource_config}",
-        f"export GIGL_PROJECT={gigl_project}",
-        end_marker,
+        start_marker + "\n",
+        f"export GIGL_TEST_DEFAULT_RESOURCE_CONFIG={gigl_test_default_resource_config}\n",
+        f"export GIGL_PROJECT={gigl_project}\n",
+        end_marker + "\n",
     ]
 
     # Read the existing shell config file
@@ -63,9 +63,9 @@ def update_shell_config(
     inside_block = False
     updated_shell_config_lines = []
     for line in shell_config_lines:
-        if line.strip() == start_marker:
+        if line.strip().startswith(start_marker):
             inside_block = True
-        elif line.strip() == end_marker:
+        elif line.strip().startswith(end_marker):
             inside_block = False
             continue
         if not inside_block:
@@ -78,7 +78,7 @@ def update_shell_config(
     with open(shell_config_path, "w") as shell_config:
         shell_config.writelines(updated_shell_config_lines)
 
-    print(f"Updated {shell_config_path} with: {updated_shell_config_lines}")
+    print(f"Updated {shell_config_path} with:\n{export_lines}.")
 
 
 def assert_gcp_project_exists(project_id: str):
