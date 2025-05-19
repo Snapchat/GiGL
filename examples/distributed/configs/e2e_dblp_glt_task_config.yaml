@@ -1,23 +1,6 @@
 graphMetadata:
   # We have 3 nodes types in the DBLP Dataset: author, paper, and term. We also have 3
   # edge types: author -> paper, paper -> author, and term -> paper
-  condensedEdgeTypeMap:
-    '0':
-      dstNodeType: paper
-      relation: to
-      srcNodeType: author
-    '1':
-      dstNodeType: author
-      relation: to
-      srcNodeType: paper
-    '2':
-      dstNodeType: paper
-      relation: to
-      srcNodeType: term
-  condensedNodeTypeMap:
-    '0': author
-    '1': paper
-    '2': term
   edgeTypes:
   - dstNodeType: paper
     relation: to
@@ -44,78 +27,6 @@ datasetConfig:
     dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
     dataPreprocessorArgs:
       mocked_dataset_name: 'dblp_node_anchor_edge_features_lp'
-  # Below not used for GLT Inference and is only used for non-GLT workflows. These are provided here since this is a requirement of
-  # config validator, but will be removed in the future once this is no longer required.
-  # TODO (mkolodner-sc): Remove below arguments once they are no longer needed
-  subgraphSamplerConfig:
-    numPositiveSamples: 1
-    subgraphSamplingStrategy:
-      messagePassingPaths:
-        paths:
-        - rootNodeType: paper
-          samplingOps:
-          - edgeType:
-              dstNodeType: paper
-              relation: to
-              srcNodeType: author
-            opName: op_1
-            randomUniform:
-              numNodesToSample: 10
-          - edgeType:
-              dstNodeType: paper
-              relation: to
-              srcNodeType: term
-            opName: op_2
-            randomUniform:
-              numNodesToSample: 10
-          - edgeType:
-              dstNodeType: author
-              relation: to
-              srcNodeType: paper
-            opName: op_3
-            inputOpNames:
-            - op_1
-            randomUniform:
-              numNodesToSample: 10
-        - rootNodeType: author
-          samplingOps:
-          - edgeType:
-              dstNodeType: author
-              relation: to
-              srcNodeType: paper
-            opName: op_4
-            randomUniform:
-              numNodesToSample: 10
-          - edgeType:
-              dstNodeType: paper
-              relation: to
-              srcNodeType: term
-            opName: op_5
-            inputOpNames:
-            - op_4
-            randomUniform:
-              numNodesToSample: 10
-          - edgeType:
-              dstNodeType: paper
-              relation: to
-              srcNodeType: author
-            opName: op_6
-            inputOpNames:
-            - op_4
-            randomUniform:
-              numNodesToSample: 10
-    graphDbConfig:
-      graph_db_args:
-        use_local_sampler: 'true'
-  splitGeneratorConfig:
-    assignerArgs:
-      seed: '42'
-      test_split: '0.2'
-      train_split: '0.7'
-      val_split: '0.1'
-    assignerClsPath: splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner
-    splitStrategyClsPath: splitgenerator.lib.split_strategies.TransductiveNodeAnchorBasedLinkPredictionSplitStrategy
-# Above not used for GLT Inference
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
