@@ -25,9 +25,8 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     select_label_edge_types,
     to_heterogeneous_edge,
-    to_homogeneous,
 )
-from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 
 logger = Logger()
 
@@ -45,7 +44,9 @@ class DistNeighborLoader(DistLoader):
     # keep the "full batch" as the value of the dict.
     # We use a multiprocessing dict as the sampling and transforms happen in different
     # processes.
-    _batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
+    _batch_store: Optional[
+        abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
+    ] = None
     _transforms: Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]
 
     def __init__(
@@ -163,12 +164,9 @@ class DistNeighborLoader(DistLoader):
                     f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
                 )
 
-        if not hasattr(self, "_batch_store"):
-            logger.info("Setting batch store")
-            node_batches_by_sampled_nodes: abc.MutableMapping[
-                tuple[NodeType, tuple[int, ...]], torch.Tensor
-            ] = torch.multiprocessing.Manager().dict()
-            self._batch_store = node_batches_by_sampled_nodes
+        # if not hasattr(self, "_batch_store"):
+        #     logger.info("Setting batch store to None")
+        #     self._batch_store = None
 
         curr_process_nodes = _shard_nodes_by_process(
             input_nodes=input_nodes,
@@ -393,10 +391,28 @@ class DistABLPLoader(DistNeighborLoader):
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             DEFAULT_HOMOGENEOUS_EDGE_TYPE, dataset.graph.keys()
         )
+        # We want to setup "input_nodes" as an approppriately shaped tensor for sampling.
+        # Our goal here is to:
+        # * Sample against anchor nodes and their labels together
+        # * Later dissambiguate what anchors have which labels.
+        # Let's say we have the following graph:
+        # Message passing edges:
+        # A -> B -> C
+        # Positive label edges:
+        # A -> D
+        # B -> F
+        # Negative label edges:
+        # A -> E
+        # B -> G
+        # Then we want to sample `{A, D, E}, {B, F, G}` together.
+        # Therefor we want to create `input_nodes` as:
+        # `[[A, -2, D, -3, E, -4], [B, -2, F, -3, G, -4]]`
+        # We use -2, -3, -4 as sentinels to distinguish between the anchor node, positive labels, and negative labels.
+        # The sentinels will later be stripped out by _LabeledNodeSamplerInput.
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset, input_nodes, positive_label_edge_type, negative_label_edge_type
-        )
-        extracted_input_nodes = input_nodes.unsqueeze(1)
+        )  # (num_nodes X num_positive_labels), (num_nodes X num_negative_labels)
+        extracted_input_nodes = input_nodes.unsqueeze(1)  # (num_nodes X 1)
         if negative_labels is not None:
             anchor_sentinel = -2
             positive_sentinel = -3
@@ -411,7 +427,7 @@ class DistABLPLoader(DistNeighborLoader):
                     torch.full_like(extracted_input_nodes, negative_sentinel),
                 ],
                 dim=1,
-            )
+            )  # (num_nodes X (num_positive_labels + num_negative_labels + 4))
         else:
             anchor_sentinel = -2
             positive_sentinel = -3
@@ -424,7 +440,7 @@ class DistABLPLoader(DistNeighborLoader):
                     torch.full_like(extracted_input_nodes, positive_sentinel),
                 ],
                 dim=1,
-            )
+            )  # (num_nodes X (num_positive_labels + 3))
 
         node_batches_by_sampled_nodes: abc.MutableMapping[
             tuple[NodeType, tuple[int, ...]], torch.Tensor
@@ -550,7 +566,7 @@ class _LabeledNodeSamplerInput(NodeSamplerInput):
         if self._batch_store is not None:
             # Dedup the nodes to sample.
             # We use a `dict` here to dedup the nodes, as `set` does not preserve
-            # insertion order, which need to keep we can differentiate betwee:
+            # insertion order, which need to keep we can differentiate between:
             # anchor: A, positive: B, negative: C
             # and
             # anchor: C, positive: B, negative: A
@@ -600,6 +616,12 @@ class _SetLabels:
         The labels are set based on the anchor node and positive label sentinels.
         We assume that the input batch is a 1D tensor of node ids, or fornat:
             `[<anchor node>, <anchor node sentinel>, <positive labels>, <positive label sentinel>, <negative label>, <negative label sentinel>]`
+        Will also set anchor node ids.
+
+
+        The returned data will have the following additional attributes:
+            * `y_positive`: A mapping from anchor node id -> positive label node ids.
+            * (Optionally)`y_negative`: A mapping from anchor node id -> negative label node ids.
 
         We expect that the batch store contains:
             * `(node_type, node_ids)` as the key
@@ -629,8 +651,8 @@ class _SetLabels:
     def __call__(self, data: _GraphData) -> _GraphData:
         """Transform the heterogeneous graph to a homogeneous graph."""
         is_heterogeneous = isinstance(data, HeteroData)
-        positive_labels: dict[NodeType, torch.Tensor] = {}
-        negative_labels: dict[NodeType, torch.Tensor] = {}
+        positive_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
+        negative_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
         if is_heterogeneous:
             node_types = data.node_types
         else:
@@ -650,48 +672,71 @@ class _SetLabels:
         for node_type in node_types:
             full_batch: torch.Tensor
             # data.batch is already de-duped.
+            # Represents all nodes that were sampled in the batch.
             if is_heterogeneous:
                 batch = tuple(data[node_type].batch.tolist())
             else:
                 batch = tuple(data.batch.tolist())
-            full_batch = self._batch_store.pop((node_type, batch))
+            full_batch = self._batch_store.pop((node_type, batch))  # [N]
+            # Get indices of the sentinels.
             achor_node_sentinels = torch.nonzero(
                 full_batch == self._anchor_node_sentinel
-            ).squeeze(1)
+            ).squeeze(
+                1
+            )  # [Num sampled anchors]
             positive_label_sentinels = torch.nonzero(
                 full_batch == self._positive_label_sentinel
-            ).squeeze(1)
-            pos_labels = []
+            ).squeeze(
+                1
+            )  # [Num sampled anchors]
+            pos_labels: dict[int, torch.Tensor] = {}
             if self._negative_label_sentinel is not None:
                 negative_label_sentinels = torch.nonzero(
                     full_batch == self._negative_label_sentinel
-                ).squeeze(1)
-                neg_labels = []
+                ).squeeze(
+                    1
+                )  # [Num sampled anchors]
+                neg_labels = {}
                 for anchor, positive, negative in zip(
                     achor_node_sentinels,
                     positive_label_sentinels,
                     negative_label_sentinels,
                 ):
-                    pos_batch = full_batch[anchor + 1 : positive].view(-1)
-                    pos_labels.append(pos_batch)
-                    neg_batch = full_batch[positive + 1 : negative].view(-1)
-                    neg_labels.append(neg_batch)
+                    anchor_node = int(full_batch[anchor - 1].item())
+                    pos_batch = full_batch[anchor + 1 : positive].view(
+                        -1
+                    )  # [max num positive labels]
+                    pos_labels[anchor_node] = pos_batch[
+                        pos_batch != PADDING_NODE
+                    ]  # [num positive labels for $anchor_node]
+                    neg_batch = full_batch[positive + 1 : negative].view(
+                        -1
+                    )  # [max num negative labels]
+                    neg_labels[anchor_node] = neg_batch[
+                        neg_batch != PADDING_NODE
+                    ]  # [num negative labels for $anchor_node]
             else:
                 neg_labels = None
                 for anchor, positive in zip(
                     achor_node_sentinels, positive_label_sentinels
                 ):
-                    pos_batch = full_batch[anchor + 1 : positive].view(-1)
-                    pos_labels.append(pos_batch)
-            positive_labels[node_type] = torch.stack(pos_labels)
+                    anchor_node = int(full_batch[anchor - 1].item())
+                    pos_batch = full_batch[anchor + 1 : positive].view(
+                        -1
+                    )  # [max num positive labels]
+                    pos_labels[anchor_node] = pos_batch[
+                        pos_batch != PADDING_NODE
+                    ]  # [num positive labels for $anchor_node]
+            positive_labels[node_type] = pos_labels
             if neg_labels is not None:
-                negative_labels[node_type] = torch.stack(neg_labels)
+                negative_labels[node_type] = neg_labels
         if is_heterogeneous:
             data.y_positive = positive_labels
             if negative_labels:
                 data.y_negative = negative_labels
         else:
-            data.y_positive = to_homogeneous(positive_labels)
+            # Saddly, can't use `to_homogeneous` here for mypy reasons as the values are dicts :(
+            data.y_positive = next(iter(positive_labels.values()))
             if negative_labels:
-                data.y_negative = to_homogeneous(negative_labels)
+                data.y_negative = next(iter(negative_labels.values()))
         return data

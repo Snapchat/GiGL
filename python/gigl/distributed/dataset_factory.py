@@ -61,7 +61,7 @@ def _load_and_build_partitioned_dataset(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    should_treat_as_heterogeneous: bool = False,
+    treat_ablp_graph_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
@@ -77,6 +77,7 @@ def _load_and_build_partitioned_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
+        treat_ablp_graph_as_heterogeneous (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -103,7 +104,7 @@ def _load_and_build_partitioned_dataset(
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
     )
-    if should_treat_as_heterogeneous:
+    if treat_ablp_graph_as_heterogeneous:
         loaded_graph_tensors.treat_labels_as_edges()
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
@@ -214,7 +215,7 @@ def _build_dataset_process(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    should_treat_as_heterogeneous: bool = False,
+    treat_ablp_graph_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
@@ -248,6 +249,7 @@ def _build_dataset_process(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
+        treat_ablp_graph_as_heterogeneous (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -273,7 +275,7 @@ def _build_dataset_process(
         partitioner_class=partitioner_class,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
-        should_treat_as_heterogeneous=should_treat_as_heterogeneous,
+        treat_ablp_graph_as_heterogeneous=treat_ablp_graph_as_heterogeneous,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
     )
@@ -294,7 +296,7 @@ def build_dataset(
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    should_treat_as_heterogeneous: bool = False,
+    treat_ablp_graph_as_heterogeneous: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: int = DEFAULT_MASTER_DATA_BUILDING_PORT,
@@ -311,6 +313,7 @@ def build_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
+        treat_ablp_graph_as_heterogeneous (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -345,7 +348,7 @@ def build_dataset(
             partitioner_class,
             node_tf_dataset_options,
             edge_tf_dataset_options,
-            should_treat_as_heterogeneous,
+            treat_ablp_graph_as_heterogeneous,
             splitter,
             _ssl_positive_label_percentage,
         ),
@@ -387,23 +390,28 @@ def build_dataset_from_task_config_uri(
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
         sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "inferencerConfig.inferencerArgs"
-        should_convert_to_heterogeneous = False
+        treat_ablp_graph_as_heterogeneous = False
     else:
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
         sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "trainerConfig.trainerArgs"
-        should_convert_to_heterogeneous = bool(
-            strtobool(args.get("should_convert_to_heterogeneous", "False"))
+        # TODO(kmonte): Maybe we should always do this for training?
+        treat_ablp_graph_as_heterogeneous = bool(
+            strtobool(args.get("treat_ablp_graph_as_heterogeneous", "False"))
         )
 
-    if should_convert_to_heterogeneous:
+    if treat_ablp_graph_as_heterogeneous:
         # TODO(kmonte): Read train/val/test split counts from config.
+        # TODO(kmonte): Read label edge dir from config.
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction=sample_edge_direction,
             edge_types=[
                 message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
                 message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
             ],
+        )
+        logger.info(
+            "Will be treating the ABLP labels as heterogeneous edges in the graph."
         )
     else:
         splitter = None
@@ -450,7 +458,7 @@ def build_dataset_from_task_config_uri(
         distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
         partitioner_class=partitioner_class,
-        should_treat_as_heterogeneous=should_convert_to_heterogeneous,
+        treat_ablp_graph_as_heterogeneous=treat_ablp_graph_as_heterogeneous,
         splitter=splitter,
     )
 

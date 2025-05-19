@@ -185,8 +185,14 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
-                expected_positive_labels=torch.tensor([[15], [16]]),
-                expected_negative_labels=torch.tensor([[13, 16], [17, -1]]),
+                expected_positive_labels={
+                    10: torch.tensor([15]),
+                    15: torch.tensor([16]),
+                },
+                expected_negative_labels={
+                    10: torch.tensor([13, 16]),
+                    15: torch.tensor([17]),
+                },
             ),
             param(
                 "Positive edges",
@@ -194,13 +200,16 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
-                expected_positive_labels=torch.tensor([[15], [16]]),
+                expected_positive_labels={
+                    10: torch.tensor([15]),
+                    15: torch.tensor([16]),
+                },
                 expected_negative_labels=None,
             ),
         ]
     )
     # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
-    @unittest.skip("Failing due to ports being already allocated - skiping for now")
+    # @unittest.skip("Failing due to ports being already allocated - skiping for now")
     def test_ablp_dataloader(
         self,
         _,
@@ -270,16 +279,25 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 1)
-
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(
             datum.node,
             expected_node,
             dim=0,
         )
-        assert_tensor_equality(datum.y_positive, expected_positive_labels)
+        self.assertEqual(datum.y_positive.keys(), expected_positive_labels.keys())
+        for anchor in expected_positive_labels.keys():
+            assert_tensor_equality(
+                datum.y_positive[anchor],
+                expected_positive_labels[anchor],
+            )
         if expected_negative_labels is not None:
-            assert_tensor_equality(datum.y_negative, expected_negative_labels)
+            self.assertEqual(datum.y_negative.keys(), expected_negative_labels.keys())
+            for anchor in expected_negative_labels.keys():
+                assert_tensor_equality(
+                    datum.y_negative[anchor],
+                    expected_negative_labels[anchor],
+                )
         else:
             self.assertFalse(hasattr(datum, "y_negative"))
         dsts, srcs, *_ = datum.coo()
@@ -304,7 +322,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         for datum in loader:
             self.assertIsInstance(datum, Data)
             self.assertTrue(hasattr(datum, "y_positive"))
+            self.assertIsInstance(datum.y_positive, dict)
             self.assertTrue(hasattr(datum, "y_negative"))
+            self.assertIsInstance(datum.y_negative, dict)
+            self.assertEqual(datum.y_positive.keys(), datum.y_negative.keys())
             count += 1
         self.assertEqual(count, 2161)
 
