@@ -359,6 +359,8 @@ def _run_example_inference(
         bq_table_path=output_bq_table_path
     )
 
+    # We write embeddings to a temporary GCS path during the inference loop, since writing directly to bigquery for each embedding is slow.
+    # After inference has finished, we then load all embeddings to bigquery from GCS.
     embedding_output_gcs_folder = InferenceAssets.get_gcs_asset_write_path_prefix(
         applied_task_identifier=AppliedTaskIdentifier(job_name),
         bq_table_path=output_bq_table_path,
