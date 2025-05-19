@@ -1,13 +1,16 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
+from gigl.common import GcsUri
+from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.vertex_ai_context import (
     DistributedContext,
     connect_worker_pool,
     get_host_name,
     get_leader_hostname,
     get_leader_port,
+    get_local_world_size,
     get_rank,
     get_vertex_ai_job_id,
     get_world_size,
@@ -47,6 +50,10 @@ class TestVertexAIContext(unittest.TestCase):
     def test_get_rank(self):
         self.assertEqual(get_rank(), 1)
 
+    @patch.dict(os.environ, VAI_JOB_ENV | {"LOCAL_WORLD_SIZE": "4"})
+    def test_get_rank(self):
+        self.assertEqual(get_local_world_size(), 4)
+
     def test_throws_if_not_on_vai(self):
         with self.assertRaises(Exception):
             get_vertex_ai_job_id()
@@ -60,63 +67,62 @@ class TestVertexAIContext(unittest.TestCase):
             get_world_size()
         with self.assertRaises(Exception):
             get_rank()
+        with self.assertRaises(Exception):
+            get_local_world_size()
 
-    @patch("torch.distributed.init_process_group")
-    @patch("torch.distributed.broadcast_object_list")
-    @patch("torch.distributed.destroy_process_group")
     @patch("subprocess.check_output", return_value=b"127.0.0.1")
     @patch("time.sleep", return_value=None)
+    @patch("gigl.common.utils.gcs.GcsUtils.upload_from_string")
     @patch.dict(
         os.environ,
         {
             "RANK": "0",
             "WORLD_SIZE": "2",
+            LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: "gs://FAKE BUCKET DNE/some-file.txt",
+            "LOCAL_WORLD_SIZE": "4",
             "CLOUD_ML_JOB_ID": "test_job_id",
         },
     )
-    def test_connect_worker_pool_leader(
-        self,
-        mock_sleep,
-        mock_check_output,
-        mock_destroy_process_group,
-        mock_broadcast_object_list,
-        mock_init_process_group,
-    ):
+    def test_connect_worker_pool_leader(self, mock_upload, mock_sleep, mock_subprocess):
         distributed_context: DistributedContext = connect_worker_pool()
         self.assertEqual(distributed_context.main_worker_ip_address, "127.0.0.1")
         self.assertEqual(distributed_context.global_rank, 0)
         self.assertEqual(distributed_context.global_world_size, 2)
+        self.assertEqual(distributed_context.local_world_size, 4)
+        mock_upload.assert_called_once_with(
+            gcs_path=GcsUri("gs://FAKE BUCKET DNE/some-file.txt"), content="127.0.0.1"
+        )
 
-    @patch("torch.distributed.init_process_group")
-    @patch("torch.distributed.broadcast_object_list")
-    @patch("torch.distributed.destroy_process_group")
+    @patch("gigl.common.utils.vertex_ai_context._ping_host_ip")
     @patch("subprocess.check_output", return_value=b"127.0.0.1")
     @patch("time.sleep", return_value=None)
+    @patch("gigl.common.utils.gcs.GcsUtils.read_from_gcs", return_value="127.0.0.1")
+    @patch("gigl.common.utils.gcs.GcsUtils.upload_from_string")
     @patch.dict(
         os.environ,
         {
             "RANK": "1",
             "WORLD_SIZE": "2",
+            LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: "gs://FAKE BUCKET DNE/some-file.txt",
+            "LOCAL_WORLD_SIZE": "4",
             "CLOUD_ML_JOB_ID": "test_job_id",
         },
     )
     def test_connect_worker_pool_worker(
-        self,
-        mock_sleep,
-        mock_check_output,
-        mock_destroy_process_group,
-        mock_broadcast_object_list,
-        mock_init_process_group,
+        self, mock_upload, mock_read, mock_sleep, mock_subprocess, mock_ping_host
     ):
-        def _mock_broadcast_object_list(object_list, src):
-            # Simulate broadcasting
-            object_list[0] = "127.0.0.1"
-
-        mock_broadcast_object_list.side_effect = _mock_broadcast_object_list
+        mock_ping_host.side_effect = [False, True]
         distributed_context: DistributedContext = connect_worker_pool()
         self.assertEqual(distributed_context.main_worker_ip_address, "127.0.0.1")
         self.assertEqual(distributed_context.global_rank, 1)
         self.assertEqual(distributed_context.global_world_size, 2)
+        self.assertEqual(distributed_context.local_world_size, 4)
+        mock_read.assert_has_calls(
+            [
+                call(GcsUri("gs://FAKE BUCKET DNE/some-file.txt")),
+                call(GcsUri("gs://FAKE BUCKET DNE/some-file.txt")),
+            ]
+        )
 
 
 if __name__ == "__main__":
