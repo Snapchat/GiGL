@@ -3,7 +3,6 @@ from collections import abc
 from typing import MutableMapping
 
 import torch
-import torch.distributed.rpc
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
