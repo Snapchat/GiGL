@@ -232,11 +232,8 @@ class DistNeighborLoader(DistLoader):
             )
             num_cpu_threads = DEFAULT_NUM_CPU_THREADS
         gigl.distributed.utils.init_neighbor_loader_worker(
-            master_ip_address=context.main_worker_ip_address,
+            distributed_context=context,
             local_process_rank=local_process_rank,
-            local_process_world_size=context.local_world_size,
-            rank=context.global_rank,
-            world_size=context.global_world_size,
             master_worker_port=_main_inference_port,
             device=device,
             should_use_cpu_workers=should_use_cpu_workers,
