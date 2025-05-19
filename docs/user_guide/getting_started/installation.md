@@ -1,3 +1,11 @@
+## Supported Environments
+
+These are the current environments supported by GiGL
+
+| Python | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
+| ------ | --------------- | --------- | ---------- | ------- | --- |
+| 3.9    | Partial Support | Supported | 12.1       | 2.5     | 2.5 |
+
 # Installation
 
 We are working on making our whls publicly accessible, for the time being you will need to install from source.
@@ -26,20 +34,3 @@ tooling useful for contributions:
 ```bash
 make install_dev_deps
 ```
-
-## GCP Installation
-
-If you are using a GCP cloud instance, you can also leverage our handy script `scripts/setup_environment.sh` to help you
-bootstrap your instance. i.e. first you can clone the repo to your instance then run:
-
-```
-bash scripts/setup_environment.sh
-```
-
-## Supported Environments
-
-These are the current environments supported by GiGL
-
-| Python | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
-| ------ | --------------- | --------- | ---------- | ------- | --- |
-| 3.9    | Partial Support | Supported | 12.1       | 2.5     | 2.5 |

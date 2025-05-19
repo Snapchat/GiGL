@@ -1,8 +1,4 @@
-# Quick Start Guide
-
-```{note}
-This section will be updated soon. TODO (svij)
-```
+# Quick Start
 
 GiGL is a flexible framework that allows customization for many graph ML tasks in its components like data data
 pre-processing, training logic, inference.
@@ -10,32 +6,91 @@ pre-processing, training logic, inference.
 This page outlines the steps needed to get up and running an end to end pipeline in different scenarios, starting from a
 simple local setup to more complex cloud-based operations.
 
-## Install GiGL
+## 1. Setup instance for GiGL usage and/or development
+
+Below we provide two ways to bootstrap an environment for using and/or developing GiGL
+
+````{dropdown} (Recommended) Developing/experimenting on a GCP cloud instance.
+:color: primary
+
+  We will need to create a GCP instance and setup needed pre-requisites to install and use GiGL.
+
+  You can use our `create_dev_instance.py` script to automatically create an instance for you:
+  ```bash
+    python scripts/create_dev_instance.py
+  ```
+  Next, ssh into your instance; clone the repo and install other pre-requisites needed before we can install GiGL:
+  ```bash
+  bash scripts/setup_dev_instance.sh`
+  ```
+````
+
+
+````{dropdown} Manual Setup
+:color: primary
+
+  1. If on MAC, Install [Homebrew](https://brew.sh/).
+
+  2. Install [Conda](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install):
+
+  3. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
+
+  4. Ensure you have GNU MAKE v >= 4.4; if not, please upgrade version.
+  ```bash
+  make --version
+  ```
+
+  **Install make on MAC:**
+  ```bash
+  brew install make
+  ```
+
+  Subsequently, you should be able to use `gmake` instead of `make`
+
+  **Install make on Linux:**
+  ```
+  apt-get update && apt-get upgrade -y && apt-get install -y cmake
+  ```
+
+  5. Install [gcloud cli](https://cloud.google.com/sdk/docs/install):
+    - Make sure you are authenticated to use Google Cloud services: `gcloud init` +
+      `gcloud auth application-default login`.
+    - Make sure you are authenticated to pull Docker images: `gcloud auth configure-docker us-central1-docker.pkg.dev`.
+
+````
+
+## 2. Setup your Cloud Environment
+
+For GiGL to function you need to se up a few cloud resources including a Service Account, GCS Buckets, BQ tables and relevent permissions. Please follow instructions under the [Cloud Setup Guide](./cloud_setup_guide.md)
+
+
+## 3. Install GiGL
 
 Before proceeding, make sure you have correctly installed `gigl` by following the
 [installation guide](./installation.md).
 
-This section outlines the steps needed to get up and running an end to end pipeline (via GCP) on an in-built sample
-task: training and inference for transductive node-anchor based link prediction task on Cora (homogeneous). Running in
-the cloud enables the usage of services like Dataproc, VertexAI, and Dataflow to enable large-scale
-distributed/optimized performance.
 
-## Config Setup
+## 4. Config Setup
 
-To run an end to end pipeline in GiGL, two config files are required. In this guide, some samples/templates are provided
-to get started but these would need to be modified as needed for custom tasks.
+To run an end to end pipeline in GiGL, two configs are required: `resource config`, and `task config`. The `resource config` specifies the resource and environment configurations for each component in the GiGL. Whereas the `task config` specifies task-related configurations - guiding the behavior of components according to the needs of your machine learning task.
 
 **Resource Config**:
 
 The resource config contains GCP project specific information (service account, buckets, etc.) as well as GiGL Component
-resource allocation. To setup cloud resources for `shared_resource_config.common_compute_config`, see
-[cloud setup guide](./cloud_setup_guide.md).
+resource allocation. You will find some resource configs already in the repo, but these are either configured to run on our CI/CD systems, or not completely filled - meaning you will not be able to use them directly.
 
-Once you have setup your cloud project, you can populate the `common_compute_config` section of the template resource
-config provided in `GiGL/docs/examples/template_resource_config.yaml`. The remainder of the resource config is populated
-with some pre-defined values which should be suitable for this task.
+We will bootstrap a resource config to get you started using the `bootstrap_resource_config.py` script. The script creates a copy off the `deployment/configs/unittest_resource_config.yaml` config and swaps the compute resources to point them to resources you created when you [Setup your Cloud Environment](#2-setup-your-cloud-environment) - ensure you have done this before proceeding.
 
-For more information, see [resource config guide](../config_guides/resource_config_guide.md).
+Run the following command and follow the steps:
+
+```bash
+python scripts/bootstrap_resource_config.py
+```
+
+You will note that if the script finishes sucessfully, it will have added two environment variables to your main shell file i.e. (`~/.zshrc`); mainly
+`GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, and `GIGL_PROJECT`.
+
+For detailed information on `resource config`, see our [resource config guide](../config_guides/resource_config_guide.md).
 
 **Task Config**:
 
@@ -43,21 +98,36 @@ The template task config is for populating custom class paths, custom arguments,
 passed into config populator. For task config usage/spec creation, see the
 [task_config_guide](../config_guides/task_config_guide.md).
 
-In this guide, we will be using a built-in preprocessor config to run on one of GiGL's supported mocked datasets (in
-this specific example `cora_homogeneous_node_anchor_edge_features`). The other supported mocked datasets can be seen in
-`python/tests/test_assets/dataset_mocking/lib/mocked_dataset_artifact_metadata.json`
+## 5. Running an End To End GiGL Pipeline
 
-The path for the template task config is:
-`python/tests/test_assets/dataset_mocking/pipeline_test_assets/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml`
-
-## Running an End To End GiGL Pipeline
-
-Now that we have our two config files setup, we can now kick off an end to end GiGL run.
+```{caution}
+Since `.whl`s for GiGL have not been released yet, using GiGL workflows currently follows the same process as you would kick them off if developing GiGL. This is expected to change once wheels are available.
+```
 
 GiGL supports various ways to orchestrate an end to end run such as KFP Orchestration, GiGL Runner, and manual component
 import and running as needed. For more details see [here](./orchestration.md)
 
-## Quick Start: Digging Deeper and Advanced Usage
+Lets use the following command to run an e2e node anchor based link prediction example on the cora dataset:
+
+```bash
+export GIGL_CORA_NABLP_TASK_CONFIG="gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml"
+make \
+  job_name="$(whoami)_gigl_hello_world_cora_nalp" \
+  task_config_uri="$GIGL_CORA_NABLP_TASK_CONFIG" \
+  resource_config_uri="$GIGL_TEST_DEFAULT_RESOURCE_CONFIG" \
+  run_dev_gnn_kubeflow_pipeline
+```
+
+If the pipeline ran sucessfully, you should see a url to Vertex AI where your pipeline is running.
+
+Observe that once you run this command a few things happen:
+1. The relevent jars are compiled
+2. Docker images are built from the GiGL source code and uploaded to your project
+3. A KFP pipeline is compiled with references to the relevent jars, and docker iamges
+4. The compiled pipeline runs on Vertex AI on your project w/ the task and resource configs provided.
+
+
+## Digging Deeper and Advanced Usage
 
 Now that you have an idea on how GiGL works, you may want to explore advanced customization options for your specific
 tasks. This section directs you to various guides that detail how to create and modify task specifications, use custom

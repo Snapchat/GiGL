@@ -8,6 +8,7 @@ DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
+PWD=$(shell pwd)
 
 # You can override GIGL_PROJECT by setting it in your environment i.e.
 # adding `export GIGL_PROJECT=your_project` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -22,6 +23,9 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 
 PYTHON_DIRS:=examples python shared scripts
 PY_TEST_FILES?="*_test.py"
+# You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
+# adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
+GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_config.yaml
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
@@ -31,6 +35,7 @@ GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # then when we *check* the format of those files, we will fail.
 # Thus, we only want to format the Markdown files that we explicitly include in our repo.
 MD_FILES:=$(shell if [ ! ${GIT_BRANCH} ]; then echo "."; else git ls-tree --name-only -r ${GIT_BRANCH} . | grep ".md"; fi;)
+
 
 get_ver_hash:
 	# Fetches the git commit hash and stores it in `$GIT_COMMIT`
@@ -70,6 +75,7 @@ install_dev_deps: check_if_valid_env
 	bash ./requirements/install_scala_deps.sh
 	pip install -e ./python/
 	pre-commit install --hook-type pre-commit --hook-type pre-push
+
 
 # Production environments, if you are developing use `make install_dev_deps` instead
 install_deps:
@@ -138,7 +144,7 @@ unit_test_py: clean_build_files_py type_check
 	( cd python ; \
 	python -m tests.unit.main \
 		--env=test \
-		--resource_config_uri ../deployment/configs/unittest_resource_config.yaml \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
 	)
 
@@ -182,7 +188,7 @@ integration_test:
 	cd python ;\
 	python -m tests.integration.main \
 	--env=test \
-	--resource_config_uri ../deployment/configs/unittest_resource_config.yaml \
+	--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 	--test_file_pattern=$(PY_TEST_FILES) \
 	)
 
@@ -474,9 +480,6 @@ stop_toaster:
 	docker buildx prune
 
 release_gigl:
-	@echo "This needs to be implemented"
-
-publish_docs:
 	@echo "This needs to be implemented"
 
 build_docs:
