@@ -93,18 +93,6 @@ def assert_gcp_project_exists(project_id: str):
         )
 
 
-def assert_service_account_exists(service_account_email: str, project: str):
-    # Check if the service account exists
-    command = f"gcloud iam service-accounts describe {service_account_email} --project={project}"
-    result = subprocess.run(command, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"Command failed with error: {result.stderr}")
-        raise ValueError(
-            f"Service account '{service_account_email}' does not exist or you do not have access to it."
-        )
-    print(f"Service account '{service_account_email}' exists.")
-
-
 def assert_bq_dataset_exists(dataset_name: str, project: str):
     command = f"bq show --project_id {project} {dataset_name}"
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -153,7 +141,7 @@ def main():
     ).strip()
     assert region, "Region cannot be empty"
     gcp_service_account_email: str = input("The GCP Service account: ").strip()
-    assert_service_account_exists(gcp_service_account_email, project)
+    assert gcp_service_account_email, "GCP Service account cannot be empty"
 
     print("Please provide us the information on the BQ Datasets you want to use")
     temp_assets_bq_dataset_name: str = input(
