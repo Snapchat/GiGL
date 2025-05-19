@@ -105,7 +105,8 @@ def assert_bq_dataset_exists(dataset_name: str, project: str):
 
 
 def assert_gcs_bucket_exists(bucket_name: str):
-    command = f"gsutil ls gs://{bucket_name}"
+    assert bucket_name.startswith("gs://"), "Bucket name must start with 'gs://'"
+    command = f"gsutil ls {bucket_name}"
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"Command failed with error: {result.stderr}")
@@ -143,7 +144,7 @@ def main():
     gcp_service_account_email: str = input("The GCP Service account: ").strip()
     assert gcp_service_account_email, "GCP Service account cannot be empty"
 
-    print("Please provide us the information on the BQ Datasets you want to use")
+    print("\n\nPlease provide us the information on the BQ Datasets you want to use")
     temp_assets_bq_dataset_name: str = input(
         "`temp_assets_bq_dataset_name` - Dataset name used for temporary assets: "
     ).strip()
@@ -153,13 +154,13 @@ def main():
     ).strip()
     assert_bq_dataset_exists(dataset_name=embedding_bq_dataset_name, project=project)
 
-    print("Please provide us the information on the GCS Buckets you want to use")
+    print("\n\nPlease provide us the information on the GCS Buckets you want to use")
     temp_assets_bucket: str = input(
-        f"`temp_assets_bucket` - GCS Bucket for storing temporary assets: "
+        f"`temp_assets_bucket` - GCS Bucket for storing temporary assets i.e. `gs://YOUR_BUCKET_NAME`: "
     ).strip()
     assert_gcs_bucket_exists(bucket_name=temp_assets_bucket)
     perm_assets_bucket: str = input(
-        f"`perm_assets_bucket` - GCS Bucket for storing permanent assets: "
+        f"`perm_assets_bucket` - GCS Bucket for storing permanent assets i.e. `gs://YOUR_BUCKET_NAME`: "
     ).strip()
     assert_gcs_bucket_exists(bucket_name=perm_assets_bucket)
 
