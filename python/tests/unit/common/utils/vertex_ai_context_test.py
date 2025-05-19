@@ -63,6 +63,7 @@ class TestVertexAIContext(unittest.TestCase):
 
     @patch("torch.distributed.init_process_group")
     @patch("torch.distributed.broadcast_object_list")
+    @patch("torch.distributed.destroy_process_group")
     @patch("subprocess.check_output", return_value=b"127.0.0.1")
     @patch("time.sleep", return_value=None)
     @patch.dict(
@@ -77,6 +78,7 @@ class TestVertexAIContext(unittest.TestCase):
         self,
         mock_sleep,
         mock_check_output,
+        mock_destroy_process_group,
         mock_broadcast_object_list,
         mock_init_process_group,
     ):
@@ -87,6 +89,7 @@ class TestVertexAIContext(unittest.TestCase):
 
     @patch("torch.distributed.init_process_group")
     @patch("torch.distributed.broadcast_object_list")
+    @patch("torch.distributed.destroy_process_group")
     @patch("subprocess.check_output", return_value=b"127.0.0.1")
     @patch("time.sleep", return_value=None)
     @patch.dict(
@@ -101,6 +104,7 @@ class TestVertexAIContext(unittest.TestCase):
         self,
         mock_sleep,
         mock_check_output,
+        mock_destroy_process_group,
         mock_broadcast_object_list,
         mock_init_process_group,
     ):
