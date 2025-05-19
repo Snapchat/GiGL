@@ -51,7 +51,7 @@ class TestVertexAIContext(unittest.TestCase):
         self.assertEqual(get_rank(), 1)
 
     @patch.dict(os.environ, VAI_JOB_ENV | {"LOCAL_WORLD_SIZE": "4"})
-    def test_get_rank(self):
+    def test_get_local_world_size(self):
         self.assertEqual(get_local_world_size(), 4)
 
     def test_throws_if_not_on_vai(self):
