@@ -71,6 +71,7 @@ install_dev_deps: check_if_valid_env
 	pip install -e ./python/
 	pre-commit install --hook-type pre-commit --hook-type pre-push
 
+
 # Production environments, if you are developing use `make install_dev_deps` instead
 install_deps:
 	gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -82,45 +83,45 @@ install_deps:
 generate_mac_arm64_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/darwin_arm64_requirements_unified.txt \
-	--extra torch25-cpu --extra transform \
+	--extra torch25-cpu --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
+# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong.
 generate_dev_mac_arm64_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_darwin_arm64_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra dev \
+	--extra torch25-cpu --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_linux_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/linux_cpu_requirements_unified.txt \
-	--extra torch25-cpu --extra transform \
+	--extra torch25-cpu --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_dev_linux_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_linux_cpu_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra dev \
+	--extra torch25-cpu --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_linux_cuda_hashed_requirements:
 	pip-compile  -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/linux_cuda_requirements_unified.txt \
-	--extra torch25-cuda-121 --extra transform \
+	--extra torch25-cuda-121 --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_dev_linux_cuda_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_linux_cuda_requirements_unified.txt \
-	--extra torch25-cuda-121 --extra transform --extra dev \
+	--extra torch25-cuda-121 --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# These are a collection of tests that are run before anything is installed using tools abialable on host.
+# These are a collection of tests that are run before anything is installed using tools available on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
