@@ -78,7 +78,7 @@ jobs:
   lint-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # Not sure how long these take but if it's more than 20 minutes something has gone very wrong...
+    timeout-minutes: 20 # If our linting takes longer than 20 minutes something has gone very wrong...
     steps:
     - name: Run Linting Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
