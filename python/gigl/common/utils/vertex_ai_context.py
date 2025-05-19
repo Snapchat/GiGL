@@ -124,7 +124,7 @@ def connect_worker_pool() -> DistributedContext:
 
     global_rank = get_rank()
     global_world_size = get_world_size()
-    local_world_Size = get_local_world_size()
+    local_world_size = get_local_world_size()
 
     is_leader_worker = global_rank == 0
     ip_file_uri = GcsUri(_get_leader_worker_internal_ip_file_path())
@@ -165,7 +165,7 @@ def connect_worker_pool() -> DistributedContext:
         main_worker_ip_address=host_ip,
         global_rank=global_rank,
         global_world_size=global_world_size,
-        local_world_Size=local_world_Size,
+        local_world_size=local_world_size,
     )
 
 
