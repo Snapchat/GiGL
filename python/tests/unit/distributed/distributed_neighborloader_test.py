@@ -29,6 +29,7 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_heterogeneous_node,
 )
+from tests.test_assets.distributed.decorator import run_in_separate_process
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -50,6 +51,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
+    @run_in_separate_process
     def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
@@ -83,8 +85,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
-    # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
-    @unittest.skip("Failing due to ports being already allocated - skiping for now")
+    @run_in_separate_process
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {
@@ -190,8 +191,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
-    @unittest.skip("Failing due to ports being already allocated - skiping for now")
+    @run_in_separate_process
     def test_ablp_dataloader(
         self,
         _,
