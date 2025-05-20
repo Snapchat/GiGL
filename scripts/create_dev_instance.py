@@ -154,8 +154,9 @@ if __name__ == "__main__":
             f"\n{param.long_description}" if param.long_description else ""
         )
         if param.default is None:
+            required_clause = "(required)" if param.required else "(optional)"
             input_question = (
-                f"-> {param.description}{long_description_clause} (required): "
+                f"-> {param.description}{long_description_clause} {required_clause}: "
             )
         else:
             input_question = f"-> {param.description}{long_description_clause}\nDefaults to: [{param.default}]: "

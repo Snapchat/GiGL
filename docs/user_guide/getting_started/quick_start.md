@@ -22,6 +22,14 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   Next, ssh into your instance. It will most likely ask you to install gpu drivers, follow instructions and do so.
   Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab off your instance click
   the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
+
+  Once done, ensure you can run multiarch docker builds by running following command:
+  ```
+  docker buildx create --driver=docker-container --use
+  sudo apt-get install qemu-user-static
+  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+  ```
+
 ````
 
 ````{dropdown} Manual Setup
@@ -32,6 +40,22 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   2. Install [Conda](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install):
 
   3. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
+
+  Once installed, ensure you can run multiarch docker builds by running following command:
+
+  Linux:
+  ```bash
+  docker buildx create --driver=docker-container --use
+  sudo apt-get install qemu-user-static
+  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+  ```
+
+  Mac:
+  ```bash
+  docker buildx create --driver=docker-container --use
+  brew install qemu
+  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+  ```
 
   4. Ensure you have GNU MAKE v >= 4.4; if not, please upgrade version.
   ```bash
@@ -92,7 +116,13 @@ python scripts/bootstrap_resource_config.py
 ```
 
 You will note that if the script finishes sucessfully, it will have added two environment variables to your main shell
-file i.e. (`~/.zshrc`); mainly `GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, and `GIGL_PROJECT`.
+file i.e. (`~/.zshrc`); mainly `GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, and `GIGL_PROJECT`. Ensure vars are available (you
+may need to restart shell)
+
+```bash
+echo $GIGL_TEST_DEFAULT_RESOURCE_CONFIG
+echo $GIGL_PROJECT
+```
 
 For detailed information on `resource config`, see our
 [resource config guide](../config_guides/resource_config_guide.md).
@@ -120,6 +150,7 @@ make \
   job_name="$(whoami)_gigl_hello_world_cora_nalp" \
   task_config_uri="$GIGL_CORA_NABLP_TASK_CONFIG" \
   resource_config_uri="$GIGL_TEST_DEFAULT_RESOURCE_CONFIG" \
+  start_at="config_populator" \
   run_dev_gnn_kubeflow_pipeline
 ```
 

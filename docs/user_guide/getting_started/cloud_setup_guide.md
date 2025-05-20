@@ -25,6 +25,7 @@ For more detailed information on meeting the prerequisites, refer to the officia
    - [VertexAI](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com)
    - [Dataproc](https://console.cloud.google.com/apis/library/dataproc.googleapis.com)
    - [BigQuery](https://console.cloud.google.com/apis/library/bigquery.googleapis.com)
+   - [Artifact Registry](https://console.cloud.google.com/apis/library/artifactregistry.googleapis.com)
 
 6. [Created GCS bucket(s)](https://console.cloud.google.com/storage/create-bucket) for storing assets. You need to
    create two different buckets for storing temporary and permanent assets. We will reference these as
@@ -46,26 +47,33 @@ For more detailed information on meeting the prerequisites, refer to the officia
    BQ datasets in the project, one for storing temporary assets, and one for output embeddings. We will reference these
    as `temp_assets_bq_dataset_name`, and `embedding_bq_dataset_name` respectively throughout the library.
 
-```{caution}
-The BQ datasets must be in the same project as you plan on running the pipelines.
-```
+   ```{caution}
+   The BQ datasets must be in the same project and be multi regional with the location being the country/superset region where you plan on running the pipelines - otherwise pipelines won't work. i.e. `us-central1` region maps to `US` for multi_regional dataset.
+   <img src="../../assets/images/cloud_setup/multi_regional_bq_dataset_example.png" alt="Regional BQ Dataset Example">
+   ```
 
-<img src="../../assets/images/cloud_setup/regional_bq_dataset_example.png" alt="Regional BQ Dataset Example">
+8. [Create a Docker Artifact Registry](https://console.cloud.google.com/artifacts) for storing your compiled docker
+   images that will contain your custom source code GiGL source. Ensure the registry is in the same region as your other
+   compute assets.
 
-8. Create a [new GCP service account](https://console.cloud.google.com/iam-admin/serviceaccounts) (or use an existing),
+   <img src="../../assets/images/cloud_setup/regional_registry_example.png" alt="Regional Registry Example">
+
+9. Create a [new GCP service account](https://console.cloud.google.com/iam-admin/serviceaccounts) (or use an existing),
    and [give it relevant IAM perms](https://cloud.google.com/iam/docs/roles-overview):
 
-   - `bigquery.user`
-   - `cloudprofiler.user`
-   - `compute.admin`
-   - `dataflow.admin`
-   - `dataflow.worker`
-   - `dataproc.editor`
-   - `logging.logWriter`
-   - `monitoring.metricWriter`
-   - `notebooks.legacyViewer`
-   - `aiplatform.user`
-   - `dataproc.worker`
+```{note}
+  You youself are going to need the following permissions to create new IAM bindings: `roles/resourcemanager.projectIamAdmin`, and `roles/iam.serviceAccountAdmin`
+```
+
+a. Firstly give the SA permission to use itself:
+
+```bash
+ gcloud iam service-accounts add-iam-policy-binding $SERVICE_ACCOUNT \
+ --member="serviceAccount:$SERVICE_ACCOUNT" \
+ --role="roles/iam.serviceAccountUser"
+```
+
+b. Next, the SA will need some permissions at the project level:
 
 ````{note}
 Example of granting `bigquery.user`:
@@ -74,11 +82,35 @@ Example of granting `bigquery.user`:
     --member="serviceAccount:$SERVICE_ACCOUNT" \
     --role="roles/bigquery.user"
   ```
-
-  You youself are going to need the following permissions to create new IAM bindings: `roles/resourcemanager.projectIamAdmin`
 ````
 
-9. Give your SA `storage.objectAdmin` on the bucket(s) you created
+- `bigquery.user`
+- `cloudprofiler.user`
+- `compute.admin`
+- `dataflow.admin`
+- `dataflow.worker`
+- `dataproc.editor`
+- `logging.logWriter`
+- `monitoring.metricWriter`
+- `notebooks.legacyViewer`
+- `aiplatform.user`
+- `dataproc.worker`
+- `artifactregistry.writer`
+
+c. Next we need to grant the GCP
+[Vertex AI Service Agent](https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents) i.e.
+`service-$PROJECT_NUMBER@gcp-sa-aiplatform-cc.iam.gserviceaccount.com` permissions to read from artifact registry so the
+VAI pipelines can pull the docker images you push to the registry you created. You can find your `$PROJECT_NUMBER` from
+your main project console page: `console.cloud.google.com`
+
+```bash
+ gcloud projects add-iam-policy-binding $PROJECT_ID \
+   --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-aiplatform-cc.iam.gserviceaccount.com" \
+   --role="roles/artifactregistry.reader"
+```
+
+10. Give your SA `storage.objectAdmin` and `roles/storage.legacyBucketReader` on the buckets you created i.e. to grant
+    `storage.objectAdmin` you can run:
 
 ```bash
 gcloud storage buckets add-iam-policy-binding $BUCKET_NAME \
@@ -86,22 +118,8 @@ gcloud storage buckets add-iam-policy-binding $BUCKET_NAME \
   --role="roles/storage.objectAdmin"
 ```
 
-10. Give your SA `roles/bigquery.dataOwner` on the datasets you created. See
+11. Give your SA `roles/bigquery.dataOwner` on the datasets you created. See
     [instructions](https://cloud.google.com/bigquery/docs/control-access-to-resources-iam#bq_2).
-
-11. (Recommended) If you are planning on developing on a cloud instance,
-    [follow the instructions below](#setup-gcp-vm-for-development).
-
-### Setup GCP VM for GiGL usage and/or development
-
-1. Take note of GCP account, Service Account, Buckets, and BQ Tables that were created as part of your cloud setup
-2. Run the dev instance bootstrap script to help create a dev instance for you in GCP:
-
-```bash
-python scripts/create_dev_instance.py
-```
-
-3. Once the script is setup
 
 ## AWS Project Setup Guide
 

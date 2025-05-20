@@ -13,9 +13,10 @@ PWD=$(shell pwd)
 # You can override GIGL_PROJECT by setting it in your environment i.e.
 # adding `export GIGL_PROJECT=your_project` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_PROJECT?=external-snap-ci-github-gigl
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cpu-dataflow
-DOCKER_IMAGE_MAIN_CUDA_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cuda
-DOCKER_IMAGE_MAIN_CPU_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cpu
+GIGL_DOCKER_ARTIFACT_REGISTRY?=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu-dataflow
+DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
+DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
