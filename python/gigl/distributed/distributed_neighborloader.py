@@ -35,18 +35,6 @@ DEFAULT_NUM_CPU_THREADS = 2
 
 
 class DistNeighborLoader(DistLoader):
-    # _batch_store is a multi-process shared dict that stores the sampled nodes for each process.
-    # It is a mapping of (node_type, sampled_nodes) to the "full batch".
-    # Since the full batch may contain invalid node ids (sentinels and padding),
-    # we need to strip out invalid node ids (< 0), in `_LabeledNodeSamplerInput`
-    # before we can sample.
-    # But since we do care about the sentinels and padding, we need to
-    # keep the "full batch" as the value of the dict.
-    # We use a multiprocessing dict as the sampling and transforms happen in different
-    # processes.
-    _batch_store: Optional[
-        abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
-    ] = None
     _transforms: Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]
 
     def __init__(
@@ -237,9 +225,7 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
-        input_data = _LabeledNodeSamplerInput(
-            node=node_ids, input_type=node_type, batch_store=self._batch_store
-        )
+        input_data = self._get_node_sampler_input(node_ids, node_type)
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
@@ -255,6 +241,13 @@ class DistNeighborLoader(DistLoader):
             seed=None,  # it's actually optional - None means random.
         )
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
+
+    def _get_node_sampler_input(
+        self, node: torch.Tensor, input_type: Optional[Union[NodeType, str]]
+    ) -> NodeSamplerInput:
+        if len(node.shape) != 1:
+            raise ValueError(f"Input nodes must be a 1D tensor, got {node.shape}.")
+        return NodeSamplerInput(node, input_type)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
@@ -438,6 +431,15 @@ class DistABLPLoader(DistNeighborLoader):
                 dim=1,
             )  # (num_nodes X (num_positive_labels + 3))
 
+        # _batch_store is a multi-process shared dict that stores the sampled nodes for each process.
+        # It is a mapping of (node_type, sampled_nodes) to the "full batch".
+        # Since the full batch may contain invalid node ids (sentinels and padding),
+        # we need to strip out invalid node ids (< 0), in `_LabeledNodeSamplerInput`
+        # before we can sample.
+        # But since we do care about the sentinels and padding, we need to
+        # keep the "full batch" as the value of the dict.
+        # We use a multiprocessing dict as the sampling and transforms happen in different
+        # processes.
         node_batches_by_sampled_nodes: abc.MutableMapping[
             tuple[NodeType, tuple[int, ...]], torch.Tensor
         ] = torch.multiprocessing.Manager().dict()
@@ -486,6 +488,11 @@ class DistABLPLoader(DistNeighborLoader):
             shuffle=shuffle,
             drop_last=drop_last,
         )
+
+    def _get_node_sampler_input(
+        self, node: torch.Tensor, input_type: Optional[Union[NodeType, str]]
+    ) -> NodeSamplerInput:
+        return _LabeledNodeSamplerInput(node, input_type, self._batch_store)
 
 
 def _shard_nodes_by_process(

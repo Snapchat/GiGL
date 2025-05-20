@@ -25,7 +25,6 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     GraphPartitionData,
     PartitionOutput,
     message_passing_to_negative_label,
@@ -86,57 +85,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # Cora has 2708 nodes, make sure we go over all of them.
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
-
-    # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
-    @unittest.skip("Failing due to ports being already allocated - skiping for now")
-    def test_distributed_neighbor_loader_batched(self):
-        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        edge_index = {
-            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
-                [
-                    [10, 10, 11, 11, 12, 12, 13, 13],
-                    [11, 12, 12, 13, 14, 11, 14, 11],
-                ]
-            ),
-        }
-        partition_output = PartitionOutput(
-            node_partition_book=to_heterogeneous_node(torch.zeros(14)),
-            edge_partition_book={
-                e_type: torch.zeros(e_idx.size(1))
-                for e_type, e_idx in edge_index.items()
-            },
-            partitioned_edge_index={
-                etype: GraphPartitionData(
-                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
-                )
-                for etype, idx in edge_index.items()
-            },
-            partitioned_edge_features=None,
-            partitioned_node_features=None,
-            partitioned_negative_labels=None,
-            partitioned_positive_labels=None,
-        )
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output)
-
-        loader = DistNeighborLoader(
-            dataset=dataset,
-            num_neighbors=[2],
-            input_nodes=(node_type, torch.tensor([[10, 12]])),
-            context=self._context,
-            local_process_rank=0,
-            local_process_world_size=1,
-        )
-        count = 0
-        for datum in loader:
-            self.assertIsInstance(datum, HeteroData)
-            count += 1
-
-        self.assertEqual(count, 1)
-        assert_tensor_equality(
-            datum[node_type].node, torch.tensor([10, 11, 12, 14]), dim=0
-        )
-        assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")

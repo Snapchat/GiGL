@@ -275,7 +275,7 @@ def _build_dataset_process(
         partitioner_class=partitioner_class,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
-        treat_ablp_graph_as_heterogeneous=should_convert_labels_to_edges,
+        should_convert_labels_to_edges=should_convert_labels_to_edges,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
     )
