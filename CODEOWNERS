@@ -2,6 +2,6 @@
 * @svij-sc @nshah-sc @kmontemayor2-sc @yliu2-sc @mkolodner-sc
 
 # More strict rules for specific files and directories
-.github/ @svij-sc @kmontemayor2-sc
+.github/ @svij-sc @kmontemayor2-sc @nshah-sc
 requirements @svij-sc @kmontemayor2-sc @nshah-sc
 python/pyproject.toml @svij-sc @kmontemayor2-sc @nshah-sc
