@@ -1,11 +1,4 @@
 graphMetadata:
-  condensedEdgeTypeMap:
-    '0':
-      dstNodeType: paper
-      relation: cites
-      srcNodeType: paper
-  condensedNodeTypeMap:
-    '0': paper
   edgeTypes:
   - dstNodeType: paper
     relation: cites
@@ -16,7 +9,7 @@ datasetConfig:
   dataPreprocessorConfig:
     dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
     dataPreprocessorArgs:
-      # Supported keys in python/tests/test_assets/dataset_mocking/lib/mocked_dataset_artifact_metadata.json
+      # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
 inferencerConfig:
   inferencerArgs:
@@ -27,9 +20,12 @@ inferencerConfig:
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false
-  shouldSkipTraining: true  # GLT Task does not have a training phase that is being tested right now
+  shouldSkipTraining: true  # Live subgraph sampling pipelines do not have a training phase that is being tested right now
   shouldSkipModelEvaluation: true
   trainedModelMetadata:
+    # This is an example model trained on the CORA dataset. To train a custom CORA model, please refer to the
+    # `gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml` config template.
+    # You can run a pipeline for training on CORA using `make run_cora_udl_e2e_kfp_test`.
     trainedModelUri: gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features_user_defined_labels/trainer/models/model.pt
 taskMetadata:
   nodeAnchorBasedLinkPredictionTaskMetadata:
