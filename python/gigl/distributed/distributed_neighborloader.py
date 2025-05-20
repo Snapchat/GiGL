@@ -401,6 +401,8 @@ class DistABLPLoader(DistNeighborLoader):
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset, input_nodes, positive_label_edge_type, negative_label_edge_type
         )  # (num_nodes X num_positive_labels), (num_nodes X num_negative_labels)
+        # TODO (kmonte): Potentially - we can avoid using the sentinel values with either nested/jagged tensors
+        # or upstreaming changes to GLT to allow us to disasmbiguate between anchors and labels.
         extracted_input_nodes = input_nodes.unsqueeze(1)  # (num_nodes X 1)
         if negative_labels is not None:
             anchor_sentinel = -2
@@ -440,6 +442,7 @@ class DistABLPLoader(DistNeighborLoader):
         # keep the "full batch" as the value of the dict.
         # We use a multiprocessing dict as the sampling and transforms happen in different
         # processes.
+        # TODO (kmonte): We can avoid _batch_store if we have GLT output the "full batch".
         node_batches_by_sampled_nodes: abc.MutableMapping[
             tuple[NodeType, tuple[int, ...]], torch.Tensor
         ] = torch.multiprocessing.Manager().dict()
