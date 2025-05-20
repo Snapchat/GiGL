@@ -775,7 +775,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         if not isinstance(resource_config_uri, LocalUri):
             file_loader = FileLoader()
             temp_file = file_loader.load_to_temp_file(file_uri_src=resource_config_uri)
-            resource_config_uri = LocalUri(file_uri=temp_file.name)
+            resource_config_uri = LocalUri(uri=temp_file.name)
 
         self._compile_and_run_splitgen_pipeline_locally(
             frozen_gbml_config_uri=frozen_gbml_config_uri,
@@ -825,7 +825,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         if not isinstance(resource_config_uri, LocalUri):
             file_loader = FileLoader()
             temp_file = file_loader.load_to_temp_file(file_uri_src=resource_config_uri)
-            resource_config_uri = LocalUri(file_uri=temp_file.name)
+            resource_config_uri = LocalUri(uri=temp_file.name)
 
         self._compile_and_run_splitgen_pipeline_locally(
             frozen_gbml_config_uri=frozen_gbml_config_uri,
@@ -877,7 +877,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         if not isinstance(resource_config_uri, LocalUri):
             file_loader = FileLoader()
             temp_file = file_loader.load_to_temp_file(file_uri_src=resource_config_uri)
-            resource_config_uri = LocalUri(file_uri=temp_file.name)
+            resource_config_uri = LocalUri(uri=temp_file.name)
 
         self._compile_and_run_splitgen_pipeline_locally(
             frozen_gbml_config_uri=frozen_gbml_config_uri,
