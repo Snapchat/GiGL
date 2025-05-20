@@ -5,6 +5,7 @@ from typing import MutableMapping
 import graphlearn_torch as glt
 import torch
 import torch.distributed.rpc
+from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
@@ -85,6 +86,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
+        shutdown_rpc()
+
     @run_in_separate_process
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -135,6 +138,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
+        shutdown_rpc()
+
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
@@ -169,6 +174,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 4057)
+
+        shutdown_rpc()
 
     @parameterized.expand(
         [
@@ -266,6 +273,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
+
+        shutdown_rpc()
 
 
 if __name__ == "__main__":

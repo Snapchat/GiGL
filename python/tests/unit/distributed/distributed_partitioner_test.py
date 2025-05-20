@@ -7,7 +7,7 @@ from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple, Type, 
 import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.distributed import init_rpc, init_worker_group
+from graphlearn_torch.distributed import init_rpc, init_worker_group, shutdown_rpc
 from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
@@ -30,6 +30,7 @@ from tests.test_assets.distributed.constants import (
     USER_NODE_TYPE,
     USER_TO_USER_EDGE_TYPE,
 )
+from tests.test_assets.distributed.decorator import run_in_separate_process
 from tests.test_assets.distributed.run_distributed_partitioner import (
     InputDataStrategy,
     run_distributed_partitioner,
@@ -867,6 +868,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 tensor_a=expected_negative_labels, tensor_b=output_neg_label, dim=1
             )
 
+    @run_in_separate_process
     def test_partitioning_failure(self) -> None:
         master_port = glt.utils.get_free_port(self._master_ip_address)
         rank = 0
@@ -960,6 +962,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 AssertionError, "Must have registered nodes prior to partitioning them"
             ):
                 partitioner.partition()
+        shutdown_rpc()
 
 
 if __name__ == "__main__":
