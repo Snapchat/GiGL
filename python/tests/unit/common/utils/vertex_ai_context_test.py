@@ -10,6 +10,7 @@ from gigl.common.utils.vertex_ai_context import (
     get_host_name,
     get_leader_hostname,
     get_leader_port,
+    get_local_world_size,
     get_rank,
     get_vertex_ai_job_id,
     get_world_size,
@@ -49,6 +50,10 @@ class TestVertexAIContext(unittest.TestCase):
     def test_get_rank(self):
         self.assertEqual(get_rank(), 1)
 
+    @patch.dict(os.environ, VAI_JOB_ENV | {"LOCAL_WORLD_SIZE": "4"})
+    def test_get_local_world_size(self):
+        self.assertEqual(get_local_world_size(), 4)
+
     def test_throws_if_not_on_vai(self):
         with self.assertRaises(Exception):
             get_vertex_ai_job_id()
@@ -62,6 +67,8 @@ class TestVertexAIContext(unittest.TestCase):
             get_world_size()
         with self.assertRaises(Exception):
             get_rank()
+        with self.assertRaises(Exception):
+            get_local_world_size()
 
     @patch("subprocess.check_output", return_value=b"127.0.0.1")
     @patch("time.sleep", return_value=None)
@@ -72,6 +79,7 @@ class TestVertexAIContext(unittest.TestCase):
             "RANK": "0",
             "WORLD_SIZE": "2",
             LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: "gs://FAKE BUCKET DNE/some-file.txt",
+            "LOCAL_WORLD_SIZE": "4",
             "CLOUD_ML_JOB_ID": "test_job_id",
         },
     )
@@ -80,6 +88,7 @@ class TestVertexAIContext(unittest.TestCase):
         self.assertEqual(distributed_context.main_worker_ip_address, "127.0.0.1")
         self.assertEqual(distributed_context.global_rank, 0)
         self.assertEqual(distributed_context.global_world_size, 2)
+        self.assertEqual(distributed_context.local_world_size, 4)
         mock_upload.assert_called_once_with(
             gcs_path=GcsUri("gs://FAKE BUCKET DNE/some-file.txt"), content="127.0.0.1"
         )
@@ -95,6 +104,7 @@ class TestVertexAIContext(unittest.TestCase):
             "RANK": "1",
             "WORLD_SIZE": "2",
             LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: "gs://FAKE BUCKET DNE/some-file.txt",
+            "LOCAL_WORLD_SIZE": "4",
             "CLOUD_ML_JOB_ID": "test_job_id",
         },
     )
@@ -106,6 +116,7 @@ class TestVertexAIContext(unittest.TestCase):
         self.assertEqual(distributed_context.main_worker_ip_address, "127.0.0.1")
         self.assertEqual(distributed_context.global_rank, 1)
         self.assertEqual(distributed_context.global_world_size, 2)
+        self.assertEqual(distributed_context.local_world_size, 4)
         mock_read.assert_has_calls(
             [
                 call(GcsUri("gs://FAKE BUCKET DNE/some-file.txt")),
