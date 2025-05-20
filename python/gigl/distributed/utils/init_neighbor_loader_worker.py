@@ -21,6 +21,7 @@ def get_process_group_name(process_rank: int) -> str:
     """
     return f"distributed-process-{process_rank}"
 
+_PROCCESSES_SETUP: set[int] = set()
 
 # torch.set_num_interop_threads() can only be called once, otherwise we see:
 # RuntimeError: Error: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
@@ -121,8 +122,14 @@ def init_neighbor_loader_worker(
         p = psutil.Process()
         p.cpu_affinity(logical_cores)
 
-        torch.set_num_threads(num_cpu_threads)
-        torch.set_num_interop_threads(num_cpu_threads)
+        if local_process_rank not in _PROCCESSES_SETUP:
+            torch.set_num_threads(num_cpu_threads)
+            torch.set_num_interop_threads(num_cpu_threads)
+            _PROCCESSES_SETUP.add(local_process_rank)
+        else:
+            logger.info(
+                f"---Machine {rank} local process number {local_process_rank} already set up CPU threads"
+            )
     else:
         # Setting the default CUDA device for the current process to be the
         # device. Without it, there will be a process created on cuda:0 device, and

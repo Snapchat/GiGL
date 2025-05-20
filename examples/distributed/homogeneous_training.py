@@ -137,17 +137,17 @@ def _train_process(
         shuffle=True,
         drop_last=True,
     )
-    val_loader = DistABLPLoader(
-        dataset=dataset,
-        context=dist_context,
-        num_neighbors=num_neighbors,
-        local_process_rank=process_number,
-        local_process_world_size=total_processes,
-        input_nodes=to_homogeneous(dataset.val_node_ids),
-        pin_memory_device=device,
-        shuffle=True,
-        drop_last=True,
-    )
+    # val_loader = DistABLPLoader(
+    #     dataset=dataset,
+    #     context=dist_context,
+    #     num_neighbors=num_neighbors,
+    #     local_process_rank=process_number,
+    #     local_process_world_size=total_processes,
+    #     input_nodes=to_homogeneous(dataset.val_node_ids),
+    #     pin_memory_device=device,
+    #     shuffle=True,
+    #     drop_last=True,
+    # )
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         context=dist_context,
@@ -158,6 +158,8 @@ def _train_process(
         pin_memory_device=device,
         shuffle=True,
         drop_last=True,
+        _main_inference_port=50_300,
+        _main_sampling_port=50_400,
     )
     torch.distributed.init_process_group(
         backend="nccl",
@@ -223,7 +225,8 @@ def train(
 ) -> None:
     train_start_time = time.time()
 
-    dist_context = connect_worker_pool()
+    #dist_context = connect_worker_pool()
+    dist_context = DistributedContext("localhost", 0, 1)
     dataset = build_dataset_from_task_config_uri(
         task_config_uri, dist_context, is_inference=False
     )
