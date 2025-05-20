@@ -6,92 +6,17 @@ pre-processing, training logic, inference.
 This page outlines the steps needed to get up and running an end to end pipeline in different scenarios, starting from a
 simple local setup to more complex cloud-based operations.
 
-## 1. Setup instance for GiGL usage and/or development
+## 1. Install GiGL
 
-Below we provide two ways to bootstrap an environment for using and/or developing GiGL
-
-````{dropdown} (Recommended) Developing/experimenting on a GCP cloud instance.
-:color: primary
-
-  We will need to create a GCP instance and setup needed pre-requisites to install and use GiGL.
-
-  You can use our `create_dev_instance.py` script to automatically create an instance for you:
-  ```bash
-    python scripts/create_dev_instance.py
-  ```
-  Next, ssh into your instance. It will most likely ask you to install gpu drivers, follow instructions and do so.
-  Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab off your instance click
-  the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
-
-  Once done, ensure you can run multiarch docker builds by running following command:
-  ```
-  docker buildx create --driver=docker-container --use
-  sudo apt-get install qemu-user-static
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
-
-````
-
-````{dropdown} Manual Setup
-:color: primary
-
-  1. If on MAC, Install [Homebrew](https://brew.sh/).
-
-  2. Install [Conda](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install):
-
-  3. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
-
-  Once installed, ensure you can run multiarch docker builds by running following command:
-
-  Linux:
-  ```bash
-  docker buildx create --driver=docker-container --use
-  sudo apt-get install qemu-user-static
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
-
-  Mac:
-  ```bash
-  docker buildx create --driver=docker-container --use
-  brew install qemu
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
-
-  4. Ensure you have GNU MAKE v >= 4.4; if not, please upgrade version.
-  ```bash
-  make --version
-  ```
-
-  **Install make on MAC:**
-  ```bash
-  brew install make
-  ```
-
-  Subsequently, you should be able to use `gmake` instead of `make`
-
-  **Install make on Linux:**
-  ```
-  apt-get update && apt-get upgrade -y && apt-get install -y cmake
-  ```
-
-  5. Install [gcloud cli](https://cloud.google.com/sdk/docs/install):
-    - Make sure you are authenticated to use Google Cloud services: `gcloud init` +
-      `gcloud auth application-default login`.
-    - Make sure you are authenticated to pull Docker images: `gcloud auth configure-docker us-central1-docker.pkg.dev`.
-
-````
+Before proceeding, make sure you have correctly installed `gigl` by following the
+[installation guide](./installation.md).
 
 ## 2. Setup your Cloud Environment
 
 For GiGL to function you need to se up a few cloud resources including a Service Account, GCS Buckets, BQ tables and
 relevent permissions. Please follow instructions under the [Cloud Setup Guide](./cloud_setup_guide.md)
 
-## 3. Install GiGL
-
-Before proceeding, make sure you have correctly installed `gigl` by following the
-[installation guide](./installation.md).
-
-## 4. Config Setup
+## 3. Config Setup
 
 To run an end to end pipeline in GiGL, two configs are required: `resource config`, and `task config`. The
 `resource config` specifies the resource and environment configurations for each component in the GiGL. Whereas the
@@ -116,12 +41,13 @@ python scripts/bootstrap_resource_config.py
 ```
 
 You will note that if the script finishes sucessfully, it will have added two environment variables to your main shell
-file i.e. (`~/.zshrc`); mainly `GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, and `GIGL_PROJECT`. Ensure vars are available (you
-may need to restart shell)
+file i.e. (`~/.zshrc`); mainly `GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, `GIGL_PROJECT`, and `GIGL_DOCKER_ARTIFACT_REGISTRY`.
+Ensure vars are available (you may need to restart shell)
 
 ```bash
 echo $GIGL_TEST_DEFAULT_RESOURCE_CONFIG
 echo $GIGL_PROJECT
+echo $GIGL_DOCKER_ARTIFACT_REGISTRY
 ```
 
 For detailed information on `resource config`, see our
@@ -133,7 +59,7 @@ The template task config is for populating custom class paths, custom arguments,
 passed into config populator. For task config usage/spec creation, see the
 [task_config_guide](../config_guides/task_config_guide.md).
 
-## 5. Running an End To End GiGL Pipeline
+## 4. Running an End To End GiGL Pipeline
 
 ```{caution}
 Since `.whl`s for GiGL have not been released yet, using GiGL workflows currently follows the same process as you would kick them off if developing GiGL. This is expected to change once wheels are available.
