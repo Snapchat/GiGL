@@ -71,6 +71,9 @@ class GLTInferencer:
         inference_process_runtime_args = (
             gbml_config_pb_wrapper.inferencer_config.inferencer_args
         )
+        local_world_size = inference_process_runtime_args.get(
+            "num_inference_processes_per_machine", "1"
+        )
         assert isinstance(
             resource_config_wrapper.inferencer_config, VertexAiResourceConfig
         )
@@ -105,6 +108,7 @@ class GLTInferencer:
             args=job_args,
             environment_variables=[
                 {"name": "TF_CPP_MIN_LOG_LEVEL", "value": "3"},
+                {"name": "LOCAL_WORLD_SIZE", "value": local_world_size},
             ],
             machine_type=inferencer_resource_config.machine_type,
             accelerator_type=inferencer_resource_config.gpu_type.upper().replace(
