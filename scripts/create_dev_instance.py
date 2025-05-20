@@ -165,14 +165,14 @@ if __name__ == "__main__":
             if param.default
             else param.description
         )
-        parser.add_argument(f"--{key}", type=str, default=param.default, help=help_text)
+        parser.add_argument(f"--{key}", type=str, help=help_text)
 
     args = parser.parse_args()
 
     values: dict[str, str] = {}
     for key, param in supported_params.defaults.items():
         # Check if value is provided in command line arguments
-        if getattr(args, key) is not None:
+        if getattr(args, key):
             values[key] = getattr(args, key)
             continue
         # If not, prompt for input
