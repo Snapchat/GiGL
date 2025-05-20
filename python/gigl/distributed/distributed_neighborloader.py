@@ -25,214 +25,16 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     select_label_edge_types,
     to_heterogeneous_edge,
-    to_homogeneous,
 )
-from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 
 logger = Logger()
 
 # When using CPU based inference/training, we default cpu threads for neighborloading on top of the per process parallelism.
 DEFAULT_NUM_CPU_THREADS = 2
 
-_GraphData = TypeVar("_GraphData", Data, HeteroData)
-
-
-class _LabeledNodeSamplerInput(NodeSamplerInput):
-    """
-    Allows for guaranteeing that all "label sets" are sampled together.
-
-    A "label set" is an anchor node, and it's positive and negative labels.
-    For instance if we have the graph:
-        # Message passing
-        A -> B -> C
-        # Positive label
-        A -> D
-        # Negative label
-        A -> E
-
-    Then the label set for A is (A, D, E).
-
-    If this is being used for labeled input, then the `node` input should be a tensor of shape N x M
-    where N is the number of label sets, and M is the number of nodes in each label set.
-
-    This class may also be given a tensor of shape N x 1, in which case there is no guarantee
-    a node and it's labels are sampled together.
-    """
-
-    def __init__(
-        self,
-        node: torch.Tensor,
-        input_type: Optional[Union[str, NodeType]],
-        batch_store: Optional[
-            abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
-        ] = None,
-    ):
-        super().__init__(node, input_type)
-        self._batch_store = batch_store
-
-    def __len__(self) -> int:
-        return self.node.shape[0]
-
-    def __getitem__(
-        self, index: Union[torch.Tensor, Any]
-    ) -> "_LabeledNodeSamplerInput":
-        if not isinstance(index, torch.Tensor):
-            index = torch.tensor(index, dtype=torch.long)
-        index = index.to(self.node.device)
-        full_batch = self.node[index].view(-1)
-        nodes_to_sample = full_batch[full_batch >= 0]
-        if self._batch_store is not None:
-            # Dedup the nodes to sample.
-            # We use a `dict` here to dedup the nodes, as `set` does not preserve
-            # insertion order, which need to keep we can differentiate betwee:
-            # anchor: A, positive: B, negative: C
-            # and
-            # anchor: C, positive: B, negative: A
-            # We use a tuple so it can be a hash key.
-            nodes = tuple(
-                dict(zip(nodes_to_sample.tolist(), itertools.cycle([None]))).keys()
-            )
-            self._batch_store[self.input_type, nodes] = full_batch
-        return _LabeledNodeSamplerInput(nodes_to_sample, self.input_type)
-
-
-class _SupervisedToHomogeneous:
-    """Transform class to convert a heterogeneous graph to a homogeneous graph."""
-
-    def __init__(
-        self,
-        message_passing_edge_type: EdgeType,
-    ):
-        """
-        Args:
-            message_passing_edge_type (EdgeType): The edge type to use for message passing.
-        """
-
-        self._message_passing_edge_type = message_passing_edge_type
-
-    def __call__(self, data: HeteroData) -> Data:
-        """Transform the heterogeneous graph to a homogeneous graph."""
-        homogeneous_data = data.edge_type_subgraph(
-            [self._message_passing_edge_type]
-        ).to_homogeneous(add_edge_type=False, add_node_type=False)
-
-        return homogeneous_data
-
-
-class _SetLabels:
-    """Transform class to set labels for the nodes in the graph."""
-
-    def __init__(
-        self,
-        batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor],
-        anchor_node_sentinel: int,
-        positive_label_sentinel: int,
-        negative_label_sentinel: Optional[int] = None,
-    ):
-        """
-        Sets the labels for nodes in Data.y_positive and Data.y_negative.
-        The labels are set based on the anchor node and positive label sentinels.
-        We assume that the input batch is a 1D tensor of node ids, or fornat:
-            `[<anchor node>, <anchor node sentinel>, <posittuple in theive labels>, <positive label sentinel>, <negative label>, <negative label sentinel>]`
-
-        We expect that the batch store contains:
-            * `(node_type, node_ids)` as the key
-            * where `node_ids` is a 1D tensor of node ids
-            * where the sentinel values have been removed,
-            * the node ids have been de-duped
-            * and the node ids are in the same order as the input batch.
-
-        For example, if the input batch is:
-            `[0, -1, 1, -2, 3, 1 -3]`
-            for anchor node 0, positive label 1, and negative labels 3, 1,
-            and sentinal values are -1, -2, and -3,
-        then the batch store will have the key `(node_type, (0, 1, 3))`.
-
-        Args:
-            batch_store (abc.MutableMapping): The batch store to use for the graph.
-            anchor_node_sentinel (int): The sentinel value for the anchor node.
-            positive_label_sentinel (int): The sentinel value for the positive label.
-            negative_label_sentinel (Optional[int]): The sentinel value for the negative label.
-            If not provided, then negative labels will not be set.
-        """
-        self._batch_store = batch_store
-        self._anchor_node_sentinel = anchor_node_sentinel
-        self._positive_label_sentinel = positive_label_sentinel
-        self._negative_label_sentinel = negative_label_sentinel
-
-    def __call__(self, data: _GraphData) -> _GraphData:
-        """Transform the heterogeneous graph to a homogeneous graph."""
-        is_heterogeneous = isinstance(data, HeteroData)
-        positive_labels: dict[NodeType, torch.Tensor] = {}
-        negative_labels: dict[NodeType, torch.Tensor] = {}
-        if is_heterogeneous:
-            node_types = data.node_types
-        else:
-            node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
-
-        # The approach here is:
-        # For each node type:
-        # 1. Get the "full batch" of node ids, containing the sentinels.
-        # e.g. [<anchor node>, <anchor node sentinel>, <positive labels>, <positive label sentinel>, <negative labels>, <negative label sentinel>]
-        # or [0, -1, 1, 2, -3, 3, -4]
-        # Where 0 is the anchor node, -1 is the anchor node sentinel, 1 and 2 are the positive labels,
-        # -3 is the positive label sentinel, 3 is the negative label, and -4 is the negative label sentinel.
-        # 2. Select the indices of all the sentinels.
-        # 3. Get the labels between the sentinels.
-        # 4. Set the labels in the data object.
-        # TODO(kmonte): Since the labels are padded, we should be able to vectorize this.
-        for node_type in node_types:
-            full_batch: torch.Tensor
-            # data.batch is already de-duped.
-            if is_heterogeneous:
-                batch = tuple(data[node_type].batch.tolist())
-            else:
-                batch = tuple(data.batch.tolist())
-            full_batch = self._batch_store.pop((node_type, batch))
-            achor_node_sentinels = torch.nonzero(
-                full_batch == self._anchor_node_sentinel
-            ).squeeze(1)
-            positive_label_sentinels = torch.nonzero(
-                full_batch == self._positive_label_sentinel
-            ).squeeze(1)
-            pos_labels = []
-            if self._negative_label_sentinel is not None:
-                negative_label_sentinels = torch.nonzero(
-                    full_batch == self._negative_label_sentinel
-                ).squeeze(1)
-                neg_labels = []
-                for anchor, positive, negative in zip(
-                    achor_node_sentinels,
-                    positive_label_sentinels,
-                    negative_label_sentinels,
-                ):
-                    pos_batch = full_batch[anchor + 1 : positive].view(-1)
-                    pos_labels.append(pos_batch)
-                    neg_batch = full_batch[positive + 1 : negative].view(-1)
-                    neg_labels.append(neg_batch)
-            else:
-                neg_labels = None
-                for anchor, positive in zip(
-                    achor_node_sentinels, positive_label_sentinels
-                ):
-                    pos_batch = full_batch[anchor + 1 : positive].view(-1)
-                    pos_labels.append(pos_batch)
-            positive_labels[node_type] = torch.stack(pos_labels)
-            if neg_labels is not None:
-                negative_labels[node_type] = torch.stack(neg_labels)
-        if is_heterogeneous:
-            data.y_positive = positive_labels
-            if negative_labels:
-                data.y_negative = negative_labels
-        else:
-            data.y_positive = to_homogeneous(positive_labels)
-            if negative_labels:
-                data.y_negative = to_homogeneous(negative_labels)
-        return data
-
 
 class DistNeighborLoader(DistLoader):
-    _batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
     _transforms: Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]
 
     def __init__(
@@ -350,13 +152,6 @@ class DistNeighborLoader(DistLoader):
                     f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
                 )
 
-        if not hasattr(self, "_batch_store"):
-            logger.info("Setting batch store")
-            node_batches_by_sampled_nodes: abc.MutableMapping[
-                tuple[NodeType, tuple[int, ...]], torch.Tensor
-            ] = torch.multiprocessing.Manager().dict()
-            self._batch_store = node_batches_by_sampled_nodes
-
         curr_process_nodes = _shard_nodes_by_process(
             input_nodes=input_nodes,
             local_process_rank=local_process_rank,
@@ -430,9 +225,7 @@ class DistNeighborLoader(DistLoader):
         else:
             node_type, node_ids = curr_process_nodes
 
-        input_data = _LabeledNodeSamplerInput(
-            node=node_ids, input_type=node_type, batch_store=self._batch_store
-        )
+        input_data = self._get_node_sampler_input(node_ids, node_type)
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
@@ -448,6 +241,13 @@ class DistNeighborLoader(DistLoader):
             seed=None,  # it's actually optional - None means random.
         )
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
+
+    def _get_node_sampler_input(
+        self, node: torch.Tensor, input_type: Optional[Union[NodeType, str]]
+    ) -> NodeSamplerInput:
+        if len(node.shape) != 1:
+            raise ValueError(f"Input nodes must be a 1D tensor, got {node.shape}.")
+        return NodeSamplerInput(node, input_type)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
@@ -580,10 +380,28 @@ class DistABLPLoader(DistNeighborLoader):
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             DEFAULT_HOMOGENEOUS_EDGE_TYPE, dataset.graph.keys()
         )
+        # We want to setup "input_nodes" as an approppriately shaped tensor for sampling.
+        # Our goal here is to:
+        # * Sample against anchor nodes and their labels together
+        # * Later dissambiguate what anchors have which labels.
+        # Let's say we have the following graph:
+        # Message passing edges:
+        # A -> B -> C
+        # Positive label edges:
+        # A -> D
+        # B -> F
+        # Negative label edges:
+        # A -> E
+        # B -> G
+        # Then we want to sample `{A, D, E}, {B, F, G}` together.
+        # Therefor we want to create `input_nodes` as:
+        # `[[A, -2, D, -3, E, -4], [B, -2, F, -3, G, -4]]`
+        # We use -2, -3, -4 as sentinels to distinguish between the anchor node, positive labels, and negative labels.
+        # The sentinels will later be stripped out by _LabeledNodeSamplerInput.
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset, input_nodes, positive_label_edge_type, negative_label_edge_type
-        )
-        extracted_input_nodes = input_nodes.unsqueeze(1)
+        )  # (num_nodes X num_positive_labels), (num_nodes X num_negative_labels)
+        extracted_input_nodes = input_nodes.unsqueeze(1)  # (num_nodes X 1)
         if negative_labels is not None:
             anchor_sentinel = -2
             positive_sentinel = -3
@@ -598,7 +416,7 @@ class DistABLPLoader(DistNeighborLoader):
                     torch.full_like(extracted_input_nodes, negative_sentinel),
                 ],
                 dim=1,
-            )
+            )  # (num_nodes X (num_positive_labels + num_negative_labels + 4))
         else:
             anchor_sentinel = -2
             positive_sentinel = -3
@@ -611,8 +429,17 @@ class DistABLPLoader(DistNeighborLoader):
                     torch.full_like(extracted_input_nodes, positive_sentinel),
                 ],
                 dim=1,
-            )
+            )  # (num_nodes X (num_positive_labels + 3))
 
+        # _batch_store is a multi-process shared dict that stores the sampled nodes for each process.
+        # It is a mapping of (node_type, sampled_nodes) to the "full batch".
+        # Since the full batch may contain invalid node ids (sentinels and padding),
+        # we need to strip out invalid node ids (< 0), in `_LabeledNodeSamplerInput`
+        # before we can sample.
+        # But since we do care about the sentinels and padding, we need to
+        # keep the "full batch" as the value of the dict.
+        # We use a multiprocessing dict as the sampling and transforms happen in different
+        # processes.
         node_batches_by_sampled_nodes: abc.MutableMapping[
             tuple[NodeType, tuple[int, ...]], torch.Tensor
         ] = torch.multiprocessing.Manager().dict()
@@ -662,6 +489,11 @@ class DistABLPLoader(DistNeighborLoader):
             drop_last=drop_last,
         )
 
+    def _get_node_sampler_input(
+        self, node: torch.Tensor, input_type: Optional[Union[NodeType, str]]
+    ) -> NodeSamplerInput:
+        return _LabeledNodeSamplerInput(node, input_type, self._batch_store)
+
 
 def _shard_nodes_by_process(
     input_nodes: Union[torch.Tensor, Tuple[str, torch.Tensor]],
@@ -685,3 +517,235 @@ def _shard_nodes_by_process(
         node_type, node_ids = input_nodes
         node_ids = shard(node_ids)
         return (node_type, node_ids)
+
+
+_GraphData = TypeVar("_GraphData", Data, HeteroData)
+
+
+class _LabeledNodeSamplerInput(NodeSamplerInput):
+    """
+    Allows for guaranteeing that all "label sets" are sampled together.
+
+    A "label set" is an anchor node, and it's positive and negative labels.
+    For instance if we have the graph:
+        # Message passing
+        A -> B -> C
+        # Positive label
+        A -> D
+        # Negative label
+        A -> E
+
+    Then the label set for A is (A, D, E).
+
+    If this is being used for labeled input, then the `node` input should be a tensor of shape N x M
+    where N is the number of label sets, and M is the number of nodes in each label set.
+
+    This class may also be given a tensor of shape N x 1, in which case there is no guarantee
+    a node and it's labels are sampled together.
+    """
+
+    def __init__(
+        self,
+        node: torch.Tensor,
+        input_type: Optional[Union[str, NodeType]],
+        batch_store: Optional[
+            abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor]
+        ] = None,
+    ):
+        """
+        Args:
+            node (torch.Tensor): The node ids to sample.
+            input_type (Union[str, NodeType]): The type of the node.
+            batch_store (Optional[abc.MutableMapping[tuple[NodeType, tuple[int, ...]]]]): The batch store to use for the sampled nodes. Should be a multiprocessing dict.
+        """
+        super().__init__(node, input_type)
+        self._batch_store = batch_store
+
+    def __len__(self) -> int:
+        return self.node.shape[0]
+
+    def __getitem__(
+        self, index: Union[torch.Tensor, Any]
+    ) -> "_LabeledNodeSamplerInput":
+        if not isinstance(index, torch.Tensor):
+            index = torch.tensor(index, dtype=torch.long)
+        index = index.to(self.node.device)
+        full_batch = self.node[index].view(-1)
+        nodes_to_sample = full_batch[full_batch >= 0]
+        if self._batch_store is not None:
+            # Dedup the nodes to sample.
+            # We use a `dict` here to dedup the nodes, as `set` does not preserve
+            # insertion order, which need to keep we can differentiate between:
+            # anchor: A, positive: B, negative: C
+            # and
+            # anchor: C, positive: B, negative: A
+            # We use a tuple so it can be a hash key.
+            nodes = tuple(
+                dict(zip(nodes_to_sample.tolist(), itertools.cycle([None]))).keys()
+            )
+            self._batch_store[self.input_type, nodes] = full_batch
+        return _LabeledNodeSamplerInput(nodes_to_sample, self.input_type)
+
+
+class _SupervisedToHomogeneous:
+    """Transform class to convert a heterogeneous graph to a homogeneous graph."""
+
+    def __init__(
+        self,
+        message_passing_edge_type: EdgeType,
+    ):
+        """
+        Args:
+            message_passing_edge_type (EdgeType): The edge type to use for message passing.
+        """
+
+        self._message_passing_edge_type = message_passing_edge_type
+
+    def __call__(self, data: HeteroData) -> Data:
+        """Transform the heterogeneous graph to a homogeneous graph."""
+        homogeneous_data = data.edge_type_subgraph(
+            [self._message_passing_edge_type]
+        ).to_homogeneous(add_edge_type=False, add_node_type=False)
+
+        return homogeneous_data
+
+
+class _SetLabels:
+    """Transform class to set labels for the nodes in the graph."""
+
+    def __init__(
+        self,
+        batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor],
+        anchor_node_sentinel: int,
+        positive_label_sentinel: int,
+        negative_label_sentinel: Optional[int] = None,
+    ):
+        """
+        Sets the labels for nodes in Data.y_positive and Data.y_negative.
+        The labels are set based on the anchor node and positive label sentinels.
+        We assume that the input batch is a 1D tensor of node ids, or fornat:
+            `[<anchor node>, <anchor node sentinel>, <positive labels>, <positive label sentinel>, <negative label>, <negative label sentinel>]`
+        Will also set anchor node ids.
+
+
+        The returned data will have the following additional attributes:
+            * `y_positive`: A mapping from anchor node id -> positive label node ids.
+            * (Optionally)`y_negative`: A mapping from anchor node id -> negative label node ids.
+
+        We expect that the batch store contains:
+            * `(node_type, node_ids)` as the key
+            * where `node_ids` is a 1D tensor of node ids
+            * where the sentinel values have been removed,
+            * the node ids have been de-duped
+            * and the node ids are in the same order as the input batch.
+
+        For example, if the input batch is:
+            `[0, -1, 1, -2, 3, 1 -3]`
+            for anchor node 0, positive label 1, and negative labels 3, 1,
+            and sentinal values are -1, -2, and -3,
+        then the batch store will have the key `(node_type, (0, 1, 3))`.
+
+        Args:
+            batch_store (abc.MutableMapping): The batch store to use for the graph.
+            anchor_node_sentinel (int): The sentinel value for the anchor node.
+            positive_label_sentinel (int): The sentinel value for the positive label.
+            negative_label_sentinel (Optional[int]): The sentinel value for the negative label.
+            If not provided, then negative labels will not be set.
+        """
+        self._batch_store = batch_store
+        self._anchor_node_sentinel = anchor_node_sentinel
+        self._positive_label_sentinel = positive_label_sentinel
+        self._negative_label_sentinel = negative_label_sentinel
+
+    def __call__(self, data: _GraphData) -> _GraphData:
+        """Transform the heterogeneous graph to a homogeneous graph."""
+        is_heterogeneous = isinstance(data, HeteroData)
+        positive_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
+        negative_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
+        if is_heterogeneous:
+            node_types = data.node_types
+        else:
+            node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
+
+        # The approach here is:
+        # For each node type:
+        # 1. Get the "full batch" of node ids, containing the sentinels.
+        # e.g. [<anchor node>, <anchor node sentinel>, <positive labels>, <positive label sentinel>, <negative labels>, <negative label sentinel>]
+        # or [0, -1, 1, 2, -3, 3, -4]
+        # Where 0 is the anchor node, -1 is the anchor node sentinel, 1 and 2 are the positive labels,
+        # -3 is the positive label sentinel, 3 is the negative label, and -4 is the negative label sentinel.
+        # 2. Select the indices of all the sentinels.
+        # 3. Get the labels between the sentinels.
+        # 4. Set the labels in the data object.
+        # TODO(kmonte): Since the labels are padded, we should be able to vectorize this.
+        for node_type in node_types:
+            full_batch: torch.Tensor
+            # data.batch is already de-duped.
+            # Represents all nodes that were sampled in the batch.
+            if is_heterogeneous:
+                batch = tuple(data[node_type].batch.tolist())
+            else:
+                batch = tuple(data.batch.tolist())
+            full_batch = self._batch_store.pop((node_type, batch))  # [N]
+            # Get indices of the sentinels.
+            achor_node_sentinels = torch.nonzero(
+                full_batch == self._anchor_node_sentinel
+            ).squeeze(
+                1
+            )  # [Num sampled anchors]
+            positive_label_sentinels = torch.nonzero(
+                full_batch == self._positive_label_sentinel
+            ).squeeze(
+                1
+            )  # [Num sampled anchors]
+            pos_labels: dict[int, torch.Tensor] = {}
+            if self._negative_label_sentinel is not None:
+                negative_label_sentinels = torch.nonzero(
+                    full_batch == self._negative_label_sentinel
+                ).squeeze(
+                    1
+                )  # [Num sampled anchors]
+                neg_labels = {}
+                for anchor, positive, negative in zip(
+                    achor_node_sentinels,
+                    positive_label_sentinels,
+                    negative_label_sentinels,
+                ):
+                    anchor_node = int(full_batch[anchor - 1].item())
+                    pos_batch = full_batch[anchor + 1 : positive].view(
+                        -1
+                    )  # [max num positive labels]
+                    pos_labels[anchor_node] = pos_batch[
+                        pos_batch != PADDING_NODE
+                    ]  # [num positive labels for $anchor_node]
+                    neg_batch = full_batch[positive + 1 : negative].view(
+                        -1
+                    )  # [max num negative labels]
+                    neg_labels[anchor_node] = neg_batch[
+                        neg_batch != PADDING_NODE
+                    ]  # [num negative labels for $anchor_node]
+            else:
+                neg_labels = None
+                for anchor, positive in zip(
+                    achor_node_sentinels, positive_label_sentinels
+                ):
+                    anchor_node = int(full_batch[anchor - 1].item())
+                    pos_batch = full_batch[anchor + 1 : positive].view(
+                        -1
+                    )  # [max num positive labels]
+                    pos_labels[anchor_node] = pos_batch[
+                        pos_batch != PADDING_NODE
+                    ]  # [num positive labels for $anchor_node]
+            positive_labels[node_type] = pos_labels
+            if neg_labels is not None:
+                negative_labels[node_type] = neg_labels
+        if is_heterogeneous:
+            data.y_positive = positive_labels
+            if negative_labels:
+                data.y_negative = negative_labels
+        else:
+            # Saddly, can't use `to_homogeneous` here for mypy reasons as the values are dicts :(
+            data.y_positive = next(iter(positive_labels.values()))
+            if negative_labels:
+                data.y_negative = next(iter(negative_labels.values()))
+        return data
