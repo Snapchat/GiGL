@@ -1,5 +1,16 @@
 import functools
 import multiprocessing
+import traceback
+
+
+class _ExceptionWithTraceback(Exception):
+    def __init__(self, original_exception, traceback_str):
+        self.original_exception = original_exception
+        self.traceback_str = traceback_str
+        super().__init__(str(original_exception))
+
+    def __str__(self):
+        return f"{self.original_exception}\n\nTraceback (most recent call last):\n{self.traceback_str}"
 
 
 def run_in_separate_process(func):
@@ -20,7 +31,8 @@ def run_in_separate_process(func):
                 result = func(*args, **kwargs)
                 q.put((True, result))
             except Exception as e:
-                q.put((False, e))
+                tb_str = traceback.format_exc()
+                q.put((False, (e, tb_str)))
 
         q: multiprocessing.Queue = multiprocessing.Queue()
         process = multiprocessing.Process(target=target, args=(q, *args), kwargs=kwargs)
@@ -30,7 +42,8 @@ def run_in_separate_process(func):
         if not q.empty():
             success, result_or_exception = q.get()
             if not success:
-                raise result_or_exception
+                exception, tb_str = result_or_exception
+                raise _ExceptionWithTraceback(exception, tb_str)
 
         if process.exitcode != 0:
             raise RuntimeError(

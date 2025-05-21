@@ -17,6 +17,7 @@ from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
+from tests.test_assets.decorator import run_in_separate_process
 from tests.test_assets.distributed.constants import (
     EDGE_TYPE_TO_FEATURE_DIMENSION_MAP,
     ITEM_NODE_TYPE,
@@ -30,7 +31,6 @@ from tests.test_assets.distributed.constants import (
     USER_NODE_TYPE,
     USER_TO_USER_EDGE_TYPE,
 )
-from tests.test_assets.distributed.decorator import run_in_separate_process
 from tests.test_assets.distributed.run_distributed_partitioner import (
     InputDataStrategy,
     run_distributed_partitioner,
@@ -962,6 +962,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 AssertionError, "Must have registered nodes prior to partitioning them"
             ):
                 partitioner.partition()
+
+        # This call is not strictly required to pass tests, since this test uses the `run_in_separate_process` decorator,
+        # but rather is good practice to ensure that we cleanup the rpc after we finish partitioning
         shutdown_rpc()
 
 
