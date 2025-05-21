@@ -1,5 +1,5 @@
 """
-This file contains an example for how to run homogeneous inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
+This file contains an example for how to run heterogeneous inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
 GLT (GraphLearn-for-PyTorch) bindings that GiGL has. Note that example should be applied to use cases which already have
 some pretrained `nn.Module` and are looking to utilize cost-savings with distributed inference. While `run_example_inference` is coupled with
 GiGL orchestration, the `_inference_process` function is generic and can be used as references
@@ -12,17 +12,17 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.distributed.homogeneous_inference
+  command: python -m examples.distributed.heterogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 
-You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test` from GiGL root.
+You can run this example in a full pipeline with `make run_dblp_glt_kfp_test` from GiGL root.
 """
 
 import argparse
 import gc
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -41,13 +41,13 @@ from gigl.distributed import (
     DistributedContext,
     build_dataset_from_task_config_uri,
 )
-from gigl.src.common.models.pyg.homogeneous import GraphSAGE
+from gigl.src.common.models.pyg.heterogeneous import HGT
 from gigl.src.common.models.pyg.link_prediction import (
     LinkPredictionDecoder,
     LinkPredictionGNN,
 )
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
@@ -56,26 +56,25 @@ from gigl.src.inference.lib.assets import InferenceAssets
 logger = Logger()
 
 
-def _init_example_gigl_homogeneous_model(
+def _init_example_gigl_heterogeneous_model(
     state_dict: Dict[str, torch.Tensor],
-    node_feature_dim: int,
-    edge_feature_dim: int,
+    node_type_to_feature_dim: Dict[NodeType, int],
+    edge_type_to_feature_dim: Dict[EdgeType, int],
     inferencer_args: Dict[str, str],
     device: Optional[torch.device] = None,
 ) -> LinkPredictionGNN:
     """
-    Initializes a hard-coded homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
+    Initializes a hard-coded GiGL heterogeneous LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
     any `nn.Module` subclass can work with GiGL inference.
-    This model is trained based on the following CORA UDL E2E config:
-    `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
+    This model is trained based on the following DBLP E2E config:
+    `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`.
 
-    To train a different model, you can launch a pipeline for training on CORA using the above config with `make run_cora_nalp_e2e_kfp_test`.
-
+    To train a different model, you can launch a pipeline for training on DBLP using the above config with `make run_dblp_nalp_e2e_kfp_test`.
 
     Args:
         state_dict (Dict[str, torch.Tensor]): State dictionary for pretrained model
-        node_feature_dim (int): Input node feature dimension for the model
-        edge_feature_dim (int): Input edge feature dimension for the model
+        node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
+        edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
         inferencer_args (Dict[str, str]): Arguments for inferencer
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
     Returns:
@@ -83,15 +82,15 @@ def _init_example_gigl_homogeneous_model(
     """
     # TODO (mkolodner-sc): Add asserts to ensure that model shape aligns with shape of state dict
 
-    # We use the GiGL GraphSAGE implementation since the model shape needs to conform to the
-    # state_dict that the trained model used, which was done with the GiGL GraphSAGE
-    encoder_model = GraphSAGE(
-        in_dim=node_feature_dim,
+    # We use the GiGL HGT implementation since the model shape needs to conform to the
+    # state_dict that the trained model used, which was done with the GiGL HGT
+    encoder_model = HGT(
+        node_type_to_feat_dim_map=node_type_to_feature_dim,
+        edge_type_to_feat_dim_map=edge_type_to_feature_dim,
         hid_dim=int(inferencer_args.get("hid_dim", 16)),
-        out_dim=int(inferencer_args.get("out_dim", 16)),
-        edge_dim=edge_feature_dim if edge_feature_dim > 0 else None,
+        out_dim=int(inferencer_args.get("hid_dim", 16)),
         num_layers=int(inferencer_args.get("num_layers", 2)),
-        conv_kwargs={},  # Use default conv args for this model type
+        num_heads=int(inferencer_args.get("num_heads", 2)),
         should_l2_normalize_embedding_layer_output=True,
     )
 
@@ -126,8 +125,8 @@ def _inference_process(
     dataset: DistLinkPredictionDataset,
     inferencer_args: Dict[str, str],
     inference_node_type: NodeType,
-    node_feature_dim: int,
-    edge_feature_dim: int,
+    node_type_to_feature_dim: Dict[NodeType, int],
+    edge_type_to_feature_dim: Dict[EdgeType, int],
 ):
     """
     This function is spawned by multiple processes per machine and is responsible for:
@@ -144,17 +143,15 @@ def _inference_process(
         inference_batch_size (int): Batch size to use for inference
         dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
         inferencer_args (Dict[str, str]): Additional arguments for inferencer
-        inference_node_type (NodeType): Node Type that embeddings should be generated for. This is used to
+        inference_node_type (NodeType): Node Type that embeddings should be generated for in current inference process. This is used to
             tag the embeddings written to GCS.
-        node_feature_dim (int): Input node feature dimension for the model
-        edge_feature_dim (int): Input edge feature dimension for the model
+        node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
+        edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
     """
-
     fanout_per_hop = int(inferencer_args.get("fanout_per_hop", "10"))
-    # This fanout is defaulted to match the fanout provided in the CORA UDL E2E Config:
-    # `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
+    # This fanout is defaulted to match the fanout provided in the DBLP E2E Config:
+    # `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`
     # Users can feel free to parse this argument from `inferencer_args`
-
     num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
@@ -177,13 +174,23 @@ def _inference_process(
         local_process_rank=process_number_on_current_machine,
     )  # The device is automatically inferred based off the local process rank and the available devices
 
+    # Get the node ids on the current machine for the current node type
+    node_type_to_input_node_ids: Optional[
+        Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
+    ] = dataset.node_ids
+    assert isinstance(
+        node_type_to_input_node_ids, dict
+    ), f"Node IDs must be a dictionary for heterogeneous inference, got {type(node_type_to_input_node_ids)}"
+    input_node_ids: torch.Tensor = node_type_to_input_node_ids[inference_node_type]
+
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
         context=distributed_context,
         local_process_rank=process_number_on_current_machine,
         local_process_world_size=num_inference_processes_per_machine,
-        input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
+        # We must pass in a tuple of (node_type, node_ids_on_current_process) for heterogeneous input
+        input_nodes=(inference_node_type, input_node_ids),
         num_workers=sampling_workers_per_inference_process,
         batch_size=inference_batch_size,
         pin_memory_device=device,
@@ -198,10 +205,10 @@ def _inference_process(
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_state_dict_uri, device=device
     )
-    model: nn.Module = _init_example_gigl_homogeneous_model(
+    model: nn.Module = _init_example_gigl_heterogeneous_model(
         state_dict=model_state_dict,
-        node_feature_dim=node_feature_dim,
-        edge_feature_dim=edge_feature_dim,
+        node_type_to_feature_dim=node_type_to_feature_dim,
+        edge_type_to_feature_dim=edge_type_to_feature_dim,
         inferencer_args=inferencer_args,
         device=device,
     )
@@ -255,10 +262,10 @@ def _inference_process(
         )[inference_node_type]
 
         # The anchor node IDs are contained inside of the .batch field of the data
-        node_ids = data.batch.cpu()
+        node_ids = data[inference_node_type].batch.cpu()
 
         # Only the first `batch_size` rows of the node embeddings contain the embeddings of the anchor nodes
-        node_embeddings = output[: data.batch_size].cpu()
+        node_embeddings = output[: data[inference_node_type].batch_size].cpu()
 
         # We add ids and embeddings to the in-memory buffer
         exporter.add_embedding(
@@ -271,9 +278,9 @@ def _inference_process(
 
         if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"Local rank {process_number_on_current_machine} processed {batch_idx} batches. "
-                f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds. "
-                f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
+                f"Local rank {process_number_on_current_machine} processed {batch_idx} batches for node type {inference_node_type}. "
+                f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds for node type {inference_node_type}. "
+                f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds."
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
             t = time.time()
@@ -283,7 +290,7 @@ def _inference_process(
         data_loading_start_time = time.time()
 
     logger.info(
-        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished inference."
+        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished inference for node type {inference_node_type}."
     )
 
     write_embedding_start_time = time.time()
@@ -291,7 +298,7 @@ def _inference_process(
     exporter.flush_embeddings()
 
     logger.info(
-        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished writing embeddings to GCS for node type {inference_node_type}, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
@@ -304,7 +311,7 @@ def _inference_process(
     gc.collect()
 
     logger.info(
-        f"--- All machines local rank {process_number_on_current_machine} finished inference. Deleted data loader"
+        f"--- All machines local rank {process_number_on_current_machine} finished inference for node type {inference_node_type}. Deleted data loader"
     )
 
     # Clean up for a graceful exit
@@ -351,28 +358,23 @@ def _run_example_inference(
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    output_bq_table_path = InferenceAssets.get_enumerated_embedding_table_path(
-        gbml_config_pb_wrapper, graph_metadata.homogeneous_node_type
+    node_type_to_feature_dim: Dict[NodeType, int] = {
+        graph_metadata.condensed_node_type_to_node_type_map[
+            condensed_node_type
+        ]: node_feature_dim
+        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
+    }
+
+    edge_type_to_feature_dim: Dict[EdgeType, int] = {
+        graph_metadata.condensed_edge_type_to_edge_type_map[
+            condensed_edge_type
+        ]: edge_feature_dim
+        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
+    }
+
+    inference_node_types = sorted(
+        gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
     )
-
-    bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
-        bq_table_path=output_bq_table_path
-    )
-
-    # We write embeddings to a temporary GCS path during the inference loop, since writing directly to bigquery for each embedding is slow.
-    # After inference has finished, we then load all embeddings to bigquery from GCS.
-    embedding_output_gcs_folder = InferenceAssets.get_gcs_asset_write_path_prefix(
-        applied_task_identifier=AppliedTaskIdentifier(job_name),
-        bq_table_path=output_bq_table_path,
-    )
-
-    node_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_node_type
-    ]
-
-    edge_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_edge_type
-    ]
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
@@ -386,42 +388,67 @@ def _run_example_inference(
 
     inference_start_time = time.time()
 
-    # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
-    mp.spawn(
-        fn=_inference_process,
-        args=(
-            num_inference_processes_per_machine,
-            distributed_context,
-            embedding_output_gcs_folder,
-            model_uri,
-            inference_batch_size,
-            dataset,
-            inferencer_args,
-            graph_metadata.homogeneous_node_type,
-            node_feature_dim,
-            edge_feature_dim,
-        ),
-        nprocs=num_inference_processes_per_machine,
-        join=True,
-    )
-
-    logger.info(
-        f"--- Inference finished on rank {distributed_context.global_rank}, which took {time.time()-inference_start_time:.2f} seconds"
-    )
-
-    # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-    if distributed_context.global_rank == 0:
-        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
-
-        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
-        # representing the load operation, which allows user to monitor and retrieve
-        # details about the job status and result.
-        _ = load_embeddings_to_bigquery(
-            gcs_folder=embedding_output_gcs_folder,
-            project_id=bq_project_id,
-            dataset_id=bq_dataset_id,
-            table_id=bq_table_name,
+    for process_num, inference_node_type in enumerate(inference_node_types):
+        logger.info(
+            f"Starting inference process for node type {inference_node_type} ..."
         )
+        output_bq_table_path = InferenceAssets.get_enumerated_embedding_table_path(
+            gbml_config_pb_wrapper, inference_node_type
+        )
+
+        bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
+            bq_table_path=output_bq_table_path
+        )
+
+        # We write embeddings to a temporary GCS path during the inference loop, since writing directly to bigquery for each embedding is slow.
+        # After inference has finished, we then load all embeddings to bigquery from GCS.
+        embedding_output_gcs_folder = InferenceAssets.get_gcs_asset_write_path_prefix(
+            applied_task_identifier=AppliedTaskIdentifier(job_name),
+            bq_table_path=output_bq_table_path,
+        )
+
+        # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
+        mp.spawn(
+            fn=_inference_process,
+            args=(
+                num_inference_processes_per_machine,
+                distributed_context,
+                embedding_output_gcs_folder,
+                model_uri,
+                inference_batch_size,
+                dataset,
+                inferencer_args,
+                inference_node_type,
+                node_type_to_feature_dim,
+                edge_type_to_feature_dim,
+            ),
+            nprocs=num_inference_processes_per_machine,
+            join=True,
+        )
+
+        logger.info(
+            f"--- Inference finished on rank {distributed_context.global_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
+        )
+
+        # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
+        if distributed_context.global_rank == 0:
+            logger.info(
+                f"--- Machine 0 triggers loading embeddings from GCS to BigQuery for node type {inference_node_type}"
+            )
+            # If we are on the last inference process, we should wait for this last write process to complete. Otherwise, we should
+            # load embeddings to bigquery in the background so that we are not blocking the start of the next inference process
+            should_run_async = process_num != len(inference_node_types) - 1
+
+            # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
+            # representing the load operation, which allows user to monitor and retrieve
+            # details about the job status and result.
+            _ = load_embeddings_to_bigquery(
+                gcs_folder=embedding_output_gcs_folder,
+                project_id=bq_project_id,
+                dataset_id=bq_dataset_id,
+                table_id=bq_table_name,
+                should_run_async=should_run_async,
+            )
 
     logger.info(
         f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
