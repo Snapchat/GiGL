@@ -10,7 +10,7 @@ class _ExceptionWithTraceback(Exception):
         super().__init__(str(original_exception))
 
     def __str__(self):
-        return f"{self.original_exception}\n\nTraceback (most recent call last):\n{self.traceback_str}"
+        return f"{self.original_exception}\n{self.traceback_str}"
 
 
 def run_in_separate_process(func):
