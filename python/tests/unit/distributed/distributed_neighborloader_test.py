@@ -89,6 +89,55 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         shutdown_rpc()
 
     @run_in_separate_process
+    def test_multiple_neighbor_loader(self):
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+        manager = Manager()
+        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            output_dict=output_dict,
+            should_load_tensors_in_parallel=True,
+            master_ip_address=self._master_ip_address,
+            master_port=master_port,
+        )
+
+        # TODO (mkolodner-sc): Infer ports automatically, rather than hard-coding these
+        loader_one = DistNeighborLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+            pin_memory_device=torch.device("cpu"),
+            _main_inference_port=10000,
+            _main_sampling_port=20000,
+        )
+
+        loader_two = DistNeighborLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+            pin_memory_device=torch.device("cpu"),
+            _main_inference_port=30000,
+            _main_sampling_port=40000,
+        )
+
+        count = 0
+        for datum_one, datum_two in zip(loader_one, loader_two):
+            count += 1
+
+        # Cora has 2708 nodes, make sure we go over all of them.
+        # https://paperswithcode.com/dataset/cora
+        self.assertEqual(count, 2708)
+
+        shutdown_rpc()
+
+    @run_in_separate_process
     def test_distributed_neighbor_loader_batched(self):
         node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         edge_index = {

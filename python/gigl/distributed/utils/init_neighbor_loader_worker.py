@@ -23,7 +23,7 @@ def get_process_group_name(process_rank: int) -> str:
 
 
 # torch.set_num_interop_threads() can only be called once, otherwise we see:
-# RuntimeError: Error: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
+# RuntimeError: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
 # Since we don't need to re-setup the identical worker pools, etc, we can just "cache" this call.
 # That way the "side-effects" of the call are only executed once.
 @lru_cache(maxsize=1)
@@ -111,16 +111,28 @@ def init_neighbor_loader_worker(
         )
         logical_cores = first_logical_core_range + second_logical_core_range
 
-        # Set the logical cpu cores the current process shoud run on. Note
-        # that the sampling process spawned by the process will inherit
-        # this setting, meaning that sampling process will run on the same group
-        # of logical cores. However, the sampling process is network bound so
-        # it may not heavily compete resouce with model training or inference.
-        p = psutil.Process()
-        p.cpu_affinity(logical_cores)
+        try:
+            torch.set_num_interop_threads(num_cpu_threads)
+            torch.set_num_threads(num_cpu_threads)
 
-        torch.set_num_threads(num_cpu_threads)
-        torch.set_num_interop_threads(num_cpu_threads)
+            # Set the logical cpu cores the current process shoud run on. Note
+            # that the sampling process spawned by the process will inherit
+            # this setting, meaning that sampling process will run on the same group
+            # of logical cores. However, the sampling process is network bound so
+            # it may not heavily compete resouce with model training or inference.
+            p = psutil.Process()
+            p.cpu_affinity(logical_cores)
+        except RuntimeError as e:
+            if (
+                "cannot set number of interop threads after parallel work has started"
+                in str(e)
+            ):
+                logger.info(
+                    "Logical CPU cores has already been set for current process."
+                )
+            else:
+                raise e
+
     else:
         # Setting the default CUDA device for the current process to be the
         # device. Without it, there will be a process created on cuda:0 device, and
