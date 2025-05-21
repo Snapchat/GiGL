@@ -254,7 +254,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         assert_tensor_equality(datum.node[dsts], expected_dsts)
 
     # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
-    # @unittest.skip("Failing due to ports being already allocated - skiping for now")
+    @unittest.skip("Failing due to ports being already allocated - skiping for now")
     def test_cora_supervised(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
