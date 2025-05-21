@@ -263,7 +263,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             task_config_uri=cora_supervised_info.frozen_gbml_config_uri.uri,
             distributed_context=self._context,
             is_inference=False,
-            tfrecord_uri_pattern=".*\.tfrecord(\.gz)?$",
         )
         loader = DistABLPLoader(
             dataset=dataset,
