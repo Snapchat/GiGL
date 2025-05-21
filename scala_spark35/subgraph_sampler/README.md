@@ -1,8 +1,8 @@
 ## Notes for developers
 
 1. [SGS as of now](#sgs)
-1. [Scalability](#scalability)
-1. [Resources](#resources)
+2. [Scalability](#scalability)
+3. [Resources](#resources)
 
 ## SGS
 
@@ -12,7 +12,7 @@ To silence the worker logs
 
 1. Create log4j.properties file from template, under `/scala_spark35` dir, do
    `cp ../tools/scala/spark-3.5.0-bin-hadoop3/conf/log4j2.properties.template ../tools/scala/spark-3.5.0-bin-hadoop3/conf/log4j2.properties`
-1. Update the first line in `log4j.properties` to `rootLogger.level = WARN rootLogger.appenderRef.stdout.ref = console`
+2. Update the first line in `log4j.properties` to `rootLogger.level = WARN rootLogger.appenderRef.stdout.ref = console`
 
 ### Steps:
 
@@ -59,7 +59,7 @@ To silence the worker logs
 
   - note that there are two implementations for uniform sampling:
     1. non-deterministic (using built-in Spark functions), which is the default mode of sampling in SGS
-    1. deterministic (using hash based permutation). To enable it, set
+    2. deterministic (using hash based permutation). To enable it, set
     ```
     subgraphSamplerConfigs:
         experimetalFlags:
@@ -95,7 +95,7 @@ To silence the worker logs
      Hence, they must appear in the rooted neighborhoods for inferencer to use, regardless of what their
      (in-)neighborhood looks like.
 
-  1. In node_anchor_based_link_prediction_samples: every node which has any outgoing edge could be a valid training
+  2. In node_anchor_based_link_prediction_samples: every node which has any outgoing edge could be a valid training
      sample, since in practice we will want to have our trained model robustly perform well at ranking the positive edge
      above negative edges, regardless of what their (in-)neighborhood looks like.
 
@@ -125,10 +125,10 @@ Cost: See Google Cloud [pricing calculator](https://cloud.google.com/products/ca
 As any of below factor increases we should think of strategies to scale the SGS job:
 
 1. Graph size (number of nodes and edges)
-1. Number of neighborhood samples and Number of Positive Samples (if any)
-1. Node feature Dim
-1. Edge feature Dim
-1. Number of hops
+2. Number of neighborhood samples and Number of Positive Samples (if any)
+3. Node feature Dim
+4. Edge feature Dim
+5. Number of hops
 
 ### Spark Optimization/Scaling strategies
 
