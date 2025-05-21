@@ -137,6 +137,23 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
+        loader_three = DistNeighborLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+            pin_memory_device=torch.device("cpu"),
+            _main_inference_port=50000,
+            _main_sampling_port=60000,
+        )
+
+        count = 0
+        for datum_three in loader_three:
+            count += 1
+
+        self.assertEqual(count, 2708)
+
         shutdown_rpc()
 
     @run_in_separate_process
