@@ -23,7 +23,7 @@ def get_process_group_name(process_rank: int) -> str:
 
 
 # torch.set_num_interop_threads() can only be called once, otherwise we see:
-# RuntimeError: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
+# RuntimeError: Error: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
 # Since we don't need to re-setup the identical worker pools, etc, we can just "cache" this call.
 # That way the "side-effects" of the call are only executed once.
 @lru_cache(maxsize=1)
