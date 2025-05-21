@@ -30,7 +30,7 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_heterogeneous_node,
 )
-from tests.test_assets.distributed.decorator import run_in_separate_process
+from tests.test_assets.decorator import run_in_separate_process
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -86,6 +86,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # https://paperswithcode.com/dataset/cora
         self.assertEqual(count, 2708)
 
+        # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
+        # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
         shutdown_rpc()
 
     @run_in_separate_process
@@ -187,6 +189,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
         assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
 
+        # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
+        # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
         shutdown_rpc()
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
@@ -224,6 +228,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         self.assertEqual(count, 4057)
 
+        # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
+        # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
         shutdown_rpc()
 
     @parameterized.expand(
@@ -323,6 +329,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
 
+        # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
+        # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
         shutdown_rpc()
 
 
