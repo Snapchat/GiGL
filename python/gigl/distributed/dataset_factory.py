@@ -328,6 +328,28 @@ def build_dataset(
         sample_edge_direction == "in" or sample_edge_direction == "out"
     ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
 
+    if should_convert_labels_to_edges:
+        if splitter is not None:
+            logger.warning(
+                f"Received splitter {splitter} and should_convert_labels_to_edges=True. Will use {splitter} to split the graph data."
+            )
+        else:
+            logger.info(
+                f"Using default splitter {type(HashedNodeAnchorLinkSplitter)} for ABLP labels."
+            )
+            # TODO(kmonte): Read train/val/test split counts from config.
+            # TODO(kmonte): Read label edge dir from config.
+            splitter = HashedNodeAnchorLinkSplitter(
+                sampling_direction=sample_edge_direction,
+                edge_types=[
+                    message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+                    message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+                ],
+            )
+        logger.info(
+            "Will be treating the ABLP labels as heterogeneous edges in the graph."
+        )
+
     manager = mp.Manager()
 
     dataset_building_start_time = time.time()
@@ -367,7 +389,6 @@ def build_dataset_from_task_config_uri(
     task_config_uri: str,
     distributed_context: DistributedContext,
     is_inference: bool = True,
-    tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
 ) -> DistLinkPredictionDataset:
     """
     Builds a dataset from a provided `task_config_uri` as part of GiGL orchestration. Parameters to
@@ -382,7 +403,6 @@ def build_dataset_from_task_config_uri(
             master_ip_address, rank, and world size
         is_inference (bool): Whether the run is for inference or training. If True, arguments will
             be read from inferenceArgs. Otherwise, arguments witll be read from trainerArgs.
-        tfrecord_uri_pattern (str): Regex pattern for loading serialized tf records
     """
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -399,21 +419,6 @@ def build_dataset_from_task_config_uri(
         should_convert_labels_to_edges = True
 
     sample_edge_direction = args.get("sample_edge_direction", "in")
-    if should_convert_labels_to_edges:
-        # TODO(kmonte): Read train/val/test split counts from config.
-        # TODO(kmonte): Read label edge dir from config.
-        splitter = HashedNodeAnchorLinkSplitter(
-            sampling_direction=sample_edge_direction,
-            edge_types=[
-                message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
-                message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
-            ],
-        )
-        logger.info(
-            "Will be treating the ABLP labels as heterogeneous edges in the graph."
-        )
-    else:
-        splitter = None
 
     assert sample_edge_direction in (
         "in",
@@ -445,7 +450,6 @@ def build_dataset_from_task_config_uri(
     serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
         preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-        tfrecord_uri_pattern=tfrecord_uri_pattern,
     )
 
     if should_use_range_partitioning:
@@ -459,7 +463,6 @@ def build_dataset_from_task_config_uri(
         sample_edge_direction=sample_edge_direction,
         partitioner_class=partitioner_class,
         should_convert_labels_to_edges=should_convert_labels_to_edges,
-        splitter=splitter,
     )
 
     return dataset
