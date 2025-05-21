@@ -479,7 +479,3 @@ class GcsUtils:
         )
         remove_file_if_exist(local_file_path)
         logger.info(f"Moved {local_file_path} to {gcs_file_path}")
-
-    def does_gcs_bucket_exist(self, bucket_name: str) -> bool:
-        bucket = self.__storage_client.bucket(bucket_name)
-        return bucket.exists()

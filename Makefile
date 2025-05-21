@@ -8,15 +8,13 @@ DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
-PWD=$(shell pwd)
 
 # You can override GIGL_PROJECT by setting it in your environment i.e.
 # adding `export GIGL_PROJECT=your_project` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_PROJECT?=external-snap-ci-github-gigl
-GIGL_DOCKER_ARTIFACT_REGISTRY?=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu-dataflow
-DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
-DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cpu-dataflow
+DOCKER_IMAGE_MAIN_CUDA_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cuda
+DOCKER_IMAGE_MAIN_CPU_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cpu
 
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
@@ -24,9 +22,6 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 
 PYTHON_DIRS:=examples python shared scripts
 PY_TEST_FILES?="*_test.py"
-# You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
-# adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
-GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_config.yaml
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
@@ -36,7 +31,6 @@ GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # then when we *check* the format of those files, we will fail.
 # Thus, we only want to format the Markdown files that we explicitly include in our repo.
 MD_FILES:=$(shell if [ ! ${GIT_BRANCH} ]; then echo "."; else git ls-tree --name-only -r ${GIT_BRANCH} . | grep ".md"; fi;)
-
 
 get_ver_hash:
 	# Fetches the git commit hash and stores it in `$GIT_COMMIT`
@@ -89,45 +83,45 @@ install_deps:
 generate_mac_arm64_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/darwin_arm64_requirements_unified.txt \
-	--extra torch25-cpu --extra transform \
+	--extra torch25-cpu --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
+# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong.
 generate_dev_mac_arm64_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_darwin_arm64_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra dev \
+	--extra torch25-cpu --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_linux_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/linux_cpu_requirements_unified.txt \
-	--extra torch25-cpu --extra transform \
+	--extra torch25-cpu --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_dev_linux_cpu_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_linux_cpu_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra dev \
+	--extra torch25-cpu --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_linux_cuda_hashed_requirements:
 	pip-compile  -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/linux_cuda_requirements_unified.txt \
-	--extra torch25-cuda-121 --extra transform \
+	--extra torch25-cuda-121 --extra transform --extra experimental \
 	./python/pyproject.toml
 
-# Can only be run on linux, otherwise generated hashed req file will be wrong
+# Can only be run on linux, otherwise generated hashed req file will be wrong.
 generate_dev_linux_cuda_hashed_requirements:
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_linux_cuda_requirements_unified.txt \
-	--extra torch25-cuda-121 --extra transform --extra dev \
+	--extra torch25-cuda-121 --extra transform --extra dev --extra experimental \
 	./python/pyproject.toml
 
-# These are a collection of tests that are run before anything is installed using tools abialable on host.
+# These are a collection of tests that are run before anything is installed using tools available on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
@@ -145,7 +139,7 @@ unit_test_py: clean_build_files_py type_check
 	( cd python ; \
 	python -m tests.unit.main \
 		--env=test \
-		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+		--resource_config_uri ../deployment/configs/unittest_resource_config.yaml \
 		--test_file_pattern=$(PY_TEST_FILES) \
 	)
 
@@ -189,7 +183,7 @@ integration_test:
 	cd python ;\
 	python -m tests.integration.main \
 	--env=test \
-	--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+	--resource_config_uri ../deployment/configs/unittest_resource_config.yaml \
 	--test_file_pattern=$(PY_TEST_FILES) \
 	)
 
@@ -360,6 +354,12 @@ run_cora_glt_udl_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt
 run_cora_glt_udl_kfp_test: should_compile_then_run_str:="false"
 run_cora_glt_udl_kfp_test: _run_e2e_kfp_test
 
+run_dblp_glt_kfp_test: job_name_prefixes_str:="dblp_glt_test_on"
+run_dblp_glt_kfp_test: task_config_uris_str:="examples/distributed/configs/e2e_dblp_glt_task_config.yaml"
+run_dblp_glt_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
+run_dblp_glt_kfp_test: should_compile_then_run_str:="false"
+run_dblp_glt_kfp_test: _run_e2e_kfp_test
+
 # Spawns a background job for each e2e test defined by job_name_prefix, task_config_uri, and resource_config_uri
 # Waits for all jobs to finish since should_wait_for_job_to_finish:=true
 run_all_e2e_tests: should_send_job_to_background:=true
@@ -368,21 +368,25 @@ run_all_e2e_tests: job_name_prefixes_str:=\
 		"cora_nalp_test_on" \
 		"cora_snc_test_on" \
 		"dblp_nalp_test_on" \
-		"cora_glt_udl_test_on"
+		"cora_glt_udl_test_on" \
+		"dblp_glt_test_on"
 # Removed UDL due to transient issue:
 # "gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml"
 run_all_e2e_tests: task_config_uris_str:=\
 		"gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml" \
-		"examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml"
+		"examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml" \
+		"examples/distributed/configs/e2e_dblp_glt_task_config.yaml"
 run_all_e2e_tests: resource_config_uris_str:=\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
+		"deployment/configs/e2e_glt_resource_config.yaml"\
 		"deployment/configs/e2e_glt_resource_config.yaml"
 run_all_e2e_tests: should_compile_then_run_str:=\
 		"true" \
+		"false" \
 		"false" \
 		"false" \
 		"false"
@@ -481,6 +485,9 @@ stop_toaster:
 	docker buildx prune
 
 release_gigl:
+	@echo "This needs to be implemented"
+
+publish_docs:
 	@echo "This needs to be implemented"
 
 build_docs:

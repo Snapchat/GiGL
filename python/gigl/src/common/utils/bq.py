@@ -268,19 +268,6 @@ class BqUtils:
             logger.info(f"Could not evaluate table existence. {repr(e)}")
         return exists
 
-    def does_bq_dataset_exist(self, bq_dataset_path: str) -> bool:
-        exists = False
-        try:
-            bq_dataset_path = BqUtils.format_bq_path(bq_dataset_path)
-            self.__bq_client.get_dataset(bq_dataset_path)  # Make an API request.
-            exists = True
-            logger.info(f"Dataset {bq_dataset_path} exists.")
-        except NotFound:
-            logger.info(f"Dataset {bq_dataset_path} not found.")
-        except Exception as e:
-            logger.info(f"Could not evaluate dataset existence. {repr(e)}")
-        return exists
-
     def list_matching_tables(
         self, bq_dataset_path: str, table_match_string: str
     ) -> List[str]:

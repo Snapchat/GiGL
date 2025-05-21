@@ -771,11 +771,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         resource_config_uri = UriFactory.create_uri(
             uri=get_resource_config().get_resource_config_uri
         )
-
-        if not isinstance(resource_config_uri, LocalUri):
-            file_loader = FileLoader()
-            temp_file = file_loader.load_to_temp_file(file_uri_src=resource_config_uri)
-            resource_config_uri = LocalUri(uri=temp_file.name)
+        assert isinstance(resource_config_uri, LocalUri)
 
         self._compile_and_run_splitgen_pipeline_locally(
             frozen_gbml_config_uri=frozen_gbml_config_uri,
@@ -822,10 +818,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         resource_config_uri = UriFactory.create_uri(
             uri=get_resource_config().get_resource_config_uri
         )
-        if not isinstance(resource_config_uri, LocalUri):
-            file_loader = FileLoader()
-            temp_file = file_loader.load_to_temp_file(file_uri_src=resource_config_uri)
-            resource_config_uri = LocalUri(uri=temp_file.name)
+        assert isinstance(resource_config_uri, LocalUri)
 
         self._compile_and_run_splitgen_pipeline_locally(
             frozen_gbml_config_uri=frozen_gbml_config_uri,
@@ -874,10 +867,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         resource_config_uri = UriFactory.create_uri(
             uri=get_resource_config().get_resource_config_uri
         )
-        if not isinstance(resource_config_uri, LocalUri):
-            file_loader = FileLoader()
-            temp_file = file_loader.load_to_temp_file(file_uri_src=resource_config_uri)
-            resource_config_uri = LocalUri(uri=temp_file.name)
+        assert isinstance(resource_config_uri, LocalUri)
 
         self._compile_and_run_splitgen_pipeline_locally(
             frozen_gbml_config_uri=frozen_gbml_config_uri,

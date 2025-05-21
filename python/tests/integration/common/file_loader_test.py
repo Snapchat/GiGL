@@ -6,8 +6,8 @@ from typing import Dict, List
 import gigl.common.utils.local_fs as local_fs
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.utils.gcs import GcsUtils
-from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
+from tests.test_assets.uri_constants import TEST_DATA_GCS_BUCKET
 
 
 class FileLoaderTest(unittest.TestCase):
@@ -15,24 +15,38 @@ class FileLoaderTest(unittest.TestCase):
         self.file_loader = FileLoader()
         self.gcs_utils = GcsUtils()
         test_uuid = str(uuid.uuid4())
+        # TODO (svij): Refactor name and how the location of tests is derived
+        # Also need to investigate whether or not we need to clean up these assets
         self.test_asset_directory: LocalUri = LocalUri.join(".test_assets", test_uuid)
-        resource_config = get_resource_config()
         self.gcs_test_asset_directory: GcsUri = GcsUri.join(
-            resource_config.shared_resource_config.common_compute_config.temp_assets_bucket,
-            test_uuid,
+            TEST_DATA_GCS_BUCKET, test_uuid
         )
 
-    def tearDown(self) -> None:
-        self.gcs_utils.delete_files_in_bucket_dir(
-            gcs_path=self.gcs_test_asset_directory
-        )
+    # def test_local_temp_file(self):
+    #     local_file_path_src: LocalUri = LocalUri.join(
+    #         self.test_asset_directory, "test_local_temp_file.txt"
+    #     )
+
+    #     local_fs.remove_file_if_exist(local_path=local_file_path_src)
+
+    #     # Create files and ensure they exist
+    #     local_fs.create_empty_file_if_none_exists(local_path=local_file_path_src)
+    #     self.assertTrue(local_fs.does_path_exist(local_file_path_src))
+    #     with open(local_file_path_src.uri, "w") as f:
+    #         f.write("Hello")
+
+    #     temp_f = self.file_loader.load_to_temp_file(file_uri_src=local_file_path_src)
+    #     with open(temp_f.name, "r") as f:
+    #         msg = f.read()
+    #     self.assertTrue(msg == "Hello")
+    #     temp_f.close()
 
     def test_gcs_temp_file(self):
         local_file_path_src: LocalUri = LocalUri.join(
             self.test_asset_directory, "test_gcs_temp_file.txt"
         )
         gcs_file_path_src: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, "test_gcs_temp_file.txt"
+            TEST_DATA_GCS_BUCKET, "test_gcs_temp_file.txt"
         )
 
         local_fs.remove_file_if_exist(local_path=local_file_path_src)
@@ -87,7 +101,7 @@ class FileLoaderTest(unittest.TestCase):
             self.test_asset_directory, "test_local_to_gcs.txt"
         )
         gcs_file_path_dst: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, "test_local_to_gcs.txt"
+            TEST_DATA_GCS_BUCKET, "test_local_to_gcs.txt"
         )
 
         local_fs.remove_file_if_exist(local_path=local_file_path_src)
@@ -108,7 +122,7 @@ class FileLoaderTest(unittest.TestCase):
         )
 
         gcs_file_path_src: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, "test_gcs_to_local.txt"
+            TEST_DATA_GCS_BUCKET, "test_gcs_to_local.txt"
         )
 
         local_file_path_dst: LocalUri = LocalUri.join(
@@ -135,10 +149,10 @@ class FileLoaderTest(unittest.TestCase):
 
     def test_gcs_to_gcs_file(self):
         gcs_file_path_src: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, "test_gcs_to_gcs_src.txt"
+            TEST_DATA_GCS_BUCKET, "test_gcs_to_gcs_src.txt"
         )
         gcs_file_path_dst: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, "test_gcs_to_gcs_dst.txt"
+            TEST_DATA_GCS_BUCKET, "test_gcs_to_gcs_dst.txt"
         )
         with self.assertRaises(TypeError):
             self.file_loader.load_files(
@@ -175,7 +189,7 @@ class FileLoaderTest(unittest.TestCase):
         local_files = ["a.txt", "b.txt", "c.txt", "d.txt"]
         local_src_dir: LocalUri = LocalUri.join(self.test_asset_directory, "src")
         gcs_dst_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "dst"
+            TEST_DATA_GCS_BUCKET, self.test_asset_directory, "dst"
         )
 
         local_file_paths_src: List[LocalUri] = [
@@ -199,16 +213,14 @@ class FileLoaderTest(unittest.TestCase):
         for gcs_file in gcs_file_paths_dst:
             self.assertTrue(self.gcs_utils.does_gcs_file_exist(gcs_path=gcs_file))
         self.gcs_utils.delete_files_in_bucket_dir(
-            gcs_path=GcsUri.join(
-                self.gcs_test_asset_directory, self.test_asset_directory
-            )
+            gcs_path=GcsUri.join(TEST_DATA_GCS_BUCKET, self.test_asset_directory)
         )
 
     def test_gcs_to_local_dir(self):
         local_files = ["a.txt", "b.txt", "c.txt", "d.txt"]
         local_src_dir: LocalUri = LocalUri.join(self.test_asset_directory, "src")
         gcs_src_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "src"
+            TEST_DATA_GCS_BUCKET, self.test_asset_directory, "src"
         )
         local_dst_dir: LocalUri = LocalUri.join(self.test_asset_directory, "dst")
 
@@ -250,17 +262,15 @@ class FileLoaderTest(unittest.TestCase):
         for file in local_file_paths_dst:
             self.assertTrue(local_fs.does_path_exist(file))
         self.gcs_utils.delete_files_in_bucket_dir(
-            gcs_path=GcsUri.join(
-                self.gcs_test_asset_directory, self.test_asset_directory
-            )
+            gcs_path=GcsUri.join(TEST_DATA_GCS_BUCKET, self.test_asset_directory)
         )
 
     def test_gcs_to_gcs_dir(self):
         gcs_src_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "src"
+            TEST_DATA_GCS_BUCKET, self.test_asset_directory, "src"
         )
         gcs_dst_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "dst"
+            TEST_DATA_GCS_BUCKET, self.test_asset_directory, "dst"
         )
         dir_uri_map: Dict[Uri, Uri] = {gcs_src_dir: gcs_dst_dir}
 
@@ -285,3 +295,6 @@ class FileLoaderTest(unittest.TestCase):
         # Ensure both files are deleted
         self.assertFalse(file_loader.does_uri_exist(uri=tmp_local_file))
         self.assertFalse(file_loader.does_uri_exist(uri=tmp_gcs_file))
+
+    def tearDown(self) -> None:
+        pass
