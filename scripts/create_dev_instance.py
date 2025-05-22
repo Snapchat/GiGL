@@ -65,6 +65,24 @@ class SupportedParams:
 
 
 class GCPInstanceOpsAgentPolicyCreator:
+    """
+    Class to create an OPS agent policy for GCP instances.
+
+    The Ops Agent is the primary agent for collecting telemetry from your Compute Engine instances.
+    Combining the collection of logs, metrics, and traces into a single process
+
+    Agent policies enable automated installation and maintenance of the Ops Agent across a fleet of
+    Compute Engine VMs that match user-specified criteria. In this case, the user-specified criteria
+    is the inclusion of a specific label on the VM instance defined by
+    the label key: :attr:`GCPInstanceOpsAgentPolicyCreator.POLICY_INCLUSION_LABEL_KEY`
+    and label value: :attr:`GCPInstanceOpsAgentPolicyCreator.POLICY_INCLUSION_LABEL_VALUE`.
+
+    Any time an instance is created with this label, the Ops Agent will be installed and configured.
+
+    For more details, see:
+    https://cloud.google.com/stackdriver/docs/solutions/agents/ops-agent/agent-policies-overview
+    """
+
     POLICY_INCLUSION_LABEL_KEY: str = "goog-ops-agent-policy"
     POLICY_INCLUSION_LABEL_VALUE: str = "v2-x86-template-1-4-0"
 
@@ -83,14 +101,14 @@ class GCPInstanceOpsAgentPolicyCreator:
     @staticmethod
     def get_policy_ops_agent_policy_name(zone: str) -> str:
         """
-        Get the ops agent policy name for the given zone.
+        Get the OPS agent policy name for the given zone.
         """
         return f"goog-ops-agent-v2-x86-template-1-4-0-{zone}"
 
     @staticmethod
     def get_existing_ops_agent_policy(project: str, zone: str) -> Optional[str]:
         """
-        Get the existing ops agent policy for the given project and zone.
+        Get the existing OPS agent policy for the given project and zone.
         Checks for the default policy name 'goog-ops-agent-v2-x86-template-1-4-0-us-central1-a'.
         Returns the policy name if it exists, else None.
         """
@@ -110,10 +128,10 @@ class GCPInstanceOpsAgentPolicyCreator:
             ):
                 found_policy = True
         except subprocess.CalledProcessError as e:
-            print("Ops agent policy not found or error retrieving:", e)
+            print("OPS agent policy not found or error retrieving:", e)
 
         if found_policy:
-            print(f"Found existing ops agent policy: {policy_name}")
+            print(f"Found existing OPS agent policy: {policy_name}")
             return policy_name
         return None
 
@@ -123,7 +141,8 @@ class GCPInstanceOpsAgentPolicyCreator:
         zone: str,
     ) -> None:
         """
-        Create an ops agent policy for the given project and zone.
+        Create an OPS agent policy for the given project and zone.
+        See: https://cloud.google.com/stackdriver/docs/solutions/agents/ops-agent/agent-policies-overview
         """
         policy_name = GCPInstanceOpsAgentPolicyCreator.get_policy_ops_agent_policy_name(
             zone
@@ -135,7 +154,7 @@ class GCPInstanceOpsAgentPolicyCreator:
             f.write(GCPInstanceOpsAgentPolicyCreator.POLICY)
 
         print(
-            f"Creating ops agent policy with name: {policy_name} and config:\n{GCPInstanceOpsAgentPolicyCreator.POLICY}"
+            f"Creating OPS agent policy with name: {policy_name} and config:\n{GCPInstanceOpsAgentPolicyCreator.POLICY}"
         )
         policy_cmd = f"""
         gcloud compute instances ops-agents policies create {policy_name} \
@@ -146,9 +165,9 @@ class GCPInstanceOpsAgentPolicyCreator:
         print(f"Running:\n{policy_cmd}")
         proc = subprocess.run(policy_cmd, shell=True, check=True)
         if proc.returncode != 0:
-            print("Error creating ops agent policy:", proc.stderr)
-            raise RuntimeError("Failed to create ops agent policy.")
-        print(f"Ops agent policy '{policy_name}' created.")
+            print("Error creating OPS agent policy:", proc.stderr)
+            raise RuntimeError("Failed to create OPS agent policy.")
+        print(f"OPS agent policy '{policy_name}' created.")
         config_yaml_file.close()
 
 
@@ -169,7 +188,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    values: dict[str, str] = {}
+    values: Dict[str, str] = {}
     for key, param in supported_params.defaults.items():
         # Check if value is provided in command line arguments
         if getattr(args, key):
@@ -193,10 +212,10 @@ if __name__ == "__main__":
                     f"Missing required value for {key}. Please provide a value."
                 )
 
-    # Check if we need to create the ops agent policy, and if so try creating it
+    # Check if we need to create the OPS agent policy, and if so try creating it
     skip_install_ops_agent = (
         input(
-            "Do you want to install the ops agent for monitoring and logging? (y/n). Defaults to: [y]: "
+            "Do you want to install the OPS agent for monitoring and logging? (y/n). Defaults to: [y]: "
         )
         .strip()
         .lower()
@@ -221,18 +240,19 @@ if __name__ == "__main__":
             )
             if should_use_existing_policy == "n":
                 print(
-                    "Please configure the ops agent policy manually after instance creation."
+                    "Please configure the OPS agent policy manually after instance creation."
                 )
                 policy_name = None  # We won't configure a policy
             else:
-                print(f"Re-using existing ops agent policy: {policy_name}")
+                print(f"Re-using existing OPS agent policy: {policy_name}")
         else:
-            print("No existing compatible ops agent policy found. Creating a new one.")
+            print("No existing compatible OPS agent policy found. Creating a new one.")
             policy_name = GCPInstanceOpsAgentPolicyCreator.create_ops_agent_policy(
                 project=values["project"],
                 zone=values["zone"],
             )
 
+    # The OPS agent policy is
     ops_agent_clause = (
         f",{GCPInstanceOpsAgentPolicyCreator.POLICY_INCLUSION_LABEL_KEY}={GCPInstanceOpsAgentPolicyCreator.POLICY_INCLUSION_LABEL_VALUE}"
         if goog_ops_agent_policy_tag
