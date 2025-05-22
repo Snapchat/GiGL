@@ -10,6 +10,7 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import (
@@ -17,18 +18,20 @@ from gigl.distributed.distributed_neighborloader import (
     DistNeighborLoader,
 )
 from gigl.src.common.types.graph_data import NodeType
+from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     GraphPartitionData,
     PartitionOutput,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
     to_heterogeneous_node,
+    to_homogeneous,
 )
 from tests.test_assets.decorator import run_in_separate_process
 from tests.test_assets.distributed.run_distributed_dataset import (
@@ -156,60 +159,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         shutdown_rpc()
 
-    @run_in_separate_process
-    def test_distributed_neighbor_loader_batched(self):
-        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        edge_index = {
-            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
-                [
-                    [10, 10, 11, 11, 12, 12, 13, 13],
-                    [11, 12, 12, 13, 14, 11, 14, 11],
-                ]
-            ),
-        }
-        partition_output = PartitionOutput(
-            node_partition_book=to_heterogeneous_node(torch.zeros(14)),
-            edge_partition_book={
-                e_type: torch.zeros(e_idx.size(1))
-                for e_type, e_idx in edge_index.items()
-            },
-            partitioned_edge_index={
-                etype: GraphPartitionData(
-                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
-                )
-                for etype, idx in edge_index.items()
-            },
-            partitioned_edge_features=None,
-            partitioned_node_features=None,
-            partitioned_negative_labels=None,
-            partitioned_positive_labels=None,
-        )
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output)
-
-        loader = DistNeighborLoader(
-            dataset=dataset,
-            num_neighbors=[2],
-            input_nodes=(node_type, torch.tensor([[10, 12]])),
-            context=self._context,
-            local_process_rank=0,
-            local_process_world_size=1,
-        )
-        count = 0
-        for datum in loader:
-            self.assertIsInstance(datum, HeteroData)
-            count += 1
-
-        self.assertEqual(count, 1)
-        assert_tensor_equality(
-            datum[node_type].node, torch.tensor([10, 11, 12, 14]), dim=0
-        )
-        assert_tensor_equality(datum[node_type].batch, torch.tensor([10, 12]), dim=0)
-
-        # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
-        # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
-        shutdown_rpc()
-
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
@@ -255,18 +204,33 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 "Positive and Negative edges",
                 labeled_edges={
                     _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
-                    _NEGATIVE_EDGE_TYPE: torch.tensor([[10, 11], [16, 14]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
                 },
                 expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
                 expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
                 expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+                expected_positive_labels={
+                    10: torch.tensor([15]),
+                    15: torch.tensor([16]),
+                },
+                expected_negative_labels={
+                    10: torch.tensor([13, 16]),
+                    15: torch.tensor([17]),
+                },
             ),
             param(
                 "Positive edges",
-                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10], [15]])},
-                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 17]),
-                expected_srcs=torch.tensor([10, 10, 15, 15, 11, 11]),
-                expected_dsts=torch.tensor([11, 12, 13, 14, 13, 17]),
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])},
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+                expected_positive_labels={
+                    10: torch.tensor([15]),
+                    15: torch.tensor([16]),
+                },
+                expected_negative_labels=None,
             ),
         ]
     )
@@ -278,6 +242,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         expected_node,
         expected_srcs,
         expected_dsts,
+        expected_positive_labels,
+        expected_negative_labels,
     ):
         # Graph looks like https://is.gd/w2oEVp:
         # Message passing
@@ -289,7 +255,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # 10 -> 15
         # 15 -> 16
         # Negative labels
-        # 10 -> 16
+        # 10 -> {13, 16}
         # 11 -> 14
 
         edge_index = {
@@ -305,7 +271,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         partition_output = PartitionOutput(
             node_partition_book=to_heterogeneous_node(torch.zeros(18)),
             edge_partition_book={
-                e_type: torch.zeros(e_idx.size(1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -325,7 +291,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
-            input_nodes=torch.tensor([10]),
+            input_nodes=torch.tensor([10, 15]),
+            batch_size=2,
             context=self._context,
             local_process_rank=0,
             local_process_world_size=1,
@@ -337,14 +304,63 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
 
         self.assertEqual(count, 1)
+        dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(
             datum.node,
             expected_node,
             dim=0,
         )
+        self.assertEqual(datum.y_positive.keys(), expected_positive_labels.keys())
+        for anchor in expected_positive_labels.keys():
+            assert_tensor_equality(
+                datum.y_positive[anchor],
+                expected_positive_labels[anchor],
+            )
+        if expected_negative_labels is not None:
+            self.assertEqual(datum.y_negative.keys(), expected_negative_labels.keys())
+            for anchor in expected_negative_labels.keys():
+                assert_tensor_equality(
+                    datum.y_negative[anchor],
+                    expected_negative_labels[anchor],
+                )
+        else:
+            self.assertFalse(hasattr(datum, "y_negative"))
         dsts, srcs, *_ = datum.coo()
         assert_tensor_equality(datum.node[srcs], expected_srcs)
         assert_tensor_equality(datum.node[dsts], expected_dsts)
+
+        # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
+        # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
+        shutdown_rpc()
+
+    @run_in_separate_process
+    def test_cora_supervised(self):
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        dataset = build_dataset_from_task_config_uri(
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri.uri,
+            distributed_context=self._context,
+            is_inference=False,
+        )
+        loader = DistABLPLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            input_nodes=to_homogeneous(dataset.train_node_ids),
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+        )
+        count = 0
+        for datum in loader:
+            self.assertIsInstance(datum, Data)
+            self.assertTrue(hasattr(datum, "y_positive"))
+            self.assertIsInstance(datum.y_positive, dict)
+            self.assertTrue(hasattr(datum, "y_negative"))
+            self.assertIsInstance(datum.y_negative, dict)
+            self.assertEqual(datum.y_positive.keys(), datum.y_negative.keys())
+            count += 1
+        self.assertEqual(count, 2161)
 
         # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
         # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading

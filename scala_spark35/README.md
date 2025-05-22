@@ -48,7 +48,7 @@ To silence the worker logs
 
 1. Create log4j.properties file from template, under `/scala` dir, do
    `cp ../tools/scala/spark-3.1.3-bin-hadoop3.2/conf/log4j.properties.template ../tools/scala/spark-3.1.3-bin-hadoop3.2/conf/log4j.properties`
-1. Update the first line in `log4j.properties` to `log4j.rootCategory=WARN, console`
+2. Update the first line in `log4j.properties` to `log4j.rootCategory=WARN, console`
 
 Note: Mocked assets are generated using the dataset asset mocking suite (in `python/gigl/src/mocking/`)
 

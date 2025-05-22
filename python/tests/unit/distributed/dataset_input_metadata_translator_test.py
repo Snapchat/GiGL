@@ -242,6 +242,9 @@ class TranslatorTestCase(unittest.TestCase):
                 is_heterogeneous=graph_metadata_pb_wrapper.is_heterogeneous,
                 expected_entity_types=graph_metadata_pb_wrapper.edge_types,
             )
+            serialized_positive_label_info_iterable: list[
+                Optional[SerializedTFRecordInfo]
+            ]
             if isinstance(
                 serialized_graph_metadata.positive_label_entity_info, abc.Mapping
             ):
@@ -324,6 +327,9 @@ class TranslatorTestCase(unittest.TestCase):
                 is_heterogeneous=graph_metadata_pb_wrapper.is_heterogeneous,
                 expected_entity_types=graph_metadata_pb_wrapper.edge_types,
             )
+            serialized_negative_label_info_iterable: list[
+                Optional[SerializedTFRecordInfo]
+            ]
             if isinstance(
                 serialized_graph_metadata.negative_label_entity_info, abc.Mapping
             ):
