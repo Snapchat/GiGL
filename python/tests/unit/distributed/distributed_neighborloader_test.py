@@ -10,14 +10,18 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
-from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
+from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.distributed_neighborloader import (
     DistABLPLoader,
     DistNeighborLoader,
 )
+from gigl.distributed.utils.serialized_graph_metadata_translator import (
+    convert_pb_to_serialized_graph_metadata,
+)
 from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -272,11 +276,25 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
-        dataset = build_dataset_from_task_config_uri(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri.uri,
-            distributed_context=self._context,
-            is_inference=False,
+
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+            )
         )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            distributed_context=self._context,
+            sample_edge_direction="in",
+        )
+
         loader = DistABLPLoader(
             dataset=dataset,
             num_neighbors=[2, 2],
