@@ -1,16 +1,22 @@
+"""Distributed homogeneous training example.
+
+Run locally with:
+MASTER_ADDR=localhost MASTER_PORT=9762 python examples/distributed/homogeneous_training.py --task_config_uri gs://gigl-cicd-perm/cora_glt_udl_test_on__54606/config_populator/frozen_gbml_config.yaml
+"""
 import argparse
 import datetime
+import pickle
 import time
+from pathlib import Path
 from typing import Optional
 
 import torch
 import torch.multiprocessing as mp
 from torch import nn
-from torch.nn.parallel import DistributedDataParallel
 
 from gigl.common.logger import Logger
 from gigl.common.types.uri.uri_factory import UriFactory
-from gigl.common.utils.vertex_ai_context import connect_worker_pool
+from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed import (
     DistABLPLoader,
     DistLinkPredictionDataset,
@@ -19,21 +25,24 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.utils import get_available_device
-from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.common.utils.os_utils import import_obj
-from gigl.src.common.types.pb_wrappers.preprocessed_metadata import PreprocessedMetadataPbWrapper
-from gigl.types.graph import to_homogeneous
+from gigl.src.common.models.layers.loss import RetrievalLoss
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
 from gigl.src.common.models.pyg.link_prediction import (
     LinkPredictionDecoder,
     LinkPredictionGNN,
 )
-from gigl.src.common.utils.model import load_state_dict_from_uri
-from snapchat.research.gbml.preprocessed_metadata_pb2 import PreprocessedMetadata
-from gigl.common.utils.torch_training import is_distributed_available_and_initialized
-from gigl.src.common.models.layers.loss import RetrievalLoss
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.src.common.types.task_inputs import BatchCombinedScores
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+    to_homogeneous,
+)
 
 logger = Logger()
+
 
 def split_parameters_by_layer_names(
     named_parameters: list[tuple[str, torch.nn.Parameter]],
@@ -57,6 +66,7 @@ def split_parameters_by_layer_names(
         else:
             params_left.append((name, param))
     return params_to_separate, params_left
+
 
 def _init_example_gigl_model(
     state_dict: dict[str, torch.Tensor],
@@ -107,9 +117,10 @@ def _init_example_gigl_model(
     model.to(device)
 
     # Override the initiated model's parameters with the saved model's parameters.
-    model.load_state_dict(state_dict)
+    # model.load_state_dict(state_dict)
 
     return model
+
 
 def _train_process(
     process_number: int,
@@ -123,8 +134,8 @@ def _train_process(
     edge_feature_dim: int,
 ) -> None:
     validate_every = 50
-    learning_rate = 0.005
-    num_epoch = 1
+    learning_rate = 1e-6
+    num_epoch = 3
     device = get_available_device(process_number)
     train_loader = DistABLPLoader(
         dataset=dataset,
@@ -148,21 +159,32 @@ def _train_process(
     #     shuffle=True,
     #     drop_last=True,
     # )
+    zero_fanout = [0] * len(num_neighbors)
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         context=dist_context,
-        num_neighbors=num_neighbors,
+        num_neighbors={
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: num_neighbors,
+            message_passing_to_negative_label(
+                DEFAULT_HOMOGENEOUS_EDGE_TYPE
+            ): zero_fanout,
+            message_passing_to_positive_label(
+                DEFAULT_HOMOGENEOUS_EDGE_TYPE
+            ): zero_fanout,
+        },
         local_process_rank=process_number,
         local_process_world_size=total_processes,
-        input_nodes=negative_samples,
+        input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, negative_samples.repeat(100)),
         pin_memory_device=device,
+        batch_size=100,
         shuffle=True,
         drop_last=True,
         _main_inference_port=50_300,
         _main_sampling_port=50_400,
     )
     torch.distributed.init_process_group(
-        backend="nccl",
+        # TODO: "nccl" when GPU
+        backend="gloo",
         rank=dist_context.global_rank * total_processes + process_number,
         world_size=dist_context.global_world_size * total_processes,
         timeout=datetime.timedelta(minutes=30),
@@ -170,17 +192,18 @@ def _train_process(
 
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
-    model_state_dict = load_state_dict_from_uri(
-        load_from_uri=model_state_dict_uri, device=device
-    )
+    # model_state_dict = load_state_dict_from_uri(
+    #     load_from_uri=model_state_dict_uri, device=device
+    # )
     model: nn.Module = _init_example_gigl_model(
-        state_dict=model_state_dict,
+        state_dict={},
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
         inferencer_args={},
         device=device,
     )
-    ddp_model = DistributedDataParallel(model, device_ids=[device])
+    # ddp_model = DistributedDataParallel(model, device_ids=[device])
+    ddp_model = model
     all_named_parameters = list(ddp_model.named_parameters())
     embedding_params, other_params = split_parameters_by_layer_names(
         named_parameters=all_named_parameters,
@@ -208,16 +231,122 @@ def _train_process(
         f"Model initialized on machine {process_number} training device {device}\n{model}"
     )
     assert is_distributed_available_and_initialized()
+
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
+    def index_select(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        return torch.tensor(
+            [torch.nonzero(a == e).squeeze(1) for e in b], dtype=torch.long
+        )
+
     torch.distributed.barrier()
     for epoch in range(num_epoch):
+        logger.info(f"Epoch {epoch} started")
         for batch_idx, (main_data, random_data) in enumerate(
             zip(train_loader, random_negative_loader)
         ):
+            # for batch_idx, main_data in enumerate(train_loader):
             # TODO enable early stop
             # TODO enable AMP
-            main_embeddings = ddp_model(main_data)
+            # print(f"Epoch {epoch} batch {batch_idx}")
+            # print(f"maiin_data: {main_data}")
+            random_data = random_data.edge_type_subgraph(
+                [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            ).to_homogeneous(add_edge_type=False, add_node_type=False)
+            main_embeddings = to_homogeneous(
+                ddp_model(
+                    main_data,
+                    output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                    device=device,
+                )
+            )
+            # print(f"Main embeddings shape: ({main_embeddings.shape})")
+            random_embeddings = to_homogeneous(
+                ddp_model(
+                    random_data,
+                    output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                    device=device,
+                )
+            )
+            if isinstance(ddp_model, torch.nn.parallel.DistributedDataParallel):
+                decoder = ddp_model.module.decode
+            else:
+                decoder = ddp_model.decode
+            # print(f"{main_data.batch=}")
+            # print(f"{main_data.y_positive=}")
+            # print(f"{main_data.y_negative=}")
+            # print(f"{main_data.node.shape=}")
+            # print(f"{main_data.node=}")
+            # print(f"{main_data.num_sampled_nodes=}")
+            anchor_nodes = torch.tensor(list(main_data.y_positive.keys()))
+            repeated_anchors = []
+            for anchor in map(lambda t: t.item(), anchor_nodes):
+                # repeated_anchors.extend([anchor] * (main_data.y_positive[anchor].shape[0] + main_data.y_negative[anchor].shape[0]))
+                repeated_anchors.extend(
+                    [anchor] * (main_data.y_positive[anchor].numel())
+                )
+            repeated_anchor_nodes = torch.tensor(repeated_anchors)
+            positve_anchors = torch.cat(list(main_data.y_positive.values()))
+            positive_anchor_indicies = index_select(main_data.node, positve_anchors)
+            negative_anchors = torch.cat(list(main_data.y_negative.values()))
+            negative_anchor_indicies = index_select(main_data.node, negative_anchors)
+            repeated_anchor_indicies = index_select(
+                main_data.node, repeated_anchor_nodes
+            )
+            # print(f"{repeated_anchor_indicies.shape=}, {repeated_anchor_nodes.dtype=}")
+            # print(f"{repeated_anchor_indicies=}")
+            repeated_query_embeddigns = main_embeddings[repeated_anchor_indicies]
+            # print(f"{positive_anchor_indicies.shape}, {positive_anchor_indicies.dtype=}")
+            # print(f"{negative_anchor_indicies.shape}, {negative_anchor_indicies.dtype=}")
+            repeated_candidate_scores = decoder(
+                query_embeddings=repeated_query_embeddigns,
+                candidate_embeddings=torch.cat(
+                    [
+                        main_embeddings[positive_anchor_indicies],
+                        main_embeddings[negative_anchor_indicies],
+                        random_embeddings[
+                            index_select(random_data.node, random_data.batch)
+                        ],
+                    ]
+                ),
+            )
+            print(
+                f"{anchor_nodes.shape=}, {positve_anchors.shape=}, {negative_anchors.shape=}, {repeated_candidate_scores.shape=}"
+            )
+            # print(f"{repeated_candidate_scores.shape=}")
+            # print(f"{repeated_anchor_nodes.shape=}")
+            # print(f"{repeated_query_embeddigns.shape=}")
+            # print(f"{main_embeddings[positive_anchor_indicies].shape=}")
 
+            batched_combined_scores = BatchCombinedScores(
+                repeated_candidate_scores=repeated_candidate_scores,
+                positive_ids=positve_anchors,
+                hard_neg_ids=negative_anchors,
+                random_neg_ids=random_data.batch,
+                repeated_query_ids=repeated_anchor_nodes,
+                num_unique_query_ids=len(anchor_nodes),
+            )
+
+            loss_output = loss(
+                batch_combined_scores=batched_combined_scores,
+                repeated_query_embeddings=repeated_query_embeddigns,
+                candidate_sampling_probability=None,
+            )
+            print(f"{loss_output=}")
+            loss_tensor: torch.Tensor = loss_output[0]
+            if loss_tensor.grad_fn is None:
+                # print(f"main_data: {main_data}")
+                # print(f"{main_data.node=}")
+                # print(f"{main_data.x=}")
+                # print(f"{main_data.edge_index=}")
+                # print(f"{main_data.coo()=}")
+                # print(f"query_embeddings: {repeated_query_embeddigns.shape}")
+                # print(f"positive_embeddings: {main_embeddings[positive_anchor_indicies].shape}")
+                # print(f"negative_embeddings: {main_embeddings[negative_anchor_indicies].shape}")
+                print("Skipping loss")
+                continue
+            optimizer.zero_grad()
+            loss_tensor.backward()
+            optimizer.step()
 
 
 def train(
@@ -225,21 +354,31 @@ def train(
 ) -> None:
     train_start_time = time.time()
 
-    #dist_context = connect_worker_pool()
+    # dist_context = connect_worker_pool()
     dist_context = DistributedContext("localhost", 0, 1)
-    dataset = build_dataset_from_task_config_uri(
-        task_config_uri, dist_context, is_inference=False
-    )
+    local_dataset = Path(__file__).parent / "local_dataset.pkl"
+    if not local_dataset.exists():
+        dataset = build_dataset_from_task_config_uri(
+            task_config_uri, dist_context, is_inference=False
+        )
+        pickle.dump(dataset.share_ipc(), open(local_dataset, "wb"))
+    else:
+        dataset = DistLinkPredictionDataset.from_ipc_handle(
+            pickle.load(open(local_dataset, "rb"))
+        )
     gbml_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         UriFactory.create_uri(task_config_uri)
     )
-    num_training_processes = int(
-        gbml_pb_wrapper.trainer_config.trainer_args.get(
-            "num_training_processes_per_machine", 2
-        )
-    )
+    # num_training_processes = int(
+    #     gbml_pb_wrapper.trainer_config.trainer_args.get(
+    #         "num_training_processes_per_machine", 2
+    #     )
+    # )
+    num_training_processes = 1
     num_neighbors = [10, 10]
-    negative_samples = torch.arange(len(dataset.node_pb))
+    print(f"len(dataset.node_pb) = {len(to_homogeneous(dataset.node_pb))}")
+    print(f"dataset.node_pb.shape = {to_homogeneous(dataset.node_pb).shape}")
+    negative_samples = torch.arange(len(to_homogeneous(dataset.node_pb)))
     negative_samples.share_memory_()
 
     node_feature_dim = gbml_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
@@ -261,7 +400,6 @@ def train(
             gbml_pb_wrapper.trainer_config.trainer_cls_path,
             node_feature_dim,
             edge_feature_dim,
-
         ),
         nprocs=num_training_processes,
         join=True,

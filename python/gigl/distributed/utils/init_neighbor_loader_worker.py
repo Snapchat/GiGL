@@ -21,7 +21,9 @@ def get_process_group_name(process_rank: int) -> str:
     """
     return f"distributed-process-{process_rank}"
 
+
 _PROCCESSES_SETUP: set[int] = set()
+
 
 # torch.set_num_interop_threads() can only be called once, otherwise we see:
 # RuntimeError: Error: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
