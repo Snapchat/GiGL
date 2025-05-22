@@ -27,6 +27,25 @@ class FileLoaderTest(unittest.TestCase):
             gcs_path=self.gcs_test_asset_directory
         )
 
+    def test_local_temp_file(self):
+        local_file_path_src: LocalUri = LocalUri.join(
+            self.test_asset_directory, "test_local_temp_file.txt"
+        )
+
+        local_fs.remove_file_if_exist(local_path=local_file_path_src)
+
+        # Create files and ensure they exist
+        local_fs.create_empty_file_if_none_exists(local_path=local_file_path_src)
+        self.assertTrue(local_fs.does_path_exist(local_file_path_src))
+        with open(local_file_path_src.uri, "w") as f:
+            f.write("Hello")
+
+        temp_f = self.file_loader.load_to_temp_file(file_uri_src=local_file_path_src)
+        with open(temp_f.name, "r") as f:
+            msg = f.read()
+        self.assertTrue(msg == "Hello")
+        temp_f.close()
+
     def test_gcs_temp_file(self):
         local_file_path_src: LocalUri = LocalUri.join(
             self.test_asset_directory, "test_gcs_temp_file.txt"
