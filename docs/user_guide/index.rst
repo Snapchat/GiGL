@@ -26,9 +26,9 @@ Welcome to the GiGL User Guide. This guide provides detailed documentation to he
    :maxdepth: 2
    :caption: Getting Started
 
-   getting_started/installation
    getting_started/quick_start
    getting_started/cloud_setup_guide
+   getting_started/installation
    getting_started/orchestration
    examples/index
 
