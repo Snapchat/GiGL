@@ -2,6 +2,12 @@
 
 GiGL is an open-source library for training and inference of Graph Neural Networks at very large (billion) scale.
 
+```{only}
+::not html
+
+For best experience in reading GiGL documentation, please visit our documentaiton website: www.snapchat.github.io/GiGL/
+```
+
 ## Key Features 🌟
 
 - 🧠 **Versatile GNN Applications**: Supports easy customization in using GNNs in supervised and unsupervised ML
@@ -208,8 +214,7 @@ make format_scala
 make format_md
 ```
 
-All unit tests are organized in `python/tests/unit` folder. With the python entry point being
-`python/tests/unit/main.py`
+All unit tests are organized in `python/tests/unit` folder with the python entry point being `python/tests/unit/main.py`
 
 </details>
 
@@ -236,7 +241,7 @@ If you want to run individual integration tests you can do so as follows:
 make integration_test PY_TEST_FILES="file_loader_test.py"
 ```
 
-All integration tests are organized in `python/tests/integration` folder. With the python entry point being
+All integration tests are organized in `python/tests/integration` folder with the python entry point being
 `python/tests/integration/main.py`
 
 </details>
@@ -253,7 +258,7 @@ We have a few e2e test entrypoints defined in the Makefile i.e. `run_cora_nalp_e
 As these are very long running tests, we advise you run them on the PR; leveraging commands [pointed out above](#tests-).
 i.e. leaving `/e2e_test` comment in your open PR.
 
-If you must run them locally, you will have to manually modify the resource configs for the relevent e2e test you want to run so that it is using resources that you have access to.
+If you must run them locally, you will have to manually modify the resource configs for the relevant e2e test you want to run so that it is using resources that you have access to.
 
 We plan on providing better support here in the future.
 ```

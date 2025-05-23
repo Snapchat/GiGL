@@ -14,7 +14,7 @@ Before proceeding, make sure you have correctly installed `gigl` by following th
 ## 2. Setup your Cloud Environment
 
 For GiGL to function you need to se up a few cloud resources including a Service Account, GCS Buckets, BQ tables and
-relevent permissions. Please follow instructions under the [Cloud Setup Guide](./cloud_setup_guide.md)
+relevant permissions. Please follow instructions under the [Cloud Setup Guide](./cloud_setup_guide.md)
 
 ## 3. Config Setup
 
@@ -84,10 +84,10 @@ If the pipeline ran sucessfully, you should see a url to Vertex AI where your pi
 
 Observe that once you run this command a few things happen:
 
-1. The relevent jars are compiled
-2. Docker images are built from the GiGL source code and uploaded to your project
-3. A KFP pipeline is compiled with references to the relevent jars, and docker iamges
-4. The compiled pipeline runs on Vertex AI on your project w/ the task and resource configs provided.
+1. The relevant jars are compiled
+1. Docker images are built from the GiGL source code and uploaded to your project
+1. A KFP pipeline is compiled with references to the relevant jars, and docker iamges
+1. The compiled pipeline runs on Vertex AI on your project w/ the task and resource configs provided.
 
 ## Digging Deeper and Advanced Usage
 

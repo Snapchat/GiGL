@@ -1,7 +1,7 @@
 # Cloud Setup Guide
 
 ```{note}
-The guidance below assumes you are not operating within a corporate network or under organization-specific policies. It provides instructions for onboarding directly onto raw GCP.
+The guidance below assumes you are not operating within a corporate network or under organization-specific policies. It provides instructions for onboarding directly a non-restricted GCP project.
 
 If your company or lab uses custom IAM roles, security policies, infrastructure management tools, or other internal systems, please refer to your internal documentation for how those may apply alongside the steps outlined here.
 
@@ -33,6 +33,7 @@ For more detailed information on meeting the prerequisites, refer to the officia
 
    - Pro-tip: Create regional buckets and use the same region for all your resources and compute to keep your cloud
      costs minimal i.e. `us-central1`
+
      <img src="../../assets/images/cloud_setup/regional_bucket_example.png" alt="Regional Bucket Example" width="500px" />
    - Ensure to use the "standard" default class for storage
    - (Optional) Enable Hierarchical namespace on this bucket

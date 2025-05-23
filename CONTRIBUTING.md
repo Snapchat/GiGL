@@ -16,7 +16,7 @@ If you find a bug or have a feature request, please open an issue and provide as
 
 - Search existing issues to avoid duplicates.
 - Clearly describe the issue with steps to reproduce (If applicable).
-  - Include relevent specs used both task and resource.
+  - Include relevant specs used both task and resource.
   - Provide relevant logs or screenshots if applicable.
 - Expected and actual behahavior.
 - List Suggested solutions (if any).
