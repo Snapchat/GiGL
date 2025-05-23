@@ -215,7 +215,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             master_port=master_port,
         )
 
-        __spawn_new_process(_run_distributed_neighbor_loader, dataset, self._context)
+        _spawn_new_process(_run_distributed_neighbor_loader, dataset, self._context)
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
