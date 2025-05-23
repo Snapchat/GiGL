@@ -85,9 +85,9 @@ If the pipeline ran sucessfully, you should see a url to Vertex AI where your pi
 Observe that once you run this command a few things happen:
 
 1. The relevant jars are compiled
-1. Docker images are built from the GiGL source code and uploaded to your project
-1. A KFP pipeline is compiled with references to the relevant jars, and docker iamges
-1. The compiled pipeline runs on Vertex AI on your project w/ the task and resource configs provided.
+2. Docker images are built from the GiGL source code and uploaded to your project
+3. A KFP pipeline is compiled with references to the relevant jars, and docker iamges
+4. The compiled pipeline runs on Vertex AI on your project w/ the task and resource configs provided.
 
 ## Digging Deeper and Advanced Usage
 

@@ -35,10 +35,14 @@ For more detailed information on meeting the prerequisites, refer to the officia
      costs minimal i.e. `us-central1`
 
      <img src="../../assets/images/cloud_setup/regional_bucket_example.png" alt="Regional Bucket Example" width="500px" />
+
    - Ensure to use the "standard" default class for storage
+
    - (Optional) Enable Hierarchical namespace on this bucket
+
    - For your temp bucket its okay to disable `Soft delete policy (For data recovery)`, otherwise you will get billed
      unecessarily for large armounts of intermediary assets GiGL creates.
+
    - Since GiGL creates alot of intermediary assets you will want to create a
      [lifecycle rule](https://cloud.google.com/storage/docs/lifecycle) on the temporariy bucket to automatically delete
      assets. Intermediary assets can add up very quickly - you have been warned. Example:
