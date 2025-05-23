@@ -1,3 +1,6 @@
+import argparse
+from dataclasses import dataclass
+from typing import Dict, Optional
 import datetime
 import getpass
 import os
@@ -14,6 +17,41 @@ GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
 TEMPLATE_SOURCE_RESOURCE_CONFIG = (
     GIGL_ROOT_DIR / "deployment" / "configs" / "unittest_resource_config.yaml"
 )
+
+
+@dataclass
+class Param:
+    default: Optional[str]
+    description: str
+    long_description: str = ""
+    required: bool = True
+
+
+class SupportedParams:
+    defaults: Dict[str, Param]
+
+
+    def __init__(self):
+        try:
+            project = subprocess.check_output(
+                ["gcloud", "config", "get-value", "project"], text=True
+            ).strip()
+        except subprocess.CalledProcessError as e:
+            print(
+                "Error retrieving active project name; is your gcloud SDK configured correctly?",
+                e,
+            )
+            raise
+        self.defaults: Dict[str, Param] = {
+            "project": Param(default=project, description="GCP Project name that you are planning on using"),
+            "region": Param(default="us-central1", description="The GCP region where you created your resources"),
+            "gcp_service_account_email": Param(default=None, description="The GCP Service account"),
+            "docker_artifact_registry_path": Param(default=None, description="The Docker Artifact Registry path where your source code images will be stored i.e. `us-central1-docker.pkg.dev/YOUR_PROJECT_NAME/YOUR_REPO_NAME`"),
+            "temp_assets_bq_dataset_name": Param(default=None, description="`temp_assets_bq_dataset_name` - Dataset name used for temporary assets"),
+            "embedding_bq_dataset_name": Param(default=None, description="`embedding_bq_dataset_name` - Dataset used of output embeddings"),
+            "temp_assets_bucket": Param(default=None, description="`temp_assets_bucket` - GCS Bucket for storing temporary assets i.e. `gs://YOUR_BUCKET_NAME`"),
+            "perm_assets_bucket": Param(default=None, description="`perm_assets_bucket` - GCS Bucket for storing permanent assets i.e. `gs://YOUR_BUCKET_NAME`"),
+        }
 
 
 def infer_shell_file() -> str:
@@ -106,7 +144,7 @@ def assert_bq_dataset_exists(dataset_name: str, project: str):
         raise ValueError(
             f"BigQuery dataset '{dataset_name}' does not exist in project '{project}' or you do not have access to it."
         )
-    print(f"BigQuery dataset '{dataset_name}' exists.")
+    print(f"Confirmed BigQuery dataset '{dataset_name}' exists.")
 
 
 def assert_gcs_bucket_exists(bucket_name: str):
@@ -118,7 +156,7 @@ def assert_gcs_bucket_exists(bucket_name: str):
         raise ValueError(
             f"GCS bucket '{bucket_name}' does not exist or you do not have access to it."
         )
-    print(f"GCS bucket '{bucket_name}' exists.")
+    print(f"Confirmed GCS bucket '{bucket_name}' exists.")
 
 
 if __name__ == "__main__":
@@ -136,66 +174,76 @@ if __name__ == "__main__":
         f"We will use `{TEMPLATE_SOURCE_RESOURCE_CONFIG}` as the template for your resource config YAML file."
     )
 
-    # Default values
-    print("Please provide us Project information.")
-    project: str = input("GCP Project name that you are planning on using: ").strip()
-    assert_gcp_project_exists(project)
-    region: str = input(
-        f"The GCP region where you created your resources i.e. `us-central1`: "
-    ).strip()
-    assert region, "Region cannot be empty"
-    gcp_service_account_email: str = input("The GCP Service account: ").strip()
-    assert gcp_service_account_email, "GCP Service account cannot be empty"
-    docker_artifact_registry_path: str = input(
-        f"The Docker Artifact Registry path where your source code images will be stored i.e. `us-central1-docker.pkg.dev/YOUR_PROJECT_NAME/YOUR_REPO_NAME`: "
-    ).strip()
-    assert (
-        docker_artifact_registry_path
-    ), "Docker Artifact Registry path cannot be empty"
+    supported_params = SupportedParams()
+    parser = argparse.ArgumentParser(
+        description="Bootstrap GiGL resource config. All parameters can be provided as CLI args or interactively."
+    )
+    for key, param in supported_params.defaults.items():
+        help_text = (
+            f"{param.description} (default: {param.default})"
+            if param.default else param.description
+        )
+        parser.add_argument(f"--{key}", type=str, help=help_text)
+    args = parser.parse_args()
 
-    print("\n\nPlease provide us the information on the BQ Datasets you want to use")
-    temp_assets_bq_dataset_name: str = input(
-        "`temp_assets_bq_dataset_name` - Dataset name used for temporary assets: "
-    ).strip()
-    assert_bq_dataset_exists(dataset_name=temp_assets_bq_dataset_name, project=project)
-    embedding_bq_dataset_name: str = input(
-        f"`embedding_bq_dataset_name` - Dataset used of output embeddings: "
-    ).strip()
-    assert_bq_dataset_exists(dataset_name=embedding_bq_dataset_name, project=project)
+    values: Dict[str, str] = {}
+    for key, param in supported_params.defaults.items():
+        # Check if value is provided in command line arguments
+        if getattr(args, key):
+            values[key] = getattr(args, key)
+            continue
+        # If not, prompt for input
+        else:
+            input_question: str
+            long_description_clause = (
+                f"\n{param.long_description}" if param.long_description else ""
+            )
+            if param.default is None:
+                required_clause = "(required)" if param.required else "(optional)"
+                input_question = f"-> {param.description}{long_description_clause} {required_clause}: "
+            else:
+                input_question = f"-> {param.description}{long_description_clause}\nDefaults to: [{param.default}]: "
 
-    print("\n\nPlease provide us the information on the GCS Buckets you want to use")
-    temp_assets_bucket: str = input(
-        f"`temp_assets_bucket` - GCS Bucket for storing temporary assets i.e. `gs://YOUR_BUCKET_NAME`: "
-    ).strip()
-    assert_gcs_bucket_exists(bucket_name=temp_assets_bucket)
-    perm_assets_bucket: str = input(
-        f"`perm_assets_bucket` - GCS Bucket for storing permanent assets i.e. `gs://YOUR_BUCKET_NAME`: "
-    ).strip()
-    assert_gcs_bucket_exists(bucket_name=perm_assets_bucket)
+            values[key] = input(input_question).strip() or param.default  # type: ignore
+            if not values[key] and param.required:
+                raise ValueError(
+                    f"Missing required value for {key}. Please provide a value."
+                )
+
+    # Validate existence of resources
+    assert_gcp_project_exists(values["project"])
+    assert values["region"], "Region cannot be empty"
+    assert values["gcp_service_account_email"], "GCP Service account cannot be empty"
+    assert values["docker_artifact_registry_path"], "Docker Artifact Registry path cannot be empty"
+    assert_bq_dataset_exists(dataset_name=values["temp_assets_bq_dataset_name"], project=values["project"])
+    assert_bq_dataset_exists(dataset_name=values["embedding_bq_dataset_name"], project=values["project"])
+    assert_gcs_bucket_exists(bucket_name=values["temp_assets_bucket"])
+    assert_gcs_bucket_exists(bucket_name=values["perm_assets_bucket"])
 
     curr_datetime = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     curr_username = getpass.getuser()
-    resource_config_dest_path = f"{perm_assets_bucket}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
+    default_resource_config_dest_path = f"{values['perm_assets_bucket']}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
 
     destination_file_path = (
         input(
-            f"Output path for resource config (default: {resource_config_dest_path}); can be GCS or Local path: "
+            f"Output path for resource config (default: {default_resource_config_dest_path}); can be GCS or Local path: "
         ).strip()
-        or resource_config_dest_path
+        or default_resource_config_dest_path
     )
+    assert destination_file_path and destination_file_path.startswith("gs://"), "Destination file path must be a GCS path starting with 'gs://'"
 
     print("=======================================================")
     print(f"Will now create the resource config file @ {destination_file_path}.")
     print("Using the following values:")
     update_fields_dict = {
-        "project": project,
-        "region": region,
-        "gcp_service_account_email": gcp_service_account_email,
-        "temp_assets_bucket": temp_assets_bucket,
-        "temp_regional_assets_bucket": temp_assets_bucket,
-        "perm_assets_bucket": perm_assets_bucket,
-        "temp_assets_bq_dataset_name": temp_assets_bq_dataset_name,
-        "embedding_bq_dataset_name": embedding_bq_dataset_name,
+        "project": values["project"],
+        "region": values["region"],
+        "gcp_service_account_email": values["gcp_service_account_email"],
+        "temp_assets_bucket": values["temp_assets_bucket"],
+        "temp_regional_assets_bucket": values["temp_assets_bucket"],
+        "perm_assets_bucket": values["perm_assets_bucket"],
+        "temp_assets_bq_dataset_name": values["temp_assets_bq_dataset_name"],
+        "embedding_bq_dataset_name": values["embedding_bq_dataset_name"],
     }
     for key, value in update_fields_dict.items():
         print(f"  {key}: {value}")
@@ -203,7 +251,7 @@ if __name__ == "__main__":
     with open(TEMPLATE_SOURCE_RESOURCE_CONFIG, "r") as file:
         config = yaml.safe_load(file)
 
-    # # Update the YAML content
+    # Update the YAML content
     common_compute_config: dict = config.get("shared_resource_config").get(
         "common_compute_config"
     )
@@ -213,7 +261,7 @@ if __name__ == "__main__":
     with open(tmp_file.name, "w") as file:
         yaml.safe_dump(config, file)
 
-    file_loader = FileLoader(project=project)
+    file_loader = FileLoader(project=values["project"])
     file_uri_src = UriFactory.create_uri(uri=tmp_file.name)
     file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
     file_loader.load_file(file_uri_src=file_uri_src, file_uri_dst=file_uri_dest)
@@ -234,8 +282,8 @@ if __name__ == "__main__":
         update_shell_config(
             shell_config_path=shell_config_path,
             gigl_test_default_resource_config=destination_file_path,
-            gigl_project=project,
-            gigl_docker_artifact_registry_path=docker_artifact_registry_path,
+            gigl_project=values["project"],
+            gigl_docker_artifact_registry_path=values["docker_artifact_registry_path"],
         )
 
         print(
