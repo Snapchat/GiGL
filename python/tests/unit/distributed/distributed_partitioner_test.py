@@ -7,7 +7,7 @@ from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple, Type, 
 import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.distributed import init_rpc, init_worker_group, shutdown_rpc
+from graphlearn_torch.distributed import init_rpc, init_worker_group
 from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
@@ -17,7 +17,6 @@ from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
-from tests.test_assets.decorator import run_in_separate_process
 from tests.test_assets.distributed.constants import (
     EDGE_TYPE_TO_FEATURE_DIMENSION_MAP,
     ITEM_NODE_TYPE,
@@ -868,7 +867,6 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 tensor_a=expected_negative_labels, tensor_b=output_neg_label, dim=1
             )
 
-    @run_in_separate_process
     def test_partitioning_failure(self) -> None:
         master_port = glt.utils.get_free_port(self._master_ip_address)
         rank = 0
@@ -962,10 +960,6 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 AssertionError, "Must have registered nodes prior to partitioning them"
             ):
                 partitioner.partition()
-
-        # This call is not strictly required to pass tests, since this test uses the `run_in_separate_process` decorator,
-        # but rather is good practice to ensure that we cleanup the rpc after we finish partitioning
-        shutdown_rpc()
 
 
 if __name__ == "__main__":
