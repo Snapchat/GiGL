@@ -271,7 +271,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
         shutdown_rpc()
 
-    @run_in_separate_process
     def test_cora_supervised(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
