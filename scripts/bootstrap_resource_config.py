@@ -1,12 +1,12 @@
 import argparse
-from dataclasses import dataclass
-from typing import Dict, Optional
 import datetime
 import getpass
 import os
 import pathlib
 import subprocess
 import tempfile
+from dataclasses import dataclass
+from typing import Dict, Optional
 
 import yaml
 
@@ -30,7 +30,6 @@ class Param:
 class SupportedParams:
     defaults: Dict[str, Param]
 
-
     def __init__(self):
         try:
             project = subprocess.check_output(
@@ -43,14 +42,37 @@ class SupportedParams:
             )
             raise
         self.defaults: Dict[str, Param] = {
-            "project": Param(default=project, description="GCP Project name that you are planning on using"),
-            "region": Param(default="us-central1", description="The GCP region where you created your resources"),
-            "gcp_service_account_email": Param(default=None, description="The GCP Service account"),
-            "docker_artifact_registry_path": Param(default=None, description="The Docker Artifact Registry path where your source code images will be stored i.e. `us-central1-docker.pkg.dev/YOUR_PROJECT_NAME/YOUR_REPO_NAME`"),
-            "temp_assets_bq_dataset_name": Param(default=None, description="`temp_assets_bq_dataset_name` - Dataset name used for temporary assets"),
-            "embedding_bq_dataset_name": Param(default=None, description="`embedding_bq_dataset_name` - Dataset used of output embeddings"),
-            "temp_assets_bucket": Param(default=None, description="`temp_assets_bucket` - GCS Bucket for storing temporary assets i.e. `gs://YOUR_BUCKET_NAME`"),
-            "perm_assets_bucket": Param(default=None, description="`perm_assets_bucket` - GCS Bucket for storing permanent assets i.e. `gs://YOUR_BUCKET_NAME`"),
+            "project": Param(
+                default=project,
+                description="GCP Project name that you are planning on using",
+            ),
+            "region": Param(
+                default="us-central1",
+                description="The GCP region where you created your resources",
+            ),
+            "gcp_service_account_email": Param(
+                default=None, description="The GCP Service account"
+            ),
+            "docker_artifact_registry_path": Param(
+                default=None,
+                description="The Docker Artifact Registry path where your source code images will be stored i.e. `us-central1-docker.pkg.dev/YOUR_PROJECT_NAME/YOUR_REPO_NAME`",
+            ),
+            "temp_assets_bq_dataset_name": Param(
+                default=None,
+                description="`temp_assets_bq_dataset_name` - Dataset name used for temporary assets",
+            ),
+            "embedding_bq_dataset_name": Param(
+                default=None,
+                description="`embedding_bq_dataset_name` - Dataset used of output embeddings",
+            ),
+            "temp_assets_bucket": Param(
+                default=None,
+                description="`temp_assets_bucket` - GCS Bucket for storing temporary assets i.e. `gs://YOUR_BUCKET_NAME`",
+            ),
+            "perm_assets_bucket": Param(
+                default=None,
+                description="`perm_assets_bucket` - GCS Bucket for storing permanent assets i.e. `gs://YOUR_BUCKET_NAME`",
+            ),
         }
 
 
@@ -76,10 +98,10 @@ def infer_shell_file() -> str:
 
 
 def update_shell_config(
-    shell_config_path,
-    gigl_test_default_resource_config,
-    gigl_project,
-    gigl_docker_artifact_registry_path,
+    shell_config_path: str,
+    gigl_test_default_resource_config: str,
+    gigl_project: str,
+    gigl_docker_artifact_registry_path: str,
 ):
     """Updates the shell configuration file with the environment variables in an idempotent way."""
     shell_config_path = os.path.expanduser(shell_config_path)
@@ -130,7 +152,7 @@ def assert_gcp_project_exists(project_id: str):
 
     print(result.stdout)
     if result.returncode != 0:
-        print(f"Command failed with error: {result.stderr}")
+        print(f"Command `{command}` failed with error: {result.stderr}")
         raise ValueError(
             f"Project '{project_id}' does not exist or you do not have access to it."
         )
@@ -140,7 +162,7 @@ def assert_bq_dataset_exists(dataset_name: str, project: str):
     command = f"bq show --project_id {project} {dataset_name}"
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"Command failed with error: {result.stderr}")
+        print(f"Command `{command}` failed with error: {result.stderr}")
         raise ValueError(
             f"BigQuery dataset '{dataset_name}' does not exist in project '{project}' or you do not have access to it."
         )
@@ -152,7 +174,7 @@ def assert_gcs_bucket_exists(bucket_name: str):
     command = f"gsutil ls {bucket_name}"
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"Command failed with error: {result.stderr}")
+        print(f"Command `{command}` failed with error: {result.stderr}")
         raise ValueError(
             f"GCS bucket '{bucket_name}' does not exist or you do not have access to it."
         )
@@ -181,7 +203,8 @@ if __name__ == "__main__":
     for key, param in supported_params.defaults.items():
         help_text = (
             f"{param.description} (default: {param.default})"
-            if param.default else param.description
+            if param.default
+            else param.description
         )
         parser.add_argument(f"--{key}", type=str, help=help_text)
     args = parser.parse_args()
@@ -214,9 +237,15 @@ if __name__ == "__main__":
     assert_gcp_project_exists(values["project"])
     assert values["region"], "Region cannot be empty"
     assert values["gcp_service_account_email"], "GCP Service account cannot be empty"
-    assert values["docker_artifact_registry_path"], "Docker Artifact Registry path cannot be empty"
-    assert_bq_dataset_exists(dataset_name=values["temp_assets_bq_dataset_name"], project=values["project"])
-    assert_bq_dataset_exists(dataset_name=values["embedding_bq_dataset_name"], project=values["project"])
+    assert values[
+        "docker_artifact_registry_path"
+    ], "Docker Artifact Registry path cannot be empty"
+    assert_bq_dataset_exists(
+        dataset_name=values["temp_assets_bq_dataset_name"], project=values["project"]
+    )
+    assert_bq_dataset_exists(
+        dataset_name=values["embedding_bq_dataset_name"], project=values["project"]
+    )
     assert_gcs_bucket_exists(bucket_name=values["temp_assets_bucket"])
     assert_gcs_bucket_exists(bucket_name=values["perm_assets_bucket"])
 
@@ -230,7 +259,9 @@ if __name__ == "__main__":
         ).strip()
         or default_resource_config_dest_path
     )
-    assert destination_file_path and destination_file_path.startswith("gs://"), "Destination file path must be a GCS path starting with 'gs://'"
+    assert destination_file_path and destination_file_path.startswith(
+        "gs://"
+    ), "Destination file path must be a GCS path starting with 'gs://'"
 
     print("=======================================================")
     print(f"Will now create the resource config file @ {destination_file_path}.")
