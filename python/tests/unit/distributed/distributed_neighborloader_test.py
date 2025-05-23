@@ -314,8 +314,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             count += 1
         self.assertEqual(count, 2161)
 
-        # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
-        # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
         shutdown_rpc()
 
 
