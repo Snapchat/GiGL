@@ -38,8 +38,14 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import GraphPartitionData
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    GraphPartitionData,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+)
 from gigl.utils.data_splitters import (
+    HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
     select_ssl_positive_label_edges,
 )
@@ -55,6 +61,7 @@ def _load_and_build_partitioned_dataset(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
+    should_convert_labels_to_edges: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
@@ -70,6 +77,7 @@ def _load_and_build_partitioned_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
+        should_convert_labels_to_edges (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -96,6 +104,8 @@ def _load_and_build_partitioned_dataset(
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
     )
+    if should_convert_labels_to_edges:
+        loaded_graph_tensors.treat_labels_as_edges()
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
@@ -205,6 +215,7 @@ def _build_dataset_process(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
+    should_convert_labels_to_edges: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
@@ -238,6 +249,7 @@ def _build_dataset_process(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
+        should_convert_labels_to_edges (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -263,6 +275,7 @@ def _build_dataset_process(
         partitioner_class=partitioner_class,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
+        should_convert_labels_to_edges=should_convert_labels_to_edges,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
     )
@@ -283,6 +296,7 @@ def build_dataset(
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    should_convert_labels_to_edges: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: int = DEFAULT_MASTER_DATA_BUILDING_PORT,
@@ -299,6 +313,7 @@ def build_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
+        should_convert_labels_to_edges (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -312,6 +327,28 @@ def build_dataset(
     assert (
         sample_edge_direction == "in" or sample_edge_direction == "out"
     ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
+
+    if should_convert_labels_to_edges:
+        if splitter is not None:
+            logger.warning(
+                f"Received splitter {splitter} and should_convert_labels_to_edges=True. Will use {splitter} to split the graph data."
+            )
+        else:
+            logger.info(
+                f"Using default splitter {type(HashedNodeAnchorLinkSplitter)} for ABLP labels."
+            )
+            # TODO(kmonte): Read train/val/test split counts from config.
+            # TODO(kmonte): Read label edge dir from config.
+            splitter = HashedNodeAnchorLinkSplitter(
+                sampling_direction=sample_edge_direction,
+                edge_types=[
+                    message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+                    message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+                ],
+            )
+        logger.info(
+            "Will be treating the ABLP labels as heterogeneous edges in the graph."
+        )
 
     manager = mp.Manager()
 
@@ -333,6 +370,7 @@ def build_dataset(
             partitioner_class,
             node_tf_dataset_options,
             edge_tf_dataset_options,
+            should_convert_labels_to_edges,
             splitter,
             _ssl_positive_label_percentage,
         ),
@@ -373,11 +411,13 @@ def build_dataset_from_task_config_uri(
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
         args_path = "inferencerConfig.inferencerArgs"
+        should_convert_labels_to_edges = False
     else:
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
         args_path = "trainerConfig.trainerArgs"
+        # TODO(kmonte): Maybe we should enable this as a flag?
+        should_convert_labels_to_edges = True
 
-    # Should be a string which is either "in" or "out"
     sample_edge_direction = args.get("sample_edge_direction", "in")
 
     assert sample_edge_direction in (
@@ -422,6 +462,7 @@ def build_dataset_from_task_config_uri(
         distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
         partitioner_class=partitioner_class,
+        should_convert_labels_to_edges=should_convert_labels_to_edges,
     )
 
     return dataset
