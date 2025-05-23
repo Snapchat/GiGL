@@ -200,6 +200,23 @@ def message_passing_to_negative_label(
         return edge_type
 
 
+# TODO: add tests for this.
+def is_label_edge_type(
+    edge_type: _EdgeType,
+) -> bool:
+    """Check if an edge type is a label edge type.
+
+    Args:
+        edge_type (EdgeType): The edge type to check.
+
+    Returns:
+        bool: True if the edge type is a label edge type, False otherwise.
+    """
+    return _POSITIVE_LABEL_TAG in str(edge_type[1]) or _NEGATIVE_LABEL_TAG in str(
+        edge_type[1]
+    )
+
+
 def select_label_edge_types(
     message_passing_edge_type: _EdgeType, edge_entities: abc.Iterable[_EdgeType]
 ) -> tuple[_EdgeType, Optional[_EdgeType]]:

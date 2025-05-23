@@ -23,6 +23,7 @@ from gigl.src.common.types.graph_data import (
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    is_label_edge_type,
     select_label_edge_types,
     to_heterogeneous_edge,
 )
@@ -270,6 +271,8 @@ class DistABLPLoader(DistNeighborLoader):
                 Tuple[NodeType, torch.Tensor],
             ]
         ] = None,
+        # TODO(kmonte): Support multiple supervision edge types.
+        supervision_edge_type: Optional[EdgeType] = None,
         num_workers: int = 1,
         batch_size: int = 1,
         pin_memory_device: Optional[torch.device] = None,
@@ -340,16 +343,25 @@ class DistABLPLoader(DistNeighborLoader):
         # to `False` in super().__init__()` e.g.
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
+
+        if not isinstance(dataset.graph, abc.Mapping):
+            raise ValueError(
+                f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
+            )
+        is_heterogeneous = False
         # TODO(kmonte): Remove these checks and support properly heterogeneous NABLP.
         if isinstance(input_nodes, tuple):
-            raise ValueError(
-                "Heterogeneous ABLP is not supported yet. Provide node_ids as a tensor."
-            )
-        if isinstance(num_neighbors, abc.Mapping):
-            raise ValueError(
-                "Heterogeneous ABLP is not supported yet. Provide num_neighbors as a list of integers."
-            )
-        if input_nodes is None:
+            if supervision_edge_type is None:
+                raise ValueError(
+                    "When using heterogeneous ABLP, you must provide supervision_edge_types."
+                )
+            node_type, node_ids = input_nodes
+            is_heterogeneous = True
+        elif isinstance(input_nodes, torch.Tensor):
+            node_ids = input_nodes
+            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        elif input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
                     "Dataset must have node ids if input_nodes are not provided."
@@ -358,27 +370,20 @@ class DistABLPLoader(DistNeighborLoader):
                 raise ValueError(
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
-            input_nodes = dataset.node_ids
+            node_ids = dataset.node_ids
+            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
-        if not isinstance(dataset.graph, abc.Mapping):
+        missing_edge_types = set(dataset.graph.keys()) - set([supervision_edge_type])
+        if missing_edge_types:
             raise ValueError(
-                f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
+                f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
             )
 
-        if DEFAULT_HOMOGENEOUS_EDGE_TYPE not in dataset.graph:
-            raise ValueError(
-                f"With Homogeneous ABLP, the graph must have {DEFAULT_HOMOGENEOUS_EDGE_TYPE} edge type, received {dataset.graph.keys()}."
-            )
-
-        if isinstance(input_nodes, abc.Mapping):
-            input_nodes = input_nodes[DEFAULT_HOMOGENEOUS_NODE_TYPE]
-
-        if len(input_nodes.shape) != 1:
-            raise ValueError(
-                f"input_nodes must be a 1D tensor, got {input_nodes.shape}."
-            )
+        if len(node_ids.shape) != 1:
+            raise ValueError(f"input_nodes must be a 1D tensor, got {node_ids.shape}.")
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
-            DEFAULT_HOMOGENEOUS_EDGE_TYPE, dataset.graph.keys()
+            supervision_edge_type, dataset.graph.keys()
         )
         # We want to setup "input_nodes" as an approppriately shaped tensor for sampling.
         # Our goal here is to:
@@ -448,16 +453,13 @@ class DistABLPLoader(DistNeighborLoader):
         ] = torch.multiprocessing.Manager().dict()
         self._batch_store = node_batches_by_sampled_nodes
 
-        input_nodes = (DEFAULT_HOMOGENEOUS_NODE_TYPE, input_nodes)
+        input_nodes = (node_type, input_nodes)
         logger.info(
-            f"Converted input nodes to tuple of ({DEFAULT_HOMOGENEOUS_NODE_TYPE}, {input_nodes[1].shape})."
+            f"Converted input nodes to tuple of ({node_type}, {input_nodes[1].shape})."
         )
-        transforms: Sequence[
+        transforms: list[
             Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
         ] = [
-            _SupervisedToHomogeneous(
-                message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-            ),
             _SetLabels(
                 batch_store=node_batches_by_sampled_nodes,
                 anchor_node_sentinel=anchor_sentinel,
@@ -465,13 +467,18 @@ class DistABLPLoader(DistNeighborLoader):
                 negative_label_sentinel=negative_sentinel,
             ),
         ]
+        if is_heterogeneous:
+            transforms.insert(0, _SupervisedToHomogeneous(supervision_edge_type))
         self._transforms = transforms
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
         zero_samples = [0] * len(num_neighbors)
         num_neighbors = to_heterogeneous_edge(num_neighbors)
-        num_neighbors[positive_label_edge_type] = zero_samples
-        if negative_label_edge_type is not None:
-            num_neighbors[negative_label_edge_type] = zero_samples
+        for edge_type in dataset.graph.keys():
+            if is_label_edge_type(edge_type):
+                num_neighbors[edge_type] = zero_samples
+            # TODO: should this be zero, or the provided?
+            elif edge_type not in num_neighbors:
+                num_neighbors[edge_type] = zero_samples
         logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
 
         super().__init__(
