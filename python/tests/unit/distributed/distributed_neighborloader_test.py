@@ -4,6 +4,7 @@ from typing import MutableMapping, Optional
 
 import graphlearn_torch as glt
 import torch
+import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
@@ -40,10 +41,21 @@ from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
-from tests.test_assets.spawn import spawn_new_process
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+
+
+# GLT requires subclasses of DistNeighborLoader to be run in a separate process. Otherwise, we may run into segmentation fault
+# or other memory issues. Calling these functions in separate proceses also allows us to use shutdown_rpc() to ensure cleanup of
+# ports, providing stronger guarantees of isolation between tests.
+
+
+def _spawn_new_process(func, *args):
+    mp.spawn(fn=func, args=args)
+
+
+# We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
 
 
 def _run_distributed_neighbor_loader(
@@ -203,7 +215,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             master_port=master_port,
         )
 
-        spawn_new_process(_run_distributed_neighbor_loader, dataset, self._context)
+        __spawn_new_process(_run_distributed_neighbor_loader, dataset, self._context)
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
@@ -222,7 +234,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             master_port=master_port,
         )
 
-        spawn_new_process(
+        _spawn_new_process(
             _run_distributed_heterogeneous_neighbor_loader, dataset, self._context
         )
 
@@ -315,7 +327,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        spawn_new_process(
+        _spawn_new_process(
             _run_distributed_ablp_neighbor_loader,
             dataset,
             self._context,
@@ -350,7 +362,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             should_convert_labels_to_edges=True,
         )
 
-        spawn_new_process(_run_cora_supervised, dataset, self._context)
+        _spawn_new_process(_run_cora_supervised, dataset, self._context)
 
 
 if __name__ == "__main__":
