@@ -51,13 +51,12 @@ _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE
 # ports, providing stronger guarantees of isolation between tests.
 
 
-def _spawn_new_process(func, *args):
-    mp.spawn(fn=func, args=args)
-
-
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
 def _run_distributed_neighbor_loader(
-    _, dataset: DistLinkPredictionDataset, context: DistributedContext
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    expected_data_count: int,
 ):
     loader = DistNeighborLoader(
         dataset=dataset,
@@ -75,16 +74,18 @@ def _run_distributed_neighbor_loader(
 
     # Cora has 2708 nodes, make sure we go over all of them.
     # https://paperswithcode.com/dataset/cora
-    assert count == 2708
+    assert count == expected_data_count
 
     shutdown_rpc()
 
 
 def _run_distributed_heterogeneous_neighbor_loader(
-    _, dataset: DistLinkPredictionDataset, context: DistributedContext
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    expected_data_count: int,
 ):
     assert isinstance(dataset.node_ids, abc.Mapping)
-
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),
@@ -100,7 +101,7 @@ def _run_distributed_heterogeneous_neighbor_loader(
         assert isinstance(datum, HeteroData)
         count += 1
 
-    assert count == 4057
+    assert count == expected_data_count
 
     shutdown_rpc()
 
@@ -162,7 +163,10 @@ def _run_distributed_ablp_neighbor_loader(
 
 
 def _run_cora_supervised(
-    _, dataset: DistLinkPredictionDataset, context: DistributedContext
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    expected_data_count: int,
 ):
     loader = DistABLPLoader(
         dataset=dataset,
@@ -181,7 +185,7 @@ def _run_cora_supervised(
         assert isinstance(datum.y_negative, dict)
         assert datum.y_positive.keys() == datum.y_negative.keys()
         count += 1
-    assert count == 2161
+    assert count == expected_data_count
 
     shutdown_rpc()
 
@@ -200,6 +204,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
+        expected_data_count = 2708
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
@@ -213,12 +218,16 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             master_port=master_port,
         )
 
-        _spawn_new_process(_run_distributed_neighbor_loader, dataset, self._context)
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader,
+            args=(dataset, self._context, expected_data_count),
+        )
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
+        expected_data_count = 4057
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
@@ -232,8 +241,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             master_port=master_port,
         )
 
-        _spawn_new_process(
-            _run_distributed_heterogeneous_neighbor_loader, dataset, self._context
+        mp.spawn(
+            fn=_run_distributed_heterogeneous_neighbor_loader,
+            args=(dataset, self._context, expected_data_count),
         )
 
     @parameterized.expand(
@@ -325,15 +335,17 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        _spawn_new_process(
-            _run_distributed_ablp_neighbor_loader,
-            dataset,
-            self._context,
-            expected_node,
-            expected_srcs,
-            expected_dsts,
-            expected_positive_labels,
-            expected_negative_labels,
+        mp.spawn(
+            fn=_run_distributed_ablp_neighbor_loader,
+            args=(
+                dataset,
+                self._context,
+                expected_node,
+                expected_srcs,
+                expected_dsts,
+                expected_positive_labels,
+                expected_negative_labels,
+            ),
         )
 
     def test_cora_supervised(self):
@@ -352,6 +364,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
+        expected_data_count = 2161
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
@@ -360,7 +373,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             should_convert_labels_to_edges=True,
         )
 
-        _spawn_new_process(_run_cora_supervised, dataset, self._context)
+        mp.spawn(
+            fn=_run_cora_supervised, args=(dataset, self._context, expected_data_count)
+        )
 
 
 if __name__ == "__main__":
