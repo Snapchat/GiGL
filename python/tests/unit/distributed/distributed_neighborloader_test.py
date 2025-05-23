@@ -56,8 +56,6 @@ def _spawn_new_process(func, *args):
 
 
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
-
-
 def _run_distributed_neighbor_loader(
     _, dataset: DistLinkPredictionDataset, context: DistributedContext
 ):
