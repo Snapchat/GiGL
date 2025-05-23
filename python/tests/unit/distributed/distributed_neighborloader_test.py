@@ -190,6 +190,63 @@ def _run_cora_supervised(
     shutdown_rpc()
 
 
+def _run_multiple_neighbor_loader(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    expected_data_count: int,
+):
+    # TODO (mkolodner-sc): Infer ports automatically, rather than hard-coding these
+    loader_one = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+        _main_inference_port=10000,
+        _main_sampling_port=20000,
+    )
+
+    loader_two = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+        _main_inference_port=30000,
+        _main_sampling_port=40000,
+    )
+
+    count = 0
+    for datum_one, datum_two in zip(loader_one, loader_two):
+        count += 1
+
+    # Cora has 2708 nodes, make sure we go over all of them.
+    # https://paperswithcode.com/dataset/cora
+    assert count == expected_data_count
+
+    loader_three = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+        _main_inference_port=50000,
+        _main_sampling_port=60000,
+    )
+
+    count = 0
+    for datum_three in loader_three:
+        count += 1
+
+    assert count == expected_data_count
+
+    shutdown_rpc()
+
+
 class DistributedNeighborLoaderTest(unittest.TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
@@ -375,6 +432,27 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_cora_supervised, args=(dataset, self._context, expected_data_count)
+        )
+
+    def test_multiple_neighbor_loader(self):
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+        expected_data_count = 2708
+        manager = Manager()
+        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            output_dict=output_dict,
+            should_load_tensors_in_parallel=True,
+            master_ip_address=self._master_ip_address,
+            master_port=master_port,
+        )
+
+        mp.spawn(
+            fn=_run_multiple_neighbor_loader,
+            args=(dataset, self._context, expected_data_count),
         )
 
 
