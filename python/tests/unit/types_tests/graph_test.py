@@ -102,7 +102,7 @@ class GraphTypesTyest(unittest.TestCase):
                 },
             ),
             param(
-                "heterogeneous_inputs",
+                "heterogeneous_inputs, positive and negative provided",
                 node_ids={
                     NodeType("foo"): torch.tensor([0, 1]),
                     NodeType("bar"): torch.tensor([2, 3]),
@@ -150,6 +150,50 @@ class GraphTypesTyest(unittest.TestCase):
                     message_passing_to_negative_label(
                         EdgeType(NodeType("bar"), Relation("labels"), NodeType("foo"))
                     ): torch.tensor([[1, 0]]),
+                },
+            ),
+            param(
+                "heterogeneous_inputs, only positive label provided",
+                node_ids={
+                    NodeType("foo"): torch.tensor([0, 1]),
+                    NodeType("bar"): torch.tensor([2, 3]),
+                },
+                node_features={
+                    NodeType("foo"): torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+                    NodeType("bar"): torch.tensor([[5.0, 6.0], [7.0, 8.0]]),
+                },
+                edge_index={
+                    EdgeType(
+                        NodeType("foo"), Relation("to"), NodeType("bar")
+                    ): torch.tensor([[0, 1], [2, 3]]),
+                    EdgeType(
+                        NodeType("bar"), Relation("to"), NodeType("foo")
+                    ): torch.tensor([[2, 3], [0, 1]]),
+                },
+                edge_features={
+                    EdgeType(
+                        NodeType("foo"), Relation("to"), NodeType("bar")
+                    ): torch.tensor([[0.1, 0.2], [0.3, 0.4]]),
+                    EdgeType(
+                        NodeType("bar"), Relation("to"), NodeType("foo")
+                    ): torch.tensor([[0.5, 0.6], [0.7, 0.8]]),
+                },
+                positive_label={
+                    EdgeType(
+                        NodeType("foo"), Relation("labels"), NodeType("bar")
+                    ): torch.tensor([[0, 2]])
+                },
+                negative_label=None,
+                expected_edge_index={
+                    EdgeType(
+                        NodeType("foo"), Relation("to"), NodeType("bar")
+                    ): torch.tensor([[0, 1], [2, 3]]),
+                    EdgeType(
+                        NodeType("bar"), Relation("to"), NodeType("foo")
+                    ): torch.tensor([[2, 3], [0, 1]]),
+                    message_passing_to_positive_label(
+                        EdgeType(NodeType("foo"), Relation("labels"), NodeType("bar"))
+                    ): torch.tensor([[0, 2]]),
                 },
             ),
         ]
