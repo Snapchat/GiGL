@@ -374,7 +374,7 @@ class DistABLPLoader(DistNeighborLoader):
             node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
-        missing_edge_types = set(dataset.graph.keys()) - set([supervision_edge_type])
+        missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
         if missing_edge_types:
             raise ValueError(
                 f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
@@ -404,16 +404,19 @@ class DistABLPLoader(DistNeighborLoader):
         # We use -2, -3, -4 as sentinels to distinguish between the anchor node, positive labels, and negative labels.
         # The sentinels will later be stripped out by _LabeledNodeSamplerInput.
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
-            dataset, input_nodes, positive_label_edge_type, negative_label_edge_type
+            dataset=dataset,
+            node_ids=node_ids,
+            positive_label_edge_type=positive_label_edge_type,
+            negative_label_edge_type=negative_label_edge_type,
         )  # (num_nodes X num_positive_labels), (num_nodes X num_negative_labels)
         # TODO (kmonte): Potentially - we can avoid using the sentinel values with either nested/jagged tensors
         # or upstreaming changes to GLT to allow us to disasmbiguate between anchors and labels.
-        extracted_input_nodes = input_nodes.unsqueeze(1)  # (num_nodes X 1)
+        extracted_input_nodes = node_ids.unsqueeze(1)  # (num_nodes X 1)
         if negative_labels is not None:
             anchor_sentinel = -2
             positive_sentinel = -3
             negative_sentinel = -4
-            input_nodes = torch.cat(
+            node_ids = torch.cat(
                 [
                     extracted_input_nodes,
                     torch.full_like(extracted_input_nodes, anchor_sentinel),
@@ -428,7 +431,7 @@ class DistABLPLoader(DistNeighborLoader):
             anchor_sentinel = -2
             positive_sentinel = -3
             negative_sentinel = None
-            input_nodes = torch.cat(
+            node_ids = torch.cat(
                 [
                     extracted_input_nodes,
                     torch.full_like(extracted_input_nodes, anchor_sentinel),
@@ -453,22 +456,23 @@ class DistABLPLoader(DistNeighborLoader):
         ] = torch.multiprocessing.Manager().dict()
         self._batch_store = node_batches_by_sampled_nodes
 
-        input_nodes = (node_type, input_nodes)
+        input_nodes = (node_type, node_ids)
         logger.info(
-            f"Converted input nodes to tuple of ({node_type}, {input_nodes[1].shape})."
+            f"Converted input nodes to tuple of {node_type} with shape {node_ids.shape})."
         )
         transforms: list[
             Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
-        ] = [
+        ] = []
+        if not is_heterogeneous:
+            transforms.append(_SupervisedToHomogeneous(supervision_edge_type))
+        transforms.append(
             _SetLabels(
                 batch_store=node_batches_by_sampled_nodes,
                 anchor_node_sentinel=anchor_sentinel,
                 positive_label_sentinel=positive_sentinel,
                 negative_label_sentinel=negative_sentinel,
-            ),
-        ]
-        if is_heterogeneous:
-            transforms.insert(0, _SupervisedToHomogeneous(supervision_edge_type))
+            )
+        )
         self._transforms = transforms
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
         zero_samples = [0] * len(num_neighbors)
@@ -476,7 +480,6 @@ class DistABLPLoader(DistNeighborLoader):
         for edge_type in dataset.graph.keys():
             if is_label_edge_type(edge_type):
                 num_neighbors[edge_type] = zero_samples
-            # TODO: should this be zero, or the provided?
             elif edge_type not in num_neighbors:
                 num_neighbors[edge_type] = zero_samples
         logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
