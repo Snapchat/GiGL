@@ -107,22 +107,36 @@ class LoadedGraphTensors:
     # Unpartitioned Negative Edge Label
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
 
-    def treat_labels_as_edges(self) -> None:
-        """Convert positive and negative labels to edges. Converts this object in-place to a "heterogeneous" representation.
-
-        This requires the following conditions and will throw if they are not met:
-            1. The positive_label and negative_label are not None.
+    def treat_labels_as_edges(self, main_edge_type: Optional[EdgeType] = None) -> None:
         """
-        if self.positive_label is None or self.negative_label is None:
+        Convert positive and negative labels to edges. Converts this object in-place to a "heterogeneous" representation.
+
+        This function requires the following conditions and will throw if they are not met:
+            1. The positive_label is not None
+
+        Args:
+            main_edge_type (Optional[EdgeType]): Edge type to base inferred label edge type on. If None, the main_edge_type is
+            automatically inferred from the first edge type in the `edge_index` tensor. For the homogeneous case, this will be
+            the `DEFAULT_HOMOGENEOUS_EDGE_TYPE`.
+        """
+        if self.positive_label is None:
             raise ValueError(
-                "Cannot treat labels as edges when positive or negative labels are None."
+                "Cannot treat labels as edges when positive label is None."
             )
 
         edge_index_with_labels = to_heterogeneous_edge(self.edge_index)
-        main_edge_type = next(iter(edge_index_with_labels.keys()))
-        logger.info(
-            f"Basing positive and negative labels on edge types on main label edge type: {main_edge_type}."
-        )
+
+        if main_edge_type is None:
+            main_edge_type = next(iter(edge_index_with_labels.keys()))
+            logger.info(
+                f"Basing positive and negative labels on edge types on main label edge type: {main_edge_type}."
+            )
+        else:
+            if main_edge_type not in edge_index_with_labels:
+                raise ValueError(
+                    f"Provided main edge type {main_edge_type} not found in edge index keys: {edge_index_with_labels.keys()}"
+                )
+
         if isinstance(self.positive_label, torch.Tensor):
             positive_label_edge_type = message_passing_to_positive_label(main_edge_type)
             logger.info(
