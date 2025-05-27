@@ -10,6 +10,8 @@ from gigl.common.logger import Logger
 
 logger = Logger()
 
+_is_cpu_env_initialized = False
+
 
 def get_process_group_name(process_rank: int) -> str:
     """
@@ -59,6 +61,8 @@ def init_neighbor_loader_worker(
     Returns:
         torch.device: Device which current worker is assigned to
     """
+
+    global _is_cpu_env_initialized
 
     # When initiating data loader(s), there will be a spike of memory usage lasting for ~30s.
     # The current hypothesis is making connections across machines require a lot of memory.
@@ -113,16 +117,21 @@ def init_neighbor_loader_worker(
         )
         logical_cores = first_logical_core_range + second_logical_core_range
 
-        # Set the logical cpu cores the current process shoud run on. Note
-        # that the sampling process spawned by the process will inherit
-        # this setting, meaning that sampling process will run on the same group
-        # of logical cores. However, the sampling process is network bound so
-        # it may not heavily compete resouce with model training or inference.
-        p = psutil.Process()
-        p.cpu_affinity(logical_cores)
+        if not _is_cpu_env_initialized:
+            torch.set_num_interop_threads(num_cpu_threads)
+            torch.set_num_threads(num_cpu_threads)
 
-        torch.set_num_threads(num_cpu_threads)
-        torch.set_num_interop_threads(num_cpu_threads)
+            # Set the logical cpu cores the current process shoud run on. Note
+            # that the sampling process spawned by the process will inherit
+            # this setting, meaning that sampling process will run on the same group
+            # of logical cores. However, the sampling process is network bound so
+            # it may not heavily compete resouce with model training or inference.
+            p = psutil.Process()
+            p.cpu_affinity(logical_cores)
+            _is_cpu_env_initialized = True
+        else:
+            logger.info("Logical CPU cores has already been set for current process.")
+
     else:
         # Setting the default CUDA device for the current process to be the
         # device. Without it, there will be a process created on cuda:0 device, and

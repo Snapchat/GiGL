@@ -8,13 +8,15 @@ DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
+PWD=$(shell pwd)
 
 # You can override GIGL_PROJECT by setting it in your environment i.e.
 # adding `export GIGL_PROJECT=your_project` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_PROJECT?=external-snap-ci-github-gigl
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cpu-dataflow
-DOCKER_IMAGE_MAIN_CUDA_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cuda
-DOCKER_IMAGE_MAIN_CPU_NAME:=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images/src-cpu
+GIGL_DOCKER_ARTIFACT_REGISTRY?=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-base-images
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu-dataflow
+DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
+DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
@@ -22,6 +24,9 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 
 PYTHON_DIRS:=examples python shared scripts
 PY_TEST_FILES?="*_test.py"
+# You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
+# adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
+GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_config.yaml
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
@@ -31,6 +36,7 @@ GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # then when we *check* the format of those files, we will fail.
 # Thus, we only want to format the Markdown files that we explicitly include in our repo.
 MD_FILES:=$(shell if [ ! ${GIT_BRANCH} ]; then echo "."; else git ls-tree --name-only -r ${GIT_BRANCH} . | grep ".md"; fi;)
+
 
 get_ver_hash:
 	# Fetches the git commit hash and stores it in `$GIT_COMMIT`
@@ -139,7 +145,7 @@ unit_test_py: clean_build_files_py type_check
 	( cd python ; \
 	python -m tests.unit.main \
 		--env=test \
-		--resource_config_uri ../deployment/configs/unittest_resource_config.yaml \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
 	)
 
@@ -183,7 +189,7 @@ integration_test:
 	cd python ;\
 	python -m tests.integration.main \
 	--env=test \
-	--resource_config_uri ../deployment/configs/unittest_resource_config.yaml \
+	--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 	--test_file_pattern=$(PY_TEST_FILES) \
 	)
 
