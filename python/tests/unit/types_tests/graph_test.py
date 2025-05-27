@@ -163,7 +163,7 @@ class GraphTypesTyest(unittest.TestCase):
         edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         positive_label: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         negative_label: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        expected_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        expected_edge_index: dict[EdgeType, torch.Tensor],
     ):
         graph_tensors = LoadedGraphTensors(
             node_ids=node_ids,
@@ -178,7 +178,6 @@ class GraphTypesTyest(unittest.TestCase):
         self.assertIsNone(graph_tensors.positive_label)
         self.assertIsNone(graph_tensors.negative_label)
         assert isinstance(graph_tensors.edge_index, dict)
-        assert isinstance(expected_edge_index, dict)
         self.assertEqual(graph_tensors.edge_index.keys(), expected_edge_index.keys())
         for edge_type, expected_tensor in expected_edge_index.items():
             torch.testing.assert_close(
