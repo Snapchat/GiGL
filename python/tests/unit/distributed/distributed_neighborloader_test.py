@@ -17,7 +17,7 @@ from gigl.distributed.distributed_neighborloader import (
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
@@ -184,7 +184,12 @@ def _run_dblp_supervised(
     _,
     dataset: DistLinkPredictionDataset,
     context: DistributedContext,
+    supervision_edge_types: list[EdgeType],
 ):
+    assert (
+        len(supervision_edge_types) == 1
+    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    supervision_edge_type = supervision_edge_types[0]
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
     fanout = [2, 2]
@@ -196,12 +201,13 @@ def _run_dblp_supervised(
         context=context,
         local_process_rank=0,
         local_process_world_size=1,
-        supervision_edge_type=EdgeType(
-            NodeType("author"), Relation("to"), NodeType("paper")
-        ),
+        supervision_edge_type=supervision_edge_type,
     )
+    count = 0
     for datum in loader:
         assert isinstance(datum, HeteroData)
+        count += 1
+    print(count)
 
     shutdown_rpc()
 
@@ -292,20 +298,14 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
-        supervision_edge_type = gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()[
-            0
-        ]
-        rev_edge_type = EdgeType(
-            src_node_type=supervision_edge_type.dst_node_type,
-            relation=supervision_edge_type.relation,
-            dst_node_type=supervision_edge_type.src_node_type,
+        supervision_edge_types = (
+            gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in",
-            edge_types=[
-                message_passing_to_positive_label(rev_edge_type),
-            ],
+            supervision_edge_types=supervision_edge_types,
+            should_convert_labels_to_edges=True,
         )
 
         dataset = build_dataset(
@@ -317,7 +317,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             splitter=splitter,
         )
 
-        mp.spawn(fn=_run_dblp_supervised, args=(dataset, self._context))
+        mp.spawn(
+            fn=_run_dblp_supervised,
+            args=(dataset, self._context, splitter.supervision_edge_types),
+        )
 
 
 if __name__ == "__main__":

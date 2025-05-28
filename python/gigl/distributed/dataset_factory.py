@@ -36,13 +36,8 @@ from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    message_passing_to_negative_label,
-    message_passing_to_positive_label,
-)
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
@@ -60,7 +55,6 @@ def _load_and_build_partitioned_dataset(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    should_convert_labels_to_edges: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
@@ -76,7 +70,6 @@ def _load_and_build_partitioned_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
-        should_convert_labels_to_edges (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -111,22 +104,17 @@ def _load_and_build_partitioned_dataset(
             and loaded_graph_tensors.negative_label is None
         ), "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
         positive_label_edges: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
-        # TODO (mkolodner-sc): Only add necessary edge types to positive label dictionary, rather than all of the keys in the partitioned edge index
         if isinstance(loaded_graph_tensors.edge_index, abc.Mapping):
+            assert isinstance(splitter, HashedNodeAnchorLinkSplitter)
             positive_label_edges = {}
-            for (
-                edge_type,
-                edge_index,
-            ) in loaded_graph_tensors.edge_index.items():
-                if edge_type == EdgeType(
-                    src_node_type=NodeType("author"),
-                    relation=Relation("to"),
-                    dst_node_type=NodeType("paper"),
-                ):
-                    positive_label_edges[edge_type] = select_ssl_positive_label_edges(
-                        edge_index=edge_index,
-                        positive_label_percentage=_ssl_positive_label_percentage,
-                    )
+            for supervision_edge_type in splitter.supervision_edge_types:
+                assert supervision_edge_type in loaded_graph_tensors.edge_index
+                positive_label_edges[
+                    supervision_edge_type
+                ] = select_ssl_positive_label_edges(
+                    edge_index=loaded_graph_tensors.edge_index[supervision_edge_type],
+                    positive_label_percentage=_ssl_positive_label_percentage,
+                )
         elif isinstance(loaded_graph_tensors.edge_index, torch.Tensor):
             positive_label_edges = select_ssl_positive_label_edges(
                 edge_index=loaded_graph_tensors.edge_index,
@@ -139,7 +127,7 @@ def _load_and_build_partitioned_dataset(
 
         loaded_graph_tensors.positive_label = positive_label_edges
 
-    if should_convert_labels_to_edges:
+    if splitter is not None and splitter.should_convert_labels_to_edges:
         loaded_graph_tensors.treat_labels_as_edges()
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
@@ -219,7 +207,6 @@ def _build_dataset_process(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    should_convert_labels_to_edges: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
@@ -253,7 +240,6 @@ def _build_dataset_process(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
-        should_convert_labels_to_edges (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -279,7 +265,6 @@ def _build_dataset_process(
         partitioner_class=partitioner_class,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
-        should_convert_labels_to_edges=should_convert_labels_to_edges,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
     )
@@ -332,24 +317,25 @@ def build_dataset(
         sample_edge_direction == "in" or sample_edge_direction == "out"
     ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
 
-    if should_convert_labels_to_edges:
-        if splitter is not None:
+    if splitter is not None:
+        logger.info(
+            f"Received splitter {splitter} with value should_convert_labels_to_edges={splitter.should_convert_labels_to_edges}"
+        )
+        if splitter.should_convert_labels_to_edges != should_convert_labels_to_edges:
             logger.warning(
-                f"Received splitter {splitter} and should_convert_labels_to_edges=True. Will use {splitter} to split the graph data."
+                f"Splitter should_convert_labels_to_edges {splitter.should_convert_labels_to_edges} does not match \
+                `build_dataset` argument {should_convert_labels_to_edges}. Will use spliiter value of {splitter.should_convert_labels_to_edges}."
             )
-        else:
-            logger.info(
-                f"Using default splitter {type(HashedNodeAnchorLinkSplitter)} for ABLP labels."
-            )
-            # TODO(kmonte): Read train/val/test split counts from config.
-            # TODO(kmonte): Read label edge dir from config.
-            splitter = HashedNodeAnchorLinkSplitter(
-                sampling_direction=sample_edge_direction,
-                edge_types=[
-                    message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
-                    message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
-                ],
-            )
+    else:
+        logger.info(
+            f"Using default splitter {type(HashedNodeAnchorLinkSplitter)} for ABLP labels."
+        )
+        # TODO(kmonte): Read train/val/test split counts from config.
+        # TODO(kmonte): Read label edge dir from config.
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction=sample_edge_direction,
+            should_convert_labels_to_edges=should_convert_labels_to_edges,
+        )
         logger.info(
             "Will be treating the ABLP labels as heterogeneous edges in the graph."
         )
@@ -374,7 +360,6 @@ def build_dataset(
             partitioner_class,
             node_tf_dataset_options,
             edge_tf_dataset_options,
-            should_convert_labels_to_edges,
             splitter,
             _ssl_positive_label_percentage,
         ),

@@ -420,3 +420,18 @@ def to_homogeneous(
         n = next(iter(x.values()))
         return n
     return x
+
+
+def reverse_edge_type(edge_type: EdgeType) -> EdgeType:
+    """
+    Reverses the source and destination node types of the provided edge type
+    Args:
+        edge_type (EdgeType): The target edge to have its source and destinated node types reversed
+    Returns:
+        EdgeType: The reversed edge type
+    """
+    return EdgeType(
+        src_node_type=edge_type.dst_node_type,
+        relation=edge_type.relation,
+        dst_node_type=edge_type.src_node_type,
+    )
