@@ -312,7 +312,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=self._context,
             sample_edge_direction="in",
-            should_convert_labels_to_edges=True,
             _ssl_positive_label_percentage=0.1,
             splitter=splitter,
         )

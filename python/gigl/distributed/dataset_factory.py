@@ -285,7 +285,6 @@ def build_dataset(
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    should_convert_labels_to_edges: bool = False,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: int = DEFAULT_MASTER_DATA_BUILDING_PORT,
@@ -302,8 +301,8 @@ def build_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
-        should_convert_labels_to_edges (bool): Whether to convert labels to edges in the graph. If this is set to true, the output dataset will be heterogeneous.
-        splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
+        splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets.
+            If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
         _dataset_building_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
@@ -320,24 +319,6 @@ def build_dataset(
     if splitter is not None:
         logger.info(
             f"Received splitter {splitter} with value should_convert_labels_to_edges={splitter.should_convert_labels_to_edges}"
-        )
-        if splitter.should_convert_labels_to_edges != should_convert_labels_to_edges:
-            logger.warning(
-                f"Splitter should_convert_labels_to_edges {splitter.should_convert_labels_to_edges} does not match \
-                `build_dataset` argument {should_convert_labels_to_edges}. Will use spliiter value of {splitter.should_convert_labels_to_edges}."
-            )
-    else:
-        logger.info(
-            f"Using default splitter {type(HashedNodeAnchorLinkSplitter)} for ABLP labels."
-        )
-        # TODO(kmonte): Read train/val/test split counts from config.
-        # TODO(kmonte): Read label edge dir from config.
-        splitter = HashedNodeAnchorLinkSplitter(
-            sampling_direction=sample_edge_direction,
-            should_convert_labels_to_edges=should_convert_labels_to_edges,
-        )
-        logger.info(
-            "Will be treating the ABLP labels as heterogeneous edges in the graph."
         )
 
     manager = mp.Manager()
@@ -397,17 +378,24 @@ def build_dataset_from_task_config_uri(
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
+    sample_edge_direction = args.get("sample_edge_direction", "in")
+
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
         args_path = "inferencerConfig.inferencerArgs"
-        should_convert_labels_to_edges = False
+        splitter = None
     else:
+        supervision_edge_types = (
+            gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+        )
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
         args_path = "trainerConfig.trainerArgs"
-        # TODO(kmonte): Maybe we should enable this as a flag?
-        should_convert_labels_to_edges = True
-
-    sample_edge_direction = args.get("sample_edge_direction", "in")
+        # TODO(kmonte): Maybe we should enable `should_convert_labels_to_edges` as a flag?
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction=sample_edge_direction,
+            supervision_edge_types=supervision_edge_types,
+            should_convert_labels_to_edges=True,
+        )
 
     assert sample_edge_direction in (
         "in",
@@ -451,7 +439,7 @@ def build_dataset_from_task_config_uri(
         distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
         partitioner_class=partitioner_class,
-        should_convert_labels_to_edges=should_convert_labels_to_edges,
+        splitter=splitter,
     )
 
     return dataset
