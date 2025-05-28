@@ -128,7 +128,7 @@ def _load_and_build_partitioned_dataset(
         loaded_graph_tensors.positive_label = positive_label_edges
 
     if splitter is not None and splitter.should_convert_labels_to_edges:
-        loaded_graph_tensors.treat_labels_as_edges()
+        loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
@@ -137,11 +137,11 @@ def _load_and_build_partitioned_dataset(
 
     if should_assign_edges_by_src_node:
         logger.info(
-            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its source node machine"
+            f"Initializing {partitioner_class} instance while partitioning edges to its source node machine"
         )
     else:
         logger.info(
-            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its destination node machine"
+            f"Initializing {partitioner_class} instance while partitioning edges to its destination node machine"
         )
     partitioner = partitioner_class(
         should_assign_edges_by_src_node=should_assign_edges_by_src_node
@@ -318,7 +318,7 @@ def build_dataset(
 
     if splitter is not None:
         logger.info(
-            f"Received splitter {splitter} with value should_convert_labels_to_edges={splitter.should_convert_labels_to_edges}"
+            f"Received splitter {str(splitter.__class__)} with value should_convert_labels_to_edges={splitter.should_convert_labels_to_edges}"
         )
 
     manager = mp.Manager()

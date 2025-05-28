@@ -43,7 +43,7 @@ class _FakeSplitter:
 
     @property
     def should_convert_labels_to_edges(self) -> bool:
-        return True
+        return False
 
 
 _USER = NodeType("user")

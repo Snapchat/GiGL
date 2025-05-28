@@ -13,7 +13,6 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     is_label_edge_type,
-    reverse_edge_type,
 )
 
 logger = Logger()
@@ -150,12 +149,6 @@ class HashedNodeAnchorLinkSplitter:
 
         if supervision_edge_types is None:
             supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-
-        if sampling_direction == "in":
-            supervision_edge_types = [
-                reverse_edge_type(supervision_edge_type)
-                for supervision_edge_type in supervision_edge_types
-            ]
 
         self._supervision_edge_types = supervision_edge_types
 

@@ -24,6 +24,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     is_label_edge_type,
+    reverse_edge_type,
     select_label_edge_types,
     to_heterogeneous_edge,
 )
@@ -357,6 +358,8 @@ class DistABLPLoader(DistNeighborLoader):
                 )
             node_type, node_ids = input_nodes
             is_heterogeneous = True
+            if dataset.edge_dir == "in":
+                supervision_edge_type = reverse_edge_type(supervision_edge_type)
         elif isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
             node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE

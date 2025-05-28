@@ -207,7 +207,6 @@ def _run_dblp_supervised(
     for datum in loader:
         assert isinstance(datum, HeteroData)
         count += 1
-    print(count)
 
     shutdown_rpc()
 
