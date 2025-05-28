@@ -378,17 +378,20 @@ def build_dataset_from_task_config_uri(
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
-    sample_edge_direction = args.get("sample_edge_direction", "in")
 
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
+
+        sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "inferencerConfig.inferencerArgs"
         splitter = None
     else:
+        args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
+
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
-        args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
+        sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "trainerConfig.trainerArgs"
         # TODO(kmonte): Maybe we should enable `should_convert_labels_to_edges` as a flag?
         splitter = HashedNodeAnchorLinkSplitter(
