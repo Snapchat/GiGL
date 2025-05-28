@@ -270,7 +270,7 @@ def select_label_edge_types(
             negative_label_type = edge_type
     if positive_label_type is None:
         raise ValueError(
-            f"Could not find positive label edge type for message passing edge type {message_passing_edge_type} from edge entities {edge_entities}."
+            f"Could not find positive label edge type for message passing edge type {message_passing_to_positive_label(message_passing_edge_type)} from edge entities {edge_entities}."
         )
     return positive_label_type, negative_label_type
 

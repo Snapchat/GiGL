@@ -475,7 +475,11 @@ class DistABLPLoader(DistNeighborLoader):
         )
         self._transforms = transforms
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
-        zero_samples = [0] * len(num_neighbors)
+        if isinstance(num_neighbors, dict):
+            num_hop = len(list(num_neighbors.values())[0])
+        else:
+            num_hop = len(num_neighbors)
+        zero_samples = [0] * num_hop
         num_neighbors = to_heterogeneous_edge(num_neighbors)
         for edge_type in dataset.graph.keys():
             if is_label_edge_type(edge_type):
@@ -676,7 +680,7 @@ class _SetLabels:
         positive_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
         negative_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
         if is_heterogeneous:
-            node_types = data.node_types
+            node_types = data.batch_dict.keys()
         else:
             node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
 
@@ -696,7 +700,7 @@ class _SetLabels:
             # data.batch is already de-duped.
             # Represents all nodes that were sampled in the batch.
             if is_heterogeneous:
-                batch = tuple(data[node_type].batch.tolist())
+                batch = tuple(data.batch_dict[node_type].tolist())
             else:
                 batch = tuple(data.batch.tolist())
             full_batch = self._batch_store.pop((node_type, batch))  # [N]

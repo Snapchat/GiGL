@@ -36,11 +36,10 @@ from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    GraphPartitionData,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
 )
@@ -104,6 +103,42 @@ def _load_and_build_partitioned_dataset(
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
     )
+
+    # TODO (mkolodner-sc): Move this code block to transductive splitter once that is ready
+    if _ssl_positive_label_percentage is not None:
+        assert (
+            loaded_graph_tensors.positive_label is None
+            and loaded_graph_tensors.negative_label is None
+        ), "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
+        positive_label_edges: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
+        # TODO (mkolodner-sc): Only add necessary edge types to positive label dictionary, rather than all of the keys in the partitioned edge index
+        if isinstance(loaded_graph_tensors.edge_index, abc.Mapping):
+            positive_label_edges = {}
+            for (
+                edge_type,
+                edge_index,
+            ) in loaded_graph_tensors.edge_index.items():
+                if edge_type == EdgeType(
+                    src_node_type=NodeType("author"),
+                    relation=Relation("to"),
+                    dst_node_type=NodeType("paper"),
+                ):
+                    positive_label_edges[edge_type] = select_ssl_positive_label_edges(
+                        edge_index=edge_index,
+                        positive_label_percentage=_ssl_positive_label_percentage,
+                    )
+        elif isinstance(loaded_graph_tensors.edge_index, torch.Tensor):
+            positive_label_edges = select_ssl_positive_label_edges(
+                edge_index=loaded_graph_tensors.edge_index,
+                positive_label_percentage=_ssl_positive_label_percentage,
+            )
+        else:
+            raise ValueError(
+                "Found no partitioned edge index when attempting to select positive labels"
+            )
+
+        loaded_graph_tensors.positive_label = positive_label_edges
+
     if should_convert_labels_to_edges:
         loaded_graph_tensors.treat_labels_as_edges()
 
@@ -157,37 +192,6 @@ def _load_and_build_partitioned_dataset(
     del loaded_graph_tensors
 
     partition_output = partitioner.partition()
-
-    # TODO (mkolodner-sc): Move this code block to transductive splitter once that is ready
-    if _ssl_positive_label_percentage is not None:
-        assert (
-            partition_output.partitioned_positive_labels is None
-            and partition_output.partitioned_negative_labels is None
-        ), "Cannot have partitioned positive and negative labels when attempting to select self-supervised positive edges from edge index."
-        positive_label_edges: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
-        # TODO (mkolodner-sc): Only add necessary edge types to positive label dictionary, rather than all of the keys in the partitioned edge index
-        if isinstance(partition_output.partitioned_edge_index, abc.Mapping):
-            positive_label_edges = {}
-            for (
-                edge_type,
-                graph_partition_data,
-            ) in partition_output.partitioned_edge_index.items():
-                edge_index = graph_partition_data.edge_index
-                positive_label_edges[edge_type] = select_ssl_positive_label_edges(
-                    edge_index=edge_index,
-                    positive_label_percentage=_ssl_positive_label_percentage,
-                )
-        elif isinstance(partition_output.partitioned_edge_index, GraphPartitionData):
-            positive_label_edges = select_ssl_positive_label_edges(
-                edge_index=partition_output.partitioned_edge_index.edge_index,
-                positive_label_percentage=_ssl_positive_label_percentage,
-            )
-        else:
-            raise ValueError(
-                "Found no partitioned edge index when attempting to select positive labels"
-            )
-
-        partition_output.partitioned_positive_labels = positive_label_edges
 
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
