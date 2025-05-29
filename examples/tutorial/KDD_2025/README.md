@@ -46,3 +46,10 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 ### **Hands-on with GIGL**: Training and Inferring Industry-Scale GNNs - Part III (40m)
 * **End-to-End Pipeline Runs with Large-Scale Graph Data:** This section will involve running complete GNN pipelines on large datasets, from data loading to model evaluation.
 * **Customization Potential:** We'll explore the possibilities for customizing GIGL to adapt it to specific research or application needs.
+
+
+## Resources
+* **GiGL KDD '25 paper:** [GiGL: Large-Scale Graph Neural Networks at Snapchat](https://arxiv.org/abs/2502.15054)
+* **[GiGL Documentation](https://snapchat.github.io/GiGL/#)**
+  * [User Guide](https://snapchat.github.io/GiGL/docs/user_guide/index.html)
+  * [API Reference](https://snapchat.github.io/GiGL/docs/api/index.html)
