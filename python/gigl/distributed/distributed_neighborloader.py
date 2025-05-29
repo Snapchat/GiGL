@@ -472,6 +472,8 @@ class DistABLPLoader(DistNeighborLoader):
             _SetLabels(
                 batch_store=node_batches_by_sampled_nodes,
                 anchor_node_sentinel=anchor_sentinel,
+                positive_label_edge_type=positive_label_edge_type,
+                negative_label_edge_type=negative_label_edge_type,
                 positive_label_sentinel=positive_sentinel,
                 negative_label_sentinel=negative_sentinel,
             )
@@ -637,6 +639,8 @@ class _SetLabels:
         self,
         batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor],
         anchor_node_sentinel: int,
+        positive_label_edge_type: EdgeType,
+        negative_label_edge_type: Optional[EdgeType],
         positive_label_sentinel: int,
         negative_label_sentinel: Optional[int] = None,
     ):
@@ -668,6 +672,8 @@ class _SetLabels:
         Args:
             batch_store (abc.MutableMapping): The batch store to use for the graph.
             anchor_node_sentinel (int): The sentinel value for the anchor node.
+            positive_label_edge_type (EdgeType): The positive label edge type which should be removed from the torch_geometric graph
+            negative_label_edge_type (Optional[EdgeType]): The negative label edge type which should be removed from the torch_geometric graph
             positive_label_sentinel (int): The sentinel value for the positive label.
             negative_label_sentinel (Optional[int]): The sentinel value for the negative label.
             If not provided, then negative labels will not be set.
@@ -676,6 +682,8 @@ class _SetLabels:
         self._anchor_node_sentinel = anchor_node_sentinel
         self._positive_label_sentinel = positive_label_sentinel
         self._negative_label_sentinel = negative_label_sentinel
+        self._positive_label_edge_type = positive_label_edge_type
+        self._negative_label_edge_type = negative_label_edge_type
 
     def __call__(self, data: _GraphData) -> _GraphData:
         """Transform the heterogeneous graph to a homogeneous graph."""
@@ -761,11 +769,16 @@ class _SetLabels:
                 negative_labels[node_type] = neg_labels
         if is_heterogeneous:
             data.y_positive = positive_labels
+            del data.num_sampled_edges[self._positive_label_edge_type]
+            del data._edge_store_dict[self._positive_label_edge_type]
             if negative_labels:
                 data.y_negative = negative_labels
+                del data.num_sampled_edges[self._negative_label_edge_type]
+                del data._edge_store_dict[self._negative_label_edge_type]
         else:
-            # Saddly, can't use `to_homogeneous` here for mypy reasons as the values are dicts :(
+            # Sadly, can't use `to_homogeneous` here for mypy reasons as the values are dicts :(
             data.y_positive = next(iter(positive_labels.values()))
             if negative_labels:
                 data.y_negative = next(iter(negative_labels.values()))
+
         return data
