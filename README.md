@@ -137,14 +137,13 @@ not visible to open source users currently.
 
 #### Running tests against an open PR
 
-If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments:
+If you have an open PR, you can also manually kick off these CI tests by leaving one off various comments discussed below.
+Run all unit tests:
 
 ```{note}
-**For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
-instructions on how to run the tests locally, or ask a maintainer to run them for you.**
+For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
+instructions on how to run the tests locally, or ask a maintainer to run them for you.
 ```
-
-Run all unit tests:
 
 ```
 /unit_test
