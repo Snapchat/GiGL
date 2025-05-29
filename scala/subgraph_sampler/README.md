@@ -18,7 +18,7 @@ ______________________________________________________________________
 5. Merge 1hop and 2hop hydrated neighbors
 6. Merge hydrated root node to step 5, and create subgraphDF
 7. Append isolated nodes (if any) to subgraphDF [RootedNodeNeighnorhood]
-8. Add task-relevent samples to subgraphDF (such as positive node neighborshoods or node labels) to create trainingSubgraphDF
+8. Add task-relevant samples to subgraphDF (such as positive node neighborshoods or node labels) to create trainingSubgraphDF
 9. (If specified) append isolated nodes to trainingSubgraphDF [SupervisedNodeClassificationSample,NodeAnchorBasedLinkPredictionSample ]
 10. Modify subgraphDF and trainingSubgraphDF schema to compatible structure as defined in `training_samples_schema.proto`.
 11. Convert DataFrames from step 10 to DataSet and map DataSet rows to ByteArray
