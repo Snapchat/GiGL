@@ -5,7 +5,7 @@ GiGL is an open-source library for training and inference of Graph Neural Networ
 ```{only}
 ::not html
 
-For best experience in reading GiGL documentation, please visit our documentaiton website: https://snapchat.github.io/GiGL/
+For best experience in reading GiGL documentation visit our documentaiton website: https://snapchat.github.io/GiGL/
 ```
 
 ## Key Features 🌟
