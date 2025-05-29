@@ -13,6 +13,12 @@ By the end of this tutorial, you will have a solid understanding of GNNs,
 the challenges they face in scaling, and how GiGL addresses these challenges effectively.
 Most importantly, you will walk away with the knowledge and skills to train and infer industry-scale GNNs using GiGL.
 
+Thinking about integrating Graph Neural Networks into your applications? Here's why GiGL stands out:
+* **Built for scale:** GiGL is a large-scale Graph Neural Network library that works on industry-scale graphs.
+* **Efficient and cost-effective:** GiGL addresses GNN scalability challenges and provide cost-effective solutions for training and inference.
+* **Easy to adopt:** GiGL has abstracted interfaces and compatibility with popular GNN frameworks like PyG.
+* **Battle-tested at Snapchat:** GiGL is widely used at Snapchat and has been successfully deployed in production for various applications.
+
 
 ## Tutorial Outline
 ### GNNs and their Scale Challenges (20m)
