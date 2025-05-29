@@ -41,11 +41,12 @@ For more detailed information on meeting the prerequisites, refer to the officia
    - (Optional) Enable Hierarchical namespace on this bucket
 
    - For your temp bucket its okay to disable `Soft delete policy (For data recovery)`, otherwise you will get billed
-     unecessarily for large armounts of intermediary assets GiGL creates.
+     unnecessarily for large amounts of intermediary assets GiGL creates.
 
-   - Since GiGL creates alot of intermediary assets you will want to create a
-     [lifecycle rule](https://cloud.google.com/storage/docs/lifecycle) on the temporariy bucket to automatically delete
-     assets. Intermediary assets can add up very quickly - you have been warned. Example:
+   - Since GiGL creates a lot of intermediary assets you will want to create a
+     [lifecycle rule](https://cloud.google.com/storage/docs/lifecycle) on the temporary bucket to automatically delete
+     assets. Intermediary assets can add up very quickly. Example:
+
      <img src="../../assets/images/cloud_setup/bucket_lifecycle_example.png" alt="Bucket Lifecycle Example"/>
 
 7. [Create BQ Datasets](https://console.cloud.google.com/bigquery) for storing assets. You need to create two different
@@ -105,8 +106,10 @@ Example of granting `bigquery.user`:
 c. Next we need to grant the GCP
 [Vertex AI Service Agent](https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents) i.e.
 `service-$PROJECT_NUMBER@gcp-sa-aiplatform-cc.iam.gserviceaccount.com` permissions to read from artifact registry so the
-VAI pipelines can pull the docker images you push to the registry you created. You can find your `$PROJECT_NUMBER` from
-your main project console page: `console.cloud.google.com`
+VAI pipelines can pull the docker images you push to the registry you created. You can get this by running:
+`gcloud projects describe $PROJECT_ID --format="value(projectNumber)"`
+
+Alternative, you can find your `$PROJECT_NUMBER` from your main project console page: `console.cloud.google.com`
 
 ```bash
  gcloud projects add-iam-policy-binding $PROJECT_ID \

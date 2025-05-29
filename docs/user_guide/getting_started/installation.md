@@ -22,7 +22,7 @@ Below we provide two ways to bootstrap an environment for using and/or developin
     python scripts/create_dev_instance.py
   ```
   Next, ssh into your instance. It will most likely ask you to install gpu drivers, follow instructions and do so.
-  Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab off your instance click
+  Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click
   the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
 
   Once done, ensure you can run multiarch docker builds by running following command:
@@ -69,7 +69,8 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   brew install make
   ```
 
-  Subsequently, you should be able to use `gmake` instead of `make`
+  Subsequently, you should be able to use `gmake` in all places where we use `make` since brew formula has installed GNU "make" as "gmake".
+  See: https://formulae.brew.sh/formula/make
 
   **Install make on Linux:**
   ```

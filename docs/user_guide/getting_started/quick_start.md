@@ -40,9 +40,9 @@ Run the following command and follow the steps:
 python scripts/bootstrap_resource_config.py
 ```
 
-You will note that if the script finishes sucessfully, it will have added two environment variables to your main shell
-file i.e. (`~/.zshrc`); mainly `GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, `GIGL_PROJECT`, and `GIGL_DOCKER_ARTIFACT_REGISTRY`.
-Ensure vars are available (you may need to restart shell)
+You will note that if the script finishes successfully, it will have added three environment variables to your main
+shell file i.e. (`~/.zshrc`); mainly `GIGL_TEST_DEFAULT_RESOURCE_CONFIG`, `GIGL_PROJECT`, and
+`GIGL_DOCKER_ARTIFACT_REGISTRY`. Ensure vars are available (you may need to restart shell)
 
 ```bash
 echo $GIGL_TEST_DEFAULT_RESOURCE_CONFIG
@@ -68,7 +68,7 @@ Since `.whl`s for GiGL have not been released yet, using GiGL workflows currentl
 GiGL supports various ways to orchestrate an end to end run such as KFP Orchestration, GiGL Runner, and manual component
 import and running as needed. For more details see [here](./orchestration.md)
 
-Lets use the following command to run an e2e node anchor based link prediction example on the cora dataset:
+Lets use the following command to run an e2e link prediction example on the Cora dataset:
 
 ```bash
 export GIGL_CORA_NABLP_TASK_CONFIG="gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml"
@@ -80,7 +80,7 @@ make \
   run_dev_gnn_kubeflow_pipeline
 ```
 
-If the pipeline ran sucessfully, you should see a url to Vertex AI where your pipeline is running.
+If the pipeline ran successfully, you should see a url to Vertex AI where your pipeline is running.
 
 Observe that once you run this command a few things happen:
 
