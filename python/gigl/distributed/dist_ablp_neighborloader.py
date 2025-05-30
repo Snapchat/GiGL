@@ -394,7 +394,7 @@ class DistABLPLoader(DistLoader):
 
         positive_labels = metadata["positive_labels"]
         negative_labels = (
-            metadata["negative_lables"] if "negative_labels" in metadata else None
+            metadata["negative_labels"] if "negative_labels" in metadata else None
         )
         output_positive_labels: dict[int, torch.Tensor] = {}
         output_negative_labels: dict[int, torch.Tensor] = {}
