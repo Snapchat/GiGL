@@ -10,11 +10,11 @@ from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
-from gigl.distributed import DistributedContext
 from gigl.distributed.constants import (
     DEFAULT_MASTER_INFERENCE_PORT,
     DEFAULT_MASTER_SAMPLING_PORT,
 )
+from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing

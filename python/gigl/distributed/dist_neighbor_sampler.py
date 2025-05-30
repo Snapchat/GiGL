@@ -9,6 +9,7 @@ from graphlearn_torch.sampler import (
     NodeSamplerInput,
     SamplerOutput,
 )
+from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
 from gigl.types.sampler import LabeledNodeSamplerInput
@@ -35,7 +36,7 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
         if negative_labels is not None:
             negative_seeds = negative_labels[negative_labels != PADDING_NODE]
             labeled_seeds = torch.cat((labeled_seeds, negative_seeds), dim=0)
-        self.max_input_size = max(self.max_input_size, input_seeds.numel())
+        self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
         metadata = {"positive_labels": positive_labels}
@@ -50,12 +51,16 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
             }
         if is_hetero:
             assert input_type is not None
-            out_nodes, out_rows, out_cols, out_edges = {}, {}, {}, {}
-            num_sampled_nodes, num_sampled_edges = {}, {}
+            out_nodes_hetero: dict[NodeType, list[torch.Tensor]] = {}
+            out_rows_hetero: dict[EdgeType, list[torch.Tensor]] = {}
+            out_cols_hetero: dict[EdgeType, list[torch.Tensor]] = {}
+            out_edges_hetero: dict[EdgeType, list[torch.Tensor]] = {}
+            num_sampled_nodes_hetero: dict[NodeType, list[torch.Tensor]] = {}
+            num_sampled_edges_hetero: dict[EdgeType, list[torch.Tensor]] = {}
             src_dict = inducer.init_node(input_nodes)
             batch = src_dict
-            merge_dict(src_dict, out_nodes)
-            count_dict(src_dict, num_sampled_nodes, 1)
+            merge_dict(src_dict, out_nodes_hetero)
+            count_dict(src_dict, num_sampled_nodes_hetero, 1)
 
             for i in range(self.num_hops):
                 task_dict, nbr_dict, edge_dict = {}, {}, {}
@@ -87,26 +92,28 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
                 if len(nbr_dict) == 0:
                     continue
                 nodes_dict, rows_dict, cols_dict = inducer.induce_next(nbr_dict)
-                merge_dict(nodes_dict, out_nodes)
-                merge_dict(rows_dict, out_rows)
-                merge_dict(cols_dict, out_cols)
-                merge_dict(edge_dict, out_edges)
-                count_dict(nodes_dict, num_sampled_nodes, i + 2)
-                count_dict(cols_dict, num_sampled_edges, i + 1)
+                merge_dict(nodes_dict, out_nodes_hetero)
+                merge_dict(rows_dict, out_rows_hetero)
+                merge_dict(cols_dict, out_cols_hetero)
+                merge_dict(edge_dict, out_edges_hetero)
+                count_dict(nodes_dict, num_sampled_nodes_hetero, i + 2)
+                count_dict(cols_dict, num_sampled_edges_hetero, i + 1)
                 src_dict = nodes_dict
 
             sample_output = HeteroSamplerOutput(
-                node={ntype: torch.cat(nodes) for ntype, nodes in out_nodes.items()},
-                row={etype: torch.cat(rows) for etype, rows in out_rows.items()},
-                col={etype: torch.cat(cols) for etype, cols in out_cols.items()},
+                node={
+                    ntype: torch.cat(nodes) for ntype, nodes in out_nodes_hetero.items()
+                },
+                row={etype: torch.cat(rows) for etype, rows in out_rows_hetero.items()},
+                col={etype: torch.cat(cols) for etype, cols in out_cols_hetero.items()},
                 edge=(
-                    {etype: torch.cat(eids) for etype, eids in out_edges.items()}
+                    {etype: torch.cat(eids) for etype, eids in out_edges_hetero.items()}
                     if self.with_edge
                     else None
                 ),
                 batch=batch,
-                num_sampled_nodes=num_sampled_nodes,
-                num_sampled_edges=num_sampled_edges,
+                num_sampled_nodes=num_sampled_nodes_hetero,
+                num_sampled_edges=num_sampled_edges_hetero,
                 input_type=input_type,
                 metadata=metadata,
             )
