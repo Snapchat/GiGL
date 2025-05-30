@@ -1,10 +1,13 @@
 import unittest
 from collections import abc
-from typing import Optional
+from typing import MutableMapping, Optional
 
+import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
+from parameterized import param, parameterized
+from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
@@ -19,15 +22,23 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
+    CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    GraphPartitionData,
+    PartitionOutput,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
+    to_heterogeneous_node,
     to_homogeneous,
 )
 from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
+from tests.test_assets.distributed.run_distributed_dataset import (
+    run_distributed_dataset,
+)
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -178,37 +189,6 @@ def _run_cora_supervised(
     shutdown_rpc()
 
 
-def _run_dblp_supervised(
-    _,
-    dataset: DistLinkPredictionDataset,
-    context: DistributedContext,
-    supervision_edge_types: list[EdgeType],
-):
-    assert (
-        len(supervision_edge_types) == 1
-    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
-    supervision_edge_type = supervision_edge_types[0]
-    assert isinstance(dataset.train_node_ids, dict)
-    assert isinstance(dataset.graph, dict)
-    fanout = [2, 2]
-    num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
-    loader = DistABLPLoader(
-        dataset=dataset,
-        num_neighbors=num_neighbors,
-        input_nodes=(NodeType("paper"), dataset.train_node_ids["paper"]),
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
-        supervision_edge_type=supervision_edge_type,
-    )
-    count = 0
-    for datum in loader:
-        assert isinstance(datum, HeteroData)
-        count += 1
-
-    shutdown_rpc()
-
-
 def _run_multiple_neighbor_loader(
     _,
     dataset: DistLinkPredictionDataset,
@@ -266,6 +246,37 @@ def _run_multiple_neighbor_loader(
     shutdown_rpc()
 
 
+def _run_dblp_supervised(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    supervision_edge_types: list[EdgeType],
+):
+    assert (
+        len(supervision_edge_types) == 1
+    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    supervision_edge_type = supervision_edge_types[0]
+    assert isinstance(dataset.train_node_ids, dict)
+    assert isinstance(dataset.graph, dict)
+    fanout = [2, 2]
+    num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=num_neighbors,
+        input_nodes=(NodeType("paper"), dataset.train_node_ids["paper"]),
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        supervision_edge_type=supervision_edge_type,
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
+
+    shutdown_rpc()
+
+
 class DistributedNeighborLoaderTest(unittest.TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
@@ -276,6 +287,206 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             main_worker_ip_address=self._master_ip_address,
             global_rank=0,
             global_world_size=self._world_size,
+        )
+
+    def test_distributed_neighbor_loader(self):
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+        expected_data_count = 2708
+        manager = Manager()
+        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            output_dict=output_dict,
+            should_load_tensors_in_parallel=True,
+            master_ip_address=self._master_ip_address,
+            master_port=master_port,
+        )
+
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader,
+            args=(dataset, self._context, expected_data_count),
+        )
+
+    # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
+    @unittest.skip("Failing on Google Cloud Build - skiping for now")
+    def test_distributed_neighbor_loader_heterogeneous(self):
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+        expected_data_count = 4057
+        manager = Manager()
+        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            output_dict=output_dict,
+            should_load_tensors_in_parallel=True,
+            master_ip_address=self._master_ip_address,
+            master_port=master_port,
+        )
+
+        mp.spawn(
+            fn=_run_distributed_heterogeneous_neighbor_loader,
+            args=(dataset, self._context, expected_data_count),
+        )
+
+    @parameterized.expand(
+        [
+            param(
+                "Positive and Negative edges",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+                expected_positive_labels={
+                    10: torch.tensor([15]),
+                    15: torch.tensor([16]),
+                },
+                expected_negative_labels={
+                    10: torch.tensor([13, 16]),
+                    15: torch.tensor([17]),
+                },
+            ),
+            param(
+                "Positive edges",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])},
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+                expected_positive_labels={
+                    10: torch.tensor([15]),
+                    15: torch.tensor([16]),
+                },
+                expected_negative_labels=None,
+            ),
+        ]
+    )
+    def test_ablp_dataloader(
+        self,
+        _,
+        labeled_edges,
+        expected_node,
+        expected_srcs,
+        expected_dsts,
+        expected_positive_labels,
+        expected_negative_labels,
+    ):
+        # Graph looks like https://is.gd/w2oEVp:
+        # Message passing
+        # 10 -> {11, 12}
+        # 11 -> {13, 17}
+        # 15 -> {13, 14}
+        # 16 -> {12, 14}
+        # Positive labels
+        # 10 -> 15
+        # 15 -> 16
+        # Negative labels
+        # 10 -> {13, 16}
+        # 11 -> 14
+
+        edge_index = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [
+                    [10, 10, 11, 11, 15, 15, 16, 16],
+                    [11, 12, 13, 17, 13, 14, 12, 14],
+                ]
+            ),
+        }
+        edge_index.update(labeled_edges)
+
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+        )
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_distributed_ablp_neighbor_loader,
+            args=(
+                dataset,
+                self._context,
+                expected_node,
+                expected_srcs,
+                expected_dsts,
+                expected_positive_labels,
+                expected_negative_labels,
+            ),
+        )
+
+    def test_cora_supervised(self):
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+        expected_data_count = 2161
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in", should_convert_labels_to_edges=True
+        )
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            distributed_context=self._context,
+            sample_edge_direction="in",
+            splitter=splitter,
+        )
+
+        mp.spawn(
+            fn=_run_cora_supervised, args=(dataset, self._context, expected_data_count)
+        )
+
+    def test_multiple_neighbor_loader(self):
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+        expected_data_count = 2708
+        manager = Manager()
+        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            output_dict=output_dict,
+            should_load_tensors_in_parallel=True,
+            master_ip_address=self._master_ip_address,
+            master_port=master_port,
+        )
+
+        mp.spawn(
+            fn=_run_multiple_neighbor_loader,
+            args=(dataset, self._context, expected_data_count),
         )
 
     def test_dblp_supervised(self):

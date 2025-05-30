@@ -132,7 +132,6 @@ class DistABLPLoader(DistNeighborLoader):
             raise ValueError(
                 f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
             )
-        # TODO(kmonte): Remove these checks and support properly heterogeneous NABLP.
         is_heterogeneous: bool = False
         if isinstance(input_nodes, tuple):
             if supervision_edge_type is None:
@@ -150,6 +149,10 @@ class DistABLPLoader(DistNeighborLoader):
                 supervision_edge_type = reverse_edge_type(supervision_edge_type)
 
         elif isinstance(input_nodes, torch.Tensor):
+            if supervision_edge_type is not None:
+                raise ValueError(
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
+                )
             node_ids = input_nodes
             node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
@@ -163,6 +166,11 @@ class DistABLPLoader(DistNeighborLoader):
                 raise ValueError(
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
+            if supervision_edge_type is not None:
+                raise ValueError(
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
+                )
+
             node_ids = dataset.node_ids
             node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
