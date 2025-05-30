@@ -1,6 +1,6 @@
 import datetime
 import queue
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -26,6 +26,7 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.utils import seed_everything
 from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
+from torch.utils.data.dataset import Dataset
 
 from gigl.distributed.dist_neighbor_sampler import DistLinkPredictionNeighborSampler
 
@@ -100,9 +101,12 @@ def _sampling_worker_loop(
         )
         dist_sampler.start_loop()
 
+        unshuffled_index_loader: Optional[DataLoader]
+        loader: DataLoader
+
         if unshuffled_index is not None:
             unshuffled_index_loader = DataLoader(
-                unshuffled_index,
+                cast(Dataset, unshuffled_index),
                 batch_size=sampling_config.batch_size,
                 shuffle=False,
                 drop_last=sampling_config.drop_last,
@@ -122,6 +126,7 @@ def _sampling_worker_loop(
             if command == MpCommand.SAMPLE_ALL:
                 seeds_index = args
                 if seeds_index is None:
+                    assert unshuffled_index_loader is not None
                     loader = unshuffled_index_loader
                 else:
                     loader = DataLoader(

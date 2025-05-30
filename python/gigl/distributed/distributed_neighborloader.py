@@ -144,11 +144,21 @@ class DistNeighborLoader(DistLoader):
                     f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
                 )
 
+        # Determines if the node ids passed in are heterogeneous or homogeneous.
+        if isinstance(input_nodes, torch.Tensor):
+            node_ids = input_nodes
+            node_type = None
+        else:
+            node_type, node_ids = input_nodes
+
         curr_process_nodes = shard_nodes_by_process(
-            input_nodes=input_nodes,
+            input_nodes=node_ids,
             local_process_rank=local_process_rank,
             local_process_world_size=local_process_world_size,
         )
+
+        input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
+
         device = (
             pin_memory_device
             if pin_memory_device
@@ -210,15 +220,6 @@ class DistNeighborLoader(DistLoader):
         if not hasattr(self, "_transforms"):
             self._transforms = []
 
-        # Determines if the node ids passed in are heterogeneous or homogeneous.
-        if isinstance(curr_process_nodes, torch.Tensor):
-            node_ids = curr_process_nodes
-            node_type = None
-        else:
-            node_type, node_ids = curr_process_nodes
-
-        input_data = NodeSamplerInput(node_ids, node_type)
-
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -242,24 +243,16 @@ class DistNeighborLoader(DistLoader):
 
 
 def shard_nodes_by_process(
-    input_nodes: Union[torch.Tensor, Tuple[str, torch.Tensor]],
+    input_nodes: torch.Tensor,
     local_process_rank: int,
     local_process_world_size: int,
-) -> Union[torch.Tensor, Tuple[str, torch.Tensor]]:
-    def shard(nodes: torch.Tensor) -> torch.Tensor:
-        num_node_ids_per_process = nodes.size(0) // local_process_world_size
-        start_index = local_process_rank * num_node_ids_per_process
-        end_index = (
-            nodes.size(0)
-            if local_process_rank == local_process_world_size - 1
-            else start_index + num_node_ids_per_process
-        )
-        nodes_for_current_process = nodes[start_index:end_index]
-        return nodes_for_current_process
-
-    if isinstance(input_nodes, torch.Tensor):
-        return shard(input_nodes)
-    else:
-        node_type, node_ids = input_nodes
-        node_ids = shard(node_ids)
-        return (node_type, node_ids)
+) -> torch.Tensor:
+    num_node_ids_per_process = input_nodes.size(0) // local_process_world_size
+    start_index = local_process_rank * num_node_ids_per_process
+    end_index = (
+        input_nodes.size(0)
+        if local_process_rank == local_process_world_size - 1
+        else start_index + num_node_ids_per_process
+    )
+    nodes_for_current_process = input_nodes[start_index:end_index]
+    return nodes_for_current_process

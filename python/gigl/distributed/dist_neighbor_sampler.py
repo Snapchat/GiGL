@@ -49,6 +49,7 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
                 input_type: input_seeds,
                 supervision_node_type: labeled_seeds,
             }
+        output: NeighborOutput
         if is_hetero:
             assert input_type is not None
             out_nodes_hetero: dict[NodeType, list[torch.Tensor]] = {}
@@ -82,7 +83,7 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
                             )
 
                 for etype, task in task_dict.items():
-                    output: NeighborOutput = await task
+                    output = await task
                     if output.nbr.numel() == 0:
                         continue
                     nbr_dict[etype] = [src_dict[etype[0]], output.nbr, output.nbr_num]
@@ -121,13 +122,15 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
             assert input_type == supervision_node_type
             srcs = inducer.init_node(input_nodes[input_type])
             batch = srcs
-            out_nodes, out_edges = [], []
-            num_sampled_nodes, num_sampled_edges = [], []
+            out_nodes: list[torch.Tensor] = []
+            out_edges: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+            num_sampled_nodes: list[torch.Tensor] = []
+            num_sampled_edges: list[torch.Tensor] = []
             out_nodes.append(srcs)
             num_sampled_nodes.append(srcs.size(0))
             # Sample subgraph.
             for req_num in self.num_neighbors:
-                output: NeighborOutput = await self._sample_one_hop(srcs, req_num, None)
+                output = await self._sample_one_hop(srcs, req_num, None)
                 if output.nbr.numel() == 0:
                     break
                 nodes, rows, cols = inducer.induce_next(
