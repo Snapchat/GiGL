@@ -3,11 +3,7 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage, ShmChannel
-from graphlearn_torch.distributed import (
-    DistLoader,
-    MpDistSamplingWorkerOptions,
-    get_context,
-)
+from graphlearn_torch.distributed import MpDistSamplingWorkerOptions, get_context
 from graphlearn_torch.sampler import SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -23,7 +19,8 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import (
     DEFAULT_NUM_CPU_THREADS,
-    _shard_nodes_by_process,
+    DistNeighborLoader,
+    shard_nodes_by_process,
 )
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -42,7 +39,7 @@ from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 logger = Logger()
 
 
-class DistHeterogeneousABLPLoader(DistLoader):
+class DistABLPLoader(DistNeighborLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
@@ -229,7 +226,7 @@ class DistHeterogeneousABLPLoader(DistLoader):
                 f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
             )
 
-        curr_process_nodes = _shard_nodes_by_process(
+        curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
             local_process_rank=local_process_rank,
             local_process_world_size=local_process_world_size,

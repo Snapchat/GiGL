@@ -29,6 +29,11 @@ from torch.utils.data.dataloader import DataLoader
 
 from gigl.distributed.dist_neighbor_sampler import DistLinkPredictionNeighborSampler
 
+"""
+All code in this file is directly taken from GraphLearn-for-PyTorch, with the exception that we call
+the GiGL DistNeighborSampler with custom link prediction logic instead of the GLT DistNeighborSampler
+"""
+
 
 def _sampling_worker_loop(
     rank,
