@@ -24,17 +24,35 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
         supervision_node_type = inputs.supervision_node_type
-        labeled_seeds = inputs.positive_labels[
-            inputs.positive_labels != PADDING_NODE
-        ].to(self.device)
-        if inputs.negative_labels is not None:
-            negative_seeds = inputs.negative_labels[
-                inputs.negative_labels != PADDING_NODE
-            ].to(self.device)
+        positive_labels = inputs.positive_labels.to(self.device)
+        negative_labels = (
+            inputs.negative_labels.to(self.device)
+            if inputs.negative_labels is not None
+            else None
+        )
+
+        labeled_seeds = positive_labels[positive_labels != PADDING_NODE]
+        if negative_labels is not None:
+            negative_seeds = negative_labels[negative_labels != PADDING_NODE]
             labeled_seeds = torch.cat((labeled_seeds, negative_seeds), dim=0)
         self.max_input_size = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
+        pos_dict = {}
+        neg_dict = {}
+        for i in range(input_seeds.shape[0]):
+            positive_label_for_node = positive_labels[i]
+            pos_dict[input_seeds[i]] = positive_label_for_node[
+                positive_label_for_node != PADDING_NODE
+            ]
+            if negative_labels is not None:
+                negative_label_for_node = negative_labels[i]
+                neg_dict[input_seeds[i]] = negative_label_for_node[
+                    negative_label_for_node != PADDING_NODE
+                ]
+        metadata = {"pos_dict": pos_dict}
+        if negative_labels is not None:
+            metadata["neg_dict"] = neg_dict
         if input_type == supervision_node_type:
             input_nodes = {input_type: torch.cat((input_seeds, labeled_seeds), dim=0)}
         else:
@@ -102,7 +120,7 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
                 num_sampled_nodes=num_sampled_nodes,
                 num_sampled_edges=num_sampled_edges,
                 input_type=input_type,
-                metadata={},
+                metadata=metadata,
             )
         else:
             assert input_type == supervision_node_type
@@ -134,7 +152,7 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
                 batch=batch,
                 num_sampled_nodes=num_sampled_nodes,
                 num_sampled_edges=num_sampled_edges,
-                metadata={},
+                metadata=metadata,
             )
 
         # Reclaim inducer into pool.
