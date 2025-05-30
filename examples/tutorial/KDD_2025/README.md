@@ -50,6 +50,4 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 
 ## Resources
 * **GiGL KDD '25 paper:** [GiGL: Large-Scale Graph Neural Networks at Snapchat](https://arxiv.org/abs/2502.15054)
-* **[GiGL Documentation](https://snapchat.github.io/GiGL/#)**
-  * [User Guide](https://snapchat.github.io/GiGL/docs/user_guide/index.html)
-  * [API Reference](https://snapchat.github.io/GiGL/docs/api/index.html)
+* **[GiGL Documentation](../../../docs/user_guide/index.rst)**
