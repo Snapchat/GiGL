@@ -1,4 +1,4 @@
-# This yaml is used to test HGS. The data is generated via mock assets for Toy graph and copied over in relevent paths below.
+# This yaml is used to test HGS. The data is generated via mock assets for Toy graph and copied over in relevant paths below.
 datasetConfig:
   splitGeneratorConfig:
     assignerArgs:

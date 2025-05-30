@@ -1,3 +1,3 @@
 """
-Orchestration support for End-to-End GiGL Pipelines.
+Orchestration support for end-to-end GiGL Pipelines.
 """
