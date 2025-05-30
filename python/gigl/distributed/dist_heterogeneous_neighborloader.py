@@ -1,14 +1,15 @@
 from collections import abc
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
-from graphlearn_torch.channel import ShmChannel
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
     get_context,
 )
 from graphlearn_torch.sampler import SamplingConfig, SamplingType
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
@@ -36,7 +37,7 @@ from gigl.types.graph import (
     to_heterogeneous_edge,
 )
 from gigl.types.sampler import LabeledNodeSamplerInput
-from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 
 logger = Logger()
 
@@ -135,11 +136,13 @@ class DistHeterogeneousABLPLoader(DistLoader):
                 f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
             )
         # TODO(kmonte): Remove these checks and support properly heterogeneous NABLP.
+        is_heterogeneous: bool = False
         if isinstance(input_nodes, tuple):
             if supervision_edge_type is None:
                 raise ValueError(
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
+            is_heterogeneous = True
             node_type, node_ids = input_nodes
             assert (
                 supervision_edge_type[0] == node_type
@@ -186,6 +189,21 @@ class DistHeterogeneousABLPLoader(DistLoader):
             positive_label_edge_type=positive_label_edge_type,
             negative_label_edge_type=negative_label_edge_type,
         )
+
+        transforms: list[
+            Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
+        ] = []
+
+        if not is_heterogeneous:
+            transforms.append(_SupervisedToHomogeneous(supervision_edge_type))
+        transforms.append(
+            _SetLabels(
+                input_node_type=node_type,
+                positive_label_edge_type=positive_label_edge_type,
+                negative_label_edge_type=negative_label_edge_type,
+            )
+        )
+        self._transforms = transforms
 
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
         if isinstance(num_neighbors, dict):
@@ -367,3 +385,83 @@ class DistHeterogeneousABLPLoader(DistLoader):
             self._channel,
         )
         self._mp_producer.init()
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        data = super()._collate_fn(msg)
+        for transform in self._transforms:
+            data = transform(data)
+        return data
+
+
+class _SupervisedToHomogeneous:
+    """Transform class to convert a heterogeneous graph to a homogeneous graph."""
+
+    def __init__(
+        self,
+        message_passing_edge_type: EdgeType,
+    ):
+        """
+        Args:
+            message_passing_edge_type (EdgeType): The edge type to use for message passing.
+        """
+
+        self._message_passing_edge_type = message_passing_edge_type
+
+    def __call__(self, data: HeteroData) -> Data:
+        """Transform the heterogeneous graph to a homogeneous graph."""
+        homogeneous_data = data.edge_type_subgraph(
+            [self._message_passing_edge_type]
+        ).to_homogeneous(add_edge_type=False, add_node_type=False)
+
+        return homogeneous_data
+
+
+class _SetLabels:
+    """Transform class to set labels for the nodes in the graph."""
+
+    def __init__(
+        self,
+        input_node_type,
+        positive_label_edge_type,
+        negative_label_edge_type,
+    ):
+        self._input_node_type = input_node_type
+        self._positive_label_edge_type = positive_label_edge_type
+        self._negative_label_edge_type = negative_label_edge_type
+
+    def __call__(self, data: Data) -> Data:
+        is_heterogeneous = isinstance(data, HeteroData)
+        positive_labels: dict[int, torch.Tensor] = {}
+        has_negative_label = hasattr(data, "negative_labels")
+        if is_heterogeneous:
+            anchor_nodes = data.batch_dict[self._input_node_type]
+        else:
+            anchor_nodes = data.batch
+        if has_negative_label:
+            assert self._negative_label_edge_type is not None
+            negative_labels: dict[int, torch.Tensor] = {}
+
+        for i in range(data.positive_labels.shape[0]):
+            positive_example = data.positive_labels[i]
+            positive_labels[anchor_nodes[i].item()] = positive_example[
+                positive_example != PADDING_NODE
+            ]
+            if has_negative_label:
+                negative_example = data.negative_labels[i]
+                negative_labels[anchor_nodes[i].item()] = negative_example[
+                    negative_example != PADDING_NODE
+                ]
+
+        data.y_positive = positive_labels
+        del data.positive_labels
+        if has_negative_label:
+            data.y_negative = negative_labels
+            del data.negative_labels
+        if is_heterogeneous:
+            del data.num_sampled_edges[self._positive_label_edge_type]
+            del data._edge_store_dict[self._positive_label_edge_type]
+            if has_negative_label:
+                del data.num_sampled_edges[self._negative_label_edge_type]
+                del data._edge_store_dict[self._negative_label_edge_type]
+
+        return data
