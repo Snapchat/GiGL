@@ -2,6 +2,12 @@
 
 GiGL is an open-source library for training and inference of Graph Neural Networks at very large (billion) scale.
 
+```{only}
+::not html
+
+For best experience in reading GiGL documentation visit our documentaiton website: https://snapchat.github.io/GiGL/
+```
+
 ## Key Features 🌟
 
 - 🧠 **Versatile GNN Applications**: Supports easy customization in using GNNs in supervised and unsupervised ML
@@ -45,7 +51,7 @@ the model is trained with triplet-style contrastive loss on a set of anchor node
 
 ### Usage
 
-GiGL offers 3 primiary methods of usage to run the components for your graph machine learning tasks.
+GiGL offers 3 primary methods of usage to run the components for your graph machine learning tasks.
 
 #### 1. Importable GiGL
 
@@ -77,7 +83,7 @@ python -m \
     gigl.src.training.trainer \
     --job_name your_job_name \
     --task_config_uri gs://your_project_bucket/task_config.yaml \
-    --resource_config_uri "gs://your_project_bucket/resource_conifg.yaml"
+    --resource_config_uri "gs://your_project_bucket/resource_config.yaml"
 ```
 
 </details>
@@ -116,12 +122,28 @@ One your PR is "Added to the merge queue", the changes will only merge once our 
 checks succeed. The only caveat to this is the large scale performance testing that runs @ some regular cadence but is
 not visible to open source users currently.
 
-If you have an open PR; you can also manually kick off these CI tests by leaving one of the following comments:
+### Types of Tests
 
-**Note: For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
-instructions on how to run the tests locally, or ask a maintainer to run them for you.**
+1. Linting/Formatting Tests
+2. Unit Tests
+3. Integration Tests - Simulate the pipeline behavior of GiGL components. These tests are crucial for verifying that
+   components function correctly in sequence and that outputs from one component are correctly handled by the next.
+4. Cloud Integration Test (end-to-end) - run a full end-to-end GiGL pipeline within GCP, also leveraging cloud services
+   such as Dataflow, Dataproc, and Vertex AI
+5. Perfornmance Tests (end-to-end) - not currently exposed publically; but benchmarked against internal datasets on a
+   regular cadence.
 
-Run all unit tests:
+### Running tests
+
+#### Running tests against an open PR
+
+If you have an open PR, you can also manually kick off these CI tests by leaving one off various comments discussed
+below. Run all unit tests:
+
+```{note}
+For safety reasons you will have to be a repo maintainer to be able to run these commands. Alternatively, see
+instructions on how to run the tests locally, or ask a maintainer to run them for you.
+```
 
 ```
 /unit_test
@@ -139,12 +161,27 @@ Run all end-to-end tests:
 /e2e_test
 ```
 
-### Running tests locally
+#### Running tests locally
 
 The entry point for running all tests is from the `Makefile`. We provide some documentation below on how you can run
-these tests locally.
+these tests both locally and on an open PR (leveraring our build/testing system).
 
-#### Lint/Formatting & Unit Tests
+````{note}
+  GiGL's unit, integration, and e2e tests require the use of a resource config. By default we use the `deployment/configs/unittest_resource_config.yaml` config for our CI/CD systems; but since most users wont have much access needed to compute/storage assets on the resources listed in our config, you won't be able to run the tests without doing some configuration.
+
+  This is already taken care for you assuming you have already followed [quick start instructions to setup resource config](./docs/user_guide/getting_started/quick_start.md#3-config-setup). You will have a few environment variables exposed in your main shell file (i.e. `~/.zshrc`) that are needed for these tests to function.
+
+  You can verify using command below:
+  ```bash
+  echo $GIGL_TEST_DEFAULT_RESOURCE_CONFIG
+  echo $GIGL_PROJECT
+  echo $GIGL_DOCKER_ARTIFACT_REGISTRY
+  ```
+
+  These environment variables override what is defined in the `Makefile` , allowing you to run tests as discussed below.
+````
+
+##### Lint/Formatting & Unit Tests
 
 You can run all the linting & Formatting tests by calling
 
@@ -159,7 +196,7 @@ make unit_test
 ```
 
 <details>
-<summary>More Commands</summary>
+<summary>More Commands and Details</summary>
 
 ```bash
 # Runs both Scala and Python unit tests, and the python static type checker
@@ -193,53 +230,50 @@ make format_scala
 make format_md
 ```
 
+All unit tests are organized in `python/tests/unit` folder, with the python entry point being
+`python/tests/unit/main.py`
+
 </details>
 
-#### Local Integration Test
+##### Integration Tests
 
-```{note}
-This section will be updated soon. TODO (svij)
-```
-
-GiGL's local integration tests simulate the pipeline behavior of GiGL components. These tests are crucial for verifying
-that components function correctly in sequence and that outputs from one component are correctly handled by the next.
-
-<details>
-<summary>More Details</summary>
-
-- Utilizes mocked/synthetic data publicly hosted in GCS (see: [Public Assets](%22todo%22))
-- Require access and run on cloud services such as BigQuery, Dataflow etc.
-- Required to pass before merging PR (Pre-merge check)
-
-To run integration tests locally, you need to provide yur own resource config and run the following command:
+Assuming you have followed instructions [above](#running-tests-locally), you should be able to run the integration tests
+using:
 
 ```bash
-make integration_test resource_config_uri="gs://your-project-bucket/resource_config.yaml"
+make integration_test
 ```
 
-</details>
-
-### Cloud Integration Test (End-to-End)
-
-```{note}
-This section will be updated soon. TODO (svij)
-```
-
-Cloud integration tests run a full end-to-end GiGL pipeline within GCP, also leveraging cloud services such as Dataflow,
-Dataproc, and Vertex AI.
+Note: These tests may take a while to run!
 
 <details>
-<summary>More Details</summary>
+<summary>More Commands and Details</summary>
 
-- Utilizes mocked/synthetic data publicly hosted in GCS (see: [Public Assets](%22todo%22))
-- Require access and run on cloud services such as BigQuery, Dataflow etc.
-- Required to pass before merging PR (Pre-merge check). Access to the orchestration, logs, etc., is restricted to
-  authorized internal engineers to maintain security. Failures will be reported back to contributor as needed.
+If you want to run individual integration tests you can do so as follows:
 
-To test cloud integration test functionality, you can replicate by running and end-to-end pipeline by following along
-one of our Cora examples (See: [Examples](%22todo%22))
+```bash
+make integration_test PY_TEST_FILES="file_loader_test.py"
+```
+
+All integration tests are organized in `python/tests/integration` folder with the python entry point being
+`python/tests/integration/main.py`
 
 </details>
+
+##### Cloud Integration Test (end-to-end)
+
+We have a few e2e test entrypoints defined in the Makefile i.e. `run_cora_nalp_e2e_kfp_test`,
+`run_cora_snc_e2e_kfp_test`, etc. Search for `e2e` keyword.
+
+```{caution}
+As these are very long running tests, we advise you run them on the PR; leveraging commands [pointed out above](#running-tests-against-an-open-pr).
+i.e. leaving `/e2e_test` comment in your open PR.
+
+If you must run them locally, you will have to manually modify the resource configs for the relevant e2e test you want to run so that it is using resources that you have access to.
+
+We plan on providing better support here in the future.
+```
+
 <br>
 
 ## Contribution 🔥
@@ -263,10 +297,10 @@ You may still have unanswered questions or may be facing issues. If so please se
 If you use GiGL in publications, we would appreciate citations to [our paper](https://arxiv.org/pdf/2502.15054):
 
 ```bibtex
-@article{zhao2025gigl,
+@inproceedings{zhao2025gigl,
   title={GiGL: Large-Scale Graph Neural Networks at Snapchat},
   author={Zhao, Tong and Liu, Yozen and Kolodner, Matthew and Montemayor, Kyle and Ghazizadeh, Elham and Batra, Ankit and Fan, Zihao and Gao, Xiaobin and Guo, Xuan and Ren, Jiwen and Park, Serim and Yu, Peicheng and Yu, Jun and Vij, Shubham and Shah, Neil},
-  journal={arXiv preprint arXiv:2502.15054},
+  booktitle={Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining},
   year={2025}
 }
 ```
