@@ -1,5 +1,5 @@
 from collections import abc
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import ShmChannel
@@ -8,7 +8,7 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     get_context,
 )
-from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+from graphlearn_torch.sampler import SamplingConfig, SamplingType
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
@@ -35,6 +35,7 @@ from gigl.types.graph import (
     select_label_edge_types,
     to_heterogeneous_edge,
 )
+from gigl.types.sampler import LabeledNodeSamplerInput
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 logger = Logger()
@@ -273,7 +274,7 @@ class DistHeterogeneousABLPLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        sampler_input = _LabeledHeterogeneousNodeSamplerInput(
+        sampler_input = LabeledNodeSamplerInput(
             node=curr_process_nodes,
             input_type=node_type,
             positive_labels=positive_labels,
@@ -366,61 +367,3 @@ class DistHeterogeneousABLPLoader(DistLoader):
             self._channel,
         )
         self._mp_producer.init()
-
-
-class _LabeledHeterogeneousNodeSamplerInput(NodeSamplerInput):
-    """
-    Allows for guaranteeing that all "label sets" are sampled together.
-
-    A "label set" is an anchor node, and it's positive and negative labels.
-    For instance if we have the graph:
-        # Message passing
-        A -> B -> C
-        # Positive label
-        A -> D
-        # Negative label
-        A -> E
-
-    Then the label set for A is (A, D, E).
-
-    If this is being used for labeled input, then the `node` input should be a tensor of shape N x M
-    where N is the number of label sets, and M is the number of nodes in each label set.
-
-    This class may also be given a tensor of shape N x 1, in which case there is no guarantee
-    a node and it's labels are sampled together.
-    """
-
-    def __init__(
-        self,
-        node: torch.Tensor,
-        input_type: Optional[Union[str, NodeType]],
-        positive_labels: torch.Tensor,
-        negative_labels: torch.Tensor,
-        supervision_node_type: Optional[Union[str, NodeType]],
-    ):
-        """
-        Args:
-            node (torch.Tensor): The node ids to sample.
-            input_type (Union[str, NodeType]): The type of the node.
-        """
-        super().__init__(node, input_type)
-        self._positive_labels = positive_labels
-        self._negative_labels = negative_labels
-        self._supervision_node_type = supervision_node_type
-
-    def __len__(self) -> int:
-        return self.node.shape[0]
-
-    def __getitem__(
-        self, index: Union[torch.Tensor, Any]
-    ) -> "_LabeledHeterogeneousNodeSamplerInput":
-        if not isinstance(index, torch.Tensor):
-            index = torch.tensor(index, dtype=torch.long)
-        index = index.to(self.node.device)
-        return _LabeledHeterogeneousNodeSamplerInput(
-            node=self.node[index],
-            input_type=self.input_type,
-            positive_labels=self._positive_labels[index],
-            negative_labels=self._negative_labels[index],
-            supervision_node_type=self._supervision_node_type,
-        )
