@@ -23,6 +23,8 @@ from gigl.src.common.types.graph_data import (
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    is_label_edge_type,
+    reverse_edge_type,
     select_label_edge_types,
     to_heterogeneous_edge,
 )
@@ -270,6 +272,8 @@ class DistABLPLoader(DistNeighborLoader):
                 Tuple[NodeType, torch.Tensor],
             ]
         ] = None,
+        # TODO(kmonte): Support multiple supervision edge types.
+        supervision_edge_type: Optional[EdgeType] = None,
         num_workers: int = 1,
         batch_size: int = 1,
         pin_memory_device: Optional[torch.device] = None,
@@ -340,16 +344,27 @@ class DistABLPLoader(DistNeighborLoader):
         # to `False` in super().__init__()` e.g.
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
+
+        if not isinstance(dataset.graph, abc.Mapping):
+            raise ValueError(
+                f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
+            )
+        is_heterogeneous = False
         # TODO(kmonte): Remove these checks and support properly heterogeneous NABLP.
         if isinstance(input_nodes, tuple):
-            raise ValueError(
-                "Heterogeneous ABLP is not supported yet. Provide node_ids as a tensor."
-            )
-        if isinstance(num_neighbors, abc.Mapping):
-            raise ValueError(
-                "Heterogeneous ABLP is not supported yet. Provide num_neighbors as a list of integers."
-            )
-        if input_nodes is None:
+            if supervision_edge_type is None:
+                raise ValueError(
+                    "When using heterogeneous ABLP, you must provide supervision_edge_types."
+                )
+            node_type, node_ids = input_nodes
+            is_heterogeneous = True
+            if dataset.edge_dir == "in":
+                supervision_edge_type = reverse_edge_type(supervision_edge_type)
+        elif isinstance(input_nodes, torch.Tensor):
+            node_ids = input_nodes
+            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        elif input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
                     "Dataset must have node ids if input_nodes are not provided."
@@ -358,27 +373,20 @@ class DistABLPLoader(DistNeighborLoader):
                 raise ValueError(
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
-            input_nodes = dataset.node_ids
+            node_ids = dataset.node_ids
+            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
-        if not isinstance(dataset.graph, abc.Mapping):
+        missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
+        if missing_edge_types:
             raise ValueError(
-                f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
+                f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
             )
 
-        if DEFAULT_HOMOGENEOUS_EDGE_TYPE not in dataset.graph:
-            raise ValueError(
-                f"With Homogeneous ABLP, the graph must have {DEFAULT_HOMOGENEOUS_EDGE_TYPE} edge type, received {dataset.graph.keys()}."
-            )
-
-        if isinstance(input_nodes, abc.Mapping):
-            input_nodes = input_nodes[DEFAULT_HOMOGENEOUS_NODE_TYPE]
-
-        if len(input_nodes.shape) != 1:
-            raise ValueError(
-                f"input_nodes must be a 1D tensor, got {input_nodes.shape}."
-            )
+        if len(node_ids.shape) != 1:
+            raise ValueError(f"input_nodes must be a 1D tensor, got {node_ids.shape}.")
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
-            DEFAULT_HOMOGENEOUS_EDGE_TYPE, dataset.graph.keys()
+            supervision_edge_type, dataset.graph.keys()
         )
         # We want to setup "input_nodes" as an approppriately shaped tensor for sampling.
         # Our goal here is to:
@@ -399,16 +407,19 @@ class DistABLPLoader(DistNeighborLoader):
         # We use -2, -3, -4 as sentinels to distinguish between the anchor node, positive labels, and negative labels.
         # The sentinels will later be stripped out by _LabeledNodeSamplerInput.
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
-            dataset, input_nodes, positive_label_edge_type, negative_label_edge_type
+            dataset=dataset,
+            node_ids=node_ids,
+            positive_label_edge_type=positive_label_edge_type,
+            negative_label_edge_type=negative_label_edge_type,
         )  # (num_nodes X num_positive_labels), (num_nodes X num_negative_labels)
         # TODO (kmonte): Potentially - we can avoid using the sentinel values with either nested/jagged tensors
         # or upstreaming changes to GLT to allow us to disasmbiguate between anchors and labels.
-        extracted_input_nodes = input_nodes.unsqueeze(1)  # (num_nodes X 1)
+        extracted_input_nodes = node_ids.unsqueeze(1)  # (num_nodes X 1)
         if negative_labels is not None:
             anchor_sentinel = -2
             positive_sentinel = -3
             negative_sentinel = -4
-            input_nodes = torch.cat(
+            node_ids = torch.cat(
                 [
                     extracted_input_nodes,
                     torch.full_like(extracted_input_nodes, anchor_sentinel),
@@ -423,7 +434,7 @@ class DistABLPLoader(DistNeighborLoader):
             anchor_sentinel = -2
             positive_sentinel = -3
             negative_sentinel = None
-            input_nodes = torch.cat(
+            node_ids = torch.cat(
                 [
                     extracted_input_nodes,
                     torch.full_like(extracted_input_nodes, anchor_sentinel),
@@ -448,30 +459,38 @@ class DistABLPLoader(DistNeighborLoader):
         ] = torch.multiprocessing.Manager().dict()
         self._batch_store = node_batches_by_sampled_nodes
 
-        input_nodes = (DEFAULT_HOMOGENEOUS_NODE_TYPE, input_nodes)
+        input_nodes = (node_type, node_ids)
         logger.info(
-            f"Converted input nodes to tuple of ({DEFAULT_HOMOGENEOUS_NODE_TYPE}, {input_nodes[1].shape})."
+            f"Converted input nodes to tuple of {node_type} with shape {node_ids.shape})."
         )
-        transforms: Sequence[
+        transforms: list[
             Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]
-        ] = [
-            _SupervisedToHomogeneous(
-                message_passing_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-            ),
+        ] = []
+        if not is_heterogeneous:
+            transforms.append(_SupervisedToHomogeneous(supervision_edge_type))
+        transforms.append(
             _SetLabels(
                 batch_store=node_batches_by_sampled_nodes,
                 anchor_node_sentinel=anchor_sentinel,
+                positive_label_edge_type=positive_label_edge_type,
+                negative_label_edge_type=negative_label_edge_type,
                 positive_label_sentinel=positive_sentinel,
                 negative_label_sentinel=negative_sentinel,
-            ),
-        ]
+            )
+        )
         self._transforms = transforms
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
-        zero_samples = [0] * len(num_neighbors)
+        if isinstance(num_neighbors, dict):
+            num_hop = len(list(num_neighbors.values())[0])
+        else:
+            num_hop = len(num_neighbors)
+        zero_samples = [0] * num_hop
         num_neighbors = to_heterogeneous_edge(num_neighbors)
-        num_neighbors[positive_label_edge_type] = zero_samples
-        if negative_label_edge_type is not None:
-            num_neighbors[negative_label_edge_type] = zero_samples
+        for edge_type in dataset.graph.keys():
+            if is_label_edge_type(edge_type):
+                num_neighbors[edge_type] = zero_samples
+            elif edge_type not in num_neighbors:
+                num_neighbors[edge_type] = zero_samples
         logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
 
         super().__init__(
@@ -620,6 +639,8 @@ class _SetLabels:
         self,
         batch_store: abc.MutableMapping[tuple[NodeType, tuple[int, ...]], torch.Tensor],
         anchor_node_sentinel: int,
+        positive_label_edge_type: EdgeType,
+        negative_label_edge_type: Optional[EdgeType],
         positive_label_sentinel: int,
         negative_label_sentinel: Optional[int] = None,
     ):
@@ -651,6 +672,8 @@ class _SetLabels:
         Args:
             batch_store (abc.MutableMapping): The batch store to use for the graph.
             anchor_node_sentinel (int): The sentinel value for the anchor node.
+            positive_label_edge_type (EdgeType): The positive label edge type which should be removed from the torch_geometric graph
+            negative_label_edge_type (Optional[EdgeType]): The negative label edge type which should be removed from the torch_geometric graph
             positive_label_sentinel (int): The sentinel value for the positive label.
             negative_label_sentinel (Optional[int]): The sentinel value for the negative label.
             If not provided, then negative labels will not be set.
@@ -659,6 +682,8 @@ class _SetLabels:
         self._anchor_node_sentinel = anchor_node_sentinel
         self._positive_label_sentinel = positive_label_sentinel
         self._negative_label_sentinel = negative_label_sentinel
+        self._positive_label_edge_type = positive_label_edge_type
+        self._negative_label_edge_type = negative_label_edge_type
 
     def __call__(self, data: _GraphData) -> _GraphData:
         """Transform the heterogeneous graph to a homogeneous graph."""
@@ -666,7 +691,7 @@ class _SetLabels:
         positive_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
         negative_labels: dict[NodeType, dict[int, torch.Tensor]] = {}
         if is_heterogeneous:
-            node_types = data.node_types
+            node_types = data.batch_dict.keys()
         else:
             node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
 
@@ -686,7 +711,7 @@ class _SetLabels:
             # data.batch is already de-duped.
             # Represents all nodes that were sampled in the batch.
             if is_heterogeneous:
-                batch = tuple(data[node_type].batch.tolist())
+                batch = tuple(data.batch_dict[node_type].tolist())
             else:
                 batch = tuple(data.batch.tolist())
             full_batch = self._batch_store.pop((node_type, batch))  # [N]
@@ -744,11 +769,16 @@ class _SetLabels:
                 negative_labels[node_type] = neg_labels
         if is_heterogeneous:
             data.y_positive = positive_labels
+            del data.num_sampled_edges[self._positive_label_edge_type]
+            del data._edge_store_dict[self._positive_label_edge_type]
             if negative_labels:
                 data.y_negative = negative_labels
+                del data.num_sampled_edges[self._negative_label_edge_type]
+                del data._edge_store_dict[self._negative_label_edge_type]
         else:
-            # Saddly, can't use `to_homogeneous` here for mypy reasons as the values are dicts :(
+            # Sadly, can't use `to_homogeneous` here for mypy reasons as the values are dicts :(
             data.y_positive = next(iter(positive_labels.values()))
             if negative_labels:
                 data.y_negative = next(iter(negative_labels.values()))
+
         return data
