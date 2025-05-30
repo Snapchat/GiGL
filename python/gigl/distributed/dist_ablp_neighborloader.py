@@ -2,7 +2,7 @@ from collections import abc
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage, ShmChannel
+from graphlearn_torch.channel import ShmChannel
 from graphlearn_torch.distributed import MpDistSamplingWorkerOptions, get_context
 from graphlearn_torch.sampler import SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
@@ -382,12 +382,6 @@ class DistABLPLoader(DistNeighborLoader):
             self._channel,
         )
         self._mp_producer.init()
-
-    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        data = super()._collate_fn(msg)
-        for transform in self._transforms:
-            data = transform(data)
-        return data
 
 
 class _SupervisedToHomogeneous:

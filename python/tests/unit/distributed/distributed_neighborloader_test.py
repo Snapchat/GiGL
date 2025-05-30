@@ -8,12 +8,10 @@ from graphlearn_torch.distributed import shutdown_rpc
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
+from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.distributed_neighborloader import (
-    DistABLPLoader,
-    DistNeighborLoader,
-)
+from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
