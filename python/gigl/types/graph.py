@@ -469,8 +469,4 @@ def reverse_edge_type(edge_type: EdgeType) -> EdgeType:
     Returns:
         EdgeType: The reversed edge type
     """
-    return EdgeType(
-        src_node_type=edge_type.dst_node_type,
-        relation=edge_type.relation,
-        dst_node_type=edge_type.src_node_type,
-    )
+    return EdgeType(edge_type[2], edge_type[1], edge_type[0])
