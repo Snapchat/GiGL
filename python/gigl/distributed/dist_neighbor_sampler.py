@@ -38,21 +38,9 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
         self.max_input_size = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
-        pos_dict = {}
-        neg_dict = {}
-        for i in range(input_seeds.shape[0]):
-            positive_label_for_node = positive_labels[i]
-            pos_dict[input_seeds[i]] = positive_label_for_node[
-                positive_label_for_node != PADDING_NODE
-            ]
-            if negative_labels is not None:
-                negative_label_for_node = negative_labels[i]
-                neg_dict[input_seeds[i]] = negative_label_for_node[
-                    negative_label_for_node != PADDING_NODE
-                ]
-        metadata = {"pos_dict": pos_dict}
+        metadata = {"pos_dict": positive_labels}
         if negative_labels is not None:
-            metadata["neg_dict"] = neg_dict
+            metadata["neg_dict"] = negative_labels
         if input_type == supervision_node_type:
             input_nodes = {input_type: torch.cat((input_seeds, labeled_seeds), dim=0)}
         else:

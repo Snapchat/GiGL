@@ -1,6 +1,5 @@
 import datetime
 import queue
-from enum import Enum
 from typing import Optional, Union
 
 import torch
@@ -14,6 +13,10 @@ from graphlearn_torch.distributed import (
     init_worker_group,
     shutdown_rpc,
 )
+from graphlearn_torch.distributed.dist_sampling_producer import (
+    MP_STATUS_CHECK_INTERVAL,
+    MpCommand,
+)
 from graphlearn_torch.sampler import (
     EdgeSamplerInput,
     NodeSamplerInput,
@@ -25,14 +28,6 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 
 from gigl.distributed.dist_neighbor_sampler import DistLinkPredictionNeighborSampler
-
-
-class MpCommand(Enum):
-    SAMPLE_ALL = 0
-    STOP = 1
-
-
-MP_STATUS_CHECK_INTERVAL = 5.0
 
 
 def _sampling_worker_loop(

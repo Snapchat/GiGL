@@ -140,11 +140,11 @@ class DistHeterogeneousABLPLoader(DistLoader):
                 raise ValueError(
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
+            node_type, node_ids = input_nodes
             assert (
                 supervision_edge_type[0] == node_type
             ), f"Label EdgeType are currently expected to be provided as `anchor_node_type`_`relation`_`supervision_node_type`, \
                 got supervision edge type {supervision_edge_type} with anchor node type {node_type}"
-            node_type, node_ids = input_nodes
             supervision_node_type = supervision_edge_type[2]
             if dataset.edge_dir == "in":
                 supervision_edge_type = reverse_edge_type(supervision_edge_type)
