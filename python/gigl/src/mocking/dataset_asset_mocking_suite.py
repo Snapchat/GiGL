@@ -15,14 +15,17 @@ from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.mocking.dataset_asset_mocker import DatasetAssetMocker
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.pyg_datasets_forks import CoraFromGCS, DBLPFromGCS
+from torch_geometric.data import HeteroData
 from gigl.src.mocking.lib.versioning import (
     MockedDatasetArtifactMetadata,
     update_mocked_dataset_artifact_metadata,
 )
+from gigl.src.mocking.toy_asset_mocker import load_toy_graph
+
 
 logger = Logger()
 
-_HOMOGENEOUS_TOY_GRAPH_CONFIG = "gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
+_HOMOGENEOUS_TOY_GRAPH_CONFIG = "examples/toy_visual_example/graph_config.yaml"
 _BIPARTITE_TOY_GRAPH_CONFIG = (
     "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
 )
@@ -417,25 +420,25 @@ class DatasetAssetMockingSuite:
     def mock_toy_graph_homogeneous_node_anchor_based_link_prediction_dataset(
         self,
     ) -> MockedDatasetInfo:
-        toy_data = self._create_custom_toy_graph(
+        toy_data: HeteroData = load_toy_graph(
             graph_config=_HOMOGENEOUS_TOY_GRAPH_CONFIG
         )
+        # Extract edge types and node types from the HeteroData object
+        edge_types = list(toy_data.edge_types)
+        node_types = list(toy_data.node_types)
+
+        # Build edge_index, node_feats, and edge_feats dictionaries
+        edge_index = {et: toy_data[et].edge_index for et in edge_types}
+        node_feats = {nt: toy_data[nt].x for nt in node_types}
+        edge_feats = {et: toy_data[et].edge_attr for et in edge_types if hasattr(toy_data[et], "edge_attr")}
+
         mocked_dataset_info = MockedDatasetInfo(
             name="toy_graph_homogeneous_node_anchor_lp",
             task_metadata_type=TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK,
-            edge_index={
-                edge_type: toy_data.edge_indices[edge_type_str]
-                for edge_type_str, edge_type in toy_data.edge_types.items()
-            },
-            node_feats={
-                node_type: toy_data.node_feats[node_type_str]
-                for node_type_str, node_type in toy_data.node_types.items()
-            },
-            edge_feats={
-                edge_type: toy_data.edge_feats[edge_type_str]
-                for edge_type_str, edge_type in toy_data.edge_types.items()
-            },
-            sample_edge_type=list(toy_data.edge_types.values())[0],
+            edge_index=edge_index,
+            node_feats=node_feats,
+            edge_feats=edge_feats,
+            sample_edge_type=edge_types[0],
         )
         return mocked_dataset_info
 

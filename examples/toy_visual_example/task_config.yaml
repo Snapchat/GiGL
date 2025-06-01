@@ -1,0 +1,60 @@
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: user
+    relation: is_friends_with
+    srcNodeType: user
+  nodeTypes:
+  - user
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+      - srcNodeType: user
+        relation: is_friends_with
+        dstNodeType: user
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorArgs:
+      bq_edges_table_name: 'external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_supervised_node_classification_user_friend_user_edges'
+      bq_nodes_table_name: 'external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_supervised_node_classification_user_nodes'
+    dataPreprocessorConfigClsPath: applied_tasks.mocking.toy_graph.toy_data_preprocessor_config.ToyDataPreprocessorConfig
+  subgraphSamplerConfig:
+    numHops: 1
+    numNeighborsToSample: 2
+    numPositiveSamples: 1
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    assignerClsPath: gigl.src.split_generator.lib.unsupervised_node_anchor_based_link_prediction.transductive.TransductiveEdgeToLinkSplitHashingAssigner
+    splitStrategyClsPath: gigl.src.split_generator.lib.unsupervised_node_anchor_based_link_prediction.transductive.TransductiveUnsupervisedNodeAnchorBasedLinkPredictionSplitStrategy
+trainerConfig:
+  trainerArgs:
+    margin: '0.3'
+    optim_lr: '0.005'
+    optim_weight_decay: '0.0005'
+    should_l2_normalize_output: 'True'
+    num_layers: '2'
+    hid_dim: '128'
+    out_dim: '128'
+    val_every_num_batches: '100'
+    num_val_batches: '100'
+    num_test_batches: '100'
+    early_stop_patience: '10'
+    main_sample_batch_size: '4096'
+    random_negative_sample_batch_size: '512'
+    random_negative_sample_batch_size_for_evaluation: '1000'
+    train_main_sample_num_workers: '4'
+    train_random_sample_num_workers: '2'
+    val_main_sample_num_workers: '2'
+    val_random_sample_num_workers: '1'
+    test_main_sample_num_workers: '2'
+    test_random_sample_num_workers: '1'
+  trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.UnsupervisedNodeAnchorBasedLinkPredictionModelingTaskSpec
+inferencerConfig:
+  inferencerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.UnsupervisedNodeAnchorBasedLinkPredictionModelingTaskSpec
+  inferencerArgs:
+    num_layers: '2'
+    hid_dim: '128'
+    out_dim: '128'

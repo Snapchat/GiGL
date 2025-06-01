@@ -39,7 +39,7 @@ adj_list:
       dst: []
 
 nodes:
-  user: 
+  user:
     - src: 0
       features: [0.0, 0]
     - src: 1

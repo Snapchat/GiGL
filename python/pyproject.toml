@@ -153,6 +153,8 @@ docs = [
     "sphinx-design==0.6.0",
     "sphinx-autodoc-typehints==2.3.0",
     "sphinx-autoapi==3.6.0",
+    "myst_nb==1.2.0",
+    "sphinx-copybutton==0.5.2"
 ]
 
 experimental = [
