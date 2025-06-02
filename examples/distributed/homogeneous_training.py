@@ -5,6 +5,7 @@ MASTER_ADDR=localhost MASTER_PORT=9762 python examples/distributed/homogeneous_t
 """
 import argparse
 import datetime
+from multiprocessing import process
 import pickle
 import time
 from pathlib import Path
@@ -216,6 +217,7 @@ def _train_process(
     model_state_dict_uri: str,
     node_feature_dim: int,
     edge_feature_dim: int,
+    num_random_samples: int,
     validate_every: int = 50,
     learning_rate: int = 1e-6,
     num_epoch: int = 1,
@@ -242,7 +244,7 @@ def _train_process(
         pin_memory_device=device,
         shuffle=True,
         drop_last=True,
-        _main_sampling_port=50_403,
+        _main_sampling_port=50_000 + process_number * 100 + 4,
     ))
     zero_fanout = [0] * len(num_neighbors)
     random_negative_loader = iter(DistNeighborLoader(
@@ -259,18 +261,18 @@ def _train_process(
         },
         local_process_rank=process_number,
         local_process_world_size=total_processes,
-        input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, negative_samples.repeat(100)),
+        input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, negative_samples),
         pin_memory_device=device,
-        batch_size=100,
+        batch_size=num_random_samples,
         shuffle=True,
         drop_last=True,
-        _main_inference_port=50_300,
-        _main_sampling_port=50_400,
+        _main_inference_port=40_000 + process_number * 100 + 4,
+        _main_sampling_port=30_000 + process_number * 100 + 4,
     ))
-
+    logger.info(f"device_type: {device.type}, device: {device}")
     torch.distributed.init_process_group(
         # TODO: "nccl" when GPU
-        backend="gloo",
+        backend="gloo" if device.type == "cpu" else "nccl",
         rank=dist_context.global_rank * total_processes + process_number,
         world_size=dist_context.global_world_size * total_processes,
         timeout=datetime.timedelta(minutes=30),
@@ -368,9 +370,16 @@ def _train_process(
                     )
                     val_loss_tensor: torch.Tensor = loss_output[0]
                     print(
-                        f"Epoch {epoch} batch {batch_idx} validation loss: {val_loss_tensor.item()}"
+                        f"Process {process_number} Epoch {epoch} batch {batch_idx} validation loss: {val_loss_tensor.item()}"
                     )
 
+    # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
+    print(f"Process {process_number} finished training")
+    torch.distributed.barrier()
+    torch.distributed.destroy_process_group()
+    print(f"Process {process_number} destroyed process group")
+    del train_loader, val_loader, random_negative_loader
+    print(f"Process {process_number} deleted dataloaders")
 
 def train(
     task_config_uri: str,
@@ -392,16 +401,21 @@ def train(
     gbml_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         UriFactory.create_uri(task_config_uri)
     )
-    # num_training_processes = int(
-    #     gbml_pb_wrapper.trainer_config.trainer_args.get(
-    #         "num_training_processes_per_machine", 2
-    #     )
-    # )
-    num_training_processes = 1
+    num_training_processes = int(
+        gbml_pb_wrapper.trainer_config.trainer_args.get(
+            "num_training_processes_per_machine", 1
+        )
+    )
+    num_random_samples = int(
+        gbml_pb_wrapper.trainer_config.trainer_args.get(
+            "num_random_samples", 100
+        )
+    )
     num_neighbors = [10, 10]
     print(f"len(dataset.node_pb) = {len(to_homogeneous(dataset.node_pb))}")
     print(f"dataset.node_pb.shape = {to_homogeneous(dataset.node_pb).shape}")
-    negative_samples = torch.arange(len(to_homogeneous(dataset.node_pb)))
+    negative_samples = torch.arange(len(to_homogeneous(dataset.node_pb))).repeat(
+        num_random_samples)
     negative_samples.share_memory_()
 
     node_feature_dim = gbml_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
@@ -423,6 +437,7 @@ def train(
             gbml_pb_wrapper.trainer_config.trainer_cls_path,
             node_feature_dim,
             edge_feature_dim,
+            num_random_samples,
         ),
         nprocs=num_training_processes,
         join=True,
