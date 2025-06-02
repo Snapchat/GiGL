@@ -473,7 +473,7 @@ class TestDataSplitters(unittest.TestCase):
         edges,
         edge_types_to_split,
     ):
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             splitter = HashedNodeAnchorLinkSplitter(
                 sampling_direction="in",
                 supervision_edge_types=edge_types_to_split,
