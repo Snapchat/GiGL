@@ -460,7 +460,7 @@ def check_if_post_processor_cls_valid(
         assert isinstance(post_processor_instance, BasePostProcessor)
     except Exception as e:
         raise ValueError(
-            f"Invalid 'postProcessorClsPath' in frozen config and/or postProcessorArgs could not sucessfully "
+            f"Invalid 'postProcessorClsPath' in frozen config and/or postProcessorArgs could not successfully "
             f"initialize the 'postProcessorClsPath' provided: {post_processor_cls_path}. "
             f"Error: {e}"
         )

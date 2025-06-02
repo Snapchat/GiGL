@@ -16,7 +16,7 @@ If you find a bug or have a feature request, please open an issue and provide as
 
 - Search existing issues to avoid duplicates.
 - Clearly describe the issue with steps to reproduce (If applicable).
-  - Include relevent specs used both task and resource.
+  - Include relevant specs used both task and resource.
   - Provide relevant logs or screenshots if applicable.
 - Expected and actual behahavior.
 - List Suggested solutions (if any).
@@ -58,11 +58,11 @@ consistency and quality.
 ### Submitting Code
 
 1. Fork the repository and create a feature branch.
-1. Ensure all unit tests pass before submitting.
-1. Add relevant unit/integration/performance tests.
-1. Submit a pull request (PR) with a clear description of your changes.
-1. Address review feedback promptly.
-1. All changes should be submitted to the `main` branch via a pull request.
+2. Ensure all unit tests pass before submitting.
+3. Add relevant unit/integration/performance tests.
+4. Submit a pull request (PR) with a clear description of your changes.
+5. Address review feedback promptly.
+6. All changes should be submitted to the `main` branch via a pull request.
 
 ### Semantic Versioning & Changelog
 

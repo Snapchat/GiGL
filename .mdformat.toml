@@ -7,3 +7,5 @@
 wrap = 120
 
 extensions = [ "tables", ]
+
+number = true
