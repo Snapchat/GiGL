@@ -84,7 +84,7 @@ class GraphTypesTyest(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "valid_inputs",
+                "valid_inputs, sample_edge_dir = in",
                 node_ids=torch.tensor([0, 1, 2]),
                 node_features=torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
                 edge_index=torch.tensor([[0, 1], [1, 2]]),
@@ -217,8 +217,8 @@ class GraphTypesTyest(unittest.TestCase):
             positive_label=positive_label,
             negative_label=negative_label,
         )
-
-        graph_tensors.treat_labels_as_edges()
+        # TODO (mkolodner-sc): Parameterize this variable for testing
+        graph_tensors.treat_labels_as_edges(edge_dir="out")
         self.assertIsNone(graph_tensors.positive_label)
         self.assertIsNone(graph_tensors.negative_label)
         assert isinstance(graph_tensors.edge_index, dict)

@@ -18,6 +18,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
     TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -32,6 +33,8 @@ class _FakeSplitter:
         ],
     ):
         self.splits = splits
+        self._should_convert_labels_to_edges = False
+        self._supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
     def __call__(self, edge_index):
         return self.splits

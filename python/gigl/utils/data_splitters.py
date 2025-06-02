@@ -1,6 +1,6 @@
 import gc
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Callable, Final, Literal, Optional, Protocol, Tuple, Union, overload
 
 import torch
@@ -12,6 +12,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    is_label_edge_type,
 )
 
 logger = Logger()
@@ -115,7 +116,8 @@ class HashedNodeAnchorLinkSplitter:
         num_val: Union[float, int] = 0.1,
         num_test: Union[float, int] = 0.1,
         hash_function: Callable[[torch.Tensor], torch.Tensor] = _fast_hash,
-        edge_types: Optional[Union[EdgeType, Sequence[EdgeType]]] = None,
+        supervision_edge_types: Optional[list[EdgeType]] = None,
+        should_convert_labels_to_edges: bool = True,
     ):
         """Initializes the HashedNodeAnchorLinkSplitter.
 
@@ -126,8 +128,9 @@ class HashedNodeAnchorLinkSplitter:
             num_test (Union[float, int]): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
                                           If an integer is provided, than exactly that number of nodes will be in the test split.
             hash_function (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): The hash function to use. Defaults to `_fast_hash`.
-            edge_types: The supervision edge types we should use for splitting.
-                        Must be provided if we are splitting a heterogeneous graph.
+            supervision_edge_types (Optional[list[EdgeType]]): The supervision edge types we should use for splitting. Must be provided if we are splitting a heterogeneous graph.
+                If None, uses the default homogeneous edge type
+            should_convert_labels_to_edges (bool): Whether label should be converted into an edge type in the graph.
         """
         _check_sampling_direction(sampling_direction)
         _check_val_test_percentage(num_val, num_test)
@@ -136,12 +139,12 @@ class HashedNodeAnchorLinkSplitter:
         self._num_val = num_val
         self._num_test = num_test
         self._hash_function = hash_function
+        self._should_convert_labels_to_edges = should_convert_labels_to_edges
 
-        if edge_types is None:
-            edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-        elif isinstance(edge_types, EdgeType):
-            edge_types = [edge_types]
-        self._supervision_edge_types: Sequence[EdgeType] = edge_types
+        if supervision_edge_types is None:
+            supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+
+        self._supervision_edge_types = supervision_edge_types
 
     @overload
     def __call__(
@@ -167,26 +170,10 @@ class HashedNodeAnchorLinkSplitter:
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         if isinstance(edge_index, torch.Tensor):
-            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
-                logger.warning(
-                    f"You provided edge-types {self._supervision_edge_types} but the edge index is homogeneous. Ignoring edge types."
-                )
             is_heterogeneous = False
             edge_index = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}
 
         else:
-            if (
-                self._supervision_edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-                or not self._supervision_edge_types
-            ):
-                raise ValueError(
-                    "If edge_index is a mapping, edges_to_split must be provided."
-                )
-            missing = set(self._supervision_edge_types) - edge_index.keys()
-            if missing:
-                raise ValueError(
-                    f"Missing edge types from provided edge index: {missing}. Expected edges types {self._supervision_edge_types} to be in the mapping, but got {edge_index.keys()}."
-                )
             is_heterogeneous = True
 
         # First, find max node id per node type.
@@ -197,7 +184,21 @@ class HashedNodeAnchorLinkSplitter:
         # We also store references to all tensors of a given node type, for convenient access later.
         max_node_id_by_type: dict[NodeType, int] = defaultdict(int)
         node_ids_by_node_type: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
-        for edge_type_to_split in self._supervision_edge_types:
+        for edge_type_to_split, coo_edges in edge_index.items():
+            is_label = False
+            if self._should_convert_labels_to_edges and is_label_edge_type(
+                edge_type_to_split
+            ):
+                is_label = True
+            elif (
+                not self._should_convert_labels_to_edges
+                and edge_type_to_split in self._supervision_edge_types
+            ):
+                is_label = True
+            # We skip if the current edge type is not a labeled edge type, since we don't want to generate splits for edges which aren't used for supervision
+            if not is_label:
+                continue
+
             coo_edges = edge_index[edge_type_to_split]
             _check_edge_index(coo_edges)
             anchor_nodes = (
@@ -270,6 +271,11 @@ class HashedNodeAnchorLinkSplitter:
             val = nodes_to_select[num_train : num_val + num_train]  # 1 x num_val_nodes
             test = nodes_to_select[num_train + num_val :]  # 1 x num_test_nodes
             splits[anchor_node_type] = (train, val, test)
+        if len(splits) == 0:
+            raise ValueError(
+                f"Found no edge types to split from the provided edge index: {edge_index.keys()} using supervision edge types {self._supervision_edge_types}"
+            )
+
         if is_heterogeneous:
             return splits
         else:
