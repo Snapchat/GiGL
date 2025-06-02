@@ -13,7 +13,7 @@ import itertools
 
 import torch
 import torch.multiprocessing as mp
-from torch import nn
+from torch import neg, nn
 from torch_geometric.data import Data, HeteroData
 
 from gigl.common.collections.itertools import batch
@@ -187,9 +187,9 @@ def _infer_inputs(
             ]
         ),
     )
-    print(
-        f"{anchor_nodes.shape=}, {positve_anchors.shape=}, {negative_anchors.shape=}, {repeated_candidate_scores.shape=}"
-    )
+    # print(
+    #     f"{anchor_nodes.shape=}, {positve_anchors.shape=}, {negative_anchors.shape=}, {repeated_candidate_scores.shape=}"
+    # )
     # print(f"{repeated_candidate_scores.shape=}")
     # print(f"{repeated_anchor_nodes.shape=}")
     # print(f"{repeated_query_embeddigns.shape=}")
@@ -232,7 +232,7 @@ def _train_process(
         shuffle=True,
         drop_last=True,
     )
-    val_loader = DistABLPLoader(
+    val_loader = iter(DistABLPLoader(
         dataset=dataset,
         context=dist_context,
         num_neighbors=num_neighbors,
@@ -243,9 +243,9 @@ def _train_process(
         shuffle=True,
         drop_last=True,
         _main_sampling_port=50_403,
-    )
+    ))
     zero_fanout = [0] * len(num_neighbors)
-    random_negative_loader = DistNeighborLoader(
+    random_negative_loader = iter(DistNeighborLoader(
         dataset=dataset,
         context=dist_context,
         num_neighbors={
@@ -266,7 +266,8 @@ def _train_process(
         drop_last=True,
         _main_inference_port=50_300,
         _main_sampling_port=50_400,
-    )
+    ))
+
     torch.distributed.init_process_group(
         # TODO: "nccl" when GPU
         backend="gloo",
@@ -321,14 +322,13 @@ def _train_process(
     torch.distributed.barrier()
     for epoch in range(num_epoch):
         logger.info(f"Epoch {epoch} started")
-        for batch_idx, (main_data, random_data) in enumerate(
-            zip(train_loader, random_negative_loader)
-        ):
+        for batch_idx, main_data in enumerate(train_loader):
             # for batch_idx, main_data in enumerate(train_loader):
             # TODO enable early stop
             # TODO enable AMP
             # print(f"Epoch {epoch} batch {batch_idx}")
             # print(f"maiin_data: {main_data}")
+            random_data= next(random_negative_loader)
             random_data = random_data.edge_type_subgraph(
                 [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             ).to_homogeneous(add_edge_type=False, add_node_type=False)
@@ -341,27 +341,36 @@ def _train_process(
             loss_output = loss(batch_combined_scores=scores, repeated_query_embeddings=repeated_query_embeddings, candidate_sampling_probability=None)
             loss_tensor: torch.Tensor = loss_output[0]
 
-            # print(f"{main_data.batch=}")
-            # print(f"{main_data.y_positive=}")
-            # print(f"{main_data.y_negative=}")
-            # print(f"{main_data.node.shape=}")
-            # print(f"{main_data.node=}")
-            # print(f"{main_data.num_sampled_nodes=}")
-
             if loss_tensor.grad_fn is None:
-                # print(f"main_data: {main_data}")
-                # print(f"{main_data.node=}")
-                # print(f"{main_data.x=}")
-                # print(f"{main_data.edge_index=}")
-                # print(f"{main_data.coo()=}")
-                # print(f"query_embeddings: {repeated_query_embeddigns.shape}")
-                # print(f"positive_embeddings: {main_embeddings[positive_anchor_indicies].shape}")
-                # print(f"negative_embeddings: {main_embeddings[negative_anchor_indicies].shape}")
                 print("Skipping loss")
                 continue
             optimizer.zero_grad()
             loss_tensor.backward()
             optimizer.step()
+
+            # Validation
+            if batch_idx % validate_every == 0:
+                print(f"validating for batch idx {batch_idx} at epoch {epoch}")
+                with torch.no_grad():
+                    random_data = next(random_negative_loader)
+                    random_data = random_data.edge_type_subgraph(
+                        [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+                    ).to_homogeneous(add_edge_type=False, add_node_type=False)
+                    val_scores, repeated_query_embeddings = _infer_inputs(
+                        model=ddp_model,
+                        main_data=next(val_loader),
+                        random_data=random_data,
+                        device=device,
+                    )
+                    loss_output = loss(
+                        batch_combined_scores=val_scores,
+                        repeated_query_embeddings=repeated_query_embeddings,
+                        candidate_sampling_probability=None,
+                    )
+                    val_loss_tensor: torch.Tensor = loss_output[0]
+                    print(
+                        f"Epoch {epoch} batch {batch_idx} validation loss: {val_loss_tensor.item()}"
+                    )
 
 
 def train(
