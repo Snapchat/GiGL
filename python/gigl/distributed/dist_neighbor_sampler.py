@@ -12,16 +12,18 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
-from gigl.types.sampler import LabeledNodeSamplerInput
+from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.utils.data_splitters import PADDING_NODE
 
+# TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
 
-class DistLinkPredictionNeighborSampler(DistNeighborSampler):
+
+class DistABLPNeighborSampler(DistNeighborSampler):
     async def _sample_from_nodes(
         self,
         inputs: NodeSamplerInput,
     ) -> Optional[SampleMessage]:
-        assert isinstance(inputs, LabeledNodeSamplerInput)
+        assert isinstance(inputs, ABLPNodeSamplerInput)
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
         supervision_node_type = inputs.supervision_node_type
@@ -39,7 +41,7 @@ class DistLinkPredictionNeighborSampler(DistNeighborSampler):
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
-        metadata = {"positive_labels": positive_labels}
+        metadata: dict[str, torch.Tensor] = {"positive_labels": positive_labels}
         if negative_labels is not None:
             metadata["negative_labels"] = negative_labels
         if input_type == supervision_node_type:

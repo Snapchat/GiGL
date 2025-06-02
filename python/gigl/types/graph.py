@@ -461,7 +461,7 @@ def to_homogeneous(
     return x
 
 
-def reverse_edge_type(edge_type: EdgeType) -> EdgeType:
+def reverse_edge_type(edge_type: _EdgeType) -> _EdgeType:
     """
     Reverses the source and destination node types of the provided edge type
     Args:
@@ -469,4 +469,7 @@ def reverse_edge_type(edge_type: EdgeType) -> EdgeType:
     Returns:
         EdgeType: The reversed edge type
     """
-    return EdgeType(edge_type[2], edge_type[1], edge_type[0])
+    if isinstance(edge_type, EdgeType):
+        return EdgeType(edge_type[2], edge_type[1], edge_type[0])
+    else:
+        return (edge_type[2], edge_type[1], edge_type[0])

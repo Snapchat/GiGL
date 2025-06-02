@@ -541,7 +541,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_dblp_supervised,
-            args=(dataset, self._context, splitter.supervision_edge_types),
+            args=(dataset, self._context, supervision_edge_types),
         )
 
 

@@ -25,6 +25,7 @@ from gigl.distributed.distributed_neighborloader import (
     DEFAULT_NUM_CPU_THREADS,
     shard_nodes_by_process,
 )
+from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -36,7 +37,6 @@ from gigl.types.graph import (
     select_label_edge_types,
     to_heterogeneous_edge,
 )
-from gigl.types.sampler import LabeledNodeSamplerInput
 from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 
 logger = Logger()
@@ -143,9 +143,11 @@ class DistABLPLoader(DistLoader):
                 )
             self._is_input_heterogeneous = True
             node_type, node_ids = input_nodes
+            # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
+            # this assumption is no longer valid and/or is too opinionated
             assert (
                 supervision_edge_type[0] == node_type
-            ), f"Label EdgeType are currently expected to be provided as `anchor_node_type`_`relation`_`supervision_node_type`, \
+            ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
                 got supervision edge type {supervision_edge_type} with anchor node type {node_type}"
             supervision_node_type = supervision_edge_type[2]
             if dataset.edge_dir == "in":
@@ -288,7 +290,7 @@ class DistABLPLoader(DistLoader):
             pin_memory=self.to_device.type == "cuda",
         )
 
-        sampler_input = LabeledNodeSamplerInput(
+        sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
             input_type=node_type,
             positive_labels=positive_labels,
@@ -309,6 +311,9 @@ class DistABLPLoader(DistLoader):
             edge_dir=dataset.edge_dir,
             seed=None,  # it's actually optional - None means random.
         )
+
+        # Code below this point is taken from the GLT DistNeighborLoader.__init__() function. We do this so that we may override
+        # the DistSamplingProducer that is used with the GiGL implementation.
 
         self.data = dataset
         self.input_data = sampler_input
@@ -383,7 +388,18 @@ class DistABLPLoader(DistLoader):
 
     def _get_labels(
         self, msg: SampleMessage
-    ) -> Tuple[Data, dict[int, torch.Tensor], Optional[dict[int, torch.Tensor]]]:
+    ) -> Tuple[
+        SampleMessage, dict[int, torch.Tensor], Optional[dict[int, torch.Tensor]]
+    ]:
+        """
+        Gets the labels from the output SampleMessage and removes them from the metadata
+        Args:
+            msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
+        Returns:
+            SampleMessage: Updated sample messsage with the label fields removed
+            dict[int, torch.Tensor]: Map of anchor node ID to positive labels
+            Optional[dict[int, torch.Tensor]]: Map of anchor node ID to negative labels, can be None if dataset has no negative labels
+        """
         metadata = {}
         for k in list(msg.keys()):
             if k.startswith("#META."):
@@ -416,6 +432,14 @@ class DistABLPLoader(DistLoader):
         )
 
     def _supervised_to_homogeneous(self, data: Data) -> Data:
+        """
+        Removes the labeled edge type from a supervised graph and converts it to homogeneous
+
+        Args:
+            data (Data): Heterogeneous graph with the supervision edge type
+        Returns:
+            data (Data): Homogeneous graph with the labeled edge type removed
+        """
         homogeneous_data = data.edge_type_subgraph(
             [self._supervision_edge_type]
         ).to_homogeneous(add_edge_type=False, add_node_type=False)

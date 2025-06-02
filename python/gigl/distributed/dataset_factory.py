@@ -97,7 +97,7 @@ def _load_and_build_partitioned_dataset(
         edge_tf_dataset_options=edge_tf_dataset_options,
     )
 
-    # TODO (mkolodner-sc): Move this code block to transductive splitter once that is ready
+    # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
         assert (
             loaded_graph_tensors.positive_label is None
@@ -105,9 +105,13 @@ def _load_and_build_partitioned_dataset(
         ), "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
         positive_label_edges: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         if isinstance(loaded_graph_tensors.edge_index, abc.Mapping):
-            assert isinstance(splitter, HashedNodeAnchorLinkSplitter)
+            # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
+            # we can remove this assert.
+            assert isinstance(
+                splitter, HashedNodeAnchorLinkSplitter
+            ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
             positive_label_edges = {}
-            for supervision_edge_type in splitter.supervision_edge_types:
+            for supervision_edge_type in splitter._supervision_edge_types:
                 assert supervision_edge_type in loaded_graph_tensors.edge_index
                 positive_label_edges[
                     supervision_edge_type
@@ -127,7 +131,10 @@ def _load_and_build_partitioned_dataset(
 
         loaded_graph_tensors.positive_label = positive_label_edges
 
-    if splitter is not None and splitter.should_convert_labels_to_edges:
+    if (
+        isinstance(splitter, HashedNodeAnchorLinkSplitter)
+        and splitter._should_convert_labels_to_edges
+    ):
         loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
@@ -317,8 +324,11 @@ def build_dataset(
     ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
 
     if splitter is not None:
+        assert isinstance(
+            splitter, HashedNodeAnchorLinkSplitter
+        ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
         logger.info(
-            f"Received splitter {str(splitter.__class__)} with value should_convert_labels_to_edges={splitter.should_convert_labels_to_edges}"
+            f"Received splitter {str(splitter.__class__)} with value should_convert_labels_to_edges={splitter._should_convert_labels_to_edges}"
         )
 
     manager = mp.Manager()

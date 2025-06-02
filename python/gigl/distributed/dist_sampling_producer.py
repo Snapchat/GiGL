@@ -28,7 +28,7 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
-from gigl.distributed.dist_neighbor_sampler import DistLinkPredictionNeighborSampler
+from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
 
 """
 All code in this file is directly taken from GraphLearn-for-PyTorch, with the exception that we call
@@ -85,7 +85,7 @@ def _sampling_worker_loop(
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
-        dist_sampler = DistLinkPredictionNeighborSampler(
+        dist_sampler = DistABLPNeighborSampler(
             data,
             sampling_config.num_neighbors,
             sampling_config.with_edge,

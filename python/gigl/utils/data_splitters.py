@@ -54,12 +54,6 @@ class NodeAnchorLinkSplitter(Protocol):
     ]:
         ...
 
-    @property
-    def should_convert_labels_to_edges(self):
-        raise NotImplementedError(
-            "should_convert_labels_to_edges is not implemented for splitter class"
-        )
-
 
 def _fast_hash(x: torch.Tensor) -> torch.Tensor:
     """Fast hash function.
@@ -152,14 +146,6 @@ class HashedNodeAnchorLinkSplitter:
 
         self._supervision_edge_types = supervision_edge_types
 
-    @property
-    def supervision_edge_types(self) -> list[EdgeType]:
-        return self._supervision_edge_types
-
-    @property
-    def should_convert_labels_to_edges(self) -> bool:
-        return self._should_convert_labels_to_edges
-
     @overload
     def __call__(
         self,
@@ -209,6 +195,7 @@ class HashedNodeAnchorLinkSplitter:
                 and edge_type_to_split in self._supervision_edge_types
             ):
                 is_label = True
+            # We skip if the current edge type is not a labeled edge type, since we don't want to generate splits for edges which aren't used for supervision
             if not is_label:
                 continue
 
@@ -284,9 +271,10 @@ class HashedNodeAnchorLinkSplitter:
             val = nodes_to_select[num_train : num_val + num_train]  # 1 x num_val_nodes
             test = nodes_to_select[num_train + num_val :]  # 1 x num_test_nodes
             splits[anchor_node_type] = (train, val, test)
-        assert (
-            len(splits) > 0
-        ), f"Found no edge types to split from the provided edge index: {edge_index.keys()} using supervision edge types {self._supervision_edge_types}"
+        if len(splits) == 0:
+            raise ValueError(
+                f"Found no edge types to split from the provided edge index: {edge_index.keys()} using supervision edge types {self._supervision_edge_types}"
+            )
 
         if is_heterogeneous:
             return splits
