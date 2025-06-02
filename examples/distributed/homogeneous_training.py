@@ -28,6 +28,7 @@ from gigl.distributed import (
     DistributedContext,
     build_dataset_from_task_config_uri,
 )
+from graphlearn_torch.distributed import barrier, shutdown_rpc
 from gigl.distributed.utils import get_available_device
 from gigl.src.common.models.layers.loss import RetrievalLoss
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
@@ -218,29 +219,31 @@ def _train_process(
     node_feature_dim: int,
     edge_feature_dim: int,
     num_random_samples: int,
-    validate_every: int = 50,
+    validate_every: int = 100,
     learning_rate: int = 1e-6,
     num_epoch: int = 1,
 ) -> None:
     device = get_available_device(process_number)
+    train_nodes = to_homogeneous(dataset.train_node_ids)
     train_loader = DistABLPLoader(
         dataset=dataset,
         context=dist_context,
         num_neighbors=num_neighbors,
         local_process_rank=process_number,
         local_process_world_size=total_processes,
-        input_nodes=to_homogeneous(dataset.train_node_ids),
+        input_nodes=train_nodes,
         pin_memory_device=device,
         shuffle=True,
         drop_last=True,
     )
+    val_nodes = to_homogeneous(dataset.val_node_ids)
     val_loader = iter(DistABLPLoader(
         dataset=dataset,
         context=dist_context,
         num_neighbors=num_neighbors,
         local_process_rank=process_number,
         local_process_world_size=total_processes,
-        input_nodes=to_homogeneous(dataset.val_node_ids),
+        input_nodes=val_nodes,
         pin_memory_device=device,
         shuffle=True,
         drop_last=True,
@@ -321,6 +324,7 @@ def _train_process(
 
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
     torch.distributed.barrier()
+    print(f"process {process_number} started training. {train_nodes.shape=}, {val_nodes.shape=}, {negative_samples.shape=}")
     for epoch in range(num_epoch):
         logger.info(f"Epoch {epoch} started")
         for batch_idx, main_data in enumerate(train_loader):
@@ -329,34 +333,45 @@ def _train_process(
             # TODO enable AMP
             # print(f"Epoch {epoch} batch {batch_idx}")
             # print(f"maiin_data: {main_data}")
+            print(
+                f"Process {process_number} Epoch {epoch} batch {batch_idx}")
             random_data= next(random_negative_loader)
+            print(f"process {process_number} ")
             random_data = random_data.edge_type_subgraph(
                 [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             ).to_homogeneous(add_edge_type=False, add_node_type=False)
+            print(f"inferring inputs for process {process_number}")
             scores, repeated_query_embeddings = _infer_inputs(
                 model=ddp_model,
                 main_data=main_data,
                 random_data=random_data,
                 device=device,
             )
+            print(f"calculating loss for process {process_number}")
             loss_output = loss(batch_combined_scores=scores, repeated_query_embeddings=repeated_query_embeddings, candidate_sampling_probability=None)
             loss_tensor: torch.Tensor = loss_output[0]
 
             if loss_tensor.grad_fn is None:
-                print("Skipping loss")
+                # print("Skipping loss")
                 continue
+            print(f"process {process_number} zero grad")
             optimizer.zero_grad()
+            print(f"process {process_number} loss backwards")
             loss_tensor.backward()
+            print(f"process {process_number} optimizer step")
             optimizer.step()
+            print(f"process {process_number} done")
 
             # Validation
             if batch_idx % validate_every == 0:
                 print(f"validating for batch idx {batch_idx} at epoch {epoch}")
                 with torch.no_grad():
+                    print(f"process {process_number} validating")
                     random_data = next(random_negative_loader)
                     random_data = random_data.edge_type_subgraph(
                         [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
                     ).to_homogeneous(add_edge_type=False, add_node_type=False)
+                    print(f"process {process_number} validation forward pass")
                     val_scores, repeated_query_embeddings = _infer_inputs(
                         model=ddp_model,
                         main_data=next(val_loader),
@@ -376,6 +391,7 @@ def _train_process(
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
     print(f"Process {process_number} finished training")
     torch.distributed.barrier()
+    #barrier()
     torch.distributed.destroy_process_group()
     print(f"Process {process_number} destroyed process group")
     del train_loader, val_loader, random_negative_loader

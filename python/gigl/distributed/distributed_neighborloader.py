@@ -515,6 +515,7 @@ def _shard_nodes_by_process(
             if local_process_rank == local_process_world_size - 1
             else start_index + num_node_ids_per_process
         )
+        logger.info(f"Slicing nodes ({nodes.shape}) from {start_index} to {end_index}.")
         nodes_for_current_process = nodes[start_index:end_index]
         return nodes_for_current_process
 
