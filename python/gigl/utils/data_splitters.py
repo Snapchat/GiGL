@@ -1,7 +1,17 @@
 import gc
 from collections import defaultdict
 from collections.abc import Mapping
-from typing import Callable, Final, Literal, Optional, Protocol, Tuple, Union, overload
+from typing import (
+    Callable,
+    Final,
+    Literal,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    Union,
+    overload,
+)
 
 import torch
 from graphlearn_torch.data import Dataset, Topology
@@ -144,7 +154,7 @@ class HashedNodeAnchorLinkSplitter:
         if supervision_edge_types is None:
             supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
-        self._supervision_edge_types = supervision_edge_types
+        self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
 
     @overload
     def __call__(
