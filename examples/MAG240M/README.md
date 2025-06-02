@@ -5,9 +5,9 @@
 GiGL assumes your data is available in BQ Tables. BQ is ubiqutous to large enterprises as it provides a serverless,
 highly scalable, and cost-effective platform for storing and analyzing massive datasets.
 
-We provide a script [fetch_data.ipynb](./fetch_data.ipynb) which you can utilize to load the MAG240M data into BQ tables in your own
-project. Alternatively, you can skip this all together since we a copy of this dataset in BQ that can be utilized right
-away.
+We provide a script [fetch_data.ipynb](./fetch_data.ipynb) which you can utilize to load the MAG240M data into BQ tables
+in your own project. Alternatively, you can skip this all together since we a copy of this dataset in BQ that can be
+utilized right away.
 
 ### 2. Run e2e pipeline
 
@@ -20,7 +20,6 @@ Note: If you decided to follow step 1. you may need to subesequently modify path
 Follow along [mag240m.ipynb](./mag240m.ipynb) to run an e2e GiGL pipeline on the MAG240M dataset. It will guide you
 through running each component: `config_populator` -> `data_preprocessor` -> `subgraph_sampler` -> `split_generator` ->
 `trainer` -> `inferencer`
-
 
 ```{toctree}
 :maxdepth: 2

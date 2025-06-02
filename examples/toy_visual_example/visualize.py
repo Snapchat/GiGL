@@ -1,6 +1,6 @@
 import networkx as nx
-from torch_geometric.data import HeteroData
 import torch_geometric.utils
+from torch_geometric.data import HeteroData
 
 
 class GraphVisualizer:
@@ -35,5 +35,13 @@ class GraphVisualizer:
         # Generate a static layout
         pos = nx.spring_layout(g, seed=42)
         for node in g.nodes():
-            g.nodes[node]['label'] = node
-        nx.draw(g, pos, with_labels=True, node_color=node_colors, node_size=500, font_size=10, font_weight='bold')
+            g.nodes[node]["label"] = node
+        nx.draw(
+            g,
+            pos,
+            with_labels=True,
+            node_color=node_colors,
+            node_size=500,
+            font_size=10,
+            font_weight="bold",
+        )
