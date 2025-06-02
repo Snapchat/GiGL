@@ -403,7 +403,7 @@ def train(
     )
     num_training_processes = int(
         gbml_pb_wrapper.trainer_config.trainer_args.get(
-            "num_training_processes_per_machine", 1
+            "num_training_processes_per_machine", 2
         )
     )
     num_random_samples = int(
