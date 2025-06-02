@@ -9,11 +9,14 @@ import pickle
 import time
 from pathlib import Path
 from typing import Optional
+import itertools
 
 import torch
 import torch.multiprocessing as mp
 from torch import nn
+from torch_geometric.data import Data, HeteroData
 
+from gigl.common.collections.itertools import batch
 from gigl.common.logger import Logger
 from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
@@ -121,6 +124,87 @@ def _init_example_gigl_model(
 
     return model
 
+def index_select(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    return torch.tensor(
+        [torch.nonzero(a == e).squeeze(1) for e in b], dtype=torch.long
+    )
+
+
+def _infer_inputs(
+        model: nn.Module,
+        main_data: Data,
+        random_data: Data,
+        device: torch.device
+) -> tuple[BatchCombinedScores, torch.Tensor]:
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        decoder = model.module.decode
+    else:
+        decoder = model.decode
+    anchor_nodes = torch.tensor(list(main_data.y_positive.keys()))
+    repeated_anchors = []
+    for anchor in map(lambda t: t.item(), anchor_nodes):
+        # repeated_anchors.extend([anchor] * (main_data.y_positive[anchor].shape[0] + main_data.y_negative[anchor].shape[0]))
+        repeated_anchors.extend(
+            [anchor] * (main_data.y_positive[anchor].numel())
+        )
+    repeated_anchor_nodes = torch.tensor(repeated_anchors)
+    positve_anchors = torch.cat(list(main_data.y_positive.values()))
+    positive_anchor_indicies = index_select(main_data.node, positve_anchors)
+    negative_anchors = torch.cat(list(main_data.y_negative.values()))
+    negative_anchor_indicies = index_select(main_data.node, negative_anchors)
+    repeated_anchor_indicies = index_select(
+        main_data.node, repeated_anchor_nodes
+    )
+    # print(f"{repeated_anchor_indicies.shape=}, {repeated_anchor_nodes.dtype=}")
+    # print(f"{repeated_anchor_indicies=}")
+    main_embeddings = to_homogeneous(
+        model(
+            main_data,
+            output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            device=device,
+        )
+    )
+    # print(f"Main embeddings shape: ({main_embeddings.shape})")
+    random_embeddings = to_homogeneous(
+        model(
+            random_data,
+            output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            device=device,
+        )
+    )
+    repeated_query_embeddigns = main_embeddings[repeated_anchor_indicies]
+    # print(f"{positive_anchor_indicies.shape}, {positive_anchor_indicies.dtype=}")
+    # print(f"{negative_anchor_indicies.shape}, {negative_anchor_indicies.dtype=}")
+    repeated_candidate_scores = decoder(
+        query_embeddings=repeated_query_embeddigns,
+        candidate_embeddings=torch.cat(
+            [
+                main_embeddings[positive_anchor_indicies],
+                main_embeddings[negative_anchor_indicies],
+                random_embeddings[
+                    index_select(random_data.node, random_data.batch)
+                ],
+            ]
+        ),
+    )
+    print(
+        f"{anchor_nodes.shape=}, {positve_anchors.shape=}, {negative_anchors.shape=}, {repeated_candidate_scores.shape=}"
+    )
+    # print(f"{repeated_candidate_scores.shape=}")
+    # print(f"{repeated_anchor_nodes.shape=}")
+    # print(f"{repeated_query_embeddigns.shape=}")
+    # print(f"{main_embeddings[positive_anchor_indicies].shape=}")
+
+    batched_combined_scores = BatchCombinedScores(
+        repeated_candidate_scores=repeated_candidate_scores,
+        positive_ids=positve_anchors,
+        hard_neg_ids=negative_anchors,
+        random_neg_ids=random_data.batch,
+        repeated_query_ids=repeated_anchor_nodes,
+        num_unique_query_ids=len(anchor_nodes),
+    )
+    return batched_combined_scores, repeated_query_embeddigns
+
 
 def _train_process(
     process_number: int,
@@ -132,10 +216,10 @@ def _train_process(
     model_state_dict_uri: str,
     node_feature_dim: int,
     edge_feature_dim: int,
+    validate_every: int = 50,
+    learning_rate: int = 1e-6,
+    num_epoch: int = 1,
 ) -> None:
-    validate_every = 50
-    learning_rate = 1e-6
-    num_epoch = 3
     device = get_available_device(process_number)
     train_loader = DistABLPLoader(
         dataset=dataset,
@@ -148,17 +232,18 @@ def _train_process(
         shuffle=True,
         drop_last=True,
     )
-    # val_loader = DistABLPLoader(
-    #     dataset=dataset,
-    #     context=dist_context,
-    #     num_neighbors=num_neighbors,
-    #     local_process_rank=process_number,
-    #     local_process_world_size=total_processes,
-    #     input_nodes=to_homogeneous(dataset.val_node_ids),
-    #     pin_memory_device=device,
-    #     shuffle=True,
-    #     drop_last=True,
-    # )
+    val_loader = DistABLPLoader(
+        dataset=dataset,
+        context=dist_context,
+        num_neighbors=num_neighbors,
+        local_process_rank=process_number,
+        local_process_world_size=total_processes,
+        input_nodes=to_homogeneous(dataset.val_node_ids),
+        pin_memory_device=device,
+        shuffle=True,
+        drop_last=True,
+        _main_sampling_port=50_403,
+    )
     zero_fanout = [0] * len(num_neighbors)
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
@@ -233,11 +318,6 @@ def _train_process(
     assert is_distributed_available_and_initialized()
 
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
-    def index_select(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        return torch.tensor(
-            [torch.nonzero(a == e).squeeze(1) for e in b], dtype=torch.long
-        )
-
     torch.distributed.barrier()
     for epoch in range(num_epoch):
         logger.info(f"Epoch {epoch} started")
@@ -252,87 +332,22 @@ def _train_process(
             random_data = random_data.edge_type_subgraph(
                 [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             ).to_homogeneous(add_edge_type=False, add_node_type=False)
-            main_embeddings = to_homogeneous(
-                ddp_model(
-                    main_data,
-                    output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                    device=device,
-                )
+            scores, repeated_query_embeddings = _infer_inputs(
+                model=ddp_model,
+                main_data=main_data,
+                random_data=random_data,
+                device=device,
             )
-            # print(f"Main embeddings shape: ({main_embeddings.shape})")
-            random_embeddings = to_homogeneous(
-                ddp_model(
-                    random_data,
-                    output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                    device=device,
-                )
-            )
-            if isinstance(ddp_model, torch.nn.parallel.DistributedDataParallel):
-                decoder = ddp_model.module.decode
-            else:
-                decoder = ddp_model.decode
+            loss_output = loss(batch_combined_scores=scores, repeated_query_embeddings=repeated_query_embeddings, candidate_sampling_probability=None)
+            loss_tensor: torch.Tensor = loss_output[0]
+
             # print(f"{main_data.batch=}")
             # print(f"{main_data.y_positive=}")
             # print(f"{main_data.y_negative=}")
             # print(f"{main_data.node.shape=}")
             # print(f"{main_data.node=}")
             # print(f"{main_data.num_sampled_nodes=}")
-            anchor_nodes = torch.tensor(list(main_data.y_positive.keys()))
-            repeated_anchors = []
-            for anchor in map(lambda t: t.item(), anchor_nodes):
-                # repeated_anchors.extend([anchor] * (main_data.y_positive[anchor].shape[0] + main_data.y_negative[anchor].shape[0]))
-                repeated_anchors.extend(
-                    [anchor] * (main_data.y_positive[anchor].numel())
-                )
-            repeated_anchor_nodes = torch.tensor(repeated_anchors)
-            positve_anchors = torch.cat(list(main_data.y_positive.values()))
-            positive_anchor_indicies = index_select(main_data.node, positve_anchors)
-            negative_anchors = torch.cat(list(main_data.y_negative.values()))
-            negative_anchor_indicies = index_select(main_data.node, negative_anchors)
-            repeated_anchor_indicies = index_select(
-                main_data.node, repeated_anchor_nodes
-            )
-            # print(f"{repeated_anchor_indicies.shape=}, {repeated_anchor_nodes.dtype=}")
-            # print(f"{repeated_anchor_indicies=}")
-            repeated_query_embeddigns = main_embeddings[repeated_anchor_indicies]
-            # print(f"{positive_anchor_indicies.shape}, {positive_anchor_indicies.dtype=}")
-            # print(f"{negative_anchor_indicies.shape}, {negative_anchor_indicies.dtype=}")
-            repeated_candidate_scores = decoder(
-                query_embeddings=repeated_query_embeddigns,
-                candidate_embeddings=torch.cat(
-                    [
-                        main_embeddings[positive_anchor_indicies],
-                        main_embeddings[negative_anchor_indicies],
-                        random_embeddings[
-                            index_select(random_data.node, random_data.batch)
-                        ],
-                    ]
-                ),
-            )
-            print(
-                f"{anchor_nodes.shape=}, {positve_anchors.shape=}, {negative_anchors.shape=}, {repeated_candidate_scores.shape=}"
-            )
-            # print(f"{repeated_candidate_scores.shape=}")
-            # print(f"{repeated_anchor_nodes.shape=}")
-            # print(f"{repeated_query_embeddigns.shape=}")
-            # print(f"{main_embeddings[positive_anchor_indicies].shape=}")
 
-            batched_combined_scores = BatchCombinedScores(
-                repeated_candidate_scores=repeated_candidate_scores,
-                positive_ids=positve_anchors,
-                hard_neg_ids=negative_anchors,
-                random_neg_ids=random_data.batch,
-                repeated_query_ids=repeated_anchor_nodes,
-                num_unique_query_ids=len(anchor_nodes),
-            )
-
-            loss_output = loss(
-                batch_combined_scores=batched_combined_scores,
-                repeated_query_embeddings=repeated_query_embeddigns,
-                candidate_sampling_probability=None,
-            )
-            print(f"{loss_output=}")
-            loss_tensor: torch.Tensor = loss_output[0]
             if loss_tensor.grad_fn is None:
                 # print(f"main_data: {main_data}")
                 # print(f"{main_data.node=}")
