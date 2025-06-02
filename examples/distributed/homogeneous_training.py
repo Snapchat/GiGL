@@ -288,8 +288,7 @@ def _train_process(
         inferencer_args={},
         device=device,
     )
-    # ddp_model = DistributedDataParallel(model, device_ids=[device])
-    ddp_model = model
+    ddp_model = nn.parallel.DistributedDataParallel(model, device_ids=[device] if device.type == "cuda" else None)
     all_named_parameters = list(ddp_model.named_parameters())
     embedding_params, other_params = split_parameters_by_layer_names(
         named_parameters=all_named_parameters,
