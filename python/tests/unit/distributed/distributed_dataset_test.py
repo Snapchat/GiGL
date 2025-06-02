@@ -33,17 +33,11 @@ class _FakeSplitter:
         ],
     ):
         self.splits = splits
+        self._should_convert_labels_to_edges = False
+        self._supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
     def __call__(self, edge_index):
         return self.splits
-
-    @property
-    def supervision_edge_types(self) -> list[EdgeType]:
-        return [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-
-    @property
-    def should_convert_labels_to_edges(self) -> bool:
-        return False
 
 
 _USER = NodeType("user")

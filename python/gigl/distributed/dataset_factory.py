@@ -324,12 +324,7 @@ def build_dataset(
     ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
 
     if splitter is not None:
-        assert isinstance(
-            splitter, HashedNodeAnchorLinkSplitter
-        ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
-        logger.info(
-            f"Received splitter {str(splitter.__class__)} with value should_convert_labels_to_edges={splitter._should_convert_labels_to_edges}"
-        )
+        logger.info(f"Received splitter {str(splitter.__class__)}.")
 
     manager = mp.Manager()
 
