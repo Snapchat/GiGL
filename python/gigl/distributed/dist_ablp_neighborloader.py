@@ -427,9 +427,32 @@ class DistABLPLoader(DistLoader):
         positive_labels: dict[int, torch.Tensor],
         negative_labels: Optional[dict[int, torch.Tensor]],
     ) -> Data:
+        if isinstance(data, HeteroData):
+            nodes = data[self._supervision_edge_type[2]].batch
+        else:
+            nodes = data.batch
+        global_node_to_local_node_map = {
+            node.item(): idx for idx, node in enumerate(nodes)
+        }
+        for local_anchor_node_id in positive_labels:
+            positive_labels[local_anchor_node_id] = torch.tensor(
+                [
+                    global_node_to_local_node_map[positive_label.item()]
+                    for positive_label in positive_labels[local_anchor_node_id]
+                ]
+            ).to(self.to_device)
+            if negative_labels is not None:
+                negative_labels[local_anchor_node_id] = torch.tensor(
+                    [
+                        global_node_to_local_node_map[negative_label.item()]
+                        for negative_label in negative_labels[local_anchor_node_id]
+                    ]
+                ).to(self.to_device)
         data.y_positive = positive_labels
         if negative_labels is not None:
             data.y_negative = negative_labels
+        data.global_node_to_local_node_map = global_node_to_local_node_map
+
         if isinstance(data, HeteroData):
             del data.num_sampled_edges[self._positive_label_edge_type]
             del data._edge_store_dict[self._positive_label_edge_type]
