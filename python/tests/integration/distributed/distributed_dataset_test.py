@@ -146,7 +146,9 @@ class DistDatasetTestCase(unittest.TestCase):
                 "Test GLT Dataset Split with heterogeneous toy dataset",
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 is_heterogeneous=False,
-                split_fn=HashedNodeAnchorLinkSplitter(sampling_direction="out"),
+                split_fn=HashedNodeAnchorLinkSplitter(
+                    sampling_direction="out", should_convert_labels_to_edges=True
+                ),
             ),
             param(
                 "Test GLT Dataset Load in parallel with homogeneous toy NABLP dataset",
@@ -154,9 +156,10 @@ class DistDatasetTestCase(unittest.TestCase):
                 is_heterogeneous=True,
                 split_fn=HashedNodeAnchorLinkSplitter(
                     sampling_direction="out",
-                    edge_types=EdgeType(
-                        NodeType("story"), Relation("to"), NodeType("user")
-                    ),
+                    supervision_edge_types=[
+                        EdgeType(NodeType("story"), Relation("to"), NodeType("user"))
+                    ],
+                    should_convert_labels_to_edges=True,
                 ),
             ),
             param(
@@ -167,10 +170,11 @@ class DistDatasetTestCase(unittest.TestCase):
                     sampling_direction="out",
                     num_test=1,
                     num_val=1,
-                    edge_types=[
+                    supervision_edge_types=[
                         EdgeType(NodeType("story"), Relation("to"), NodeType("user")),
                         EdgeType(NodeType("user"), Relation("to"), NodeType("story")),
                     ],
+                    should_convert_labels_to_edges=True,
                 ),
             ),
         ]

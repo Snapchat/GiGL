@@ -223,6 +223,7 @@ class TestDataSplitters(unittest.TestCase):
             hash_function=hash_function,
             num_val=val_num,
             num_test=test_num,
+            should_convert_labels_to_edges=False,
         )
         train, val, test = splitter(edges)
 
@@ -430,7 +431,8 @@ class TestDataSplitters(unittest.TestCase):
             hash_function=hash_function,
             num_val=val_num,
             num_test=test_num,
-            edge_types=edge_types_to_split,
+            supervision_edge_types=edge_types_to_split,
+            should_convert_labels_to_edges=False,
         )
         split = splitter(edges)
 
@@ -472,11 +474,12 @@ class TestDataSplitters(unittest.TestCase):
         edge_types_to_split,
     ):
         with self.assertRaises(ValueError):
-            HashedNodeAnchorLinkSplitter(
-                sampling_direction="in", edge_types=edge_types_to_split
-            )(
-                edge_index=edges,
+            splitter = HashedNodeAnchorLinkSplitter(
+                sampling_direction="in",
+                supervision_edge_types=edge_types_to_split,
+                should_convert_labels_to_edges=False,
             )
+            splitter(edge_index=edges)
 
     def test_node_based_link_splitter_no_train_nodes(self):
         edges = torch.stack(
@@ -486,9 +489,13 @@ class TestDataSplitters(unittest.TestCase):
             ]
         )
         with self.assertRaises(ValueError):
-            HashedNodeAnchorLinkSplitter(
-                sampling_direction="in", num_val=5, num_test=5
-            )(edges)
+            splitter = HashedNodeAnchorLinkSplitter(
+                sampling_direction="in",
+                num_val=5,
+                num_test=5,
+                should_convert_labels_to_edges=False,
+            )
+            splitter(edge_index=edges)
 
     @parameterized.expand(
         [

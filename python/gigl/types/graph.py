@@ -1,6 +1,7 @@
+import gc
 from collections import abc
 from dataclasses import dataclass
-from typing import Optional, TypeVar, Union, overload
+from typing import Literal, Optional, TypeVar, Union, overload
 
 import torch
 from graphlearn_torch.partition import PartitionBook
@@ -107,12 +108,16 @@ class LoadedGraphTensors:
     # Unpartitioned Negative Edge Label
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
 
-    def treat_labels_as_edges(self) -> None:
+    def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
         Convert positive and negative labels to edges. Converts this object in-place to a "heterogeneous" representation.
+        If the edge direction is "in", we must reverse the supervision edge type.
 
         This function requires the following conditions and will throw if they are not met:
             1. The positive_label is not None
+
+        Args:
+            edge_dir: The edge direction of the graph.
 
         """
         if self.positive_label is None:
@@ -136,10 +141,17 @@ class LoadedGraphTensors:
                     "Detected multiple edge types in provided edge_index, but no edge types specified for provided positive label."
                 )
             positive_label_edge_type = message_passing_to_positive_label(main_edge_type)
+            if edge_dir == "in":
+                positive_label_edge_type = reverse_edge_type(positive_label_edge_type)
+                edge_index_with_labels[
+                    positive_label_edge_type
+                ] = self.positive_label.flip(0)
+            else:
+                edge_index_with_labels[positive_label_edge_type] = self.positive_label
             logger.info(
                 f"Treating homogeneous positive labels as edge type {positive_label_edge_type}."
             )
-            edge_index_with_labels[positive_label_edge_type] = self.positive_label
+
         elif isinstance(self.positive_label, dict):
             for (
                 positive_label_type,
@@ -148,10 +160,20 @@ class LoadedGraphTensors:
                 positive_label_edge_type = message_passing_to_positive_label(
                     positive_label_type
                 )
+                if edge_dir == "in":
+                    positive_label_edge_type = reverse_edge_type(
+                        positive_label_edge_type
+                    )
+                    edge_index_with_labels[
+                        positive_label_edge_type
+                    ] = positive_label_tensor.flip(0)
+                else:
+                    edge_index_with_labels[
+                        positive_label_edge_type
+                    ] = positive_label_tensor
                 logger.info(
                     f"Treating heterogeneous positive labels {positive_label_type} as edge type {positive_label_edge_type}."
                 )
-                edge_index_with_labels[positive_label_edge_type] = positive_label_tensor
 
         if isinstance(self.negative_label, torch.Tensor):
             if main_edge_type is None:
@@ -159,10 +181,16 @@ class LoadedGraphTensors:
                     "Detected multiple edge types in provided edge_index, but no edge types specified for provided negative label."
                 )
             negative_label_edge_type = message_passing_to_negative_label(main_edge_type)
+            if edge_dir == "in":
+                negative_label_edge_type = reverse_edge_type(negative_label_edge_type)
+                edge_index_with_labels[
+                    negative_label_edge_type
+                ] = self.negative_label.flip(0)
+            else:
+                edge_index_with_labels[negative_label_edge_type] = self.negative_label
             logger.info(
                 f"Treating homogeneous negative labels as edge type {negative_label_edge_type}."
             )
-            edge_index_with_labels[negative_label_edge_type] = self.negative_label
         elif isinstance(self.negative_label, dict):
             for (
                 negative_label_type,
@@ -171,10 +199,20 @@ class LoadedGraphTensors:
                 negative_label_edge_type = message_passing_to_negative_label(
                     negative_label_type
                 )
+                if edge_dir == "in":
+                    negative_label_edge_type = reverse_edge_type(
+                        negative_label_edge_type
+                    )
+                    edge_index_with_labels[
+                        negative_label_edge_type
+                    ] = negative_label_tensor.flip(0)
+                else:
+                    edge_index_with_labels[
+                        negative_label_edge_type
+                    ] = negative_label_tensor
                 logger.info(
                     f"Treating heterogeneous negative labels {negative_label_type} as edge type {negative_label_edge_type}."
                 )
-                edge_index_with_labels[negative_label_edge_type] = negative_label_tensor
 
         self.node_ids = to_heterogeneous_node(self.node_ids)
         self.node_features = to_heterogeneous_node(self.node_features)
@@ -182,6 +220,7 @@ class LoadedGraphTensors:
         self.edge_features = to_heterogeneous_edge(self.edge_features)
         self.positive_label = None
         self.negative_label = None
+        gc.collect()
 
 
 def message_passing_to_positive_label(
@@ -232,6 +271,23 @@ def message_passing_to_negative_label(
         return edge_type
 
 
+# TODO: add tests for this.
+def is_label_edge_type(
+    edge_type: _EdgeType,
+) -> bool:
+    """Check if an edge type is a label edge type.
+
+    Args:
+        edge_type (EdgeType): The edge type to check.
+
+    Returns:
+        bool: True if the edge type is a label edge type, False otherwise.
+    """
+    return _POSITIVE_LABEL_TAG in str(edge_type[1]) or _NEGATIVE_LABEL_TAG in str(
+        edge_type[1]
+    )
+
+
 def select_label_edge_types(
     message_passing_edge_type: _EdgeType, edge_entities: abc.Iterable[_EdgeType]
 ) -> tuple[_EdgeType, Optional[_EdgeType]]:
@@ -253,7 +309,7 @@ def select_label_edge_types(
             negative_label_type = edge_type
     if positive_label_type is None:
         raise ValueError(
-            f"Could not find positive label edge type for message passing edge type {message_passing_edge_type} from edge entities {edge_entities}."
+            f"Could not find positive label edge type for message passing edge type {message_passing_to_positive_label(message_passing_edge_type)} from edge entities {edge_entities}."
         )
     return positive_label_type, negative_label_type
 
@@ -403,3 +459,17 @@ def to_homogeneous(
         n = next(iter(x.values()))
         return n
     return x
+
+
+def reverse_edge_type(edge_type: _EdgeType) -> _EdgeType:
+    """
+    Reverses the source and destination node types of the provided edge type
+    Args:
+        edge_type (EdgeType): The target edge to have its source and destinated node types reversed
+    Returns:
+        EdgeType: The reversed edge type
+    """
+    if isinstance(edge_type, EdgeType):
+        return EdgeType(edge_type[2], edge_type[1], edge_type[0])
+    else:
+        return (edge_type[2], edge_type[1], edge_type[0])

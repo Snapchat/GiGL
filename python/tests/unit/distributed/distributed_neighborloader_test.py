@@ -11,16 +11,14 @@ from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
+from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.distributed_neighborloader import (
-    DistABLPLoader,
-    DistNeighborLoader,
-)
+from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
@@ -37,6 +35,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -138,18 +137,33 @@ def _run_distributed_ablp_neighbor_loader(
         expected_node,
         dim=0,
     )
-    assert datum.y_positive.keys() == expected_positive_labels.keys()
+    global_node_to_local_node_map = datum.global_node_to_local_node_map
     for anchor in expected_positive_labels.keys():
+        assert anchor in global_node_to_local_node_map
+        local_anchor = global_node_to_local_node_map[anchor]
+        local_positive_labels = torch.tensor(
+            [
+                global_node_to_local_node_map[positive_label.item()]
+                for positive_label in expected_positive_labels[anchor]
+            ]
+        )
         assert_tensor_equality(
-            datum.y_positive[anchor],
-            expected_positive_labels[anchor],
+            datum.y_positive[local_anchor],
+            local_positive_labels,
         )
     if expected_negative_labels is not None:
-        assert datum.y_negative.keys() == expected_negative_labels.keys()
         for anchor in expected_negative_labels.keys():
+            assert anchor in global_node_to_local_node_map
+            local_anchor = global_node_to_local_node_map[anchor]
+            local_negative_labels = torch.tensor(
+                [
+                    global_node_to_local_node_map[negative_label.item()]
+                    for negative_label in expected_negative_labels[anchor]
+                ]
+            )
             assert_tensor_equality(
-                datum.y_negative[anchor],
-                expected_negative_labels[anchor],
+                datum.y_negative[local_anchor],
+                local_negative_labels,
             )
     else:
         assert not hasattr(datum, "y_negative")
@@ -243,6 +257,37 @@ def _run_multiple_neighbor_loader(
         count += 1
 
     assert count == expected_data_count
+
+    shutdown_rpc()
+
+
+def _run_dblp_supervised(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    supervision_edge_types: list[EdgeType],
+):
+    assert (
+        len(supervision_edge_types) == 1
+    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    supervision_edge_type = supervision_edge_types[0]
+    assert isinstance(dataset.train_node_ids, dict)
+    assert isinstance(dataset.graph, dict)
+    fanout = [2, 2]
+    num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=num_neighbors,
+        input_nodes=(NodeType("paper"), dataset.train_node_ids["paper"]),
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        supervision_edge_type=supervision_edge_type,
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
 
     shutdown_rpc()
 
@@ -421,13 +466,17 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
-        expected_data_count = 2161
+        expected_data_count = 2168
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in", should_convert_labels_to_edges=True
+        )
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=self._context,
             sample_edge_direction="in",
-            should_convert_labels_to_edges=True,
+            splitter=splitter,
         )
 
         mp.spawn(
@@ -453,6 +502,46 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         mp.spawn(
             fn=_run_multiple_neighbor_loader,
             args=(dataset, self._context, expected_data_count),
+        )
+
+    def test_dblp_supervised(self):
+        dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
+            DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=dblp_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        supervision_edge_types = (
+            gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+        )
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in",
+            supervision_edge_types=supervision_edge_types,
+            should_convert_labels_to_edges=True,
+        )
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            distributed_context=self._context,
+            sample_edge_direction="in",
+            _ssl_positive_label_percentage=0.1,
+            splitter=splitter,
+        )
+
+        mp.spawn(
+            fn=_run_dblp_supervised,
+            args=(dataset, self._context, supervision_edge_types),
         )
 
 
