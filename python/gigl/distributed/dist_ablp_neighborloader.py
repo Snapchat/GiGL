@@ -451,6 +451,17 @@ class DistABLPLoader(DistLoader):
         positive_labels: dict[int, torch.Tensor],
         negative_labels: Optional[dict[int, torch.Tensor]],
     ) -> Data:
+        """
+        Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
+        local index. Removes inserted supervision edge type from the Data variables.
+        Args:
+            data (Data): Graph to provide labels for
+            positive_labels (dict[int, torch.Tensor]): Mapping of local anchor node id to global positive node ids
+            negative_labels (Optional[dict[int, torch.Tensor]]): Mapping of local anchor node id to global negative node ids,
+                can be None if dataset has no negative labels
+        Returns:
+            Data: torch_geometric Data object with the filtered edge fields and labels set as properties of the instance
+        """
         if isinstance(data, HeteroData):
             supervision_node_type = (
                 self._supervision_edge_type[0]
