@@ -144,11 +144,11 @@ def _load_and_build_partitioned_dataset(
 
     if should_assign_edges_by_src_node:
         logger.info(
-            f"Initializing {partitioner_class} instance while partitioning edges to its source node machine"
+            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its source node machine"
         )
     else:
         logger.info(
-            f"Initializing {partitioner_class} instance while partitioning edges to its destination node machine"
+            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its destination node machine"
         )
     partitioner = partitioner_class(
         should_assign_edges_by_src_node=should_assign_edges_by_src_node
