@@ -428,30 +428,46 @@ class DistABLPLoader(DistLoader):
         negative_labels: Optional[dict[int, torch.Tensor]],
     ) -> Data:
         if isinstance(data, HeteroData):
-            nodes = data[self._supervision_edge_type[2]].batch
+            supervision_node_type = (
+                self._supervision_edge_type[0]
+                if self.edge_dir == "in"
+                else self._supervision_edge_type[2]
+            )
+            for node_type in data.node_types:
+                global_node_to_local_node_map = {
+                    node.item(): idx for idx, node in enumerate(data[node_type].node)
+                }
+                data[
+                    node_type
+                ].global_node_to_local_node_map = global_node_to_local_node_map
+            global_node_to_local_supervision_node_map = data[
+                supervision_node_type
+            ].global_node_to_local_node_map
         else:
-            nodes = data.batch
-        global_node_to_local_node_map = {
-            node.item(): idx for idx, node in enumerate(nodes)
-        }
+            global_node_to_local_supervision_node_map = {
+                node.item(): idx for idx, node in enumerate(data.node)
+            }
+            data.global_node_to_local_node_map = (
+                global_node_to_local_supervision_node_map
+            )
+
         for local_anchor_node_id in positive_labels:
             positive_labels[local_anchor_node_id] = torch.tensor(
                 [
-                    global_node_to_local_node_map[positive_label.item()]
+                    global_node_to_local_supervision_node_map[positive_label.item()]
                     for positive_label in positive_labels[local_anchor_node_id]
                 ]
             ).to(self.to_device)
             if negative_labels is not None:
                 negative_labels[local_anchor_node_id] = torch.tensor(
                     [
-                        global_node_to_local_node_map[negative_label.item()]
+                        global_node_to_local_supervision_node_map[negative_label.item()]
                         for negative_label in negative_labels[local_anchor_node_id]
                     ]
                 ).to(self.to_device)
         data.y_positive = positive_labels
         if negative_labels is not None:
             data.y_negative = negative_labels
-        data.global_node_to_local_node_map = global_node_to_local_node_map
 
         if isinstance(data, HeteroData):
             del data.num_sampled_edges[self._positive_label_edge_type]
