@@ -22,7 +22,8 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    is_label_edge_type,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
 )
 
 logger = Logger()
@@ -62,6 +63,10 @@ class NodeAnchorLinkSplitter(Protocol):
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
+        ...
+
+    @property
+    def should_convert_labels_to_edges(self):
         ...
 
 
@@ -155,6 +160,16 @@ class HashedNodeAnchorLinkSplitter:
             supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
+        if should_convert_labels_to_edges:
+            self._labeled_edge_types: Sequence[EdgeType] = [
+                message_passing_to_positive_label(supervision_edge_type)
+                for supervision_edge_type in supervision_edge_types
+            ] + [
+                message_passing_to_negative_label(supervision_edge_type)
+                for supervision_edge_type in supervision_edge_types
+            ]
+        else:
+            self._labeled_edge_types = supervision_edge_types
 
     @overload
     def __call__(
@@ -199,18 +214,9 @@ class HashedNodeAnchorLinkSplitter:
         max_node_id_by_type: dict[NodeType, int] = defaultdict(int)
         node_ids_by_node_type: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
         for edge_type_to_split, coo_edges in edge_index.items():
-            is_label = False
-            if self._should_convert_labels_to_edges and is_label_edge_type(
-                edge_type_to_split
-            ):
-                is_label = True
-            elif (
-                not self._should_convert_labels_to_edges
-                and edge_type_to_split in self._supervision_edge_types
-            ):
-                is_label = True
-            # We skip if the current edge type is not a labeled edge type, since we don't want to generate splits for edges which aren't used for supervision
-            if not is_label:
+            # In this case, the labels should be converted to an edge type in graph with relation containing `is_gigl_positive` or `is_gigl_negative`.
+            if edge_type_to_split not in self._labeled_edge_types:
+                # We skip if the current edge type is not a labeled edge type, since we don't want to generate splits for edges which aren't used for supervision
                 continue
 
             coo_edges = edge_index[edge_type_to_split]
@@ -294,6 +300,10 @@ class HashedNodeAnchorLinkSplitter:
             return splits
         else:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+
+    @property
+    def should_convert_labels_to_edges(self):
+        return self._should_convert_labels_to_edges
 
 
 def get_labels_for_anchor_nodes(

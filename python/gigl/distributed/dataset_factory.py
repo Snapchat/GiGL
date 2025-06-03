@@ -135,7 +135,7 @@ def _load_and_build_partitioned_dataset(
 
     if (
         isinstance(splitter, HashedNodeAnchorLinkSplitter)
-        and splitter._should_convert_labels_to_edges
+        and splitter.should_convert_labels_to_edges
     ):
         loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
