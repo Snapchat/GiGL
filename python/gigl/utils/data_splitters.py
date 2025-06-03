@@ -174,6 +174,7 @@ class HashedNodeAnchorLinkSplitter:
         # also be ("user", "positive", "story"), meaning that all edges in the loaded edge index tensor with this edge type will be treated as a labeled
         # edge and will be used for splitting.
 
+        # TODO (mkolodner-sc): Deprecate storing ` self._supervision_edge_types` as a private variable once the SSL splitter is prepared
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
         if should_convert_labels_to_edges:
             self._labeled_edge_types: Sequence[EdgeType] = [
@@ -210,9 +211,9 @@ class HashedNodeAnchorLinkSplitter:
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         if isinstance(edge_index, torch.Tensor):
-            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+            if self._labeled_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 logger.warning(
-                    f"You provided edge-types {self._supervision_edge_types} but the edge index is homogeneous. Ignoring supervision edge types."
+                    f"You provided edge-types {self._labeled_edge_types} but the edge index is homogeneous. Ignoring supervision edge types."
                 )
             is_heterogeneous = False
             edge_index = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}
@@ -308,7 +309,7 @@ class HashedNodeAnchorLinkSplitter:
             splits[anchor_node_type] = (train, val, test)
         if len(splits) == 0:
             raise ValueError(
-                f"Found no edge types to split from the provided edge index: {edge_index.keys()} using supervision edge types {self._supervision_edge_types}"
+                f"Found no edge types to split from the provided edge index: {edge_index.keys()} using labeled edge types {self._labeled_edge_types}"
             )
 
         if is_heterogeneous:
