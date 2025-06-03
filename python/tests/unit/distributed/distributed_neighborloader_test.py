@@ -139,7 +139,6 @@ def _run_distributed_ablp_neighbor_loader(
     )
     global_node_to_local_node_map = datum.global_node_to_local_node_map
     for anchor in expected_positive_labels.keys():
-        assert anchor in global_node_to_local_node_map
         local_anchor = global_node_to_local_node_map[anchor]
         local_positive_labels = torch.tensor(
             [
@@ -153,7 +152,6 @@ def _run_distributed_ablp_neighbor_loader(
         )
     if expected_negative_labels is not None:
         for anchor in expected_negative_labels.keys():
-            assert anchor in global_node_to_local_node_map
             local_anchor = global_node_to_local_node_map[anchor]
             local_negative_labels = torch.tensor(
                 [

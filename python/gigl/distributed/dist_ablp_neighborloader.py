@@ -336,12 +336,11 @@ class DistABLPLoader(DistLoader):
         self._is_collocated_worker = False
         self._is_remote_worker = False
 
-        if self.data is not None:
-            self.num_data_partitions = self.data.num_partitions
-            self.data_partition_idx = self.data.partition_idx
-            self._set_ntypes_and_etypes(
-                self.data.get_node_types(), self.data.get_edge_types()
-            )
+        self.num_data_partitions = self.data.num_partitions
+        self.data_partition_idx = self.data.partition_idx
+        self._set_ntypes_and_etypes(
+            self.data.get_node_types(), self.data.get_edge_types()
+        )
 
         self._num_recv = 0
         self._epoch = 0
