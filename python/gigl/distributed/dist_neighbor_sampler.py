@@ -19,6 +19,11 @@ from gigl.utils.data_splitters import PADDING_NODE
 
 
 class DistABLPNeighborSampler(DistNeighborSampler):
+    """
+    We inherit from the GLT DistNeighborSampler base class and override the _sample_from_nodes function. Specifically, we
+    introduce functionality to read parse ABLPNodeSamplerInput, which contains information about the supervision nodes and node types
+    that we also want to fanout around.
+    """
     async def _sample_from_nodes(
         self,
         inputs: NodeSamplerInput,
