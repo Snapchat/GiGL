@@ -170,6 +170,10 @@ class HashedNodeAnchorLinkSplitter:
         # For example, if `should_convert_labels_to_edges=True` and we provide supervision_edge_types=[("user", "to", "story")], the
         # labeled edge types will be ("user", "to_gigl_positive", "story") and ("user", "to_gigl_negative", "story"), if there are negative labels.
 
+        # If `should_convert_labels_to_edges=False` and we provide supervision_edge_types=[("user", "positive", "story")], the labeled edge type will
+        # also be ("user", "positive", "story"), meaning that all edges in the loaded edge index tensor with this edge type will be treated as a labeled
+        # edge and will be used for splitting.
+
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
         if should_convert_labels_to_edges:
             self._labeled_edge_types: Sequence[EdgeType] = [
