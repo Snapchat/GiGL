@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 import torch
@@ -88,7 +89,9 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             count_dict(src_dict, num_sampled_nodes_hetero, 1)
 
             for i in range(self.num_hops):
-                task_dict, nbr_dict, edge_dict = {}, {}, {}
+                task_dict: dict[EdgeType, asyncio.Task] = {}
+                nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
+                edge_dict: dict[EdgeType, torch.Tensor] = {}
                 for etype in self.edge_types:
                     req_num = self.num_neighbors[etype][i]
                     if self.edge_dir == "in":
