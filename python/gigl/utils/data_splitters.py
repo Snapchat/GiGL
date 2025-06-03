@@ -159,6 +159,17 @@ class HashedNodeAnchorLinkSplitter:
         if supervision_edge_types is None:
             supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
+        # Supervision edge types are the edge type which will be used for positive and negative labels.
+        # Labeled edge types are the actual edge type that be injected into the edge index tensor.
+        # If should_convert_labels_to_edges=False, supervision edge types and labeled edge types will be the same,
+        # since the supervision edge type already exists in the edge index graph. Otherwise, we assume that the
+        # edge index tensor initially only contains the message passing edges, and will inject the labeled edge into the
+        # edge index based on some provided labels. As a result, the labeled edge types will be an augmented version of the
+        # supervision edge types.
+
+        # For example, if `should_convert_labels_to_edges=True` and we provide supervision_edge_types=[("user", "to", "story")], the
+        # labeled edge types will be ("user", "to_gigl_positive", "story") and ("user", "to_gigl_negative", "story"), if there are negative labels.
+
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
         if should_convert_labels_to_edges:
             self._labeled_edge_types: Sequence[EdgeType] = [
