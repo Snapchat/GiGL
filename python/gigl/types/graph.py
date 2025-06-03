@@ -103,7 +103,9 @@ def _get_label_edges(
         labeled_edge_index (torch.Tensor): Edge index containing positive or negative labels for supervision
         edge_dir (Literal["in", "out"]): Direction of edges in the graph
         labeled_edge_type (EdgeType): Edge type used for the positive or negative labeled edges
-
+    Returns:
+        EdgeType: Labeled edge type, which has been reversed if edge_dir = "in"
+        torch.Tensor: Labeled edge index, which has its rows flipped if edge_dir = "in"
     """
     if edge_dir == "in":
         rev_edge_type = reverse_edge_type(labeled_edge_type)

@@ -143,9 +143,11 @@ class HashedNodeAnchorLinkSplitter:
             num_test (Union[float, int]): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
                                           If an integer is provided, than exactly that number of nodes will be in the test split.
             hash_function (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): The hash function to use. Defaults to `_fast_hash`.
-            supervision_edge_types (Optional[list[EdgeType]]): The supervision edge types we should use for splitting. Must be provided if we are splitting a heterogeneous graph.
-                If None, uses the default homogeneous edge type
-            should_convert_labels_to_edges (bool): Whether label should be converted into an edge type in the graph.
+            supervision_edge_types (Optional[list[EdgeType]]): The supervision edge types we should use for splitting.
+                Must be provided if we are splitting a heterogeneous graph. If None, uses the default message passing edge type in the graph.
+            should_convert_labels_to_edges (bool): Whether label should be converted into an edge type in the graph. If provided, will make
+                `gigl.distributed.build_dataset` convert all labels into edges, and will infer positive and negative edge types based on
+                `supervision_edge_types`.
         """
         _check_sampling_direction(sampling_direction)
         _check_val_test_percentage(num_val, num_test)
@@ -174,7 +176,6 @@ class HashedNodeAnchorLinkSplitter:
         # also be ("user", "positive", "story"), meaning that all edges in the loaded edge index tensor with this edge type will be treated as a labeled
         # edge and will be used for splitting.
 
-        # TODO (mkolodner-sc): Deprecate storing ` self._supervision_edge_types` as a private variable once the SSL splitter is prepared
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
         if should_convert_labels_to_edges:
             self._labeled_edge_types: Sequence[EdgeType] = [
