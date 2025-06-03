@@ -37,6 +37,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -421,13 +422,17 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
-        expected_data_count = 2161
+        expected_data_count = 2168
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in", should_convert_labels_to_edges=True
+        )
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=self._context,
             sample_edge_direction="in",
-            should_convert_labels_to_edges=True,
+            splitter=splitter,
         )
 
         mp.spawn(
