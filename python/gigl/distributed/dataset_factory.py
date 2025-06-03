@@ -99,10 +99,13 @@ def _load_and_build_partitioned_dataset(
 
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
-        assert (
-            loaded_graph_tensors.positive_label is None
-            and loaded_graph_tensors.negative_label is None
-        ), "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
+        if (
+            loaded_graph_tensors.positive_label is not None
+            or loaded_graph_tensors.negative_label is not None
+        ):
+            raise ValueError(
+                "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
+            )
         positive_label_edges: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         if isinstance(loaded_graph_tensors.edge_index, abc.Mapping):
             # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
@@ -112,7 +115,6 @@ def _load_and_build_partitioned_dataset(
             ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
             positive_label_edges = {}
             for supervision_edge_type in splitter._supervision_edge_types:
-                assert supervision_edge_type in loaded_graph_tensors.edge_index
                 positive_label_edges[
                     supervision_edge_type
                 ] = select_ssl_positive_label_edges(
@@ -126,15 +128,12 @@ def _load_and_build_partitioned_dataset(
             )
         else:
             raise ValueError(
-                "Found no partitioned edge index when attempting to select positive labels"
+                f"Found an unknown edge index type: {type(loaded_graph_tensors.edge_index)} when attempting to select positive labels"
             )
 
         loaded_graph_tensors.positive_label = positive_label_edges
 
-    if (
-        isinstance(splitter, HashedNodeAnchorLinkSplitter)
-        and splitter._should_convert_labels_to_edges
-    ):
+    if splitter is not None and splitter.should_convert_labels_to_edges:
         loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
@@ -324,7 +323,7 @@ def build_dataset(
     ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
 
     if splitter is not None:
-        logger.info(f"Received splitter {str(splitter.__class__)}.")
+        logger.info(f"Received splitter {type(splitter)}.")
 
     manager = mp.Manager()
 

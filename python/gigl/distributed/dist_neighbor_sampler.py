@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 import torch
@@ -19,6 +20,13 @@ from gigl.utils.data_splitters import PADDING_NODE
 
 
 class DistABLPNeighborSampler(DistNeighborSampler):
+    """
+    We inherit from the GLT DistNeighborSampler base class and override the _sample_from_nodes function. Specifically, we
+    introduce functionality to read parse ABLPNodeSamplerInput, which contains information about the supervision nodes and node types
+    that we also want to fanout around. We add the supervision nodes to the initial fanout seeds, and inject the label information into the
+    output SampleMessage metadata.
+    """
+
     async def _sample_from_nodes(
         self,
         inputs: NodeSamplerInput,
@@ -34,10 +42,12 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             else None
         )
 
-        labeled_seeds = positive_labels[positive_labels != PADDING_NODE]
+        positive_seeds = positive_labels[positive_labels != PADDING_NODE]
+        negative_seeds: Optional[torch.Tensor]
         if negative_labels is not None:
             negative_seeds = negative_labels[negative_labels != PADDING_NODE]
-            labeled_seeds = torch.cat((labeled_seeds, negative_seeds), dim=0)
+        else:
+            negative_seeds = None
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
@@ -45,12 +55,25 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         if negative_labels is not None:
             metadata["negative_labels"] = negative_labels
         if input_type == supervision_node_type:
-            input_nodes = {input_type: torch.cat((input_seeds, labeled_seeds), dim=0)}
+            combined_seeds: tuple[torch.Tensor, ...]
+            if negative_seeds is not None:
+                combined_seeds = (input_seeds, positive_seeds, negative_seeds)
+            else:
+                combined_seeds = (input_seeds, positive_seeds)
+            input_nodes = {input_type: torch.cat(combined_seeds, dim=0)}
         else:
-            input_nodes = {
-                input_type: input_seeds,
-                supervision_node_type: labeled_seeds,
-            }
+            if negative_seeds is None:
+                input_nodes = {
+                    input_type: input_seeds,
+                    supervision_node_type: positive_seeds,
+                }
+            else:
+                input_nodes = {
+                    input_type: input_seeds,
+                    supervision_node_type: torch.cat(
+                        (positive_seeds, negative_seeds), dim=0
+                    ),
+                }
         output: NeighborOutput
         if is_hetero:
             assert input_type is not None
@@ -66,7 +89,9 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             count_dict(src_dict, num_sampled_nodes_hetero, 1)
 
             for i in range(self.num_hops):
-                task_dict, nbr_dict, edge_dict = {}, {}, {}
+                task_dict: dict[EdgeType, asyncio.Task] = {}
+                nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
+                edge_dict: dict[EdgeType, torch.Tensor] = {}
                 for etype in self.edge_types:
                     req_num = self.num_neighbors[etype][i]
                     if self.edge_dir == "in":
