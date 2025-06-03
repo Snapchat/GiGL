@@ -1,5 +1,9 @@
+# All code in this file is directly taken from GraphLearn-for-PyTorch (graphlearn_torch/python/distributed/dist_sampling_producer.py),
+# with the exception that we call the GiGL DistNeighborSampler with custom link prediction logic instead of the GLT DistNeighborSampler.
+
 import datetime
 import queue
+from threading import Barrier
 from typing import Optional, Union, cast
 
 import torch
@@ -30,14 +34,9 @@ from torch.utils.data.dataset import Dataset
 
 from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
 
-"""
-All code in this file is directly taken from GraphLearn-for-PyTorch, with the exception that we call
-the GiGL DistNeighborSampler with custom link prediction logic instead of the GLT DistNeighborSampler
-"""
-
 
 def _sampling_worker_loop(
-    rank,
+    rank: int,
     data: DistDataset,
     sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
     unshuffled_index: Optional[torch.Tensor],
@@ -45,8 +44,8 @@ def _sampling_worker_loop(
     worker_options: MpDistSamplingWorkerOptions,
     channel: ChannelBase,
     task_queue: mp.Queue,
-    sampling_completed_worker_count,
-    mp_barrier,
+    sampling_completed_worker_count,  # mp.Value
+    mp_barrier: Barrier,
 ):
     dist_sampler = None
     try:

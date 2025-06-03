@@ -54,6 +54,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         if negative_labels is not None:
             metadata["negative_labels"] = negative_labels
         if input_type == supervision_node_type:
+            combined_seeds: tuple[torch.Tensor, ...]
             if negative_seeds is not None:
                 combined_seeds = (input_seeds, positive_seeds, negative_seeds)
             else:
