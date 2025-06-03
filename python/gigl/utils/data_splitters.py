@@ -180,6 +180,10 @@ class HashedNodeAnchorLinkSplitter:
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         if isinstance(edge_index, torch.Tensor):
+            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+                logger.warning(
+                    f"You provided edge-types {self._supervision_edge_types} but the edge index is homogeneous. Ignoring supervision edge types."
+                )
             is_heterogeneous = False
             edge_index = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}
 
