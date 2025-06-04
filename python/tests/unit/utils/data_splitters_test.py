@@ -322,37 +322,6 @@ class TestDataSplitters(unittest.TestCase):
                 },
             ),
             param(
-                "Multiple supervision edge types, one target node type",
-                edges={
-                    EdgeType(_NODE_B, _TO, _NODE_A): torch.stack(
-                        [
-                            torch.zeros(10, dtype=torch.int64),
-                            torch.arange(10, dtype=torch.int64),
-                        ]
-                    ),
-                    EdgeType(_NODE_C, _TO, _NODE_A): torch.stack(
-                        [
-                            torch.zeros(10, dtype=torch.int64),
-                            torch.arange(10, 20, dtype=torch.int64),
-                        ]
-                    ),
-                },
-                edge_types_to_split=[
-                    EdgeType(_NODE_B, _TO, _NODE_A),
-                    EdgeType(_NODE_C, _TO, _NODE_A),
-                ],
-                hash_function=lambda x: x,
-                val_num=0.1,
-                test_num=0.1,
-                expected={
-                    _NODE_A: (
-                        torch.arange(16, dtype=torch.int64),
-                        torch.tensor([16, 17], dtype=torch.int64),
-                        torch.tensor([18, 19], dtype=torch.int64),
-                    ),
-                },
-            ),
-            param(
                 "Multiple supervision edge types, one target node type, dup nodes",
                 edges={
                     EdgeType(_NODE_B, _TO, _NODE_A): torch.stack(
@@ -384,6 +353,37 @@ class TestDataSplitters(unittest.TestCase):
                 },
             ),
             param(
+                "Multiple supervision edge types, one target node type, disjoint set",
+                edges={
+                    EdgeType(_NODE_B, _TO, _NODE_A): torch.stack(
+                        [
+                            torch.zeros(10, dtype=torch.int64),
+                            torch.arange(10, dtype=torch.int64),
+                        ]
+                    ),
+                    EdgeType(_NODE_C, _TO, _NODE_A): torch.stack(
+                        [
+                            torch.zeros(10, dtype=torch.int64),
+                            torch.arange(5, 15, dtype=torch.int64),
+                        ]
+                    ),
+                },
+                edge_types_to_split=[
+                    EdgeType(_NODE_B, _TO, _NODE_A),
+                    EdgeType(_NODE_C, _TO, _NODE_A),
+                ],
+                hash_function=lambda x: x,
+                val_num=1,
+                test_num=1,
+                expected={
+                    _NODE_A: (
+                        torch.tensor([5, 6, 7], dtype=torch.int64),
+                        torch.tensor([8], dtype=torch.int64),
+                        torch.tensor([9], dtype=torch.int64),
+                    ),
+                },
+            ),
+            param(
                 "Multiple supervision edge types, one target node type, different input shapes",
                 edges={
                     EdgeType(_NODE_B, _TO, _NODE_A): torch.stack(
@@ -394,8 +394,8 @@ class TestDataSplitters(unittest.TestCase):
                     ),
                     EdgeType(_NODE_C, _TO, _NODE_A): torch.stack(
                         [
-                            torch.zeros(2, dtype=torch.int64),
-                            torch.arange(30, 32, dtype=torch.int64),
+                            torch.zeros(20, dtype=torch.int64),
+                            torch.arange(20, dtype=torch.int64),
                         ]
                     ),
                 },
@@ -408,9 +408,9 @@ class TestDataSplitters(unittest.TestCase):
                 test_num=0.1,
                 expected={
                     _NODE_A: (
-                        torch.arange(10, dtype=torch.int64),
-                        torch.tensor([30], dtype=torch.int64),
-                        torch.tensor([31], dtype=torch.int64),
+                        torch.arange(8, dtype=torch.int64),
+                        torch.tensor([8], dtype=torch.int64),
+                        torch.tensor([9], dtype=torch.int64),
                     ),
                 },
             ),

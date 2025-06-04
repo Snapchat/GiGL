@@ -24,6 +24,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
+    reverse_edge_type,
 )
 
 logger = Logger()
@@ -123,6 +124,10 @@ class HashedNodeAnchorLinkSplitter:
     Take the graph [A -> B] as an example.
     If `sampling_direction` is "in", then B is the source and A is the destination.
     If `sampling_direction` is "out", then A is the source and B is the destination.
+
+    Note that if an given node type is specified to be selected by different edges,
+    e.g. (A to B) and (A to C),
+    Then the returned node ids for `A` will be the intersection of the two sets of node ids.
     """
 
     def __init__(
@@ -177,14 +182,24 @@ class HashedNodeAnchorLinkSplitter:
         # edge and will be used for splitting.
 
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
+        self._labeled_edge_types: Sequence[EdgeType]
         if should_convert_labels_to_edges:
-            self._labeled_edge_types: Sequence[EdgeType] = [
+            labeled_edge_types = [
                 message_passing_to_positive_label(supervision_edge_type)
                 for supervision_edge_type in supervision_edge_types
             ] + [
                 message_passing_to_negative_label(supervision_edge_type)
                 for supervision_edge_type in supervision_edge_types
             ]
+            # If the edge direction is "in", we must reverse the labeled edge type, since separately provided labels are expected to be initially outgoing, and all edges
+            # in the graph must have the same edge direction.
+            if sampling_direction == "in":
+                self._labeled_edge_types = [
+                    reverse_edge_type(labeled_edge_type)
+                    for labeled_edge_type in labeled_edge_types
+                ]
+            else:
+                self._labeled_edge_types = labeled_edge_types
         else:
             self._labeled_edge_types = supervision_edge_types
 
@@ -229,7 +244,7 @@ class HashedNodeAnchorLinkSplitter:
         # TODO(kmonte): investigate this.
         # We also store references to all tensors of a given node type, for convenient access later.
         max_node_id_by_type: dict[NodeType, int] = defaultdict(int)
-        node_ids_by_node_type: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
+        node_ids_by_node_type: dict[NodeType, list[tuple[torch.Tensor, EdgeType]]] = defaultdict(list)
         for edge_type_to_split, coo_edges in edge_index.items():
             # In this case, the labels should be converted to an edge type in graph with relation containing `is_gigl_positive` or `is_gigl_negative`.
             if edge_type_to_split not in self._labeled_edge_types:
@@ -252,7 +267,7 @@ class HashedNodeAnchorLinkSplitter:
                     torch.max(anchor_nodes).item() + 1,
                 )
             )
-            node_ids_by_node_type[anchor_node_type].append(anchor_nodes)
+            node_ids_by_node_type[anchor_node_type].append((anchor_nodes, edge_type_to_split))
         # Second, we go through all node types and split them.
         # Note the approach here (with `torch.argsort`) isn't the quickest
         # we could avoid calling `torch.argsort` and do something like:
@@ -271,9 +286,14 @@ class HashedNodeAnchorLinkSplitter:
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         for anchor_node_type, collected_anchor_nodes in node_ids_by_node_type.items():
             max_node_id = max_node_id_by_type[anchor_node_type]
-            node_id_count = torch.zeros(max_node_id, dtype=torch.int64)
-            for anchor_nodes in collected_anchor_nodes:
-                node_id_count.add_(torch.bincount(anchor_nodes, minlength=max_node_id))
+            node_count_by_edge: dict[EdgeType, torch.Tensor] = defaultdict(lambda: torch.zeros(max_node_id, dtype=torch.int64))
+            for anchor_nodes, edge_type in collected_anchor_nodes:
+                node_count_by_edge[edge_type].add_(torch.bincount(anchor_nodes, minlength=max_node_id))
+
+
+            node_id_count = torch.ones(max_node_id, dtype=torch.int64)
+            for anchor_counts in node_count_by_edge.values():
+                node_id_count = (node_id_count != 0) & (anchor_counts != 0)
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
             # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
             # and the `squeeze` converts that to a 1d tensor (`[1, 3]`).
