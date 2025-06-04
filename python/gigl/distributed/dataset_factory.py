@@ -18,7 +18,7 @@ from graphlearn_torch.distributed import (
     shutdown_rpc,
 )
 
-from gigl.common import UriFactory
+from gigl.common import Uri, UriFactory
 from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
@@ -360,7 +360,7 @@ def build_dataset(
 
 
 def build_dataset_from_task_config_uri(
-    task_config_uri: str,
+    task_config_uri: Union[str, Uri],
     distributed_context: DistributedContext,
     is_inference: bool = True,
 ) -> DistLinkPredictionDataset:
