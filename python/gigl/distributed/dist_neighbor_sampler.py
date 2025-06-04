@@ -17,6 +17,7 @@ from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.utils.data_splitters import PADDING_NODE
 
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
+# TODO (mkolodner-sc): Add tests for this class
 
 
 class DistABLPNeighborSampler(DistNeighborSampler):
@@ -54,6 +55,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         metadata: dict[str, torch.Tensor] = {"positive_labels": positive_labels}
         if negative_labels is not None:
             metadata["negative_labels"] = negative_labels
+        # If the input type and supervision node type are the same, we should concatenate the input and supervision nodes together for fanning out.
         if input_type == supervision_node_type:
             combined_seeds: tuple[torch.Tensor, ...]
             if negative_seeds is not None:
@@ -61,6 +63,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             else:
                 combined_seeds = (input_seeds, positive_seeds)
             input_nodes = {input_type: torch.cat(combined_seeds, dim=0)}
+        # Otherwise, they need to be passed as two separate node types to the inducer.init_node() function.
         else:
             if negative_seeds is None:
                 input_nodes = {
