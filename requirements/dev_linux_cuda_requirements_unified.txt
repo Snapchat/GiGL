@@ -1779,6 +1779,7 @@ numpy==1.24.3 \
     #   matplotlib
     #   ml-dtypes
     #   pandas
+    #   pandas-stubs
     #   pyarrow
     #   scikit-learn
     #   scipy
@@ -2000,6 +2001,10 @@ pandas==1.5.3 \
     #   gigl (python/pyproject.toml)
     #   tensorflow-data-validation
     #   tfx-bsl
+pandas-stubs==2.2.2.240807 \
+    --hash=sha256:64a559725a57a449f46225fbafc422520b7410bff9252b661a225b5559192a93 \
+    --hash=sha256:893919ad82be4275f0d07bb47a95d08bae580d3fdea308a7acfcb3f02e76186e
+    # via gigl (python/pyproject.toml)
 parameterized==0.9.0 \
     --hash=sha256:4e0758e3d41bea3bbd05ec14fc2c24736723f243b28d702081aef438c9372b1b \
     --hash=sha256:7fc905272cefa4f364c1a3429cbbe9c0f98b793988efb5bf90aac80f08db09b1
@@ -3104,6 +3109,10 @@ types-psutil==7.0.0.20250401 \
     --hash=sha256:2a7d663c0888a079fc1643ebc109ad12e57a21c9552a9e2035da504191336dbf \
     --hash=sha256:ed23f7140368104afe4e05a6085a5fa56fbe8c880a0f4dfe8d63e041106071ed
     # via gigl (python/pyproject.toml)
+types-pytz==2025.2.0.20250516 \
+    --hash=sha256:e0e0c8a57e2791c19f718ed99ab2ba623856b11620cb6b637e5f62ce285a7451 \
+    --hash=sha256:e1216306f8c0d5da6dafd6492e72eb080c9a166171fa80dd7a1990fd8be7a7b3
+    # via pandas-stubs
 types-pyyaml==6.0.12.20250402 \
     --hash=sha256:652348fa9e7a203d4b0d21066dfb00760d3cbd5a15ebb7cf8d33c88a49546681 \
     --hash=sha256:d7c13c3e6d335b6af4b0122a01ff1d270aba84ab96d1a1a1063ecba3e13ec075
