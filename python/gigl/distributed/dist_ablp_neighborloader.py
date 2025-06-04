@@ -437,7 +437,8 @@ class DistABLPLoader(DistLoader):
     ) -> Data:
         """
         Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
-        local index. Removes inserted supervision edge type from the Data variables.
+        local index. Removes inserted supervision edge type from the data variables, since this is an implementation detail and should not be
+        exposed in the final HeteroData/Data object.
         Args:
             data (Data): Graph to provide labels for
             positive_labels (torch.Tensor): Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
