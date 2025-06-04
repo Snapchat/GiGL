@@ -17,9 +17,7 @@ from gigl.distributed.distributed_neighborloader import (
     DistABLPLoader,
     DistNeighborLoader,
 )
-from gigl.distributed.utils.serialized_graph_metadata_translator import (
-    convert_pb_to_serialized_graph_metadata,
-)
+from gigl.distributed.utils import convert_pb_to_serialized_graph_metadata
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata

@@ -13,7 +13,7 @@ from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
-from gigl.distributed.utils.partition_book import get_ids_on_rank
+from gigl.distributed.utils import get_ids_on_rank
 from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to use torch_geometric.typing
     EdgeType,
     NodeType,

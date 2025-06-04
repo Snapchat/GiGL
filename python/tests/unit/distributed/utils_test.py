@@ -2,19 +2,24 @@ import unittest
 from collections import abc
 from typing import Dict, List, Optional, Union
 
+i
+
+import unittest
+from typing import Dict
+
+import torch
+from graphlearn_torch.partition import RangePartitionBook
 from parameterized import param, parameterized
 
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
-from gigl.distributed.utils.serialized_graph_metadata_translator import (
+from gigl.distributed.utils import (
     convert_pb_to_serialized_graph_metadata,
+    get_ids_on_rank,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
-from gigl.src.mocking.lib.versioning import (
-    MockedDatasetArtifactMetadata,
-    get_mocked_dataset_artifact_metadata,
-)
+from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -23,11 +28,6 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 
 
 class TranslatorTestCase(unittest.TestCase):
-    def setUp(self):
-        self._name_to_mocked_dataset_map: Dict[
-            str, MockedDatasetArtifactMetadata
-        ] = get_mocked_dataset_artifact_metadata()
-
     def _assert_data_type_correctness(
         self,
         entity_info: Optional[
@@ -81,7 +81,7 @@ class TranslatorTestCase(unittest.TestCase):
         ]
     )
     def test_translator_correctness(self, _, mocked_dataset_info: MockedDatasetInfo):
-        mocked_dataset_artifact_metadata = self._name_to_mocked_dataset_map[
+        mocked_dataset_artifact_metadata = get_mocked_dataset_artifact_metadata()[
             mocked_dataset_info.name
         ]
         gbml_config_pb_wrapper = (
@@ -395,3 +395,44 @@ class TranslatorTestCase(unittest.TestCase):
                     self.assertIsNone(serialized_negative_label_info)
         else:
             self.assertIsNone(serialized_graph_metadata.negative_label_entity_info)
+
+    @parameterized.expand(
+        [
+            param(
+                "Test getting ids for tensor-based partition book",
+                partition_book=torch.Tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1]),
+                rank_to_expected_ids={
+                    0: torch.Tensor([0, 3, 7]).to(torch.int64),
+                    1: torch.Tensor([1, 2, 8, 9]).to(torch.int64),
+                    2: torch.Tensor([6]).to(torch.int64),
+                    3: torch.Tensor([4, 5]).to(torch.int64),
+                },
+            ),
+            param(
+                "Test getting ids for range-based partition book",
+                partition_book=RangePartitionBook(
+                    partition_ranges=[(0, 4), (4, 5), (5, 10), (10, 13)],
+                    partition_idx=0,
+                ),
+                rank_to_expected_ids={
+                    0: torch.Tensor([0, 1, 2, 3]).to(torch.int64),
+                    1: torch.Tensor([4]).to(torch.int64),
+                    2: torch.Tensor([5, 6, 7, 8, 9]).to(torch.int64),
+                    3: torch.Tensor([10, 11, 12]).to(torch.int64),
+                },
+            ),
+        ]
+    )
+    def test_getting_ids_on_rank(
+        self,
+        _,
+        partition_book: torch.Tensor,
+        rank_to_expected_ids: Dict[int, torch.Tensor],
+    ):
+        for rank, expected_ids in rank_to_expected_ids.items():
+            output_ids = get_ids_on_rank(partition_book=partition_book, rank=rank)
+            torch.testing.assert_close(actual=output_ids, expected=expected_ids)
+
+
+if __name__ == "__main__":
+    unittest.main()
