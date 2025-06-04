@@ -37,7 +37,7 @@ from gigl.types.graph import (
     select_label_edge_types,
     to_heterogeneous_edge,
 )
-from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
+from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 logger = Logger()
 
@@ -387,12 +387,10 @@ class DistABLPLoader(DistLoader):
 
     def _get_labels(
         self, msg: SampleMessage
-    ) -> Tuple[
-        SampleMessage, dict[int, torch.Tensor], Optional[dict[int, torch.Tensor]]
-    ]:
+    ) -> Tuple[SampleMessage, torch.Tensor, Optional[torch.Tensor]]:
         # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
         """
-        Gets the de-padded labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
+        Gets the labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
         `to_hetero_data` function strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
         building the HeteroData object.
 
@@ -400,8 +398,8 @@ class DistABLPLoader(DistLoader):
             msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
         Returns:
             SampleMessage: Updated sample messsage with the label fields removed
-            dict[int, torch.Tensor]: Map of anchor node ID to positive labels
-            Optional[dict[int, torch.Tensor]]: Map of anchor node ID to negative labels, can be None if dataset has no negative labels
+            torch.Tensor: Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
+            Optional[torch.Tensor]: Negative label ID tensor, where the ith row corresponds to the ith anchor node ID, can be None if dataset has no negative labels
         """
         metadata = {}
         for k in list(msg.keys()):
@@ -415,24 +413,7 @@ class DistABLPLoader(DistLoader):
         negative_labels = (
             metadata["negative_labels"] if "negative_labels" in metadata else None
         )
-        output_positive_labels: dict[int, torch.Tensor] = {}
-        output_negative_labels: dict[int, torch.Tensor] = {}
-
-        for i in range(positive_labels.shape[0]):
-            positive_example = positive_labels[i]
-            output_positive_labels[i] = positive_example[
-                positive_example != PADDING_NODE
-            ]
-            if negative_labels is not None:
-                negative_example = negative_labels[i]
-                output_negative_labels[i] = negative_example[
-                    negative_example != PADDING_NODE
-                ]
-        return (
-            msg,
-            output_positive_labels,
-            output_negative_labels if len(output_negative_labels) > 0 else None,
-        )
+        return (msg, positive_labels, negative_labels)
 
     def _supervised_to_homogeneous(self, data: Data) -> Data:
         """
@@ -451,16 +432,16 @@ class DistABLPLoader(DistLoader):
     def _set_labels(
         self,
         data: Data,
-        positive_labels: dict[int, torch.Tensor],
-        negative_labels: Optional[dict[int, torch.Tensor]],
+        positive_labels: torch.Tensor,
+        negative_labels: Optional[torch.Tensor],
     ) -> Data:
         """
         Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
         local index. Removes inserted supervision edge type from the Data variables.
         Args:
             data (Data): Graph to provide labels for
-            positive_labels (dict[int, torch.Tensor]): Mapping of local anchor node id to global positive node ids
-            negative_labels (Optional[dict[int, torch.Tensor]]): Mapping of local anchor node id to global negative node ids,
+            positive_labels (torch.Tensor): Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
+            negative_labels (Optional[torch.Tensor]): Negative label ID tensor, where the ith row corresponds to the ith anchor node ID,
                 can be None if dataset has no negative labels
         Returns:
             Data: torch_geometric Data object with the filtered edge fields and labels set as properties of the instance
@@ -476,12 +457,15 @@ class DistABLPLoader(DistLoader):
         else:
             local_node_to_global_node = data.node
 
-        for local_anchor_node_id in positive_labels:
+        output_positive_labels: dict[int, torch.Tensor] = {}
+        output_negative_labels: dict[int, torch.Tensor] = {}
+
+        for local_anchor_node_id in range(positive_labels.size(0)):
             positive_mask = (
                 local_node_to_global_node.unsqueeze(1)
                 == positive_labels[local_anchor_node_id]
             )
-            positive_labels[local_anchor_node_id] = torch.nonzero(positive_mask)[
+            output_positive_labels[local_anchor_node_id] = torch.nonzero(positive_mask)[
                 :, 0
             ].to(self.to_device)
             if negative_labels is not None:
@@ -489,12 +473,12 @@ class DistABLPLoader(DistLoader):
                     local_node_to_global_node.unsqueeze(1)
                     == negative_labels[local_anchor_node_id]
                 )
-                negative_labels[local_anchor_node_id] = torch.nonzero(negative_mask)[
-                    :, 0
-                ].to(self.to_device)
-        data.y_positive = positive_labels
+                output_negative_labels[local_anchor_node_id] = torch.nonzero(
+                    negative_mask
+                )[:, 0].to(self.to_device)
+        data.y_positive = output_positive_labels
         if negative_labels is not None:
-            data.y_negative = negative_labels
+            data.y_negative = output_negative_labels
 
         if isinstance(data, HeteroData):
             del data.num_sampled_edges[self._positive_label_edge_type]
