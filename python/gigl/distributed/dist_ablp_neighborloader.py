@@ -312,8 +312,8 @@ class DistABLPLoader(DistLoader):
             seed=None,  # it's actually optional - None means random.
         )
 
-        # Code below this point is taken from the GLT DistNeighborLoader.__init__() function. We do this so that we may override
-        # the DistSamplingProducer that is used with the GiGL implementation.
+        # Code below this point is taken from the GLT DistNeighborLoader.__init__() function (graphlearn_torch/python/distributed/dist_neighbor_loader.py).
+        # We do this so that we may override the DistSamplingProducer that is used with the GiGL implementation.
 
         self.data = dataset
         self.input_data = sampler_input
@@ -390,8 +390,12 @@ class DistABLPLoader(DistLoader):
     ) -> Tuple[
         SampleMessage, dict[int, torch.Tensor], Optional[dict[int, torch.Tensor]]
     ]:
+        # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
         """
-        Gets the labels from the output SampleMessage and removes them from the metadata
+        Gets the de-padded labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
+        `to_hetero_data` function strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
+        building the HeteroData object.
+
         Args:
             msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
         Returns:
@@ -461,44 +465,33 @@ class DistABLPLoader(DistLoader):
         Returns:
             Data: torch_geometric Data object with the filtered edge fields and labels set as properties of the instance
         """
+        local_node_to_global_node: torch.Tensor
         if isinstance(data, HeteroData):
             supervision_node_type = (
                 self._supervision_edge_type[0]
                 if self.edge_dir == "in"
                 else self._supervision_edge_type[2]
             )
-            for node_type in data.node_types:
-                global_node_to_local_node_map = {
-                    node.item(): idx for idx, node in enumerate(data[node_type].node)
-                }
-                data[
-                    node_type
-                ].global_node_to_local_node_map = global_node_to_local_node_map
-            global_node_to_local_supervision_node_map = data[
-                supervision_node_type
-            ].global_node_to_local_node_map
+            local_node_to_global_node = data[supervision_node_type].node
         else:
-            global_node_to_local_supervision_node_map = {
-                node.item(): idx for idx, node in enumerate(data.node)
-            }
-            data.global_node_to_local_node_map = (
-                global_node_to_local_supervision_node_map
-            )
+            local_node_to_global_node = data.node
 
         for local_anchor_node_id in positive_labels:
-            positive_labels[local_anchor_node_id] = torch.tensor(
-                [
-                    global_node_to_local_supervision_node_map[positive_label.item()]
-                    for positive_label in positive_labels[local_anchor_node_id]
-                ]
-            ).to(self.to_device)
+            positive_mask = (
+                local_node_to_global_node.unsqueeze(1)
+                == positive_labels[local_anchor_node_id]
+            )
+            positive_labels[local_anchor_node_id] = torch.nonzero(positive_mask)[
+                :, 0
+            ].to(self.to_device)
             if negative_labels is not None:
-                negative_labels[local_anchor_node_id] = torch.tensor(
-                    [
-                        global_node_to_local_supervision_node_map[negative_label.item()]
-                        for negative_label in negative_labels[local_anchor_node_id]
-                    ]
-                ).to(self.to_device)
+                negative_mask = (
+                    local_node_to_global_node.unsqueeze(1)
+                    == negative_labels[local_anchor_node_id]
+                )
+                negative_labels[local_anchor_node_id] = torch.nonzero(negative_mask)[
+                    :, 0
+                ].to(self.to_device)
         data.y_positive = positive_labels
         if negative_labels is not None:
             data.y_negative = negative_labels

@@ -137,31 +137,24 @@ def _run_distributed_ablp_neighbor_loader(
         expected_node,
         dim=0,
     )
-    global_node_to_local_node_map = datum.global_node_to_local_node_map
-    for anchor in expected_positive_labels.keys():
-        local_anchor = global_node_to_local_node_map[anchor]
-        local_positive_labels = torch.tensor(
-            [
-                global_node_to_local_node_map[positive_label.item()]
-                for positive_label in expected_positive_labels[anchor]
-            ]
-        )
+    for local_anchor in datum.y_positive:
+        global_id = datum.node[local_anchor].item()
+        global_positive_nodes = datum.node[datum.y_positive[local_anchor]]
+        expected_positive_label = expected_positive_labels[global_id]
         assert_tensor_equality(
-            datum.y_positive[local_anchor],
-            local_positive_labels,
+            global_positive_nodes,
+            expected_positive_label,
+            dim=0,
         )
     if expected_negative_labels is not None:
-        for anchor in expected_negative_labels.keys():
-            local_anchor = global_node_to_local_node_map[anchor]
-            local_negative_labels = torch.tensor(
-                [
-                    global_node_to_local_node_map[negative_label.item()]
-                    for negative_label in expected_negative_labels[anchor]
-                ]
-            )
+        for local_anchor in datum.y_negative:
+            global_id = datum.node[local_anchor].item()
+            global_negative_nodes = datum.node[datum.y_negative[local_anchor]]
+            expected_negative_label = expected_negative_labels[global_id]
             assert_tensor_equality(
-                datum.y_negative[local_anchor],
-                local_negative_labels,
+                global_negative_nodes,
+                expected_negative_label,
+                dim=0,
             )
     else:
         assert not hasattr(datum, "y_negative")
