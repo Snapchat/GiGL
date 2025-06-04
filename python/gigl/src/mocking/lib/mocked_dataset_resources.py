@@ -18,8 +18,6 @@ from snapchat.research.gbml import graph_schema_pb2
 
 @dataclass
 class MockedDatasetInfo:
-    # TODO: (svij) Deprecate MockedDatasetInfo in favor of pyg.HeteroData
-
     @property
     def node_types(self) -> List[NodeType]:
         return list(self.node_feats.keys())
