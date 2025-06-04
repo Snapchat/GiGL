@@ -358,6 +358,17 @@ class GbmlConfigPbWrapper:
         Returns:
             PreprocessedMetadataPbWrapper: The preprocessed metadata proto wrapper
         """
+        if self._preprocessed_metadata_pb_wrapper is None:
+            # Try populating the _preprocessed_metadata_pb_wrapper field if not available
+            # This is already done in __post_init__, but we can call it again incase the wrapper
+            # was initialized before preprocessor ran
+            logger.info(
+                "Preprocessed metadata was not initialized, meaning it was not available when this object was initialized."
+                "Attempting to load it now."
+            )
+            self.__load_preprocessed_metadata_pb_wrapper(
+                uri=self.gbml_config_pb.shared_config.preprocessed_metadata_uri
+            )
         return self._preprocessed_metadata_pb_wrapper
 
     @property
