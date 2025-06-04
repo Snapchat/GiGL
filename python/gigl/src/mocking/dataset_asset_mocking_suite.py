@@ -433,9 +433,7 @@ class DatasetAssetMockingSuite:
 
         # Extract edge types and node types from the HeteroData object
         edge_types = list(toy_data.edge_types)
-        print(f"SV DEBUG Edge types: {edge_types}")
         node_types = list(toy_data.node_types)
-        print(f"SV DEBUG Node types: {node_types}")
 
         # Build edge_index, node_feats, and edge_feats dictionaries
         edge_index = {
