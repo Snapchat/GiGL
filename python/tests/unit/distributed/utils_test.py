@@ -2,11 +2,6 @@ import unittest
 from collections import abc
 from typing import Dict, List, Optional, Union
 
-i
-
-import unittest
-from typing import Dict
-
 import torch
 from graphlearn_torch.partition import RangePartitionBook
 from parameterized import param, parameterized
