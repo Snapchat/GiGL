@@ -278,7 +278,10 @@ def _run_dblp_supervised(
     count = 0
     for datum in loader:
         assert isinstance(datum, HeteroData)
+        assert hasattr(datum, "y_positive")
+        assert isinstance(datum.y_positive, dict)
         count += 1
+    assert count == dataset.train_node_ids[NodeType("paper")].size(0)
 
     shutdown_rpc()
 
