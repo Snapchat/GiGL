@@ -24,6 +24,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
+    reverse_edge_type,
 )
 
 logger = Logger()
@@ -177,14 +178,24 @@ class HashedNodeAnchorLinkSplitter:
         # edge and will be used for splitting.
 
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
+        self._labeled_edge_types: Sequence[EdgeType]
         if should_convert_labels_to_edges:
-            self._labeled_edge_types: Sequence[EdgeType] = [
+            labeled_edge_types = [
                 message_passing_to_positive_label(supervision_edge_type)
                 for supervision_edge_type in supervision_edge_types
             ] + [
                 message_passing_to_negative_label(supervision_edge_type)
                 for supervision_edge_type in supervision_edge_types
             ]
+            # If the edge direction is "in", we must reverse the labeled edge type, since separately provided labels are expected to be initially outgoing, and all edges
+            # in the graph must have the same edge direction.
+            if sampling_direction == "in":
+                self._labeled_edge_types = [
+                    reverse_edge_type(labeled_edge_type)
+                    for labeled_edge_type in labeled_edge_types
+                ]
+            else:
+                self._labeled_edge_types = labeled_edge_types
         else:
             self._labeled_edge_types = supervision_edge_types
 
