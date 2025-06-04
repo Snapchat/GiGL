@@ -1,5 +1,5 @@
 from collections import abc
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage, ShmChannel
@@ -46,14 +46,14 @@ class DistABLPLoader(DistLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
-        num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
+        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         context: DistributedContext,
         local_process_rank: int,  # TODO: Move this to DistributedContext
         local_process_world_size: int,  # TODO: Move this to DistributedContext
         input_nodes: Optional[
             Union[
                 torch.Tensor,
-                Tuple[NodeType, torch.Tensor],
+                tuple[NodeType, torch.Tensor],
             ]
         ] = None,
         # TODO(kmonte): Support multiple supervision edge types.
@@ -84,7 +84,7 @@ class DistABLPLoader(DistLoader):
 
            Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
-            num_neighbors (List[int] or Dict[Tuple[str, str, str], List[int]]):
+            num_neighbors (list[int] or Dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
@@ -92,7 +92,7 @@ class DistABLPLoader(DistLoader):
             context (DistributedContext): Distributed context information of the current process.
             local_process_rank (int): The local rank of the current process within a node.
             local_process_world_size (int): The total number of processes within a node.
-            input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
+            input_nodes (torch.Tensor or tuple[str, torch.Tensor]): The
                 indices of seed nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
                 If set to `None` for homogeneous settings, all nodes will be considered.
@@ -258,6 +258,7 @@ class DistABLPLoader(DistLoader):
             local_process_world_size=local_process_world_size,
             rank=context.global_rank,
             world_size=context.global_world_size,
+            # TODO (mkolodner-sc): Automatically infer ports so that we are not relying local_process_rank in `init_neighbor_loader_worker`
             master_worker_port=_main_inference_port,
             device=self.to_device,
             should_use_cpu_workers=should_use_cpu_workers,
@@ -281,6 +282,7 @@ class DistABLPLoader(DistLoader):
             # the sampling processes in different groups should be independent, and should
             # use different master ports.
             master_addr=context.main_worker_ip_address,
+            # TODO (mkolodner-sc): Automatically infer ports so that we are not relying local_process_rank
             master_port=_main_sampling_port + local_process_rank,
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
@@ -387,7 +389,7 @@ class DistABLPLoader(DistLoader):
 
     def _get_labels(
         self, msg: SampleMessage
-    ) -> Tuple[SampleMessage, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> tuple[SampleMessage, torch.Tensor, Optional[torch.Tensor]]:
         # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
         """
         Gets the labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
@@ -407,7 +409,6 @@ class DistABLPLoader(DistLoader):
                 meta_key = str(k[6:])
                 metadata[meta_key] = msg[k].to(self.to_device)
                 del msg[k]
-        assert len(metadata) > 0
 
         positive_labels = metadata["positive_labels"]
         negative_labels = (
@@ -417,7 +418,7 @@ class DistABLPLoader(DistLoader):
 
     def _supervised_to_homogeneous(self, data: Data) -> Data:
         """
-        Removes the labeled edge type from a supervised graph and converts it to homogeneous
+        Removes the label edge types from a supervised graph and converts it to homogeneous
 
         Args:
             data (Data): Heterogeneous graph with the supervision edge type
@@ -431,23 +432,24 @@ class DistABLPLoader(DistLoader):
 
     def _set_labels(
         self,
-        data: Data,
+        data: Union[Data, HeteroData],
         positive_labels: torch.Tensor,
         negative_labels: Optional[torch.Tensor],
-    ) -> Data:
+    ) -> Union[Data, HeteroData]:
         """
         Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
         local index. Removes inserted supervision edge type from the data variables, since this is an implementation detail and should not be
         exposed in the final HeteroData/Data object.
         Args:
-            data (Data): Graph to provide labels for
+            data (Union[Data, HeteroData]): Graph to provide labels for
             positive_labels (torch.Tensor): Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
             negative_labels (Optional[torch.Tensor]): Negative label ID tensor, where the ith row corresponds to the ith anchor node ID,
                 can be None if dataset has no negative labels
         Returns:
-            Data: torch_geometric Data object with the filtered edge fields and labels set as properties of the instance
+            Union[Data, HeteroData]: torch_geometric HeteroData/Data object with the filtered edge fields and labels set as properties of the instance
         """
         local_node_to_global_node: torch.Tensor
+        # shape [N], where N is the number of nodes in the subgraph, and local_node_to_global_node[i] gives the global node id for local node id `i`
         if isinstance(data, HeteroData):
             supervision_node_type = (
                 self._supervision_edge_type[0]
@@ -465,15 +467,20 @@ class DistABLPLoader(DistLoader):
             positive_mask = (
                 local_node_to_global_node.unsqueeze(1)
                 == positive_labels[local_anchor_node_id]
-            )
+            )  # shape [N, M], where N is the number of nodes and M is the number of positive labels for the current anchor node
+
+            # Gets the indexes of the items in local_node_to_global_node which match any of the positive labels for the current anchor node
             output_positive_labels[local_anchor_node_id] = torch.nonzero(positive_mask)[
                 :, 0
             ].to(self.to_device)
+
             if negative_labels is not None:
                 negative_mask = (
                     local_node_to_global_node.unsqueeze(1)
                     == negative_labels[local_anchor_node_id]
-                )
+                )  # shape [N, O], where N is the number of nodes and O is the number of negative labels for the current anchor node
+
+                # Gets the indexes of the items in local_node_to_global_node which match any of the negative labels for the current anchor node
                 output_negative_labels[local_anchor_node_id] = torch.nonzero(
                     negative_mask
                 )[:, 0].to(self.to_device)
@@ -481,6 +488,7 @@ class DistABLPLoader(DistLoader):
         if negative_labels is not None:
             data.y_negative = output_negative_labels
 
+        # We remove the inserted labeled edge type from the returned data object, since this is an implementation detail and should not be exposed to users.
         if isinstance(data, HeteroData):
             del data.num_sampled_edges[self._positive_label_edge_type]
             del data._edge_store_dict[self._positive_label_edge_type]
