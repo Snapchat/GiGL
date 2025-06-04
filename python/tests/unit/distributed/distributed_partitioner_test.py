@@ -13,8 +13,7 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 
 from gigl.distributed import DistPartitioner, DistRangePartitioner
-from gigl.distributed.utils import get_process_group_name
-from gigl.distributed.utils.partition_book import get_ids_on_rank
+from gigl.distributed.utils import get_ids_on_rank, get_process_group_name
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
 from tests.test_assets.distributed.constants import (

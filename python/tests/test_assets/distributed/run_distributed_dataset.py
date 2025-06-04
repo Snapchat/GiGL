@@ -4,9 +4,7 @@ from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
-from gigl.distributed.utils.serialized_graph_metadata_translator import (
-    convert_pb_to_serialized_graph_metadata,
-)
+from gigl.distributed.utils import convert_pb_to_serialized_graph_metadata
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import (
