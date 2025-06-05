@@ -344,6 +344,8 @@ def _run_toy_heterogeneous_ablp(
         assert torch.isin(
             global_positive_supervision_nodes, expected_positive_supervision_nodes
         ).all()
+        # Check that we have also fanned out around the supervision node type
+        assert datum[supervision_node_type].num_samples_nodes > 0
 
     shutdown_rpc()
 
