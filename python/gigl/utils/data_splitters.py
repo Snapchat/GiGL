@@ -244,7 +244,7 @@ class HashedNodeAnchorLinkSplitter:
         # TODO(kmonte): investigate this.
         # We also store references to all tensors of a given node type, for convenient access later.
         max_node_id_by_type: dict[NodeType, int] = defaultdict(int)
-        node_ids_by_node_type: dict[
+        node_ids_and_edge_type_by_node_type: dict[
             NodeType, list[tuple[torch.Tensor, EdgeType]]
         ] = defaultdict(list)
         for edge_type_to_split, coo_edges in edge_index.items():
@@ -269,7 +269,7 @@ class HashedNodeAnchorLinkSplitter:
                     torch.max(anchor_nodes).item() + 1,
                 )
             )
-            node_ids_by_node_type[anchor_node_type].append(
+            node_ids_and_edge_type_by_node_type[anchor_node_type].append(
                 (anchor_nodes, edge_type_to_split)
             )
         # Second, we go through all node types and split them.
@@ -288,7 +288,10 @@ class HashedNodeAnchorLinkSplitter:
         # For example if we have `{(A to B): [0, 1], (A to C): [0, 2]}` then we will have
         # `collected_anchor_nodes` = [[0, 1], [0, 2]].
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
-        for anchor_node_type, collected_anchor_nodes in node_ids_by_node_type.items():
+        for (
+            anchor_node_type,
+            collected_anchor_nodes,
+        ) in node_ids_and_edge_type_by_node_type.items():
             max_node_id = max_node_id_by_type[anchor_node_type]
 
             # We want to keep track of the node ids, by edge type.
@@ -299,17 +302,21 @@ class HashedNodeAnchorLinkSplitter:
             # negative_labels = [(2, 5), (3, 1)]
             # We should only use `2` as a node id.
             node_count_by_edge: dict[EdgeType, torch.Tensor] = defaultdict(
-                lambda: torch.zeros(max_node_id, dtype=torch.int64)
+                lambda: torch.zeros(max_node_id, dtype=torch.int8)
             )
             for anchor_nodes, edge_type in collected_anchor_nodes:
                 node_count_by_edge[edge_type].add_(
                     torch.bincount(anchor_nodes, minlength=max_node_id)
                 )
 
-            node_id_count = torch.ones(max_node_id, dtype=torch.int64)
+            node_id_count = torch.ones(max_node_id, dtype=torch.int8)
             # Do the intersection calculation.
             for anchor_counts in node_count_by_edge.values():
                 node_id_count = (node_id_count != 0) & (anchor_counts != 0)
+
+            node_count_by_edge.clear()
+            del node_count_by_edge
+            gc.collect()
 
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
             # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
