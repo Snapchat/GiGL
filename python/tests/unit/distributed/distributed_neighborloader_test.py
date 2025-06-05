@@ -284,7 +284,7 @@ def _run_dblp_supervised(
         assert hasattr(datum, "y_positive")
         assert isinstance(datum.y_positive, dict)
         assert not hasattr(datum, "y_negative")
-        for local_anchor_node_id, local_positive_nodes in datum.y_positive:
+        for local_anchor_node_id, local_positive_nodes in datum.y_positive.items():
             assert local_anchor_node_id < len(datum[anchor_node_type].batch)
             assert torch.all(
                 local_positive_nodes < len(datum[supervision_node_type].node)
@@ -354,7 +354,7 @@ def _run_toy_heterogeneous_ablp(
             global_positive_supervision_nodes, all_positive_supervision_nodes
         ).all()
         # Check that we have also fanned out around the supervision node type
-        assert datum[supervision_node_type].num_samples_nodes[0] > 0
+        assert datum[supervision_node_type].num_sampled_nodes[0] > 0
 
     # Check that the current anchor node from y_positive is found in the batch
     assert_tensor_equality(
