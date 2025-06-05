@@ -279,6 +279,8 @@ class DistABLPLoader(DistNeighborLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
+        _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
@@ -490,6 +492,8 @@ class DistABLPLoader(DistNeighborLoader):
             num_cpu_threads=num_cpu_threads,
             shuffle=shuffle,
             drop_last=drop_last,
+            _main_inference_port=_main_inference_port,
+            _main_sampling_port=_main_sampling_port,
         )
 
     def _get_node_sampler_input(
@@ -511,6 +515,7 @@ def _shard_nodes_by_process(
             if local_process_rank == local_process_world_size - 1
             else start_index + num_node_ids_per_process
         )
+        logger.info(f"Slicing nodes ({nodes.shape}) from {start_index} to {end_index}.")
         nodes_for_current_process = nodes[start_index:end_index]
         return nodes_for_current_process
 

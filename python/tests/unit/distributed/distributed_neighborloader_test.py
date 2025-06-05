@@ -460,6 +460,36 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, expected_data_count),
         )
 
+    # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
+    @unittest.skip("Failing due to ports being already allocated - skiping for now")
+    def test_cora_supervised(self):
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        dataset = build_dataset_from_task_config_uri(
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri.uri,
+            distributed_context=self._context,
+            is_inference=False,
+        )
+        loader = DistABLPLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            input_nodes=to_homogeneous(dataset.train_node_ids),
+            context=self._context,
+            local_process_rank=0,
+            local_process_world_size=1,
+        )
+        count = 0
+        for datum in loader:
+            self.assertIsInstance(datum, Data)
+            self.assertTrue(hasattr(datum, "y_positive"))
+            self.assertIsInstance(datum.y_positive, dict)
+            self.assertTrue(hasattr(datum, "y_negative"))
+            self.assertIsInstance(datum.y_negative, dict)
+            self.assertEqual(datum.y_positive.keys(), datum.y_negative.keys())
+            count += 1
+        self.assertEqual(count, 2161)
+
 
 if __name__ == "__main__":
     unittest.main()
