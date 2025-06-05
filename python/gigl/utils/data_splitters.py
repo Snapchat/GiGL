@@ -436,9 +436,13 @@ def _get_padded_labels(
         mask, torch.full_like(ranges, PADDING_NODE.item()), indices[ranges]
     )
     labels = torch.cat(
-        [labels, torch.ones(extra_nodes_to_pad, max_range) * PADDING_NODE], dim=0
+        [
+            labels,
+            torch.ones(extra_nodes_to_pad, max_range, dtype=torch.int64) * PADDING_NODE,
+        ],
+        dim=0,
     )
-    return labels.to(dtype=torch.int64)
+    return labels
 
 
 def _check_sampling_direction(sampling_direction: str):

@@ -623,7 +623,7 @@ class TestDataSplitters(unittest.TestCase):
             positive_label_edge_type=a_to_b,
             negative_label_edge_type=a_to_c,
         )
-
+        # "DST" nodes for our anchor nodes (10, 11, 13).
         expected_positive = torch.tensor(
             [[10, 11], [12, 13], [10, -1]], dtype=torch.int64
         )
