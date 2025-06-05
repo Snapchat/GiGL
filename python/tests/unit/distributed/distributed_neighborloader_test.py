@@ -263,6 +263,8 @@ def _run_dblp_supervised(
         len(supervision_edge_types) == 1
     ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
     supervision_edge_type = supervision_edge_types[0]
+    anchor_node_type = supervision_edge_type.src_node_type
+    supervision_node_type = supervision_edge_type.dst_node_type
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
     fanout = [2, 2]
@@ -270,7 +272,7 @@ def _run_dblp_supervised(
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(NodeType("paper"), dataset.train_node_ids["paper"]),
+        input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),
         context=context,
         local_process_rank=0,
         local_process_world_size=1,
@@ -281,8 +283,14 @@ def _run_dblp_supervised(
         assert isinstance(datum, HeteroData)
         assert hasattr(datum, "y_positive")
         assert isinstance(datum.y_positive, dict)
+        assert not hasattr(datum, "y_negative")
+        for local_anchor_node_id, local_positive_nodes in datum.y_positive:
+            assert local_anchor_node_id < len(datum[anchor_node_type].batch)
+            assert torch.all(
+                local_positive_nodes < len(datum[supervision_node_type].node)
+            )
         count += 1
-    assert count == dataset.train_node_ids[NodeType("paper")].size(0)
+    assert count == dataset.train_node_ids[anchor_node_type].size(0)
 
     shutdown_rpc()
 
@@ -306,7 +314,7 @@ def _run_toy_heterogeneous_ablp(
         supervision_node_type, Relation("to_gigl_positive"), anchor_node_type
     )
     num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
-    expected_positive_supervision_nodes, expected_anchor_nodes, _, _ = dataset.graph[
+    all_positive_supervision_nodes, all_anchor_nodes, _, _ = dataset.graph[
         labeled_edge_type
     ].topo.to_coo()
     loader = DistABLPLoader(
@@ -331,18 +339,22 @@ def _run_toy_heterogeneous_ablp(
     assert_tensor_equality(
         dataset.train_node_ids[anchor_node_type], datum[anchor_node_type].batch
     )
+    # Check that the anchor node from y_positive is found in the batch
+    assert_tensor_equality(
+        torch.tensor(list(datum.y_positive.keys())),
+        datum[anchor_node_type].batch,
+        dim=0,
+    )
     for local_anchor_node, local_positive_supervision_nodes in datum.y_positive.items():
         global_anchor_node = datum[anchor_node_type].node[local_anchor_node]
         global_positive_supervision_nodes = datum[supervision_node_type].node[
             local_positive_supervision_nodes
         ]
-        # Check that the current anchor node from y_positive is found in the batch
-        assert global_anchor_node in datum[anchor_node_type].batch
         # Check that the current anchor node from y_positive is found in the expected anchor tensor
-        assert global_anchor_node.item() in expected_anchor_nodes
+        assert global_anchor_node.item() in all_anchor_nodes
         # Check that all positive supervision nodes from y_positive are found in the expected positive supervision tensor
         assert torch.isin(
-            global_positive_supervision_nodes, expected_positive_supervision_nodes
+            global_positive_supervision_nodes, all_positive_supervision_nodes
         ).all()
         # Check that we have also fanned out around the supervision node type
         assert datum[supervision_node_type].num_samples_nodes[0] > 0

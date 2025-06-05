@@ -215,7 +215,7 @@ class DistABLPLoader(DistLoader):
             num_hop = len(list(num_neighbors.values())[0])
         else:
             num_hop = len(num_neighbors)
-        zero_samples = [0] * num_hop
+        zero_samples = [0 for _ in range(num_hop)]
         num_neighbors = to_heterogeneous_edge(num_neighbors)
         for edge_type in dataset.graph.keys():
             if is_label_edge_type(edge_type):
@@ -416,12 +416,12 @@ class DistABLPLoader(DistLoader):
         )
         return (msg, positive_labels, negative_labels)
 
-    def _supervised_to_homogeneous(self, data: Data) -> Data:
+    def _supervised_to_homogeneous(self, data: HeteroData) -> Data:
         """
         Removes the label edge types from a supervised graph and converts it to homogeneous
 
         Args:
-            data (Data): Heterogeneous graph with the supervision edge type
+            data (HeteroData): Heterogeneous graph with the supervision edge type
         Returns:
             data (Data): Homogeneous graph with the labeled edge type removed
         """
@@ -473,6 +473,7 @@ class DistABLPLoader(DistLoader):
             output_positive_labels[local_anchor_node_id] = torch.nonzero(positive_mask)[
                 :, 0
             ].to(self.to_device)
+            # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the positive labels for the current anchor node
 
             if negative_labels is not None:
                 negative_mask = (
@@ -484,6 +485,7 @@ class DistABLPLoader(DistLoader):
                 output_negative_labels[local_anchor_node_id] = torch.nonzero(
                     negative_mask
                 )[:, 0].to(self.to_device)
+                # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
         data.y_positive = output_positive_labels
         if negative_labels is not None:
             data.y_negative = output_negative_labels
