@@ -354,7 +354,7 @@ def _run_toy_heterogeneous_ablp(
             global_positive_supervision_nodes, all_positive_supervision_nodes
         ).all()
         # Check that we have also fanned out around the supervision node type
-        assert datum[supervision_node_type].num_sampled_nodes[0] > 0
+        assert datum.num_sampled_nodes[supervision_node_type][0] > 0
 
     # Check that the current anchor node from y_positive is found in the batch
     assert_tensor_equality(
