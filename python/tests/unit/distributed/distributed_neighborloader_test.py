@@ -339,17 +339,14 @@ def _run_toy_heterogeneous_ablp(
     assert_tensor_equality(
         dataset.train_node_ids[anchor_node_type], datum[anchor_node_type].batch
     )
-    # Check that the anchor node from y_positive is found in the batch
-    assert_tensor_equality(
-        torch.tensor(list(datum.y_positive.keys())),
-        datum[anchor_node_type].batch,
-        dim=0,
-    )
+    global_anchor_nodes = []
     for local_anchor_node, local_positive_supervision_nodes in datum.y_positive.items():
         global_anchor_node = datum[anchor_node_type].node[local_anchor_node]
         global_positive_supervision_nodes = datum[supervision_node_type].node[
             local_positive_supervision_nodes
         ]
+        global_anchor_nodes.append(global_anchor_node)
+
         # Check that the current anchor node from y_positive is found in the expected anchor tensor
         assert global_anchor_node.item() in all_anchor_nodes
         # Check that all positive supervision nodes from y_positive are found in the expected positive supervision tensor
@@ -358,6 +355,11 @@ def _run_toy_heterogeneous_ablp(
         ).all()
         # Check that we have also fanned out around the supervision node type
         assert datum[supervision_node_type].num_samples_nodes[0] > 0
+
+    # Check that the current anchor node from y_positive is found in the batch
+    assert_tensor_equality(
+        torch.tensor(global_anchor_nodes), datum[anchor_node_type].batch, dim=0
+    )
 
     shutdown_rpc()
 
