@@ -467,7 +467,7 @@ class DistABLPLoader(DistLoader):
             positive_mask = (
                 local_node_to_global_node.unsqueeze(1)
                 == positive_labels[local_anchor_node_id]
-            )  # shape [N, M], where N is the number of nodes and M is the number of positive labels for the current anchor node
+            )  # shape [N, P], where N is the number of nodes and P is the number of positive labels for the current anchor node
 
             # Gets the indexes of the items in local_node_to_global_node which match any of the positive labels for the current anchor node
             output_positive_labels[local_anchor_node_id] = torch.nonzero(positive_mask)[
@@ -478,7 +478,7 @@ class DistABLPLoader(DistLoader):
                 negative_mask = (
                     local_node_to_global_node.unsqueeze(1)
                     == negative_labels[local_anchor_node_id]
-                )  # shape [N, O], where N is the number of nodes and O is the number of negative labels for the current anchor node
+                )  # shape [N, M], where N is the number of nodes and M is the number of negative labels for the current anchor node
 
                 # Gets the indexes of the items in local_node_to_global_node which match any of the negative labels for the current anchor node
                 output_negative_labels[local_anchor_node_id] = torch.nonzero(
