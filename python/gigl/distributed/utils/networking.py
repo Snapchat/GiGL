@@ -10,7 +10,7 @@ logger = Logger()
 
 def get_free_port() -> int:
     """
-    Find a free port and return the socket (to keep open) and port number.
+    Get a free port number.
     Returns:
         int: A free port number on the current machine.
     """
@@ -19,7 +19,7 @@ def get_free_port() -> int:
 
 def get_free_ports(num_ports: int) -> list[int]:
     """
-    Get a list of free ports.
+    Get a list of free port numbers.
     Args:
         num_ports (int): Number of free ports to find.
     Returns:
