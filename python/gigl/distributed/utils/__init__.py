@@ -2,7 +2,7 @@
 Utility functions for distributed computing.
 """
 
-all = [
+__all__ = [
     "get_available_device",
     "get_free_ports_from_master_node",
     "get_free_port",
