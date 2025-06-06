@@ -19,30 +19,39 @@ def run_in_dist_context(
         rank=rank,
     )
     try:
-        ports: list[int] = get_free_master_ports(num_ports=num_ports)
+        free_ports: list[int] = get_free_master_ports(num_ports=num_ports)
+        assert len(free_ports) == num_ports
+
         # Check that all ranks see the same ports broadcasted from master (rank 0)
-        gathered_ports = [
+        gathered_ports_across_ranks = [
             torch.zeros(num_ports, dtype=torch.int32) for _ in range(world_size)
         ]
-        dist.all_gather_object(gathered_ports, ports)
-        assert len(gathered_ports) == world_size, (
-            f"Expected {world_size} ports, but got {len(gathered_ports)}"
-        )
-        assert all(isinstance(p, int) and p > 0 for p in gathered_ports), (
-            f"All gathered ports should be positive integers, but got: {gathered_ports}"
-        )
-        for rank in range(world_size):
-            port_n = [gathered_ports[rank][port_num] for port_num in range(num_ports)]
-            assert all(
-                p == port_n[0] for p in port_n
-            ), f"Ports not synchronized across ranks: {port_n}"
+        dist.all_gather_object(gathered_ports_across_ranks, free_ports)
+        assert (
+            len(gathered_ports_across_ranks) == world_size
+        ), f"Expected {world_size} ports, but got {len(gathered_ports_across_ranks)}"
+        ports_gathered_at_rank_0 = gathered_ports_across_ranks[0]
+        assert (
+            len(ports_gathered_at_rank_0) == num_ports
+        ), "returned number of ports to match requested number of ports"
+        assert all(
+            port >= 0 for port in ports_gathered_at_rank_0
+        ), "All ports should be non-negative integers"
+        assert all(
+            ports_gathered_at_rank_k == ports_gathered_at_rank_0
+            for ports_gathered_at_rank_k in gathered_ports_across_ranks
+        ), "All ranks should receive the same ports from master (rank 0)"
     finally:
         dist.destroy_process_group()
 
 
 class TestGetFreeMasterPorts(unittest.TestCase):
     def tearDown(self):
-        dist.destroy_process_group()
+        if dist.is_initialized():
+            print("Destroying process group")
+            # Ensure the process group is destroyed after each test
+            # to avoid interference with subsequent tests
+            dist.destroy_process_group()
 
     @parameterized.expand(
         [
@@ -63,18 +72,18 @@ class TestGetFreeMasterPorts(unittest.TestCase):
             ),
         ]
     )
-    def test_get_free_master_ports_two_ranks(self, _, num_ports: int, world_size: int):
+    def test_get_free_master_ports_two_ranks(self, _name, num_ports, world_size):
         port = get_free_port()
         init_process_group_init_method = f"tcp://127.0.0.1:{port}"
         mp.spawn(
-            run_in_dist_context,
+            fn=run_in_dist_context,
             args=(world_size, init_process_group_init_method, num_ports),
             nprocs=world_size,
         )
 
     def test_fails_if_process_group_not_initialized(self):
         with self.assertRaises(
-            RuntimeError,
-            msg="An error should be raised since the `dist.init_process_group` is not initialized"
+            AssertionError,
+            msg="An error should be raised since the `dist.init_process_group` is not initialized",
         ):
             get_free_master_ports(num_ports=1)

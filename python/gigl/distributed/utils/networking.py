@@ -3,16 +3,41 @@ from typing import Optional
 
 import torch
 
+from gigl.common.logger import Logger
 
-def get_free_port() -> tuple[socket.socket, int]:
+logger = Logger()
+
+
+def get_free_port() -> int:
     """
     Find a free port and return the socket (to keep open) and port number.
     Returns:
-        tuple[socket.socket, int]: A tuple containing the socket and the free port number.
+        int: A free port number on the current machine.
     """
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("", 0))  # OS assigns a free port
-    return s, s.getsockname()[1]
+    return get_free_ports(num_ports=1)[0]
+
+
+def get_free_ports(num_ports: int) -> list[int]:
+    """
+    Get a list of free ports.
+    Args:
+        num_ports (int): Number of free ports to find.
+    Returns:
+        list[int]: A list of free port numbers on the current machine.
+    """
+    assert num_ports >= 1, "num_ports must be >= 1"
+    ports: list[int] = []
+    open_sockets: list[socket.socket] = []
+    for _ in range(num_ports):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # OS assigns a free port; we want to keep it open until we have all ports so we only return unique ports
+        s.bind(("", 0))
+        open_sockets.append(s)
+        ports.append(s.getsockname()[1])
+    # Free up ports by closing the sockets
+    for s in open_sockets:
+        s.close()
+    return ports
 
 
 def get_free_master_ports(
@@ -20,7 +45,14 @@ def get_free_master_ports(
 ) -> list[int]:
     """
     Get a free port from master node, that can be used for communication between workers.
+    Args:
+        num_ports (int): Number of free ports to find.
+        _global_rank_override (Optional[int]): Override for the global rank,
+            useful for testing or if global rank is not accurately available.
+    Returns:
+        list[int]: A list of free port numbers on the master node.
     """
+    # Ensure that the distributed environment is initialized
     assert (
         torch.distributed.is_initialized()
     ), "Distributed environment must be initialized to communicate free ports on master"
@@ -31,13 +63,15 @@ def get_free_master_ports(
         if _global_rank_override is None
         else _global_rank_override
     )
-    ports: list[int] = []
+    logger.info(
+        f"Rank {rank} is requesting {num_ports} free ports from rank 0 (master)"
+    )
+    ports: list[int]
     if rank == 0:
-        # Find a free port on the master node
-        s, port = get_free_port()
-        ports.append(port)
+        ports = get_free_ports(num_ports)
+        logger.info(f"Rank {rank} found free ports: {ports}")
     else:
-        ports.append(0)  # dummy for non rank 0 processes
+        ports = [0] * num_ports
 
     # Wrap port in a tensor to communicate
     port_tensor = torch.tensor(
@@ -45,4 +79,5 @@ def get_free_master_ports(
     )
     # Broadcast from master from rank 0 to all other ranks
     torch.distributed.broadcast(port_tensor, src=0)
+    logger.info(f"Rank {rank} received ports: {port_tensor.tolist()}")
     return port_tensor.tolist()
