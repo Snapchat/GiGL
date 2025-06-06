@@ -44,7 +44,7 @@ def get_free_ports_from_master_node(
     num_ports=1, _global_rank_override: Optional[int] = None
 ) -> list[int]:
     """
-    Get a free port from master node, that can be used for communication between workers.
+    Get free ports from master node, that can be used for communication between workers.
     Args:
         num_ports (int): Number of free ports to find.
         _global_rank_override (Optional[int]): Override for the global rank,
