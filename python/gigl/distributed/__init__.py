@@ -2,7 +2,7 @@
 GLT Distributed Classes implemented in GiGL
 """
 
-all = [
+__all__ = [
     "DistNeighborLoader",
     "DistLinkPredictionDataset",
     "DistributedContext",
