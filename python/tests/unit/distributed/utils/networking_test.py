@@ -8,7 +8,7 @@ from parameterized import param, parameterized
 from gigl.distributed.utils import get_free_port, get_free_ports_from_master_node
 
 
-def run_in_dist_context(
+def test_fetching_free_ports_in_dist_context(
     rank: int, world_size: int, init_process_group_init_method: str, num_ports: int
 ):
     # Initialize distributed process group
@@ -78,7 +78,7 @@ class TestGetFreeMasterPorts(unittest.TestCase):
         port = get_free_port()
         init_process_group_init_method = f"tcp://127.0.0.1:{port}"
         mp.spawn(
-            fn=run_in_dist_context,
+            fn=test_fetching_free_ports_in_dist_context,
             args=(world_size, init_process_group_init_method, num_ports),
             nprocs=world_size,
         )
