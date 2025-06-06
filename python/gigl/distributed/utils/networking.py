@@ -40,7 +40,7 @@ def get_free_ports(num_ports: int) -> list[int]:
     return ports
 
 
-def get_free_master_ports(
+def get_free_ports_from_master_node(
     num_ports=1, _global_rank_override: Optional[int] = None
 ) -> list[int]:
     """

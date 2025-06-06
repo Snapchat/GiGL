@@ -5,7 +5,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from parameterized import param, parameterized
 
-from gigl.distributed.utils import get_free_master_ports, get_free_port
+from gigl.distributed.utils import get_free_port, get_free_ports_from_master_node
 
 
 def run_in_dist_context(
@@ -19,7 +19,7 @@ def run_in_dist_context(
         rank=rank,
     )
     try:
-        free_ports: list[int] = get_free_master_ports(num_ports=num_ports)
+        free_ports: list[int] = get_free_ports_from_master_node(num_ports=num_ports)
         assert len(free_ports) == num_ports
 
         # Check that all ranks see the same ports broadcasted from master (rank 0)
@@ -72,7 +72,9 @@ class TestGetFreeMasterPorts(unittest.TestCase):
             ),
         ]
     )
-    def test_get_free_master_ports_two_ranks(self, _name, num_ports, world_size):
+    def test_get_free_ports_from_master_node_two_ranks(
+        self, _name, num_ports, world_size
+    ):
         port = get_free_port()
         init_process_group_init_method = f"tcp://127.0.0.1:{port}"
         mp.spawn(
@@ -86,4 +88,4 @@ class TestGetFreeMasterPorts(unittest.TestCase):
             AssertionError,
             msg="An error should be raised since the `dist.init_process_group` is not initialized",
         ):
-            get_free_master_ports(num_ports=1)
+            get_free_ports_from_master_node(num_ports=1)

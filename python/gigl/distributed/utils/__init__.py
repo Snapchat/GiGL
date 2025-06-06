@@ -4,7 +4,7 @@ Utility functions for distributed computing.
 
 all = [
     "get_available_device",
-    "get_free_master_ports",
+    "get_free_ports_from_master_node",
     "get_free_port",
     "get_process_group_name",
     "init_neighbor_loader_worker",
@@ -15,4 +15,4 @@ from .init_neighbor_loader_worker import (
     get_process_group_name,
     init_neighbor_loader_worker,
 )
-from .networking import get_free_master_ports, get_free_port
+from .networking import get_free_port, get_free_ports_from_master_node
