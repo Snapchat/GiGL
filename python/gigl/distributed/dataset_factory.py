@@ -38,6 +38,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
@@ -363,6 +364,7 @@ def build_dataset_from_task_config_uri(
     task_config_uri: Union[str, Uri],
     distributed_context: DistributedContext,
     is_inference: bool = True,
+    _tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
 ) -> DistLinkPredictionDataset:
     """
     Builds a dataset from a provided `task_config_uri` as part of GiGL orchestration. Parameters to
@@ -377,6 +379,7 @@ def build_dataset_from_task_config_uri(
             master_ip_address, rank, and world size
         is_inference (bool): Whether the run is for inference or training. If True, arguments will
             be read from inferenceArgs. Otherwise, arguments witll be read from trainerArgs.
+        _tfrecord_uri_pattern (str): INTERNAL ONLY. Regex pattern for loading serialized tf records. Defaults to ".*-of-.*\.tfrecord(\.gz)?$".
     """
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -394,6 +397,8 @@ def build_dataset_from_task_config_uri(
 
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+            if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
+            else [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         )
         sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "trainerConfig.trainerArgs"
@@ -434,6 +439,7 @@ def build_dataset_from_task_config_uri(
     serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
         preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        tfrecord_uri_pattern=_tfrecord_uri_pattern,
     )
 
     if should_use_range_partitioning:
