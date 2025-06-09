@@ -1087,7 +1087,7 @@ class DistPartitioner:
         logger.info(f"Node Partitioning finished, took {elapsed_time:.3f}s")
 
         if self._is_input_homogeneous:
-            # Converting heterogenemous input back to homogeneous
+            # Converting heterogeneous input back to homogeneous
             return node_partition_book[DEFAULT_HOMOGENEOUS_NODE_TYPE]
         else:
             return node_partition_book
