@@ -5,19 +5,16 @@ MASTER_ADDR=localhost MASTER_PORT=9762 python examples/distributed/homogeneous_t
 """
 import argparse
 import datetime
-from multiprocessing import process
 import pickle
 import time
 from pathlib import Path
 from typing import Optional
-import itertools
 
 import torch
 import torch.multiprocessing as mp
-from torch import neg, nn
-from torch_geometric.data import Data, HeteroData
+from torch import nn
+from torch_geometric.data import Data
 
-from gigl.common.collections.itertools import batch
 from gigl.common.logger import Logger
 from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
@@ -28,7 +25,6 @@ from gigl.distributed import (
     DistributedContext,
     build_dataset_from_task_config_uri,
 )
-from graphlearn_torch.distributed import barrier, shutdown_rpc
 from gigl.distributed.utils import get_available_device
 from gigl.src.common.models.layers.loss import RetrievalLoss
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
@@ -126,39 +122,26 @@ def _init_example_gigl_model(
 
     return model
 
+
 def index_select(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    return torch.tensor(
-        [torch.nonzero(a == e).squeeze(1) for e in b], dtype=torch.long
-    )
+    return torch.tensor([torch.nonzero(a == e).squeeze(1) for e in b], dtype=torch.long)
 
 
 def _infer_inputs(
-        model: nn.Module,
-        main_data: Data,
-        random_data: Data,
-        device: torch.device
+    model: nn.Module, main_data: Data, random_data: Data, device: torch.device
 ) -> tuple[BatchCombinedScores, torch.Tensor]:
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         decoder = model.module.decode
     else:
         decoder = model.decode
-    anchor_nodes = torch.tensor(list(main_data.y_positive.keys()))
-    repeated_anchors = []
-    for anchor in map(lambda t: t.item(), anchor_nodes):
-        # repeated_anchors.extend([anchor] * (main_data.y_positive[anchor].shape[0] + main_data.y_negative[anchor].shape[0]))
-        repeated_anchors.extend(
-            [anchor] * (main_data.y_positive[anchor].numel())
-        )
-    repeated_anchor_nodes = torch.tensor(repeated_anchors)
-    positve_anchors = torch.cat(list(main_data.y_positive.values()))
-    positive_anchor_indicies = index_select(main_data.node, positve_anchors)
-    negative_anchors = torch.cat(list(main_data.y_negative.values()))
-    negative_anchor_indicies = index_select(main_data.node, negative_anchors)
-    repeated_anchor_indicies = index_select(
-        main_data.node, repeated_anchor_nodes
+    anchor_nodes: torch.Tensor = torch.tensor(list(main_data.y_positive.keys())).to(
+        device
     )
-    # print(f"{repeated_anchor_indicies.shape=}, {repeated_anchor_nodes.dtype=}")
-    # print(f"{repeated_anchor_indicies=}")
+    pos_nodes: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(device)
+    neg_nodes: torch.Tensor = torch.cat(list(main_data.y_negative.values())).to(device)
+    repeated_query_node_ids = anchor_nodes.repeat_interleave(
+        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
+    )
     main_embeddings = to_homogeneous(
         model(
             main_data,
@@ -166,7 +149,6 @@ def _infer_inputs(
             device=device,
         )
     )
-    # print(f"Main embeddings shape: ({main_embeddings.shape})")
     random_embeddings = to_homogeneous(
         model(
             random_data,
@@ -174,35 +156,24 @@ def _infer_inputs(
             device=device,
         )
     )
-    repeated_query_embeddigns = main_embeddings[repeated_anchor_indicies]
-    # print(f"{positive_anchor_indicies.shape}, {positive_anchor_indicies.dtype=}")
-    # print(f"{negative_anchor_indicies.shape}, {negative_anchor_indicies.dtype=}")
+    repeated_query_embeddigns = main_embeddings[repeated_query_node_ids]
     repeated_candidate_scores = decoder(
         query_embeddings=repeated_query_embeddigns,
         candidate_embeddings=torch.cat(
             [
-                main_embeddings[positive_anchor_indicies],
-                main_embeddings[negative_anchor_indicies],
-                random_embeddings[
-                    index_select(random_data.node, random_data.batch)
-                ],
+                main_embeddings[pos_nodes],
+                main_embeddings[neg_nodes],
+                random_embeddings[: len(random_data.batch)],
             ]
         ),
     )
-    # print(
-    #     f"{anchor_nodes.shape=}, {positve_anchors.shape=}, {negative_anchors.shape=}, {repeated_candidate_scores.shape=}"
-    # )
-    # print(f"{repeated_candidate_scores.shape=}")
-    # print(f"{repeated_anchor_nodes.shape=}")
-    # print(f"{repeated_query_embeddigns.shape=}")
-    # print(f"{main_embeddings[positive_anchor_indicies].shape=}")
 
     batched_combined_scores = BatchCombinedScores(
         repeated_candidate_scores=repeated_candidate_scores,
-        positive_ids=positve_anchors,
-        hard_neg_ids=negative_anchors,
+        positive_ids=main_data.node[pos_nodes],
+        hard_neg_ids=main_data.node[neg_nodes],
         random_neg_ids=random_data.batch,
-        repeated_query_ids=repeated_anchor_nodes,
+        repeated_query_ids=repeated_query_node_ids,
         num_unique_query_ids=len(anchor_nodes),
     )
     return batched_combined_scores, repeated_query_embeddigns
@@ -237,41 +208,45 @@ def _train_process(
         drop_last=True,
     )
     val_nodes = to_homogeneous(dataset.val_node_ids)
-    val_loader = iter(DistABLPLoader(
-        dataset=dataset,
-        context=dist_context,
-        num_neighbors=num_neighbors,
-        local_process_rank=process_number,
-        local_process_world_size=total_processes,
-        input_nodes=val_nodes,
-        pin_memory_device=device,
-        shuffle=True,
-        drop_last=True,
-        _main_sampling_port=50_000 + process_number * 100 + 4,
-    ))
+    val_loader = iter(
+        DistABLPLoader(
+            dataset=dataset,
+            context=dist_context,
+            num_neighbors=num_neighbors,
+            local_process_rank=process_number,
+            local_process_world_size=total_processes,
+            input_nodes=val_nodes,
+            pin_memory_device=device,
+            shuffle=True,
+            drop_last=True,
+            _main_sampling_port=50_000 + process_number * 100 + 4,
+        )
+    )
     zero_fanout = [0] * len(num_neighbors)
-    random_negative_loader = iter(DistNeighborLoader(
-        dataset=dataset,
-        context=dist_context,
-        num_neighbors={
-            DEFAULT_HOMOGENEOUS_EDGE_TYPE: num_neighbors,
-            message_passing_to_negative_label(
-                DEFAULT_HOMOGENEOUS_EDGE_TYPE
-            ): zero_fanout,
-            message_passing_to_positive_label(
-                DEFAULT_HOMOGENEOUS_EDGE_TYPE
-            ): zero_fanout,
-        },
-        local_process_rank=process_number,
-        local_process_world_size=total_processes,
-        input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, negative_samples),
-        pin_memory_device=device,
-        batch_size=num_random_samples,
-        shuffle=True,
-        drop_last=True,
-        _main_inference_port=40_000 + process_number * 100 + 4,
-        _main_sampling_port=30_000 + process_number * 100 + 4,
-    ))
+    random_negative_loader = iter(
+        DistNeighborLoader(
+            dataset=dataset,
+            context=dist_context,
+            num_neighbors={
+                DEFAULT_HOMOGENEOUS_EDGE_TYPE: num_neighbors,
+                message_passing_to_negative_label(
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE
+                ): zero_fanout,
+                message_passing_to_positive_label(
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE
+                ): zero_fanout,
+            },
+            local_process_rank=process_number,
+            local_process_world_size=total_processes,
+            input_nodes=(DEFAULT_HOMOGENEOUS_NODE_TYPE, negative_samples),
+            pin_memory_device=device,
+            batch_size=num_random_samples,
+            shuffle=True,
+            drop_last=True,
+            _main_inference_port=40_000 + process_number * 100 + 4,
+            _main_sampling_port=30_000 + process_number * 100 + 4,
+        )
+    )
     logger.info(f"device_type: {device.type}, device: {device}")
     torch.distributed.init_process_group(
         # TODO: "nccl" when GPU
@@ -293,7 +268,9 @@ def _train_process(
         inferencer_args={},
         device=device,
     )
-    ddp_model = nn.parallel.DistributedDataParallel(model, device_ids=[device] if device.type == "cuda" else None)
+    ddp_model = nn.parallel.DistributedDataParallel(
+        model, device_ids=[device] if device.type == "cuda" else None
+    )
     all_named_parameters = list(ddp_model.named_parameters())
     embedding_params, other_params = split_parameters_by_layer_names(
         named_parameters=all_named_parameters,
@@ -324,7 +301,9 @@ def _train_process(
 
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
     torch.distributed.barrier()
-    print(f"process {process_number} started training. {train_nodes.shape=}, {val_nodes.shape=}, {negative_samples.shape=}")
+    print(
+        f"process {process_number} started training. {train_nodes.shape=}, {val_nodes.shape=}, {negative_samples.shape=}"
+    )
     for epoch in range(num_epoch):
         logger.info(f"Epoch {epoch} started")
         for batch_idx, main_data in enumerate(train_loader):
@@ -333,9 +312,8 @@ def _train_process(
             # TODO enable AMP
             # print(f"Epoch {epoch} batch {batch_idx}")
             # print(f"maiin_data: {main_data}")
-            print(
-                f"Process {process_number} Epoch {epoch} batch {batch_idx}")
-            random_data= next(random_negative_loader)
+            print(f"Process {process_number} Epoch {epoch} batch {batch_idx}")
+            random_data = next(random_negative_loader)
             print(f"process {process_number} ")
             random_data = random_data.edge_type_subgraph(
                 [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
@@ -348,7 +326,11 @@ def _train_process(
                 device=device,
             )
             print(f"calculating loss for process {process_number}")
-            loss_output = loss(batch_combined_scores=scores, repeated_query_embeddings=repeated_query_embeddings, candidate_sampling_probability=None)
+            loss_output = loss(
+                batch_combined_scores=scores,
+                repeated_query_embeddings=repeated_query_embeddings,
+                candidate_sampling_probability=None,
+            )
             loss_tensor: torch.Tensor = loss_output[0]
 
             if loss_tensor.grad_fn is None:
@@ -391,11 +373,12 @@ def _train_process(
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
     print(f"Process {process_number} finished training")
     torch.distributed.barrier()
-    #barrier()
+    # barrier()
     torch.distributed.destroy_process_group()
     print(f"Process {process_number} destroyed process group")
     del train_loader, val_loader, random_negative_loader
     print(f"Process {process_number} deleted dataloaders")
+
 
 def train(
     task_config_uri: str,
@@ -423,15 +406,14 @@ def train(
         )
     )
     num_random_samples = int(
-        gbml_pb_wrapper.trainer_config.trainer_args.get(
-            "num_random_samples", 100
-        )
+        gbml_pb_wrapper.trainer_config.trainer_args.get("num_random_samples", 100)
     )
     num_neighbors = [10, 10]
     print(f"len(dataset.node_pb) = {len(to_homogeneous(dataset.node_pb))}")
     print(f"dataset.node_pb.shape = {to_homogeneous(dataset.node_pb).shape}")
     negative_samples = torch.arange(len(to_homogeneous(dataset.node_pb))).repeat(
-        num_random_samples)
+        num_random_samples
+    )
     negative_samples.share_memory_()
 
     node_feature_dim = gbml_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
