@@ -360,7 +360,9 @@ class DistLinkPredictionDataset(DistDataset):
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
         partitioned_edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
-        partitioned_edge_ids: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
+        partitioned_edge_ids: Union[
+            Optional[torch.Tensor], Dict[EdgeType, Optional[torch.Tensor]]
+        ]
         if isinstance(partition_output.partitioned_edge_index, GraphPartitionData):
             partitioned_edge_index = partition_output.partitioned_edge_index.edge_index
             partitioned_edge_ids = partition_output.partitioned_edge_index.edge_ids

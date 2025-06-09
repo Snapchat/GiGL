@@ -49,7 +49,7 @@ class GraphPartitionData:
     # edge index (rows, cols)
     edge_index: torch.Tensor
     # edge ids tensor corresponding to `edge_index`
-    edge_ids: torch.Tensor
+    edge_ids: Optional[torch.Tensor] = None
     # weights tensor corresponding to `edge_index`
     weights: Optional[torch.Tensor] = None
 
