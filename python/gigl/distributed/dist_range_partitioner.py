@@ -152,7 +152,7 @@ class DistRangePartitioner(DistPartitioner):
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            FeaturePartitionData: The edge features on the current partition
+            Optional[FeaturePartitionData]: The edge features on the current partition
             Optional[PartitionBook]: The partition book of graph edges.
         """
 
