@@ -273,10 +273,12 @@ class DistRangePartitioner(DistPartitioner):
     def partition_edge_index_and_edge_features(
         self, node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]]
     ) -> Union[
-        tuple[GraphPartitionData, Optional[FeaturePartitionData], PartitionBook],
+        tuple[
+            GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+        ],
         tuple[
             Dict[EdgeType, GraphPartitionData],
-            Optional[Dict[EdgeType, FeaturePartitionData]],
+            Dict[EdgeType, FeaturePartitionData],
             Dict[EdgeType, PartitionBook],
         ],
     ]:
@@ -290,9 +292,9 @@ class DistRangePartitioner(DistPartitioner):
             node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
         Returns:
             Union[
-                Tuple[GraphPartitionData, FeaturePartitionData, PartitionBook],
+                Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]],
                 Tuple[Dict[EdgeType, GraphPartitionData], Dict[EdgeType, FeaturePartitionData], Dict[EdgeType, PartitionBook]],
-            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous
+            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
         """
 
         self._assert_and_get_rpc_setup()
@@ -347,18 +349,17 @@ class DistRangePartitioner(DistPartitioner):
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
 
-        return_edge_features = (
-            partitioned_edge_features if partitioned_edge_features else None
-        )
         if self._is_input_homogeneous:
             return (
                 to_homogeneous(partitioned_edge_index),
-                to_homogeneous(return_edge_features),
+                to_homogeneous(partitioned_edge_features)
+                if len(partitioned_edge_features) > 0
+                else None,
                 to_homogeneous(edge_partition_book),
             )
         else:
             return (
                 partitioned_edge_index,
-                return_edge_features,
+                partitioned_edge_features,
                 edge_partition_book,
             )
