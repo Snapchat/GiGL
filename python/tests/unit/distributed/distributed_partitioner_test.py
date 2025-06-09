@@ -127,9 +127,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             is_heterogeneous=is_heterogeneous,
             expected_entity_types=expected_edge_types,
         )
-        should_expect_edge_feats = len(expected_edge_feat_types) != 0
 
-        if should_expect_edge_feats:
+        if len(expected_edge_feat_types) != 0:
             self._assert_data_type_correctness(
                 output_data=output_edge_partition_book,
                 is_heterogeneous=is_heterogeneous,
@@ -217,8 +216,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             edge_ids = graph.edge_ids
 
             if edge_ids is not None:
-                self.assertTrue(should_expect_edge_feats)
                 assert edge_partition_book is not None
+                self.assertTrue(edge_type in expected_edge_feat_types)
                 if target_node_type == ITEM_NODE_TYPE:
                     # If the target_node_type is ITEM, we expect there to be twice as many edges as nodes since item node is the destination node of two edges.
                     self.assertEqual(
@@ -246,7 +245,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     tensor_b=expected_edge_pidx,
                 )
             else:
-                self.assertFalse(should_expect_edge_feats)
+                self.assertTrue(edge_type not in expected_edge_feat_types)
                 self.assertTrue(edge_partition_book is None)
 
     def _assert_node_feature_outputs(
