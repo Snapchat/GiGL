@@ -475,43 +475,45 @@ class DistLinkPredictionDataset(DistDataset):
                 with_gpu=False,
             )
             del partitioned_edge_features, partition_edge_feat_ids, edge_id2idx
-        elif isinstance(partition_output.partitioned_edge_features, abc.Mapping):
-            if len(partition_output.partitioned_edge_features) > 0:
-                assert (
-                    isinstance(partition_output.edge_partition_book, abc.Mapping)
-                    and len(partition_output.edge_partition_book) > 0
-                ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book with at least one edge type. \
-                    Got edge partition book of type {type(partition_output.edge_partition_book)}"
-                edge_type_to_partitioned_edge_features = {
-                    edge_type: feature_partition_data.feats
-                    for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()
-                }
-                edge_type_to_partitioned_edge_feature_ids = {
-                    edge_type: feature_partition_data.ids
-                    for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()
-                }
-                edge_type_to_id2idx = {}
-                for (
-                    edge_type,
-                    edge_partition_book,
-                ) in partition_output.edge_partition_book.items():
-                    if isinstance(edge_partition_book, RangePartitionBook):
-                        edge_type_to_id2idx[edge_type] = edge_partition_book.id2index
-                    # Not all edge types may have partitioned features.
-                    elif edge_type in edge_type_to_partitioned_edge_feature_ids:
-                        edge_type_to_id2idx[edge_type] = id2idx(
-                            edge_type_to_partitioned_edge_feature_ids[edge_type]
-                        )
-                self.init_edge_features(
-                    edge_feature_data=edge_type_to_partitioned_edge_features,
-                    id2idx=edge_type_to_id2idx,
-                    with_gpu=False,
-                )
-                del (
-                    edge_type_to_partitioned_edge_features,
-                    edge_type_to_partitioned_edge_feature_ids,
-                    edge_type_to_id2idx,
-                )
+        elif (
+            isinstance(partition_output.partitioned_edge_features, abc.Mapping)
+            and len(partition_output.partitioned_edge_features) > 0
+        ):
+            assert (
+                isinstance(partition_output.edge_partition_book, abc.Mapping)
+                and len(partition_output.edge_partition_book) > 0
+            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book with at least one edge type. \
+                Got edge partition book of type {type(partition_output.edge_partition_book)}"
+            edge_type_to_partitioned_edge_features = {
+                edge_type: feature_partition_data.feats
+                for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()
+            }
+            edge_type_to_partitioned_edge_feature_ids = {
+                edge_type: feature_partition_data.ids
+                for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()
+            }
+            edge_type_to_id2idx = {}
+            for (
+                edge_type,
+                edge_partition_book,
+            ) in partition_output.edge_partition_book.items():
+                if isinstance(edge_partition_book, RangePartitionBook):
+                    edge_type_to_id2idx[edge_type] = edge_partition_book.id2index
+                # Not all edge types may have partitioned features.
+                elif edge_type in edge_type_to_partitioned_edge_feature_ids:
+                    edge_type_to_id2idx[edge_type] = id2idx(
+                        edge_type_to_partitioned_edge_feature_ids[edge_type]
+                    )
+            self.init_edge_features(
+                edge_feature_data=edge_type_to_partitioned_edge_features,
+                id2idx=edge_type_to_id2idx,
+                with_gpu=False,
+            )
+            del (
+                edge_type_to_partitioned_edge_features,
+                edge_type_to_partitioned_edge_feature_ids,
+                edge_type_to_id2idx,
+            )
 
         partition_output.partitioned_edge_features = None
 
