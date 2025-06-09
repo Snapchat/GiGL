@@ -11,22 +11,21 @@ from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
+from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.distributed_neighborloader import (
-    DistABLPLoader,
-    DistNeighborLoader,
-)
+from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -37,6 +36,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -138,18 +138,24 @@ def _run_distributed_ablp_neighbor_loader(
         expected_node,
         dim=0,
     )
-    assert datum.y_positive.keys() == expected_positive_labels.keys()
-    for anchor in expected_positive_labels.keys():
+    for local_anchor in datum.y_positive:
+        global_id = datum.node[local_anchor].item()
+        global_positive_nodes = datum.node[datum.y_positive[local_anchor]]
+        expected_positive_label = expected_positive_labels[global_id]
         assert_tensor_equality(
-            datum.y_positive[anchor],
-            expected_positive_labels[anchor],
+            global_positive_nodes,
+            expected_positive_label,
+            dim=0,
         )
     if expected_negative_labels is not None:
-        assert datum.y_negative.keys() == expected_negative_labels.keys()
-        for anchor in expected_negative_labels.keys():
+        for local_anchor in datum.y_negative:
+            global_id = datum.node[local_anchor].item()
+            global_negative_nodes = datum.node[datum.y_negative[local_anchor]]
+            expected_negative_label = expected_negative_labels[global_id]
             assert_tensor_equality(
-                datum.y_negative[anchor],
-                expected_negative_labels[anchor],
+                global_negative_nodes,
+                expected_negative_label,
+                dim=0,
             )
     else:
         assert not hasattr(datum, "y_negative")
@@ -243,6 +249,117 @@ def _run_multiple_neighbor_loader(
         count += 1
 
     assert count == expected_data_count
+
+    shutdown_rpc()
+
+
+def _run_dblp_supervised(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    supervision_edge_types: list[EdgeType],
+):
+    assert (
+        len(supervision_edge_types) == 1
+    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    supervision_edge_type = supervision_edge_types[0]
+    anchor_node_type = supervision_edge_type.src_node_type
+    supervision_node_type = supervision_edge_type.dst_node_type
+    assert isinstance(dataset.train_node_ids, dict)
+    assert isinstance(dataset.graph, dict)
+    fanout = [2, 2]
+    num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=num_neighbors,
+        input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        supervision_edge_type=supervision_edge_type,
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        assert hasattr(datum, "y_positive")
+        assert isinstance(datum.y_positive, dict)
+        assert not hasattr(datum, "y_negative")
+        for local_anchor_node_id, local_positive_nodes in datum.y_positive.items():
+            assert local_anchor_node_id < len(datum[anchor_node_type].batch)
+            assert torch.all(
+                local_positive_nodes < len(datum[supervision_node_type].node)
+            )
+        count += 1
+    assert count == dataset.train_node_ids[anchor_node_type].size(0)
+
+    shutdown_rpc()
+
+
+def _run_toy_heterogeneous_ablp(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    supervision_edge_types: list[EdgeType],
+):
+    anchor_node_type = NodeType("user")
+    supervision_node_type = NodeType("story")
+    assert (
+        len(supervision_edge_types) == 1
+    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    supervision_edge_type = supervision_edge_types[0]
+    assert isinstance(dataset.train_node_ids, dict)
+    assert isinstance(dataset.graph, dict)
+    fanout = [2, 2]
+    labeled_edge_type = EdgeType(
+        supervision_node_type, Relation("to_gigl_positive"), anchor_node_type
+    )
+    num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
+    all_positive_supervision_nodes, all_anchor_nodes, _, _ = dataset.graph[
+        labeled_edge_type
+    ].topo.to_coo()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=num_neighbors,
+        input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        supervision_edge_type=supervision_edge_type,
+        # We set the batch size to the number of "user" nodes in the heterogeneous toy graph to guarantee that the dataloader completes an epoch in 1 batch
+        batch_size=15,
+    )
+    count = 0
+    for datum in loader:
+        count += 1
+    assert count == 1
+    assert isinstance(datum, HeteroData)
+    assert hasattr(datum, "y_positive")
+    assert isinstance(datum.y_positive, dict)
+    # Ensure that the node ids we should be fanout from are all found in the batch
+    assert_tensor_equality(
+        dataset.train_node_ids[anchor_node_type], datum[anchor_node_type].batch
+    )
+    global_anchor_nodes = []
+    for local_anchor_node, local_positive_supervision_nodes in datum.y_positive.items():
+        global_anchor_node = datum[anchor_node_type].node[local_anchor_node]
+        global_positive_supervision_nodes = datum[supervision_node_type].node[
+            local_positive_supervision_nodes
+        ]
+        global_anchor_nodes.append(global_anchor_node)
+
+        # Check that the current anchor node from y_positive is found in the expected anchor tensor
+        assert global_anchor_node.item() in all_anchor_nodes
+        # Check that all positive supervision nodes from y_positive are found in the expected positive supervision tensor
+        assert torch.isin(
+            global_positive_supervision_nodes, all_positive_supervision_nodes
+        ).all()
+        # Check that we have also fanned out around the supervision node type
+        assert datum.num_sampled_nodes[supervision_node_type][0] > 0
+
+    # Check that the current anchor node from y_positive is found in the batch
+    assert_tensor_equality(
+        torch.tensor(global_anchor_nodes), datum[anchor_node_type].batch, dim=0
+    )
 
     shutdown_rpc()
 
@@ -421,13 +538,17 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
-        expected_data_count = 2161
+        expected_data_count = 2168
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in", should_convert_labels_to_edges=True
+        )
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=self._context,
             sample_edge_direction="in",
-            should_convert_labels_to_edges=True,
+            splitter=splitter,
         )
 
         mp.spawn(
@@ -455,35 +576,87 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, expected_data_count),
         )
 
-    # TODO: (mkolodner-sc) - Re-enable this test once ports are dynamically inferred
-    @unittest.skip("Failing due to ports being already allocated - skiping for now")
-    def test_cora_supervised(self):
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+    # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
+    @unittest.skip("Failing on Google Cloud Build - skiping for now")
+    def test_dblp_supervised(self):
+        dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
+            DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
-        dataset = build_dataset_from_task_config_uri(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri.uri,
+
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=dblp_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        supervision_edge_types = (
+            gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+        )
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in",
+            supervision_edge_types=supervision_edge_types,
+            should_convert_labels_to_edges=True,
+        )
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=self._context,
-            is_inference=False,
+            sample_edge_direction="in",
+            _ssl_positive_label_percentage=0.1,
+            splitter=splitter,
         )
-        loader = DistABLPLoader(
-            dataset=dataset,
-            num_neighbors=[2, 2],
-            input_nodes=to_homogeneous(dataset.train_node_ids),
-            context=self._context,
-            local_process_rank=0,
-            local_process_world_size=1,
+
+        mp.spawn(
+            fn=_run_dblp_supervised,
+            args=(dataset, self._context, supervision_edge_types),
         )
-        count = 0
-        for datum in loader:
-            self.assertIsInstance(datum, Data)
-            self.assertTrue(hasattr(datum, "y_positive"))
-            self.assertIsInstance(datum.y_positive, dict)
-            self.assertTrue(hasattr(datum, "y_negative"))
-            self.assertIsInstance(datum.y_negative, dict)
-            self.assertEqual(datum.y_positive.keys(), datum.y_negative.keys())
-            count += 1
-        self.assertEqual(count, 2161)
+
+    def test_toy_heterogeneous_ablp(self):
+        toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[
+            HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=toy_heterogeneous_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        supervision_edge_types = (
+            gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+        )
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in",
+            supervision_edge_types=supervision_edge_types,
+            should_convert_labels_to_edges=True,
+        )
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            distributed_context=self._context,
+            sample_edge_direction="in",
+            _ssl_positive_label_percentage=0.1,
+            splitter=splitter,
+        )
+
+        mp.spawn(
+            fn=_run_toy_heterogeneous_ablp,
+            args=(dataset, self._context, supervision_edge_types),
+        )
 
 
 if __name__ == "__main__":

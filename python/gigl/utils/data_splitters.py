@@ -1,7 +1,17 @@
 import gc
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
-from typing import Callable, Final, Literal, Optional, Protocol, Tuple, Union, overload
+from collections.abc import Mapping
+from typing import (
+    Callable,
+    Final,
+    Literal,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    Union,
+    overload,
+)
 
 import torch
 from graphlearn_torch.data import Dataset, Topology
@@ -12,6 +22,9 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+    reverse_edge_type,
 )
 
 logger = Logger()
@@ -51,6 +64,10 @@ class NodeAnchorLinkSplitter(Protocol):
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
+        ...
+
+    @property
+    def should_convert_labels_to_edges(self):
         ...
 
 
@@ -115,7 +132,8 @@ class HashedNodeAnchorLinkSplitter:
         num_val: Union[float, int] = 0.1,
         num_test: Union[float, int] = 0.1,
         hash_function: Callable[[torch.Tensor], torch.Tensor] = _fast_hash,
-        edge_types: Optional[Union[EdgeType, Sequence[EdgeType]]] = None,
+        supervision_edge_types: Optional[list[EdgeType]] = None,
+        should_convert_labels_to_edges: bool = True,
     ):
         """Initializes the HashedNodeAnchorLinkSplitter.
 
@@ -126,8 +144,11 @@ class HashedNodeAnchorLinkSplitter:
             num_test (Union[float, int]): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
                                           If an integer is provided, than exactly that number of nodes will be in the test split.
             hash_function (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): The hash function to use. Defaults to `_fast_hash`.
-            edge_types: The supervision edge types we should use for splitting.
-                        Must be provided if we are splitting a heterogeneous graph.
+            supervision_edge_types (Optional[list[EdgeType]]): The supervision edge types we should use for splitting.
+                Must be provided if we are splitting a heterogeneous graph. If None, uses the default message passing edge type in the graph.
+            should_convert_labels_to_edges (bool): Whether label should be converted into an edge type in the graph. If provided, will make
+                `gigl.distributed.build_dataset` convert all labels into edges, and will infer positive and negative edge types based on
+                `supervision_edge_types`.
         """
         _check_sampling_direction(sampling_direction)
         _check_val_test_percentage(num_val, num_test)
@@ -136,12 +157,47 @@ class HashedNodeAnchorLinkSplitter:
         self._num_val = num_val
         self._num_test = num_test
         self._hash_function = hash_function
+        self._should_convert_labels_to_edges = should_convert_labels_to_edges
 
-        if edge_types is None:
-            edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-        elif isinstance(edge_types, EdgeType):
-            edge_types = [edge_types]
-        self._supervision_edge_types: Sequence[EdgeType] = edge_types
+        if supervision_edge_types is None:
+            supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+
+        # Supervision edge types are the edge type which will be used for positive and negative labels.
+        # Labeled edge types are the actual edge type that be injected into the edge index tensor.
+        # If should_convert_labels_to_edges=False, supervision edge types and labeled edge types will be the same,
+        # since the supervision edge type already exists in the edge index graph. Otherwise, we assume that the
+        # edge index tensor initially only contains the message passing edges, and will inject the labeled edge into the
+        # edge index based on some provided labels. As a result, the labeled edge types will be an augmented version of the
+        # supervision edge types.
+
+        # For example, if `should_convert_labels_to_edges=True` and we provide supervision_edge_types=[("user", "to", "story")], the
+        # labeled edge types will be ("user", "to_gigl_positive", "story") and ("user", "to_gigl_negative", "story"), if there are negative labels.
+
+        # If `should_convert_labels_to_edges=False` and we provide supervision_edge_types=[("user", "positive", "story")], the labeled edge type will
+        # also be ("user", "positive", "story"), meaning that all edges in the loaded edge index tensor with this edge type will be treated as a labeled
+        # edge and will be used for splitting.
+
+        self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
+        self._labeled_edge_types: Sequence[EdgeType]
+        if should_convert_labels_to_edges:
+            labeled_edge_types = [
+                message_passing_to_positive_label(supervision_edge_type)
+                for supervision_edge_type in supervision_edge_types
+            ] + [
+                message_passing_to_negative_label(supervision_edge_type)
+                for supervision_edge_type in supervision_edge_types
+            ]
+            # If the edge direction is "in", we must reverse the labeled edge type, since separately provided labels are expected to be initially outgoing, and all edges
+            # in the graph must have the same edge direction.
+            if sampling_direction == "in":
+                self._labeled_edge_types = [
+                    reverse_edge_type(labeled_edge_type)
+                    for labeled_edge_type in labeled_edge_types
+                ]
+            else:
+                self._labeled_edge_types = labeled_edge_types
+        else:
+            self._labeled_edge_types = supervision_edge_types
 
     @overload
     def __call__(
@@ -167,26 +223,14 @@ class HashedNodeAnchorLinkSplitter:
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         if isinstance(edge_index, torch.Tensor):
-            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+            if self._labeled_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 logger.warning(
-                    f"You provided edge-types {self._supervision_edge_types} but the edge index is homogeneous. Ignoring edge types."
+                    f"You provided edge-types {self._labeled_edge_types} but the edge index is homogeneous. Ignoring supervision edge types."
                 )
             is_heterogeneous = False
             edge_index = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}
 
         else:
-            if (
-                self._supervision_edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-                or not self._supervision_edge_types
-            ):
-                raise ValueError(
-                    "If edge_index is a mapping, edges_to_split must be provided."
-                )
-            missing = set(self._supervision_edge_types) - edge_index.keys()
-            if missing:
-                raise ValueError(
-                    f"Missing edge types from provided edge index: {missing}. Expected edges types {self._supervision_edge_types} to be in the mapping, but got {edge_index.keys()}."
-                )
             is_heterogeneous = True
 
         # First, find max node id per node type.
@@ -197,7 +241,12 @@ class HashedNodeAnchorLinkSplitter:
         # We also store references to all tensors of a given node type, for convenient access later.
         max_node_id_by_type: dict[NodeType, int] = defaultdict(int)
         node_ids_by_node_type: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
-        for edge_type_to_split in self._supervision_edge_types:
+        for edge_type_to_split, coo_edges in edge_index.items():
+            # In this case, the labels should be converted to an edge type in graph with relation containing `is_gigl_positive` or `is_gigl_negative`.
+            if edge_type_to_split not in self._labeled_edge_types:
+                # We skip if the current edge type is not a labeled edge type, since we don't want to generate splits for edges which aren't used for supervision
+                continue
+
             coo_edges = edge_index[edge_type_to_split]
             _check_edge_index(coo_edges)
             anchor_nodes = (
@@ -233,7 +282,7 @@ class HashedNodeAnchorLinkSplitter:
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         for anchor_node_type, collected_anchor_nodes in node_ids_by_node_type.items():
             max_node_id = max_node_id_by_type[anchor_node_type]
-            node_id_count = torch.zeros(max_node_id, dtype=torch.int64)
+            node_id_count = torch.zeros(max_node_id, dtype=torch.uint8)
             for anchor_nodes in collected_anchor_nodes:
                 node_id_count.add_(torch.bincount(anchor_nodes, minlength=max_node_id))
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
@@ -270,10 +319,19 @@ class HashedNodeAnchorLinkSplitter:
             val = nodes_to_select[num_train : num_val + num_train]  # 1 x num_val_nodes
             test = nodes_to_select[num_train + num_val :]  # 1 x num_test_nodes
             splits[anchor_node_type] = (train, val, test)
+        if len(splits) == 0:
+            raise ValueError(
+                f"Found no edge types to split from the provided edge index: {edge_index.keys()} using labeled edge types {self._labeled_edge_types}"
+            )
+
         if is_heterogeneous:
             return splits
         else:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+
+    @property
+    def should_convert_labels_to_edges(self):
+        return self._should_convert_labels_to_edges
 
 
 def get_labels_for_anchor_nodes(
@@ -302,7 +360,9 @@ def get_labels_for_anchor_nodes(
                 -1, # Positive node (padded)
             ],
         ]
-
+    If positive and negative label edge types are provided:
+        * All negative label node ids must be present in the positive label node ids.
+        * For any positive label node id that does not have a negative label, the negative label will be padded with `PADDING_NODE`.
     Args:
         dataset (Dataset): The dataset storing the graph info, must be heterogeneous.
         node_ids (torch.Tensor): The node ids to use for the labels. [N]
@@ -325,18 +385,26 @@ def get_labels_for_anchor_nodes(
         negative_node_topo = None
 
     # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
-    positive_labels = _get_padded_labels(node_ids, positive_node_topo)
+    positive_labels = _get_padded_labels(
+        node_ids, positive_node_topo, allow_non_existant_node_ids=False
+    )
 
     if negative_node_topo is not None:
         # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
-        negative_labels = _get_padded_labels(node_ids, negative_node_topo)
+        negative_labels = _get_padded_labels(
+            node_ids, negative_node_topo, allow_non_existant_node_ids=True
+        )
     else:
         negative_labels = None
 
     return positive_labels, negative_labels
 
 
-def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.Tensor:
+def _get_padded_labels(
+    anchor_node_ids: torch.Tensor,
+    topo: Topology,
+    allow_non_existant_node_ids: bool = False,
+) -> torch.Tensor:
     """Returns the padded labels and the max range of labels.
 
     Given anchor node ids and a topology, this function returns a tensor
@@ -346,6 +414,8 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     Args:
         anchor_node_ids (torch.Tensor): The anchor node ids to use for the labels. [N]
         topo (Topology): The topology to use for the labels.
+        allow_non_existant_node_ids (bool): If True, will allow anchor node ids that do not exist in the topology.
+            This means that the returned tensor will be padded with `PADDING_NODE` for those anchor node ids.
     Returns:
         The shape of the returned tensor is [N, max_number_of_labels].
     """
@@ -355,6 +425,11 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
+    extra_nodes_to_pad = 0
+    if allow_non_existant_node_ids:
+        valid_ids = anchor_node_ids < (indptr.size(0) - 1)
+        extra_nodes_to_pad = int(torch.count_nonzero(~valid_ids).item())
+        anchor_node_ids = anchor_node_ids[valid_ids]
     starts = indptr[anchor_node_ids]  # [N]
     ends = indptr[anchor_node_ids + 1]  # [N]
 
@@ -370,6 +445,13 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
     labels = torch.where(
         mask, torch.full_like(ranges, PADDING_NODE.item()), indices[ranges]
+    )
+    labels = torch.cat(
+        [
+            labels,
+            torch.ones(extra_nodes_to_pad, max_range, dtype=torch.int64) * PADDING_NODE,
+        ],
+        dim=0,
     )
     return labels
 

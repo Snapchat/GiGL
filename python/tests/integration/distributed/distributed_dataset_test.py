@@ -143,34 +143,38 @@ class DistDatasetTestCase(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "Test GLT Dataset Split with heterogeneous toy dataset",
+                "Test GLT Dataset Split with homogeneous toy NABLP dataset",
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 is_heterogeneous=False,
-                split_fn=HashedNodeAnchorLinkSplitter(sampling_direction="out"),
+                split_fn=HashedNodeAnchorLinkSplitter(
+                    sampling_direction="out", should_convert_labels_to_edges=False
+                ),
             ),
             param(
-                "Test GLT Dataset Load in parallel with homogeneous toy NABLP dataset",
+                "Test GLT Dataset Load in parallel with heterogeneous toy dataset",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 is_heterogeneous=True,
                 split_fn=HashedNodeAnchorLinkSplitter(
                     sampling_direction="out",
-                    edge_types=EdgeType(
-                        NodeType("story"), Relation("to"), NodeType("user")
-                    ),
+                    supervision_edge_types=[
+                        EdgeType(NodeType("story"), Relation("to"), NodeType("user"))
+                    ],
+                    should_convert_labels_to_edges=False,
                 ),
             ),
             param(
-                "Test GLT Dataset Load in parallel with homogeneous toy NABLP dataset - two supervision edge types",
+                "Test GLT Dataset Load in parallel with heterogeneous toy NABLP dataset - two supervision edge types",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 is_heterogeneous=True,
                 split_fn=HashedNodeAnchorLinkSplitter(
                     sampling_direction="out",
                     num_test=1,
                     num_val=1,
-                    edge_types=[
+                    supervision_edge_types=[
                         EdgeType(NodeType("story"), Relation("to"), NodeType("user")),
                         EdgeType(NodeType("user"), Relation("to"), NodeType("story")),
                     ],
+                    should_convert_labels_to_edges=False,
                 ),
             ),
         ]

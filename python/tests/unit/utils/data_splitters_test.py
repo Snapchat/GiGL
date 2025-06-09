@@ -223,6 +223,7 @@ class TestDataSplitters(unittest.TestCase):
             hash_function=hash_function,
             num_val=val_num,
             num_test=test_num,
+            should_convert_labels_to_edges=False,
         )
         train, val, test = splitter(edges)
 
@@ -430,7 +431,8 @@ class TestDataSplitters(unittest.TestCase):
             hash_function=hash_function,
             num_val=val_num,
             num_test=test_num,
-            edge_types=edge_types_to_split,
+            supervision_edge_types=edge_types_to_split,
+            should_convert_labels_to_edges=False,
         )
         split = splitter(edges)
 
@@ -472,11 +474,12 @@ class TestDataSplitters(unittest.TestCase):
         edge_types_to_split,
     ):
         with self.assertRaises(ValueError):
-            HashedNodeAnchorLinkSplitter(
-                sampling_direction="in", edge_types=edge_types_to_split
-            )(
-                edge_index=edges,
+            splitter = HashedNodeAnchorLinkSplitter(
+                sampling_direction="in",
+                supervision_edge_types=edge_types_to_split,
+                should_convert_labels_to_edges=False,
             )
+            splitter(edge_index=edges)
 
     def test_node_based_link_splitter_no_train_nodes(self):
         edges = torch.stack(
@@ -486,9 +489,13 @@ class TestDataSplitters(unittest.TestCase):
             ]
         )
         with self.assertRaises(ValueError):
-            HashedNodeAnchorLinkSplitter(
-                sampling_direction="in", num_val=5, num_test=5
-            )(edges)
+            splitter = HashedNodeAnchorLinkSplitter(
+                sampling_direction="in",
+                num_val=5,
+                num_test=5,
+                should_convert_labels_to_edges=False,
+            )
+            splitter(edge_index=edges)
 
     @parameterized.expand(
         [
@@ -578,7 +585,7 @@ class TestDataSplitters(unittest.TestCase):
         positive, negative = get_labels_for_anchor_nodes(
             dataset=ds, node_ids=node_ids, positive_label_edge_type=a_to_b
         )
-        expected = torch.tensor([[10, 11]])
+        expected = torch.tensor([[10, 11]], dtype=torch.int64)
         assert_close(positive, expected, rtol=0, atol=0)
         self.assertIsNone(negative)
 
@@ -588,15 +595,17 @@ class TestDataSplitters(unittest.TestCase):
         edges = {
             a_to_b: torch.tensor(
                 [
-                    [10, 10, 11, 11, 12],
-                    [10, 11, 12, 13, 10],
-                ]
+                    [10, 10, 11, 11, 12, 13],
+                    [10, 11, 12, 13, 10, 10],
+                ],
+                dtype=torch.int64,
             ),
             a_to_c: torch.tensor(
                 [
                     [10, 11, 12, 11],
                     [20, 30, 40, 50],
-                ]
+                ],
+                dtype=torch.int64,
             ),
         }
         ds = Dataset()
@@ -607,16 +616,20 @@ class TestDataSplitters(unittest.TestCase):
         )
 
         # TODO(kmonte): Update to use a splitter once we've migrated splitter API.
-        node_ids = torch.tensor([10, 11])
+        node_ids = torch.tensor([10, 11, 13])
         positive, negative = get_labels_for_anchor_nodes(
             dataset=ds,
             node_ids=node_ids,
             positive_label_edge_type=a_to_b,
             negative_label_edge_type=a_to_c,
         )
-
-        expected_positive = torch.tensor([[10, 11], [12, 13]])
-        expected_negative = torch.tensor([[20, -1], [30, 50]])
+        # "DST" nodes for our anchor nodes (10, 11, 13).
+        expected_positive = torch.tensor(
+            [[10, 11], [12, 13], [10, -1]], dtype=torch.int64
+        )
+        expected_negative = torch.tensor(
+            [[20, -1], [30, 50], [-1, -1]], dtype=torch.int64
+        )
         assert_close(positive, expected_positive, rtol=0, atol=0)
         assert_close(negative, expected_negative, rtol=0, atol=0)
 
@@ -626,9 +639,10 @@ class TestDataSplitters(unittest.TestCase):
                 "CSR",
                 node_ids=torch.tensor([0, 1]),
                 topo=Topology(
-                    edge_index=torch.tensor([[0, 0, 1], [1, 2, 2]]), layout="CSR"
+                    edge_index=torch.tensor([[0, 0, 1], [1, 2, 2]], dtype=torch.int64),
+                    layout="CSR",
                 ),
-                expected=torch.tensor([[1, 2], [2, -1]]),
+                expected=torch.tensor([[1, 2], [2, -1]], dtype=torch.int64),
             ),
             param(
                 "CSC",
@@ -640,11 +654,12 @@ class TestDataSplitters(unittest.TestCase):
                         [
                             [1, 2, 0],
                             [0, 1, 1],
-                        ]
+                        ],
+                        dtype=torch.int64,
                     ),
                     layout="CSC",
                 ),
-                expected=torch.tensor([[1, -1], [0, 2]]),
+                expected=torch.tensor([[1, -1], [0, 2]], dtype=torch.int64),
             ),
         ]
     )

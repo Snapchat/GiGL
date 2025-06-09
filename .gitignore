@@ -42,3 +42,6 @@ graphlearn_torch.egg-info/
 fossa
 fossa.bundle
 fossa*.zip
+
+# Ignore *all* pickled files, we should *never* put these in git.
+*.pkl
