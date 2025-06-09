@@ -257,6 +257,9 @@ class DistRangePartitioner(DistPartitioner):
             current_feat_part = FeaturePartitionData(
                 feats=partitioned_edge_features, ids=None
             )
+            logger.info(
+                f"Got edge range-based partition book for edge type {edge_type} on rank {self._rank} with partition bounds: {edge_partition_book.partition_bounds}"
+            )
         else:
             current_feat_part = None
             current_graph_part = GraphPartitionData(
@@ -264,10 +267,6 @@ class DistRangePartitioner(DistPartitioner):
                 edge_ids=None,
             )
             edge_partition_book = None
-
-        logger.info(
-            f"Got edge range-based partition book for edge type {edge_type} on rank {self._rank} with partition bounds: {edge_partition_book.partition_bounds}"
-        )
 
         return current_graph_part, current_feat_part, edge_partition_book
 
