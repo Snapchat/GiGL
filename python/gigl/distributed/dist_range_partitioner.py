@@ -137,12 +137,16 @@ class DistRangePartitioner(DistPartitioner):
         self,
         node_partition_book: Dict[NodeType, PartitionBook],
         edge_type: EdgeType,
-    ) -> tuple[GraphPartitionData, Optional[FeaturePartitionData], PartitionBook]:
+    ) -> tuple[
+        GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+    ]:
         """
         Partition graph topology of a specific edge type. For range-based partitioning, we partition
         edges and edge features (if they exist) together. Once they have been partitioned across machines,
         we build the edge partition book based on the number of edges assigned to each machine. Then, we infer
         the edge IDs from the edge partition book's ranges.
+
+        If there are no edge features for the current edge type, both the returned edge feature and edge partition book will be None.
 
         Args:
             node_partition_book (Dict[NodeType, PartitionBook]): The partition books of all graph nodes.
@@ -150,8 +154,8 @@ class DistRangePartitioner(DistPartitioner):
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            FeaturePartitionData: The edge features on the current partition
-            PartitionBook: The partition book of graph edges.
+            Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
+            Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
 
         assert (
@@ -240,38 +244,43 @@ class DistRangePartitioner(DistPartitioner):
             partition_ranges.append((start, end))
             start = end
 
-        edge_partition_book = RangePartitionBook(
-            partition_ranges=partition_ranges, partition_idx=self._rank
-        )
-        partitioned_edge_ids = get_ids_on_rank(
-            partition_book=edge_partition_book, rank=self._rank
-        )
+        if edge_feat_dim is not None:
+            edge_partition_book = RangePartitionBook(
+                partition_ranges=partition_ranges, partition_idx=self._rank
+            )
+            partitioned_edge_ids = get_ids_on_rank(
+                partition_book=edge_partition_book, rank=self._rank
+            )
 
-        current_graph_part = GraphPartitionData(
-            edge_index=partitioned_edge_index,
-            edge_ids=partitioned_edge_ids,
-        )
-
-        if edge_feat_dim is None:
-            current_feat_part = None
-        else:
+            current_graph_part = GraphPartitionData(
+                edge_index=partitioned_edge_index,
+                edge_ids=partitioned_edge_ids,
+            )
             current_feat_part = FeaturePartitionData(
                 feats=partitioned_edge_features, ids=None
             )
-
-        logger.info(
-            f"Got edge range-based partition book for edge type {edge_type} on rank {self._rank} with partition bounds: {edge_partition_book.partition_bounds}"
-        )
+            logger.info(
+                f"Got edge range-based partition book for edge type {edge_type} on rank {self._rank} with partition bounds: {edge_partition_book.partition_bounds}"
+            )
+        else:
+            current_feat_part = None
+            current_graph_part = GraphPartitionData(
+                edge_index=partitioned_edge_index,
+                edge_ids=None,
+            )
+            edge_partition_book = None
 
         return current_graph_part, current_feat_part, edge_partition_book
 
     def partition_edge_index_and_edge_features(
         self, node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]]
     ) -> Union[
-        tuple[GraphPartitionData, Optional[FeaturePartitionData], PartitionBook],
+        tuple[
+            GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+        ],
         tuple[
             Dict[EdgeType, GraphPartitionData],
-            Optional[Dict[EdgeType, FeaturePartitionData]],
+            Dict[EdgeType, FeaturePartitionData],
             Dict[EdgeType, PartitionBook],
         ],
     ]:
@@ -285,9 +294,9 @@ class DistRangePartitioner(DistPartitioner):
             node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
         Returns:
             Union[
-                Tuple[GraphPartitionData, FeaturePartitionData, PartitionBook],
+                Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]],
                 Tuple[Dict[EdgeType, GraphPartitionData], Dict[EdgeType, FeaturePartitionData], Dict[EdgeType, PartitionBook]],
-            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous
+            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
         """
 
         self._assert_and_get_rpc_setup()
@@ -332,8 +341,9 @@ class DistRangePartitioner(DistPartitioner):
                 node_partition_book=transformed_node_partition_book, edge_type=edge_type
             )
             partitioned_edge_index[edge_type] = partitioned_edge_index_per_edge_type
-            edge_partition_book[edge_type] = edge_partition_book_per_edge_type
             if partitioned_edge_features_per_edge_type is not None:
+                assert edge_partition_book_per_edge_type is not None
+                edge_partition_book[edge_type] = edge_partition_book_per_edge_type
                 partitioned_edge_features[
                     edge_type
                 ] = partitioned_edge_features_per_edge_type
@@ -341,18 +351,19 @@ class DistRangePartitioner(DistPartitioner):
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
 
-        return_edge_features = (
-            partitioned_edge_features if partitioned_edge_features else None
-        )
         if self._is_input_homogeneous:
             return (
                 to_homogeneous(partitioned_edge_index),
-                to_homogeneous(return_edge_features),
-                to_homogeneous(edge_partition_book),
+                to_homogeneous(partitioned_edge_features)
+                if len(partitioned_edge_features) > 0
+                else None,
+                to_homogeneous(edge_partition_book)
+                if len(edge_partition_book) > 0
+                else None,
             )
         else:
             return (
                 partitioned_edge_index,
-                return_edge_features,
+                partitioned_edge_features,
                 edge_partition_book,
             )
