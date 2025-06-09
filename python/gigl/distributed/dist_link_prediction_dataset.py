@@ -479,11 +479,12 @@ class DistLinkPredictionDataset(DistDataset):
             isinstance(partition_output.partitioned_edge_features, abc.Mapping)
             and len(partition_output.partitioned_edge_features) > 0
         ):
+            assert isinstance(
+                partition_output.edge_partition_book, abc.Mapping
+            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book. Got edge partition book of type {type(partition_output.edge_partition_book)}"
             assert (
-                isinstance(partition_output.edge_partition_book, abc.Mapping)
-                and len(partition_output.edge_partition_book) > 0
-            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book with at least one edge type. \
-                Got edge partition book of type {type(partition_output.edge_partition_book)}"
+                len(partition_output.edge_partition_book) > 0
+            ), f"Expected at least one edge type in edge partition book, got {partition_output.edge_partition_book.keys()}."
             edge_type_to_partitioned_edge_features = {
                 edge_type: feature_partition_data.feats
                 for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()

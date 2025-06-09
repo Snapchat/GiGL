@@ -832,8 +832,8 @@ class DistPartitioner:
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            FeaturePartitionData: The edge features on the current partition
-            Optional[PartitionBook]: The partition book of graph edges.
+            Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
+            Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
 
         assert (
