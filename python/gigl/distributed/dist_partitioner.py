@@ -823,7 +823,8 @@ class DistPartitioner:
     ) -> Tuple[
         GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
     ]:
-        r"""Partition graph topology and edge features of a specific edge type.
+        r"""Partition graph topology and edge features of a specific edge type. If there are no edge features for the current edge type,
+        both the returned edge feature and edge partition book will be None.
 
         Args:
             node_partition_book (Dict[NodeType, PartitionBook]): The partition books of all graph nodes.
@@ -871,7 +872,7 @@ class DistPartitioner:
             rank_indices=edge_ids,
             partition_function=_edge_pfn,
             total_val_size=num_edges,
-            generate_pb=False if should_skip_edge_feats else True,
+            generate_pb=not should_skip_edge_feats,
         )
 
         del edge_index, target_indices

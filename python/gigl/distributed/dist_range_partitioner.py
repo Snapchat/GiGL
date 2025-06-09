@@ -146,6 +146,8 @@ class DistRangePartitioner(DistPartitioner):
         we build the edge partition book based on the number of edges assigned to each machine. Then, we infer
         the edge IDs from the edge partition book's ranges.
 
+        If there are no edge features for the current edge type, both the returned edge feature and edge partition book will be None.
+
         Args:
             node_partition_book (Dict[NodeType, PartitionBook]): The partition books of all graph nodes.
             edge_type (EdgeType): The edge type for input edges
@@ -355,7 +357,9 @@ class DistRangePartitioner(DistPartitioner):
                 to_homogeneous(partitioned_edge_features)
                 if len(partitioned_edge_features) > 0
                 else None,
-                to_homogeneous(edge_partition_book),
+                to_homogeneous(edge_partition_book)
+                if len(edge_partition_book) > 0
+                else None,
             )
         else:
             return (
