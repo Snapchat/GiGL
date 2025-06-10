@@ -45,6 +45,13 @@ from gigl.types.graph import (
 logger = Logger()
 
 
+def sync_loss_across_processes(local_loss: torch.Tensor) -> float:
+    assert is_distributed_available_and_initialized(), "DDP is not initialized"
+    # Make a copy of the local loss tensor
+    loss_tensor = local_loss.detach().clone()
+    torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
+    return loss_tensor.item() / torch.distributed.get_world_size()
+
 def split_parameters_by_layer_names(
     named_parameters: list[tuple[str, torch.nn.Parameter]],
     layer_names_to_separate: list[str],
@@ -193,6 +200,7 @@ def _train_process(
     validate_every: int = 100,
     learning_rate: int = 1e-6,
     num_epoch: int = 1,
+    use_amp: bool = True,
 ) -> None:
     device = get_available_device(process_number)
     train_nodes = to_homogeneous(dataset.train_node_ids)
@@ -271,6 +279,7 @@ def _train_process(
     ddp_model = nn.parallel.DistributedDataParallel(
         model, device_ids=[device] if device.type == "cuda" else None
     )
+    ddp_model.train()
     all_named_parameters = list(ddp_model.named_parameters())
     embedding_params, other_params = split_parameters_by_layer_names(
         named_parameters=all_named_parameters,
@@ -294,6 +303,9 @@ def _train_process(
         temperature=0.07,
         remove_accidental_hits=True,
     )
+    scaler = torch.GradScaler(
+        "cuda", enabled=use_amp
+    )  # Used in mixed precision training to avoid gradients underflow due to float16 precision
     logger.info(
         f"Model initialized on machine {process_number} training device {device}\n{model}"
     )
@@ -330,19 +342,19 @@ def _train_process(
                 batch_combined_scores=scores,
                 repeated_query_embeddings=repeated_query_embeddings,
                 candidate_sampling_probability=None,
+                device=device,
             )
             loss_tensor: torch.Tensor = loss_output[0]
 
             if loss_tensor.grad_fn is None:
                 # print("Skipping loss")
                 continue
-            print(f"process {process_number} zero grad")
             optimizer.zero_grad()
-            print(f"process {process_number} loss backwards")
-            loss_tensor.backward()
-            print(f"process {process_number} optimizer step")
-            optimizer.step()
-            print(f"process {process_number} done")
+            scaler.scale(loss_tensor).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+
 
             # Validation
             if batch_idx % validate_every == 0:
@@ -364,6 +376,7 @@ def _train_process(
                         batch_combined_scores=val_scores,
                         repeated_query_embeddings=repeated_query_embeddings,
                         candidate_sampling_probability=None,
+                        device=device,
                     )
                     val_loss_tensor: torch.Tensor = loss_output[0]
                     print(
