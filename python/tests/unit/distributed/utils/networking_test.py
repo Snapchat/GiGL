@@ -4,7 +4,8 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from parameterized import param, parameterized
-from gigl.distributed.utils import get_free_port, get_free_ports_from_master_node
+import subprocess
+from gigl.distributed.utils import get_free_port, get_free_ports_from_master_node, get_master_internal_ip
 
 
 def _test_fetching_free_ports_in_dist_context(
@@ -40,6 +41,24 @@ def _test_fetching_free_ports_in_dist_context(
             ports_gathered_at_rank_k == ports_gathered_at_rank_0
             for ports_gathered_at_rank_k in gathered_ports_across_ranks
         ), "All ranks should receive the same ports from master (rank 0)"
+    finally:
+        dist.destroy_process_group()
+
+
+def _test_get_master_internal_ip_in_dist_context(
+    rank: int, world_size: int, init_process_group_init_method: str, expected_ip: str
+):
+    # Initialize distributed process group
+    dist.init_process_group(
+        backend="gloo",
+        init_method=init_process_group_init_method,
+        world_size=world_size,
+        rank=rank,
+    )
+    print(f"Rank {rank} initialized process group with init method: {init_process_group_init_method}")
+    try:
+        master_ip = get_master_internal_ip()
+        assert master_ip == expected_ip, f"Expected master IP to be {expected_ip}, but got {master_ip}"
     finally:
         dist.destroy_process_group()
 
@@ -88,3 +107,21 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             msg="An error should be raised since the `dist.init_process_group` is not initialized",
         ):
             get_free_ports_from_master_node(num_ports=1)
+
+    def test_get_master_internal_ip(self):
+        port = get_free_port()
+        init_process_group_init_method = f"tcp://127.0.0.1:{port}"
+        expected_host_ip = subprocess.check_output(["hostname", "-i"]).decode().strip()
+        world_size = 2
+        mp.spawn(
+            fn=_test_get_master_internal_ip_in_dist_context,
+            args=(world_size, init_process_group_init_method, expected_host_ip),
+            nprocs=world_size,
+        )
+
+    def test_get_master_internal_ip_fails_if_process_group_not_initialized(self):
+        with self.assertRaises(
+            AssertionError,
+            msg="An error should be raised since the `dist.init_process_group` is not initialized",
+        ):
+            get_master_internal_ip()
