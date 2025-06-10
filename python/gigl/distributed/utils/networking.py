@@ -83,7 +83,7 @@ def get_free_ports_from_master_node(
 
 
 def get_internal_ip_from_master_node(
-    _global_rank_override: Optional[int] = None
+    _global_rank_override: Optional[int] = None,
 ) -> str:
     """
     Get the internal IP address of the master node in a distributed setup.

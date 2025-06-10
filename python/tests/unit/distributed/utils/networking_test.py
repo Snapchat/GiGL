@@ -128,7 +128,9 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             nprocs=world_size,
         )
 
-    def test_get_internal_ip_from_master_node_fails_if_process_group_not_initialized(self):
+    def test_get_internal_ip_from_master_node_fails_if_process_group_not_initialized(
+        self,
+    ):
         with self.assertRaises(
             AssertionError,
             msg="An error should be raised since the `dist.init_process_group` is not initialized",
