@@ -250,12 +250,18 @@ if __name__ == "__main__":
         if not hasattr(args, flag):
             missing_flags.append(flag)
         elif len(getattr(args, flag)) == 0:
-            missing_flags.append(flag)
+            missing_values.append(flag)
 
     if missing_flags:
         raise ValueError(
             f"Missing the following flags for a {args.action} command: {missing_flags}. "
-            + f"All required flags are: {list(required_flags)}.\nDid you forget to provide a value for the flags?"
+            + f"All required flags are: {list(required_flags)}."
+        )
+
+    if missing_values:
+        raise ValueError(
+            f"Missing values for the following flags for a {args.action} command: {missing_values}. "
+            + f"All required flags are: {list(required_flags)}."
         )
 
     compiled_pipeline_path = UriFactory.create_uri(args.compiled_pipeline_path)
