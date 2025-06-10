@@ -4,11 +4,10 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from parameterized import param, parameterized
-
 from gigl.distributed.utils import get_free_port, get_free_ports_from_master_node
 
 
-def __test_fetching_free_ports_in_dist_context(
+def _test_fetching_free_ports_in_dist_context(
     rank: int, world_size: int, init_process_group_init_method: str, num_ports: int
 ):
     # Initialize distributed process group
@@ -45,7 +44,7 @@ def __test_fetching_free_ports_in_dist_context(
         dist.destroy_process_group()
 
 
-class TestGetFreeMasterPorts(unittest.TestCase):
+class TestDistributedNetworkingUtils(unittest.TestCase):
     def tearDown(self):
         if dist.is_initialized():
             print("Destroying process group")
@@ -78,12 +77,12 @@ class TestGetFreeMasterPorts(unittest.TestCase):
         port = get_free_port()
         init_process_group_init_method = f"tcp://127.0.0.1:{port}"
         mp.spawn(
-            fn=__test_fetching_free_ports_in_dist_context,
+            fn=_test_fetching_free_ports_in_dist_context,
             args=(world_size, init_process_group_init_method, num_ports),
             nprocs=world_size,
         )
 
-    def test_fails_if_process_group_not_initialized(self):
+    def test_get_free_ports_from_master_fails_if_process_group_not_initialized(self):
         with self.assertRaises(
             AssertionError,
             msg="An error should be raised since the `dist.init_process_group` is not initialized",

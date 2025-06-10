@@ -1,5 +1,5 @@
 import socket
-from typing import Optional
+from typing import Optional, List
 
 import torch
 
@@ -11,23 +11,26 @@ logger = Logger()
 def get_free_port() -> int:
     """
     Get a free port number.
+    Note: If you call `get_free_port` multiple times, it can return the same port number if the port is still free.
+    If you want multiple free ports before you init/use them, leverage `get_free_ports` instead.
     Returns:
         int: A free port number on the current machine.
     """
     return get_free_ports(num_ports=1)[0]
 
 
-def get_free_ports(num_ports: int) -> list[int]:
+def get_free_ports(num_ports: int) -> List[int]:
     """
     Get a list of free port numbers.
+    Note: If you call `get_free_ports` multiple times, it can return the same port number if the port is still free.
     Args:
         num_ports (int): Number of free ports to find.
     Returns:
-        list[int]: A list of free port numbers on the current machine.
+        List[int]: A list of free port numbers on the current machine.
     """
     assert num_ports >= 1, "num_ports must be >= 1"
-    ports: list[int] = []
-    open_sockets: list[socket.socket] = []
+    ports: List[int] = []
+    open_sockets: List[socket.socket] = []
     for _ in range(num_ports):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # OS assigns a free port; we want to keep it open until we have all ports so we only return unique ports
@@ -42,7 +45,7 @@ def get_free_ports(num_ports: int) -> list[int]:
 
 def get_free_ports_from_master_node(
     num_ports=1, _global_rank_override: Optional[int] = None
-) -> list[int]:
+) -> List[int]:
     """
     Get free ports from master node, that can be used for communication between workers.
     Args:
@@ -50,7 +53,7 @@ def get_free_ports_from_master_node(
         _global_rank_override (Optional[int]): Override for the global rank,
             useful for testing or if global rank is not accurately available.
     Returns:
-        list[int]: A list of free port numbers on the master node.
+        List[int]: A list of free port numbers on the master node.
     """
     # Ensure that the distributed environment is initialized
     assert (
@@ -66,18 +69,14 @@ def get_free_ports_from_master_node(
     logger.info(
         f"Rank {rank} is requesting {num_ports} free ports from rank 0 (master)"
     )
-    ports: list[int]
+    ports: List[int]
     if rank == 0:
         ports = get_free_ports(num_ports)
         logger.info(f"Rank {rank} found free ports: {ports}")
     else:
         ports = [0] * num_ports
 
-    # Wrap port in a tensor to communicate
-    port_tensor = torch.tensor(
-        ports, dtype=torch.int32, device="cuda" if torch.cuda.is_available() else "cpu"
-    )
     # Broadcast from master from rank 0 to all other ranks
-    torch.distributed.broadcast(port_tensor, src=0)
-    logger.info(f"Rank {rank} received ports: {port_tensor.tolist()}")
-    return port_tensor.tolist()
+    torch.distributed.broadcast_object_list(ports, src=0)
+    logger.info(f"Rank {rank} received ports: {ports}")
+    return ports
