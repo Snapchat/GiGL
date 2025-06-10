@@ -14,6 +14,8 @@ from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_partitioner import DistPartitioner
+from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -618,7 +620,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, supervision_edge_types),
         )
 
-    def test_toy_heterogeneous_ablp(self):
+    @parameterized.expand(
+        [
+            param("Tensor-based partitioning", partitioner_class=DistPartitioner),
+            param("Range-based partitioning", partitioner_class=DistRangePartitioner),
+        ]
+    )
+    def test_toy_heterogeneous_ablp(self, _, partitioner_class: type[DistPartitioner]):
         toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[
             HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -651,6 +659,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             sample_edge_direction="in",
             _ssl_positive_label_percentage=0.1,
             splitter=splitter,
+            partitioner_class=partitioner_class,
         )
 
         mp.spawn(
