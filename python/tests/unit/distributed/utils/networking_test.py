@@ -7,7 +7,6 @@ from parameterized import param, parameterized
 import subprocess
 from gigl.distributed.utils import get_free_port, get_free_ports_from_master_node, get_master_internal_ip
 
-
 def _test_fetching_free_ports_in_dist_context(
     rank: int, world_size: int, init_process_group_init_method: str, num_ports: int
 ):
