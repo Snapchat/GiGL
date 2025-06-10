@@ -2,6 +2,14 @@
 
 Run locally with:
 MASTER_ADDR=localhost MASTER_PORT=9762 python examples/distributed/homogeneous_training.py --task_config_uri gs://gigl-cicd-perm/cora_glt_udl_test_on__54606/config_populator/frozen_gbml_config.yaml
+
+# To simulate distributed training with 2 machines:
+# Make sure your VM has two GPUs, or you are running on CPU.
+# One terminal:
+MASTER_ADDR=localhost MASTER_PORT=9762 python examples/distributed/homogeneous_training.py --task_config_uri gs://gigl-cicd-perm/cora_glt_udl_test_on__54606/config_populator/frozen_gbml_config.yaml --rank=0 --world_size=2
+
+# Another terminal:
+MASTER_ADDR=localhost MASTER_PORT=9762 python examples/distributed/homogeneous_training.py --task_config_uri gs://gigl-cicd-perm/cora_glt_udl_test_on__54606/config_populator/frozen_gbml_config.yaml --rank=1 --world_size=2
 """
 import argparse
 import datetime
@@ -51,6 +59,7 @@ def sync_loss_across_processes(local_loss: torch.Tensor) -> float:
     loss_tensor = local_loss.detach().clone()
     torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
     return loss_tensor.item() / torch.distributed.get_world_size()
+
 
 def split_parameters_by_layer_names(
     named_parameters: list[tuple[str, torch.nn.Parameter]],
@@ -202,7 +211,7 @@ def _train_process(
     num_epoch: int = 1,
     use_amp: bool = True,
 ) -> None:
-    device = get_available_device(process_number)
+    device = get_available_device(dist_context.global_rank + process_number)
     train_nodes = to_homogeneous(dataset.train_node_ids)
     train_loader = DistABLPLoader(
         dataset=dataset,
@@ -319,25 +328,18 @@ def _train_process(
     for epoch in range(num_epoch):
         logger.info(f"Epoch {epoch} started")
         for batch_idx, main_data in enumerate(train_loader):
-            # for batch_idx, main_data in enumerate(train_loader):
             # TODO enable early stop
             # TODO enable AMP
-            # print(f"Epoch {epoch} batch {batch_idx}")
-            # print(f"maiin_data: {main_data}")
-            print(f"Process {process_number} Epoch {epoch} batch {batch_idx}")
             random_data = next(random_negative_loader)
-            print(f"process {process_number} ")
             random_data = random_data.edge_type_subgraph(
                 [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             ).to_homogeneous(add_edge_type=False, add_node_type=False)
-            print(f"inferring inputs for process {process_number}")
             scores, repeated_query_embeddings = _infer_inputs(
                 model=ddp_model,
                 main_data=main_data,
                 random_data=random_data,
                 device=device,
             )
-            print(f"calculating loss for process {process_number}")
             loss_output = loss(
                 batch_combined_scores=scores,
                 repeated_query_embeddings=repeated_query_embeddings,
@@ -354,18 +356,14 @@ def _train_process(
             scaler.step(optimizer)
             scaler.update()
 
-
-
             # Validation
             if batch_idx % validate_every == 0:
                 print(f"validating for batch idx {batch_idx} at epoch {epoch}")
                 with torch.no_grad():
-                    print(f"process {process_number} validating")
                     random_data = next(random_negative_loader)
                     random_data = random_data.edge_type_subgraph(
                         [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
                     ).to_homogeneous(add_edge_type=False, add_node_type=False)
-                    print(f"process {process_number} validation forward pass")
                     val_scores, repeated_query_embeddings = _infer_inputs(
                         model=ddp_model,
                         main_data=next(val_loader),
@@ -379,27 +377,23 @@ def _train_process(
                         device=device,
                     )
                     val_loss_tensor: torch.Tensor = loss_output[0]
-                    print(
-                        f"Process {process_number} Epoch {epoch} batch {batch_idx} validation loss: {val_loss_tensor.item()}"
-                    )
 
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
-    print(f"Process {process_number} finished training")
     torch.distributed.barrier()
     # barrier()
     torch.distributed.destroy_process_group()
-    print(f"Process {process_number} destroyed process group")
     del train_loader, val_loader, random_negative_loader
-    print(f"Process {process_number} deleted dataloaders")
 
 
 def train(
     task_config_uri: str,
+    rank: int,
+    world_size: int,
 ) -> None:
     train_start_time = time.time()
 
     # dist_context = connect_worker_pool()
-    dist_context = DistributedContext("localhost", 0, 1)
+    dist_context = DistributedContext("localhost", rank, world_size)
     local_dataset = Path(__file__).parent / "local_dataset.pkl"
     if not local_dataset.exists():
         dataset = build_dataset_from_task_config_uri(
@@ -415,15 +409,13 @@ def train(
     )
     num_training_processes = int(
         gbml_pb_wrapper.trainer_config.trainer_args.get(
-            "num_training_processes_per_machine", 2
+            "num_training_processes_per_machine", 1
         )
     )
     num_random_samples = int(
         gbml_pb_wrapper.trainer_config.trainer_args.get("num_random_samples", 100)
     )
     num_neighbors = [10, 10]
-    print(f"len(dataset.node_pb) = {len(to_homogeneous(dataset.node_pb))}")
-    print(f"dataset.node_pb.shape = {to_homogeneous(dataset.node_pb).shape}")
     negative_samples = torch.arange(len(to_homogeneous(dataset.node_pb))).repeat(
         num_random_samples
     )
@@ -465,8 +457,22 @@ if __name__ == "__main__":
         required=True,
         help="URI to the task config file",
     )
+    parser.add_argument(
+        "--rank",
+        type=int,
+        default=0,
+        help="Rank of the process in the distributed training",
+    )
+    parser.add_argument(
+        "--world_size",
+        type=int,
+        default=1,
+        help="Total number of processes in the distributed training",
+    )
 
     args = parser.parse_args()
     train(
         task_config_uri=args.task_config_uri,
+        rank=args.rank,
+        world_size=args.world_size,
     )
