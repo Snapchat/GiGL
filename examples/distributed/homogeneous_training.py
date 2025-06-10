@@ -139,10 +139,6 @@ def _init_example_gigl_model(
     return model
 
 
-def index_select(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    return torch.tensor([torch.nonzero(a == e).squeeze(1) for e in b], dtype=torch.long)
-
-
 def _infer_inputs(
     model: nn.Module, main_data: Data, random_data: Data, device: torch.device
 ) -> tuple[BatchCombinedScores, torch.Tensor]:
