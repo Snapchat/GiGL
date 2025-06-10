@@ -45,6 +45,3 @@ fossa*.zip
 
 # Ignore *all* pickled files, we should *never* put these in git.
 *.pkl
-
-# CS gets downloaded and may not be cleaned up...
-cs-x86_64-pc-linux.gz
