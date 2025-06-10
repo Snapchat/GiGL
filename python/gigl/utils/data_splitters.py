@@ -24,6 +24,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
+    reverse_edge_type,
 )
 
 logger = Logger()
@@ -177,14 +178,24 @@ class HashedNodeAnchorLinkSplitter:
         # edge and will be used for splitting.
 
         self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
+        self._labeled_edge_types: Sequence[EdgeType]
         if should_convert_labels_to_edges:
-            self._labeled_edge_types: Sequence[EdgeType] = [
+            labeled_edge_types = [
                 message_passing_to_positive_label(supervision_edge_type)
                 for supervision_edge_type in supervision_edge_types
             ] + [
                 message_passing_to_negative_label(supervision_edge_type)
                 for supervision_edge_type in supervision_edge_types
             ]
+            # If the edge direction is "in", we must reverse the labeled edge type, since separately provided labels are expected to be initially outgoing, and all edges
+            # in the graph must have the same edge direction.
+            if sampling_direction == "in":
+                self._labeled_edge_types = [
+                    reverse_edge_type(labeled_edge_type)
+                    for labeled_edge_type in labeled_edge_types
+                ]
+            else:
+                self._labeled_edge_types = labeled_edge_types
         else:
             self._labeled_edge_types = supervision_edge_types
 
@@ -271,7 +282,7 @@ class HashedNodeAnchorLinkSplitter:
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         for anchor_node_type, collected_anchor_nodes in node_ids_by_node_type.items():
             max_node_id = max_node_id_by_type[anchor_node_type]
-            node_id_count = torch.zeros(max_node_id, dtype=torch.int64)
+            node_id_count = torch.zeros(max_node_id, dtype=torch.uint8)
             for anchor_nodes in collected_anchor_nodes:
                 node_id_count.add_(torch.bincount(anchor_nodes, minlength=max_node_id))
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
@@ -349,7 +360,9 @@ def get_labels_for_anchor_nodes(
                 -1, # Positive node (padded)
             ],
         ]
-
+    If positive and negative label edge types are provided:
+        * All negative label node ids must be present in the positive label node ids.
+        * For any positive label node id that does not have a negative label, the negative label will be padded with `PADDING_NODE`.
     Args:
         dataset (Dataset): The dataset storing the graph info, must be heterogeneous.
         node_ids (torch.Tensor): The node ids to use for the labels. [N]
@@ -372,18 +385,26 @@ def get_labels_for_anchor_nodes(
         negative_node_topo = None
 
     # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
-    positive_labels = _get_padded_labels(node_ids, positive_node_topo)
+    positive_labels = _get_padded_labels(
+        node_ids, positive_node_topo, allow_non_existant_node_ids=False
+    )
 
     if negative_node_topo is not None:
         # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
-        negative_labels = _get_padded_labels(node_ids, negative_node_topo)
+        negative_labels = _get_padded_labels(
+            node_ids, negative_node_topo, allow_non_existant_node_ids=True
+        )
     else:
         negative_labels = None
 
     return positive_labels, negative_labels
 
 
-def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.Tensor:
+def _get_padded_labels(
+    anchor_node_ids: torch.Tensor,
+    topo: Topology,
+    allow_non_existant_node_ids: bool = False,
+) -> torch.Tensor:
     """Returns the padded labels and the max range of labels.
 
     Given anchor node ids and a topology, this function returns a tensor
@@ -393,6 +414,8 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     Args:
         anchor_node_ids (torch.Tensor): The anchor node ids to use for the labels. [N]
         topo (Topology): The topology to use for the labels.
+        allow_non_existant_node_ids (bool): If True, will allow anchor node ids that do not exist in the topology.
+            This means that the returned tensor will be padded with `PADDING_NODE` for those anchor node ids.
     Returns:
         The shape of the returned tensor is [N, max_number_of_labels].
     """
@@ -402,6 +425,11 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
+    extra_nodes_to_pad = 0
+    if allow_non_existant_node_ids:
+        valid_ids = anchor_node_ids < (indptr.size(0) - 1)
+        extra_nodes_to_pad = int(torch.count_nonzero(~valid_ids).item())
+        anchor_node_ids = anchor_node_ids[valid_ids]
     starts = indptr[anchor_node_ids]  # [N]
     ends = indptr[anchor_node_ids + 1]  # [N]
 
@@ -417,6 +445,13 @@ def _get_padded_labels(anchor_node_ids: torch.Tensor, topo: Topology) -> torch.T
     mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
     labels = torch.where(
         mask, torch.full_like(ranges, PADDING_NODE.item()), indices[ranges]
+    )
+    labels = torch.cat(
+        [
+            labels,
+            torch.ones(extra_nodes_to_pad, max_range, dtype=torch.int64) * PADDING_NODE,
+        ],
+        dim=0,
     )
     return labels
 
