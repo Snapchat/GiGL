@@ -360,7 +360,7 @@ def build_dataset(
     return output_dataset
 
 
-def build_dataset_from_task_config_uri(
+def build_link_pred_dataset_from_task_config(
     task_config_uri: Union[str, Uri],
     distributed_context: DistributedContext,
     is_inference: bool = True,

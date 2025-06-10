@@ -39,7 +39,7 @@ from gigl.common.utils.vertex_ai_context import connect_worker_pool
 from gigl.distributed import (
     DistLinkPredictionDataset,
     DistributedContext,
-    build_dataset_from_task_config_uri,
+    build_link_pred_dataset_from_task_config,
 )
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
 from gigl.src.common.models.pyg.link_prediction import (
@@ -336,7 +336,7 @@ def _run_example_inference(
 
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
     # and registering that information to a DistLinkPredictionDataset class.
-    dataset = build_dataset_from_task_config_uri(
+    dataset = build_link_pred_dataset_from_task_config(
         task_config_uri=task_config_uri, distributed_context=distributed_context
     )
 
