@@ -25,6 +25,7 @@ tmp
 gigl.egg-info/
 gigl_dataflow_setup.egg-info/
 miniconda/
+cs-x86_64-pc-linux.gz
 
 # ==================== IDE / Editor folders
 .idea
