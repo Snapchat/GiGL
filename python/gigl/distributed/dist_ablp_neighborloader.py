@@ -211,17 +211,15 @@ class DistABLPLoader(DistLoader):
             )
         )
 
-        num_neighbors = set_labeled_edge_type_fanout(
-            dataset=dataset, num_neighbors=num_neighbors
-        )
+        dataset_edge_types = dataset.get_edge_types()
 
+        assert dataset_edge_types is not None
         num_neighbors = to_heterogeneous_edge(num_neighbors)
         assert isinstance(num_neighbors, abc.Mapping)
 
-        if num_neighbors.keys() != dataset.graph.keys():
-            raise ValueError(
-                f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset.graph.keys()}"
-            )
+        num_neighbors = set_labeled_edge_type_fanout(
+            edge_types=dataset_edge_types, num_neighbors=num_neighbors
+        )
         hops = len(next(iter(num_neighbors.values())))
         if not all(len(fanout) == hops for fanout in num_neighbors.values()):
             raise ValueError(
