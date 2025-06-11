@@ -102,6 +102,9 @@ class VertexAiJobConfig:
         int
     ] = None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
     enable_web_access: bool = True
+    # Default to suppress TensorFlow log spam
+    # Like: ` E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered`
+    tf_cpp_min_log_level: Optional[int] = 3
 
 
 class VertexAIService:
@@ -171,6 +174,13 @@ class VertexAIService:
                 value=leader_worker_internal_ip_file_path.uri,
             )
         ]
+        if job_config.tf_cpp_min_log_level is not None:
+            env_vars.append(
+                env_var.EnvVar(
+                    name="TF_CPP_MIN_LOG_LEVEL",
+                    value=str(job_config.tf_cpp_min_log_level),
+                )
+            )
 
         container_spec = ContainerSpec(
             image_uri=job_config.container_uri,
