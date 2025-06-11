@@ -16,6 +16,11 @@ from gigl.distributed.constants import (
 )
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.utils.loader import (
+    remove_labeled_edge_types,
+    set_labeled_edge_type_fanout,
+    shard_nodes_by_process,
+)
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -144,6 +149,10 @@ class DistNeighborLoader(DistLoader):
                     f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
                 )
 
+        num_neighbors = set_labeled_edge_type_fanout(
+            dataset=dataset, num_neighbors=num_neighbors
+        )
+
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
@@ -216,10 +225,6 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        # May be set by base classes.
-        if not hasattr(self, "_transforms"):
-            self._transforms = []
-
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -237,22 +242,5 @@ class DistNeighborLoader(DistLoader):
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
-        for transform in self._transforms:
-            data = transform(data)
+        data = remove_labeled_edge_types(data)
         return data
-
-
-def shard_nodes_by_process(
-    input_nodes: torch.Tensor,
-    local_process_rank: int,
-    local_process_world_size: int,
-) -> torch.Tensor:
-    num_node_ids_per_process = input_nodes.size(0) // local_process_world_size
-    start_index = local_process_rank * num_node_ids_per_process
-    end_index = (
-        input_nodes.size(0)
-        if local_process_rank == local_process_world_size - 1
-        else start_index + num_node_ids_per_process
-    )
-    nodes_for_current_process = input_nodes[start_index:end_index]
-    return nodes_for_current_process
