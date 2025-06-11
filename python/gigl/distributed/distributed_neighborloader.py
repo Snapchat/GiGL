@@ -139,7 +139,7 @@ class DistNeighborLoader(DistLoader):
             node_type, node_ids = input_nodes
 
         if dataset.get_edge_types() is None:
-            assert isinstance(num_neighbors, abc.Mapping)
+            assert isinstance(num_neighbors, list[int])
         else:
             # TODO(kmonte): We should enable this. We have two blockers:
             # 1. We need to treat `EdgeType` as a proper tuple, not the GiGL`EdgeType`.
