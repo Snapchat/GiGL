@@ -80,3 +80,44 @@ def get_free_ports_from_master_node(
     torch.distributed.broadcast_object_list(ports, src=0)
     logger.info(f"Rank {rank} received ports: {ports}")
     return ports
+
+
+def get_internal_ip_from_master_node(
+    _global_rank_override: Optional[int] = None,
+) -> str:
+    """
+    Get the internal IP address of the master node in a distributed setup.
+    This is useful for setting up RPC communication between workers where the default torch.distributed env:// setup is not enough.
+
+    i.e. when using :py:obj:`gigl.distributed.dataset_factory`
+
+    Returns:
+        str: The internal IP address of the master node.
+    """
+    assert (
+        torch.distributed.is_initialized()
+    ), "Distributed environment must be initialized"
+
+    rank = (
+        torch.distributed.get_rank()
+        if _global_rank_override is None
+        else _global_rank_override
+    )
+    logger.info(
+        f"Rank {rank} is requesting internal ip address of master node from rank 0 (master)"
+    )
+
+    master_ip_list: List[Optional[str]] = []
+    if rank == 0:
+        # Master node, return its own internal IP
+        master_ip_list = [socket.gethostbyname(socket.gethostname())]
+    else:
+        # Other nodes will receive the master's IP via broadcast
+        master_ip_list = [None]
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch.distributed.broadcast_object_list(master_ip_list, src=0, device=device)
+    master_ip = master_ip_list[0]
+    logger.info(f"Rank {rank} received master internal IP: {master_ip}")
+    assert master_ip is not None, "Could not retrieve master node's internal IP"
+    return master_ip
