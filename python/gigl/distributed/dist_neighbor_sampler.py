@@ -67,12 +67,12 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         else:
             if negative_seeds is None:
                 input_nodes = {
-                    input_type: torch.unique(input_seeds),
+                    input_type: input_seeds,
                     supervision_node_type: torch.unique(positive_seeds),
                 }
             else:
                 input_nodes = {
-                    input_type: torch.unique(input_seeds),
+                    input_type: input_seeds,
                     supervision_node_type: torch.unique(
                         torch.cat((positive_seeds, negative_seeds), dim=0)
                     ),
