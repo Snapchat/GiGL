@@ -51,3 +51,17 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
             else None,
             supervision_node_type=self.supervision_node_type,
         )
+
+    def share_memory(self):
+        self.node.share_memory_()
+        self.positive_labels.share_memory_()
+        if self.negative_labels is not None:
+            self.negative_labels.share_memory_()
+        return self
+
+    def to(self, device: torch.device):
+        self.node = self.node.to(device)
+        self.positive_labels = self.positive_labels.to(device)
+        if self.negative_labels is not None:
+            self.negative_labels = self.negative_labels.to(device)
+        return self

@@ -62,19 +62,19 @@ class DistABLPNeighborSampler(DistNeighborSampler):
                 combined_seeds = (input_seeds, positive_seeds, negative_seeds)
             else:
                 combined_seeds = (input_seeds, positive_seeds)
-            input_nodes = {input_type: torch.cat(combined_seeds, dim=0)}
+            input_nodes = {input_type: torch.unique(torch.cat(combined_seeds, dim=0))}
         # Otherwise, they need to be passed as two separate node types to the inducer.init_node() function.
         else:
             if negative_seeds is None:
                 input_nodes = {
-                    input_type: input_seeds,
-                    supervision_node_type: positive_seeds,
+                    input_type: torch.unique(input_seeds),
+                    supervision_node_type: torch.unique(positive_seeds),
                 }
             else:
                 input_nodes = {
-                    input_type: input_seeds,
-                    supervision_node_type: torch.cat(
-                        (positive_seeds, negative_seeds), dim=0
+                    input_type: torch.unique(input_seeds),
+                    supervision_node_type: torch.unique(
+                        torch.cat((positive_seeds, negative_seeds), dim=0)
                     ),
                 }
         output: NeighborOutput
