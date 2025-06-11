@@ -63,22 +63,22 @@ def set_labeled_edge_type_fanout(
 def shard_nodes_by_process(
     input_nodes: torch.Tensor,
     local_process_rank: int,
-    local_process_world_size: int,
+    local_world_size: int,
 ) -> torch.Tensor:
     """
     Shards input nodes based on the local process rank
     Args:
         input_nodes (torch.Tensor): Nodes which are split across each training or inference process
         local_process_rank (int): Rank of the current local process
-        local_process_world_size (int): Total number of local processes on the current machine
+        local_world_size (int): Total number of local processes on the current machine
     Returns:
         torch.Tensor: The sharded nodes for the current local process
     """
-    num_node_ids_per_process = input_nodes.size(0) // local_process_world_size
+    num_node_ids_per_process = input_nodes.size(0) // local_world_size
     start_index = local_process_rank * num_node_ids_per_process
     end_index = (
         input_nodes.size(0)
-        if local_process_rank == local_process_world_size - 1
+        if local_process_rank == local_world_size - 1
         else start_index + num_node_ids_per_process
     )
     nodes_for_current_process = input_nodes[start_index:end_index]
