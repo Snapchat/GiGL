@@ -61,6 +61,11 @@ class SupportedParams:
                 description="Labels for the VM instance in the form of key=value,key2=value2",
                 required=False,
             ),
+            "reservation": Param(
+                default=None,
+                description="Reservation to use for the VM instance. If not provided, the VM will be created without a reservation.",
+                required=False,
+            ),
         }
 
 
@@ -283,6 +288,7 @@ if __name__ == "__main__":
         --shielded-vtpm \
         --shielded-integrity-monitoring \
         --labels=goog-ec-src=vm_add-gcloud{ops_agent_clause}{extra_labels_clause} \
+        --reservation={values['reservation']} \
         --reservation-affinity=any
         """
     ).strip()
