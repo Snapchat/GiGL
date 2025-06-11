@@ -28,8 +28,10 @@ extensions = [
     "sphinx.ext.viewcode",  # Add links to the source code
     "sphinx.ext.autosummary", # Generates function/method/attribute summary lists
     "autoapi.extension", # Generate API docs without need to import modules: https://sphinx-autoapi.readthedocs.io/en/latest/index.html
-    "myst_parser", # Parsing markdown files: https://myst-parser.readthedocs.io/en/v0.15.1/sphinx/intro.html
+    # "myst_parser", # Parsing markdown files: https://myst-parser.readthedocs.io/en/v0.15.1/sphinx/intro.html
     "sphinx_design", # Needed by themes
+    "myst_nb", # Support for rendering Jupyter Notebooks: https://myst-nb.readthedocs.io/en/v1.2.0/
+    "sphinx_copybutton", # Support for copying code snippets: https://sphinx-copybutton.readthedocs.io/
 ]
 
 autoapi_type = 'python'
@@ -67,6 +69,7 @@ include_patterns = [
     "python/snapchat/**",
     "snapchat/**",
     "index.rst",
+    "examples/**",
 ]
 
 autodoc_default_options = {
@@ -128,3 +131,5 @@ html_context = {
     "github_version": "main",
     "doc_path": "/",
 }
+
+nb_execution_mode = "off"  # Disable execution of notebooks; we only want to render them as static content
