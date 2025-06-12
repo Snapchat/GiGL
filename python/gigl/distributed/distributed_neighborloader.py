@@ -151,10 +151,6 @@ class DistNeighborLoader(DistLoader):
             num_neighbors = set_labeled_edge_type_fanout(
                 edge_types=dataset_edge_types, num_neighbors=num_neighbors
             )
-            if num_neighbors.keys() != dataset_edge_types:
-                raise ValueError(
-                    f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset_edge_types}"
-                )
             hops = len(next(iter(num_neighbors.values())))
             if not all(len(fanout) == hops for fanout in num_neighbors.values()):
                 raise ValueError(
