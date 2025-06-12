@@ -24,7 +24,7 @@ from gigl.distributed.utils.loader import (
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_heterogeneous_edge
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_heterogeneous_edge, DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
 logger = Logger()
 
@@ -256,7 +256,7 @@ class DistNeighborLoader(DistLoader):
             data (Data): Homogeneous graph with the labeled edge type removed
         """
         homogeneous_data = data.edge_type_subgraph(
-            [self._supervision_edge_type]
+            [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         ).to_homogeneous(add_edge_type=False, add_node_type=False)
         return homogeneous_data
 
