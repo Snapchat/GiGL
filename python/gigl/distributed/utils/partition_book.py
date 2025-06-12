@@ -37,9 +37,11 @@ def get_ids_on_rank(
 
 def get_num_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
     """
-    Returns the number of ids from a partition book.
+    Returns the number of ids (e.g. the total number of nodes) from a partition book.
     Args:
         partition_book (Union[torch.Tensor, PartitionBook]): Tensor or range-based partition book
+    Returns:
+        int: Total number of ids in the partition book
     """
     if isinstance(partition_book, torch.Tensor):
         return int(partition_book.numel())
