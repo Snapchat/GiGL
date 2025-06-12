@@ -24,7 +24,11 @@ from gigl.distributed.utils.loader import (
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_heterogeneous_edge, DEFAULT_HOMOGENEOUS_EDGE_TYPE
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    to_heterogeneous_edge,
+)
 
 logger = Logger()
 
