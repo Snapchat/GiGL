@@ -14,8 +14,8 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
 from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.utils.data_splitters import PADDING_NODE
 from gigl.types.graph import is_label_edge_type
+from gigl.utils.data_splitters import PADDING_NODE
 
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
 # TODO (mkolodner-sc): Add tests for this class
@@ -37,15 +37,24 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
         supervision_node_type = inputs.supervision_node_type
-        positive_labels = inputs.positive_labels.to(self.device)
+        positive_labels = (
+            inputs.positive_labels.to(self.device)
+            if inputs.positive_labels is not None
+            else None
+        )
         negative_labels = (
             inputs.negative_labels.to(self.device)
             if inputs.negative_labels is not None
             else None
         )
 
-        positive_seeds = positive_labels[positive_labels != PADDING_NODE]
+        positive_seeds: Optional[torch.Tensor]
         negative_seeds: Optional[torch.Tensor]
+
+        if positive_labels is not None:
+            positive_seeds = positive_labels[positive_labels != PADDING_NODE]
+        else:
+            positive_seeds = None
         if negative_labels is not None:
             negative_seeds = negative_labels[negative_labels != PADDING_NODE]
         else:
@@ -53,31 +62,37 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
-        metadata: dict[str, torch.Tensor] = {"positive_labels": positive_labels}
-        if negative_labels is not None:
-            metadata["negative_labels"] = negative_labels
-        # If the input type and supervision node type are the same, we should concatenate the input and supervision nodes together for fanning out.
-        if input_type == supervision_node_type:
-            combined_seeds: tuple[torch.Tensor, ...]
-            if negative_seeds is not None:
-                combined_seeds = (input_seeds, positive_seeds, negative_seeds)
-            else:
-                combined_seeds = (input_seeds, positive_seeds)
-            input_nodes = {input_type: torch.cat(combined_seeds, dim=0)}
-        # Otherwise, they need to be passed as two separate node types to the inducer.init_node() function.
+        metadata: dict[str, torch.Tensor]
+        if supervision_node_type is None:
+            metadata = {}
+            input_nodes = {input_type: input_seeds}
         else:
-            if negative_seeds is None:
-                input_nodes = {
-                    input_type: input_seeds,
-                    supervision_node_type: positive_seeds,
-                }
+            assert positive_labels is not None and positive_seeds is not None
+            metadata = {"positive_labels": positive_labels}
+            if negative_labels is not None:
+                metadata["negative_labels"] = negative_labels
+            # If the input type and supervision node type are the same, we should concatenate the input and supervision nodes together for fanning out.
+            if input_type == supervision_node_type:
+                combined_seeds: tuple[torch.Tensor, ...]
+                if negative_seeds is not None:
+                    combined_seeds = (input_seeds, positive_seeds, negative_seeds)
+                else:
+                    combined_seeds = (input_seeds, positive_seeds)
+                input_nodes = {input_type: torch.cat(combined_seeds, dim=0)}
+            # Otherwise, they need to be passed as two separate node types to the inducer.init_node() function.
             else:
-                input_nodes = {
-                    input_type: input_seeds,
-                    supervision_node_type: torch.cat(
-                        (positive_seeds, negative_seeds), dim=0
-                    ),
-                }
+                if negative_seeds is None:
+                    input_nodes = {
+                        input_type: input_seeds,
+                        supervision_node_type: positive_seeds,
+                    }
+                else:
+                    input_nodes = {
+                        input_type: input_seeds,
+                        supervision_node_type: torch.cat(
+                            (positive_seeds, negative_seeds), dim=0
+                        ),
+                    }
         output: NeighborOutput
         if is_hetero:
             assert input_type is not None
