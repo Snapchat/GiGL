@@ -24,7 +24,7 @@ from gigl.distributed.utils.loader import (
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
-from gigl.types.graph import to_heterogeneous_edge
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_heterogeneous_edge
 
 logger = Logger()
 
@@ -135,11 +135,16 @@ class DistNeighborLoader(DistLoader):
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
-            node_type = None
+            self._is_input_heterogeneous = False
+            if dataset.get_edge_types() is None:
+                node_type = None
+            else:
+                node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         else:
+            self._is_input_heterogeneous = True
             node_type, node_ids = input_nodes
 
-        if dataset.get_edge_types() is None:
+        if not self._is_input_heterogeneous:
             assert isinstance(num_neighbors, list)
         else:
             # TODO(kmonte): We should enable this. We have two blockers:
@@ -241,7 +246,23 @@ class DistNeighborLoader(DistLoader):
         )
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
+    def _supervised_to_homogeneous(self, data: HeteroData) -> Data:
+        """
+        Removes the label edge types from a supervised graph and converts it to homogeneous
+
+        Args:
+            data (HeteroData): Heterogeneous graph with the supervision edge type
+        Returns:
+            data (Data): Homogeneous graph with the labeled edge type removed
+        """
+        homogeneous_data = data.edge_type_subgraph(
+            [self._supervision_edge_type]
+        ).to_homogeneous(add_edge_type=False, add_node_type=False)
+        return homogeneous_data
+
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
         data = remove_labeled_edge_types(data)
+        if not self._is_input_heterogeneous:
+            data = self._supervised_to_homogeneous(data)
         return data
