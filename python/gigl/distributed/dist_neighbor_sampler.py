@@ -15,6 +15,7 @@ from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.utils.data_splitters import PADDING_NODE
+from gigl.types.graph import is_label_edge_type
 
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
 # TODO (mkolodner-sc): Add tests for this class
@@ -96,6 +97,8 @@ class DistABLPNeighborSampler(DistNeighborSampler):
                 nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
                 edge_dict: dict[EdgeType, torch.Tensor] = {}
                 for etype in self.edge_types:
+                    if is_label_edge_type(etype):
+                        continue
                     req_num = self.num_neighbors[etype][i]
                     if self.edge_dir == "in":
                         srcs = src_dict.get(etype[-1], None)
