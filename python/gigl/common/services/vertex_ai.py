@@ -104,7 +104,7 @@ class VertexAiJobConfig:
     enable_web_access: bool = True
     # Default to suppress TensorFlow log spam
     # Like: ` E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered`
-    tf_cpp_min_log_level: Optional[int] = 2
+    tf_cpp_min_log_level: Optional[int] = 3
 
 
 class VertexAIService:
