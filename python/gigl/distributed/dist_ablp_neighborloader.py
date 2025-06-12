@@ -68,6 +68,7 @@ class DistABLPLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        should_skip_connection_setup: bool = False,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -257,6 +258,7 @@ class DistABLPLoader(DistLoader):
             # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
             process_start_gap_seconds=process_start_gap_seconds,
+            should_skip_connection_setup=should_skip_connection_setup,
         )
         logger.info(
             f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
@@ -275,7 +277,9 @@ class DistABLPLoader(DistLoader):
             # use different master ports.
             master_addr=context.main_worker_ip_address,
             # TODO (mkolodner-sc): Automatically infer ports so that we are not relying local_process_rank
-            master_port=_main_sampling_port + local_process_rank,
+            master_port=_main_sampling_port
+            if should_skip_connection_setup
+            else _main_sampling_port + local_process_rank,
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
@@ -376,6 +380,9 @@ class DistABLPLoader(DistLoader):
             self.sampling_config,
             self.worker_options,
             self._channel,
+        )
+        logger.info(
+            f"Launching sampling producer on machine {context.global_rank} local process number {local_process_rank}"
         )
         self._mp_producer.init()
 
