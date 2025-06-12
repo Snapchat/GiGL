@@ -146,9 +146,15 @@ class DistNeighborLoader(DistLoader):
             # 2. There are (likely) some GLT bugs around https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
             # Where if num_neighbors is a dict then we index into it improperly.
             num_neighbors = to_heterogeneous_edge(num_neighbors)
+            dataset_edge_types = dataset.get_edge_types()
+
             num_neighbors = set_labeled_edge_type_fanout(
-                edge_types=dataset.get_edge_types(), num_neighbors=num_neighbors
+                edge_types=dataset_edge_types, num_neighbors=num_neighbors
             )
+            if num_neighbors.keys() != dataset_edge_types:
+                raise ValueError(
+                    f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset_edge_types}"
+                )
             hops = len(next(iter(num_neighbors.values())))
             if not all(len(fanout) == hops for fanout in num_neighbors.values()):
                 raise ValueError(
