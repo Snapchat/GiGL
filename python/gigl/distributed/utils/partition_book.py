@@ -33,3 +33,22 @@ def get_ids_on_rank(
         return _get_ids_from_range_partition_book(
             range_partition_book=partition_book, rank=rank
         )
+
+
+def get_num_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
+    """
+    Returns the number of ids from a partition book.
+    Args:
+        partition_book (Union[torch.Tensor, PartitionBook]): Tensor or range-based partition book
+    """
+    if isinstance(partition_book, torch.Tensor):
+        return int(partition_book.numel())
+    elif isinstance(partition_book, RangePartitionBook):
+        return int(
+            partition_book.partition_bounds[-1].item()
+        )  # Last bound is the total number of ids
+    else:
+        raise TypeError(
+            f"Unsupported partition book type: {type(partition_book)}. "
+            "Expected torch.Tensor or RangePartitionBook."
+        )
