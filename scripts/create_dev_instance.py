@@ -269,6 +269,7 @@ if __name__ == "__main__":
         if values.get("startup_script")
         else ""
     )
+    reservation_clause = f"        --reservation={values['reservation']}" if values.get('reservation') else ""
 
     gcloud_cmd = inspect.cleandoc(
         f"""
@@ -288,8 +289,8 @@ if __name__ == "__main__":
         --shielded-vtpm \
         --shielded-integrity-monitoring \
         --labels=goog-ec-src=vm_add-gcloud{ops_agent_clause}{extra_labels_clause} \
-        --reservation={values['reservation']} \
-        --reservation-affinity=any
+        --reservation-affinity=any \
+        {reservation_clause}
         """
     ).strip()
 
