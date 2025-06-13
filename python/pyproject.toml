@@ -32,7 +32,7 @@ dependencies = [
     # transform deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
     # must move in lockstep, with guidance on compatible versions listed here:
     # https://pypi.org/project/tensorflow-transform/
-    "tensorflow==2.15.1",
+    "tensorflow-cpu==2.15.1",
     # https://developer.apple.com/metal/tensorflow-plugin/
     "tensorflow-metal ; platform_system=='Darwin' and platform_machine=='arm64'",
     "numpy==1.24.3",
