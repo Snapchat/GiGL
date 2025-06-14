@@ -379,7 +379,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     def test_distributed_neighbor_loader(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         expected_data_count = 2708
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -390,8 +389,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
             output_dict=output_dict,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
         )
 
         mp.spawn(
@@ -402,7 +399,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         expected_data_count = 4057
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
@@ -413,8 +409,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             mocked_dataset_info=DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
             output_dict=output_dict,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
         )
 
         mp.spawn(
@@ -569,8 +563,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
             output_dict=output_dict,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
         )
 
         mp.spawn(

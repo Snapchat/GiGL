@@ -18,6 +18,7 @@ from graphlearn_torch.distributed import (
     shutdown_rpc,
 )
 
+import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
@@ -207,8 +208,10 @@ def _build_dataset_process(
     process_number_on_current_machine: int,
     output_dict: MutableMapping[str, DistLinkPredictionDataset],
     serialized_graph_metadata: SerializedGraphMetadata,
-    distributed_context: DistributedContext,
-    dataset_building_port: int,
+    master_ip_address: str,
+    node_rank: int,
+    node_world_size: int,
+    master_dataset_building_port: int,
     sample_edge_direction: Literal["in", "out"],
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]],
@@ -240,7 +243,7 @@ def _build_dataset_process(
             will be written to for use by the parent process
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
-        dataset_building_port (int): RPC port to use to build the dataset
+        master_dataset_building_port (int): RPC port to use to build the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
@@ -254,14 +257,14 @@ def _build_dataset_process(
 
     # Sets up the worker group and rpc connection. We need to ensure we cleanup by calling shutdown_rpc() after we no longer need the rpc connection.
     init_worker_group(
-        world_size=distributed_context.global_world_size,
-        rank=distributed_context.global_rank,
+        world_size=node_world_size,
+        rank=node_rank,
         group_name=get_process_group_name(process_number_on_current_machine),
     )
 
     init_rpc(
-        master_addr=distributed_context.main_worker_ip_address,
-        master_port=dataset_building_port,
+        master_addr=master_ip_address,
+        master_port=master_dataset_building_port,
         num_rpc_threads=16,
     )
 
@@ -286,21 +289,21 @@ def _build_dataset_process(
 
 def build_dataset(
     serialized_graph_metadata: SerializedGraphMetadata,
-    distributed_context: DistributedContext,
     sample_edge_direction: Union[Literal["in", "out"], str],
+    distributed_context: Optional[DistributedContext] = None,
     should_load_tensors_in_parallel: bool = True,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
-    _dataset_building_port: int = DEFAULT_MASTER_DATA_BUILDING_PORT,
 ) -> DistLinkPredictionDataset:
     """
     Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some SerializedGraphMetadata
     Args:
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
-        distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
+        distributed_context (Optional[DistributedContext]): Distributed context containing information for master_ip_address, rank, and world size.
+            Defaults to None, in which case it will be initialized from the current torch.distributed context.
         sample_edge_direction (Union[Literal["in", "out"], str]): Whether edges in the graph are directed inward or outward. Note that this is
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
@@ -312,9 +315,6 @@ def build_dataset(
             If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
-        _dataset_building_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
-            The RPC port to use to build the dataset. In future, the port will be automatically assigned based on availability.
-            Currently defaults to: gigl.distributed.constants.DEFAULT_MASTER_DATA_BUILDING_PORT
 
     Returns:
         DistLinkPredictionDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -333,14 +333,59 @@ def build_dataset(
     # Used for directing the outputs of the dataset building process back to the parent process
     output_dict = manager.dict()
 
+    node_world_size: int
+    node_rank: int
+    main_worker_ip_address: str
+    master_dataset_building_port: int
+    if distributed_context is None:
+        should_cleanup_distributed_context: bool = False
+        if not torch.distributed.is_initialized():
+            logger.info(
+                "Distributed context is None, trying to  torch.distributed.init_process_group to communicate necessary setup information."
+            )
+            should_cleanup_distributed_context = True
+            torch.distributed.init_process_group(backend="gloo")
+
+        # global_world_size
+        # global_rank
+        # main_worker_ip_address
+        node_world_size = torch.distributed.get_world_size()
+        node_rank = torch.distributed.get_rank()
+        master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
+        master_dataset_building_port = (
+            gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
+        )
+        all_worker_ips = gigl.distributed.utils.get_internal_ip_from_all_ranks()
+        assert len(set(all_worker_ips)) == node_world_size, (
+            "Expected only one process per node in the process group, but found duplicates."
+            f" IPs: {all_worker_ips}, num_nodes: {node_world_size}"
+        )
+
+        if should_cleanup_distributed_context and torch.distributed.is_initialized():
+            logger.info(
+                "Cleaning up process group as it was initialized inside build_dataset."
+            )
+            torch.distributed.destroy_process_group()
+    else:
+        node_world_size = distributed_context.global_world_size
+        node_rank = distributed_context.global_rank
+        master_ip_address = distributed_context.main_worker_ip_address
+        master_dataset_building_port = DEFAULT_MASTER_DATA_BUILDING_PORT
+
+    logger.info(
+        f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: {master_ip_address}"
+    )
+
     # Launches process for loading serialized TFRecords from disk into memory, partitioning the data across machines, and storing data inside a GLT dataset class
     mp.spawn(
         fn=_build_dataset_process,
         args=(
             output_dict,
             serialized_graph_metadata,
-            distributed_context,
-            _dataset_building_port,
+            master_ip_address,
+            node_rank,
+            node_world_size,
+            master_dataset_building_port,
             sample_edge_direction,
             should_load_tensors_in_parallel,
             partitioner_class,
@@ -354,7 +399,7 @@ def build_dataset(
     output_dataset: DistLinkPredictionDataset = output_dict["dataset"]
 
     logger.info(
-        f"--- Dataset Building finished on rank {distributed_context.global_rank}, which took {time.time()-dataset_building_start_time:.2f} seconds"
+        f"Dataset Building finished on rank {node_rank} of {node_world_size}, which took {time.time()-dataset_building_start_time:.2f} seconds"
     )
 
     return output_dataset
@@ -362,7 +407,7 @@ def build_dataset(
 
 def build_dataset_from_task_config_uri(
     task_config_uri: Union[str, Uri],
-    distributed_context: DistributedContext,
+    distributed_context: Optional[DistributedContext] = None,
     is_inference: bool = True,
     _tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
 ) -> DistLinkPredictionDataset:
@@ -375,8 +420,9 @@ def build_dataset_from_task_config_uri(
     - should_load_tensors_in_parallel: Whether TFRecord loading should happen in parallel across entities
     Args:
         task_config_uri (str): URI to a GBML Config
-        distributed_context (DistributedContext): Distributed context containing information for
-            master_ip_address, rank, and world size
+        distributed_context (Optional[DistributedContext]): Distributed context containing information for
+            master_ip_address, rank, and world size. Defaults to None, in which case it will be initialized
+            from the current torch.distributed context.
         is_inference (bool): Whether the run is for inference or training. If True, arguments will
             be read from inferenceArgs. Otherwise, arguments witll be read from trainerArgs.
         _tfrecord_uri_pattern (str): INTERNAL ONLY. Regex pattern for loading serialized tf records. Defaults to ".*-of-.*\.tfrecord(\.gz)?$".
@@ -449,8 +495,8 @@ def build_dataset_from_task_config_uri(
 
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
-        distributed_context=distributed_context,
         sample_edge_direction=sample_edge_direction,
+        distributed_context=distributed_context,
         partitioner_class=partitioner_class,
         splitter=splitter,
     )

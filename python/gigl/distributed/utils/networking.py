@@ -121,3 +121,32 @@ def get_internal_ip_from_master_node(
     logger.info(f"Rank {rank} received master internal IP: {master_ip}")
     assert master_ip is not None, "Could not retrieve master node's internal IP"
     return master_ip
+
+
+def get_internal_ip_from_all_ranks() -> List[str]:
+    """
+    Get the internal IP addresses of all ranks in a distributed setup.
+    This is useful for setting up RPC communication between workers where the default torch.distributed env:// setup is not enough.
+    Or, if you are trying to run validation checks, get local world size for a specific node, etc.
+
+    Returns:
+        List[str]: A list of internal IP addresses of all ranks.
+    """
+    assert (
+        torch.distributed.is_initialized()
+    ), "Distributed environment must be initialized"
+
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+    logger.info(f"Rank {rank} is requesting internal IP addresses from all ranks")
+
+    ip_list: List[str] = [""] * world_size
+    curr_rank_ip = socket.gethostbyname(socket.gethostname())
+    torch.distributed.all_gather_object(ip_list, curr_rank_ip)
+
+    logger.info(f"Rank {rank} received internal IPs: {ip_list}")
+    assert all(
+        ip is not None for ip in ip_list
+    ), "Could not retrieve all ranks' internal IPs"
+
+    return ip_list
