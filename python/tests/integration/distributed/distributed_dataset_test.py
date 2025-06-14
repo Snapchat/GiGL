@@ -44,24 +44,35 @@ class DistDatasetTestCase(unittest.TestCase):
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=False,
                 is_heterogeneous=False,
+                use_process_group=False,
             ),
             param(
                 "Test GLT Dataset Load in sequence with homogeneous toy dataset with user defined labels",
                 mocked_dataset_info=TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=False,
                 is_heterogeneous=False,
+                use_process_group=False,
             ),
             param(
                 "Test GLT Dataset Load in sequence with heterogeneous toy dataset",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=False,
                 is_heterogeneous=True,
+                use_process_group=False,
             ),
             param(
                 "Test GLT Dataset Load in parallel with heterogeneous toy dataset",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=True,
                 is_heterogeneous=True,
+                use_process_group=False,
+            ),
+            param(
+                "Use process group for GLT Dataset Load in parallel with heterogeneous toy dataset",
+                mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+                should_load_tensors_in_parallel=True,
+                is_heterogeneous=True,
+                use_process_group=True,
             ),
         ]
     )
@@ -71,6 +82,7 @@ class DistDatasetTestCase(unittest.TestCase):
         mocked_dataset_info: MockedDatasetInfo,
         should_load_tensors_in_parallel: bool,
         is_heterogeneous: bool,
+        use_process_group: bool,
     ) -> None:
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
@@ -83,8 +95,9 @@ class DistDatasetTestCase(unittest.TestCase):
                 mocked_dataset_info,
                 output_dict,
                 should_load_tensors_in_parallel,
-                self._master_ip_address,
-                master_port,
+                None,
+                None,
+                use_process_group,
             ),
             nprocs=self._world_size,
             join=True,
@@ -197,8 +210,6 @@ class DistDatasetTestCase(unittest.TestCase):
                 mocked_dataset_info,
                 output_dict,
                 True,  # should_load_tensors_in_parallel
-                self._master_ip_address,
-                master_port,
                 None,  # partitioner
                 split_fn,
             ),
