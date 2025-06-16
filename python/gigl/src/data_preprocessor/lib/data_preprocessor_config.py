@@ -46,12 +46,18 @@ class DataPreprocessorConfig(ABC):
     def get_nodes_preprocessing_spec(
         self,
     ) -> Dict[NodeDataReference, NodeDataPreprocessingSpec]:
+        """
+        Defines transformation imperatives for different node types
+        """
         raise NotImplementedError
 
     @abstractmethod
     def get_edges_preprocessing_spec(
         self,
     ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+        """
+        Defines transformation imperatives for different edge types
+        """
         raise NotImplementedError
 
 

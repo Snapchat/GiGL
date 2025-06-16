@@ -99,8 +99,8 @@ The class specified by `trainerClsPath` will be initialized and all the argument
 directly passed as `**kwargs` to your trainer class. Thes only requirement is the trainer class implement the protocol
 defined @ {py:class}`gigl.src.training.v1.lib.base_trainer.BaseTrainer`.
 
-Some common sense pre-configured trainer implementations can be found in {py:class}`gigl.src.common.modeling_task_specs`
-. Although, you are recommended to implement your own.
+Some common sense pre-configured trainer implementations can be found in
+{py:class}`gigl.src.common.modeling_task_specs`. Although, you are recommended to implement your own.
 
 ```{literalinclude} ../../../examples/MAG240M/task_config.yaml
 :language: yaml
