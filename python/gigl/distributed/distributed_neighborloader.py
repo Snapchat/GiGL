@@ -19,6 +19,7 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
 
@@ -113,7 +114,7 @@ class DistNeighborLoader(DistLoader):
         # to `False` in super().__init__()` e.g.
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
-
+        logger.info(f"Dataset: \n{dataset.node_ids=}, {dataset.graph=}, {dataset.edge_dir=}")
         if input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -148,6 +149,7 @@ class DistNeighborLoader(DistLoader):
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
             node_type = None
+            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         else:
             node_type, node_ids = input_nodes
 
