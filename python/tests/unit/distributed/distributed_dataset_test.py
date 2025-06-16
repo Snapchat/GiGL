@@ -2,7 +2,6 @@ import unittest
 from collections import abc
 from typing import Any, MutableMapping, Optional, Type, Union
 
-import graphlearn_torch as glt
 import torch
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
@@ -52,7 +51,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self._master_ip_address = "localhost"
         self._world_size = 1
         self._num_rpc_threads = 4
-
 
     def assert_tensor_equal(
         self,

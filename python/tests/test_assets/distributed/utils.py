@@ -1,11 +1,11 @@
+from contextlib import contextmanager
 from typing import Optional
 
 import torch
-
 import torch.distributed as dist
-from contextlib import contextmanager
 
 from gigl.distributed.utils import get_free_port
+
 
 @contextmanager
 def local_test_dist_process_group(rank=0, world_size=1):
@@ -15,7 +15,7 @@ def local_test_dist_process_group(rank=0, world_size=1):
         backend="gloo",
         init_method=init_process_group_init_method,
         rank=rank,
-        world_size=world_size
+        world_size=world_size,
     )
     try:
         yield
