@@ -78,7 +78,7 @@ class PartitionBookTest(unittest.TestCase):
         self.assertEqual(get_total_ids(partition_book), expected_num_nodes)
 
     def test_check_partition_book(self):
-        valid_partition_book = torch.Tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1])
+        valid_partition_book = torch.tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1])
         _check_partition_book(valid_partition_book)
 
     @parameterized.expand(
