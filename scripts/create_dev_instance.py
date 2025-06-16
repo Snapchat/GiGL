@@ -269,7 +269,11 @@ if __name__ == "__main__":
         if values.get("startup_script")
         else ""
     )
-    reservation_clause = f"        --reservation={values['reservation']}" if values.get('reservation') else ""
+    reservation_clause = (
+        f"        --reservation={values['reservation']}"
+        if values.get("reservation")
+        else ""
+    )
 
     gcloud_cmd = inspect.cleandoc(
         f"""
