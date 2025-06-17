@@ -4,6 +4,18 @@ import torch
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 
 
+def _check_partition_book(partition_book: torch.Tensor) -> None:
+    """
+    Checks if the partition book is valid.
+    Args:
+        partition_book (torch.Tensor): Partition book to check.
+    Raises:
+        ValueError: If the partition book is not a 1D tensor.
+    """
+    if partition_book.dim() != 1:
+        raise ValueError("Partition book must be a 1D tensor.")
+
+
 def _get_ids_from_range_partition_book(
     range_partition_book: PartitionBook, rank: int
 ) -> torch.Tensor:
@@ -28,6 +40,7 @@ def get_ids_on_rank(
         rank (int): Rank of current machine
     """
     if isinstance(partition_book, torch.Tensor):
+        _check_partition_book(partition_book)
         return torch.nonzero(partition_book == rank).squeeze(dim=1)
     else:
         return _get_ids_from_range_partition_book(
@@ -35,15 +48,16 @@ def get_ids_on_rank(
         )
 
 
-def get_num_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
+def get_total_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
     """
-    Returns the number of ids (e.g. the total number of nodes) from a partition book.
+    Returns the total number of ids (e.g. the total number of nodes) from a partition book.
     Args:
         partition_book (Union[torch.Tensor, PartitionBook]): Tensor or range-based partition book
     Returns:
         int: Total number of ids in the partition book
     """
     if isinstance(partition_book, torch.Tensor):
+        _check_partition_book(partition_book)
         return int(partition_book.numel())
     elif isinstance(partition_book, RangePartitionBook):
         return int(

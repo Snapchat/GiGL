@@ -5,7 +5,11 @@ import torch
 from graphlearn_torch.partition import RangePartitionBook
 from parameterized import param, parameterized
 
-from gigl.distributed.utils.partition_book import get_ids_on_rank, get_num_ids
+from gigl.distributed.utils.partition_book import (
+    _check_partition_book,
+    get_ids_on_rank,
+    get_total_ids,
+)
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
@@ -14,12 +18,12 @@ class PartitionBookTest(unittest.TestCase):
         [
             param(
                 "Test getting ids for tensor-based partition book",
-                partition_book=torch.Tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1]),
+                partition_book=torch.tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1]),
                 rank_to_expected_ids={
-                    0: torch.Tensor([0, 3, 7]).to(torch.int64),
-                    1: torch.Tensor([1, 2, 8, 9]).to(torch.int64),
-                    2: torch.Tensor([6]).to(torch.int64),
-                    3: torch.Tensor([4, 5]).to(torch.int64),
+                    0: torch.tensor([0, 3, 7]).to(torch.int64),
+                    1: torch.tensor([1, 2, 8, 9]).to(torch.int64),
+                    2: torch.tensor([6]).to(torch.int64),
+                    3: torch.tensor([4, 5]).to(torch.int64),
                 },
             ),
             param(
@@ -29,10 +33,10 @@ class PartitionBookTest(unittest.TestCase):
                     partition_idx=0,
                 ),
                 rank_to_expected_ids={
-                    0: torch.Tensor([0, 1, 2, 3]).to(torch.int64),
-                    1: torch.Tensor([4]).to(torch.int64),
-                    2: torch.Tensor([5, 6, 7, 8, 9]).to(torch.int64),
-                    3: torch.Tensor([10, 11, 12]).to(torch.int64),
+                    0: torch.tensor([0, 1, 2, 3]).to(torch.int64),
+                    1: torch.tensor([4]).to(torch.int64),
+                    2: torch.tensor([5, 6, 7, 8, 9]).to(torch.int64),
+                    3: torch.tensor([10, 11, 12]).to(torch.int64),
                 },
             ),
         ]
@@ -52,7 +56,7 @@ class PartitionBookTest(unittest.TestCase):
         [
             param(
                 "Test getting ids for tensor-based partition book",
-                partition_book=torch.Tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1]),
+                partition_book=torch.tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1]),
                 expected_num_nodes=10,
             ),
             param(
@@ -65,13 +69,33 @@ class PartitionBookTest(unittest.TestCase):
             ),
         ]
     )
-    def test_get_num_ids(
+    def test_get_total_ids(
         self,
         _,
         partition_book: torch.Tensor,
         expected_num_nodes: int,
     ):
-        self.assertEqual(get_num_ids(partition_book), expected_num_nodes)
+        self.assertEqual(get_total_ids(partition_book), expected_num_nodes)
+
+    def test_check_partition_book(self):
+        valid_partition_book = torch.tensor([0, 1, 1, 0, 3, 3, 2, 0, 1, 1])
+        _check_partition_book(valid_partition_book)
+
+    @parameterized.expand(
+        [
+            param(
+                "Test invalid partition book with 2D tensor",
+                partition_book=torch.tensor([[0, 1], [1, 0]]),
+            ),
+            param(
+                "Test invalid partition book with unary tensor",
+                partition_book=torch.tensor(1),
+            ),
+        ]
+    )
+    def test_check_partition_book_invalid(self, _, partition_book: torch.Tensor):
+        with self.assertRaises(ValueError):
+            _check_partition_book(partition_book)
 
 
 if __name__ == "__main__":
