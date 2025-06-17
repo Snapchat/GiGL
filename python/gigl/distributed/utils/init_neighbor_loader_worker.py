@@ -175,7 +175,7 @@ def init_neighbor_loader_worker(
     # Note that different process groups are independent of each other. Therefore,
     # they have to use different master ports.
     logger.info(
-        f"Initing worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
+        f"Initing worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, on port {master_worker_port + local_process_rank}"
     )
     init_rpc(
         master_addr=master_ip_address,

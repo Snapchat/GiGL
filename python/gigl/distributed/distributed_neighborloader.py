@@ -198,6 +198,7 @@ class DistNeighborLoader(DistLoader):
         )
 
         # Sets up worker options for the dataloader
+        logger.info(f"DistNeighborLoader: Machine rank {context.global_rank} process rank {local_process_rank} using port {_main_sampling_port + local_process_rank}.")
         worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
