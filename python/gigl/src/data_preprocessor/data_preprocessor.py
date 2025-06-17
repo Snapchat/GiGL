@@ -146,11 +146,9 @@ class DataPreprocessor:
             data_preprocessor_args=self._data_preprocessor_args,
         )
         self.__custom_worker_image_uri = custom_worker_image_uri
-        self.__prepare_staging_paths(
-            preprocessed_metadata_uri=self._preprocessed_metadata_uri
-        )
+        self.__prepare_staging_paths()
 
-    def __prepare_staging_paths(self, preprocessed_metadata_uri: Uri) -> None:
+    def __prepare_staging_paths(self) -> None:
         """
         Clean up paths that Data Preprocessor would be writing to in order to avoid clobbering of data.
         These paths are inferred from the GbmlConfig, and the AppliedTaskIdentifier.
@@ -167,9 +165,13 @@ class DataPreprocessor:
             gcs_constants.get_data_preprocessor_assets_perm_gcs_path(
                 applied_task_identifier=self.applied_task_identifier
             ),
-            preprocessed_metadata_uri,
+            self._preprocessed_metadata_uri,
         ]
         file_loader = FileLoader()
+        logger.info(f"Deleting staging paths: {paths_to_delete}")
+        logger.info(
+            f"{self._preprocessed_metadata_uri=}, {type(self._preprocessed_metadata_uri)=}"
+        )
         file_loader.delete_files(uris=paths_to_delete)
         logger.info("Staging paths for Data Preprocessor prepared.")
 
