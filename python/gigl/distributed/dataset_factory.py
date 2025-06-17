@@ -302,7 +302,7 @@ def build_dataset(
     Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some SerializedGraphMetadata
     Args:
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
-        distributed_context (Optional[DistributedContext]): Distributed context containing information for master_ip_address, rank, and world size.
+        distributed_context (deprecated field - will be removed soon) (Optional[DistributedContext]): Distributed context containing information for master_ip_address, rank, and world size.
             Defaults to None, in which case it will be initialized from the current torch.distributed context.
         sample_edge_direction (Union[Literal["in", "out"], str]): Whether edges in the graph are directed inward or outward. Note that this is
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
@@ -335,7 +335,7 @@ def build_dataset(
 
     node_world_size: int
     node_rank: int
-    main_worker_ip_address: str
+    master_ip_address: str
     master_dataset_building_port: int
     if distributed_context is None:
         should_cleanup_distributed_context: bool = False
@@ -346,9 +346,6 @@ def build_dataset(
             should_cleanup_distributed_context = True
             torch.distributed.init_process_group(backend="gloo")
 
-        # global_world_size
-        # global_rank
-        # main_worker_ip_address
         node_world_size = torch.distributed.get_world_size()
         node_rank = torch.distributed.get_rank()
         master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()

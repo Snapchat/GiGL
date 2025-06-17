@@ -33,14 +33,15 @@ class DistNeighborLoader(DistLoader):
         self,
         dataset: DistLinkPredictionDataset,
         num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
-        context: DistributedContext,
-        local_process_rank: int,  # TODO: Move this to DistributedContext
-        local_process_world_size: int,  # TODO: Move this to DistributedContext
+
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
         num_workers: int = 1,
         batch_size: int = 1,
+        context: Optional[DistributedContext] = None, # TODO: (svij) Deprecate this
+        local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
+        local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
@@ -48,8 +49,6 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
-        _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
-        _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
         """
         Note: We try to adhere to pyg dataloader api as much as possible.
@@ -64,9 +63,9 @@ class DistNeighborLoader(DistLoader):
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
-            context (DistributedContext): Distributed context information of the current process.
-            local_process_rank (int): The local rank of the current process within a node.
-            local_process_world_size (int): The total number of processes within a node.
+            context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
+            local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
+            local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
             input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
                 indices of seed nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
@@ -97,14 +96,6 @@ class DistNeighborLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
-            _main_inference_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
-                The port number to use for inference processes.
-                In future, the port will be automatically assigned based on availability.
-                Currently defaults to: gigl.distributed.constants.DEFAULT_MASTER_INFERENCE_PORT
-            _main_sampling_port (int): WARNING: You don't need to configure this unless port conflict issues. Slotted for refactor.
-                The port number to use for sampling processes.
-                In future, the port will be automatically assigned based on availability.
-                Currently defaults to: gigl.distributed.constants.DEFAULT_MASTER_SAMPLING_PORT
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -113,6 +104,73 @@ class DistNeighborLoader(DistLoader):
         # to `False` in super().__init__()` e.g.
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
+
+
+        node_world_size: int
+        node_rank: int
+        rank: int
+        world_size: int
+        local_rank: int
+        local_world_size: int
+
+        master_ip_address: str
+        should_cleanup_distributed_context: bool = False
+        if context:
+            assert local_process_world_size, "context: DistributedContext provided, so local_process_world_size must be provided."
+            assert local_process_rank, "context: DistributedContext provided, so local_process_rank must be provided."
+
+            master_ip_address = context.main_worker_ip_address
+            node_world_size = context.global_world_size
+            node_rank = context.global_rank
+            local_world_size = local_process_world_size
+            local_rank = local_process_rank
+
+            rank = node_rank * local_rank
+            world_size = node_world_size * local_world_size
+
+            if not torch.distributed.is_initialized():
+                logger.info(
+                    "Distributed context is None, trying to torch.distributed.init_process_group to communicate necessary setup information."
+                )
+                should_cleanup_distributed_context = True
+                torch.distributed.init_process_group(
+                    backend="gloo",
+                    init_method=f"tcp://{master_ip_address}:{DEFAULT_MASTER_INFERENCE_PORT}",
+                    rank=rank,
+                    world_size=world_size,
+                )
+
+        else:
+            assert torch.distributed.is_initialized(), (
+                f"context: DistributedContext is None, so process group must be initialized before constructing this object {self.__class__.__name__}."
+            )
+            world_size = torch.distributed.get_world_size()
+            rank = torch.distributed.get_rank()
+
+            rank_ip_addresses = gigl.distributed.utils.get_internal_ip_from_all_ranks()
+            from collections import defaultdict
+            count_ranks_per_ip_addresses: Dict[str, int] = defaultdict(int)
+            for rank_ip_address in rank_ip_addresses:
+                count_ranks_per_ip_addresses[rank_ip_address] += 1
+
+            local_world_size = count_ranks_per_ip_addresses[master_ip_address]
+            for rank_ip_address, count in count_ranks_per_ip_addresses.items():
+                if count != local_world_size:
+                    raise ValueError(
+                        f"All ranks must have the same number of processes, but found {count} processes for rank ip address {rank_ip_address}, expected {local_world_size}."
+                    )
+
+            master_ip_address = rank_ip_addresses[0]
+            node_world_size = len(rank_ip_addresses)
+            local_rank = rank % local_world_size
+            node_rank = rank // local_world_size
+
+
+        logger.info(
+            f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: {master_ip_address}"
+        )
+
+
 
         if input_nodes is None:
             if dataset.node_ids is None:
@@ -153,8 +211,8 @@ class DistNeighborLoader(DistLoader):
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
-            local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
         )
 
         input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
@@ -163,13 +221,13 @@ class DistNeighborLoader(DistLoader):
             pin_memory_device
             if pin_memory_device
             else gigl.distributed.utils.get_available_device(
-                local_process_rank=local_process_rank
+                local_process_rank=local_rank
             )
         )
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
         logger.info(
-            f"Initializing neighbor loader worker in process: {local_process_rank}/{local_process_world_size} using device: {device}"
+            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {device}"
         )
         should_use_cpu_workers = device.type == "cpu"
         if should_use_cpu_workers and num_cpu_threads is None:
@@ -178,13 +236,17 @@ class DistNeighborLoader(DistLoader):
                 f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
             )
             num_cpu_threads = DEFAULT_NUM_CPU_THREADS
+
+        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(num_ports=local_world_size)
+        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
+
         gigl.distributed.utils.init_neighbor_loader_worker(
-            master_ip_address=context.main_worker_ip_address,
-            local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
-            rank=context.global_rank,
-            world_size=context.global_world_size,
-            master_worker_port=_main_inference_port,
+            master_ip_address=master_ip_address,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
+            rank=node_rank,
+            world_size=node_world_size,
+            master_worker_port=neighbor_loader_port_for_current_rank,
             device=device,
             should_use_cpu_workers=should_use_cpu_workers,
             # Lever to explore tuning for CPU based inference
@@ -192,10 +254,13 @@ class DistNeighborLoader(DistLoader):
             process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
-            f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
+            f"Finished initializing neighbor loader worker:  {local_rank}/{local_world_size}"
         )
 
         # Sets up worker options for the dataloader
+        dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(num_ports=local_world_size)
+        dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
+
         worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
@@ -206,8 +271,8 @@ class DistNeighborLoader(DistLoader):
             # Note that different groups of workers are independent, and thus
             # the sampling processes in different groups should be independent, and should
             # use different master ports.
-            master_addr=context.main_worker_ip_address,
-            master_port=_main_sampling_port + local_process_rank,
+            master_addr=master_ip_address,
+            master_port=dist_sampling_port_for_current_rank,
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
@@ -233,6 +298,14 @@ class DistNeighborLoader(DistLoader):
             edge_dir=dataset.edge_dir,
             seed=None,  # it's actually optional - None means random.
         )
+
+
+        if should_cleanup_distributed_context and torch.distributed.is_initialized():
+            logger.info(
+                f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
+            )
+            torch.distributed.destroy_process_group()
+
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
