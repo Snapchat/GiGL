@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Final, List, Optional
+from typing import Dict, Final, List, NamedTuple, Optional
 
 import kfp
 import kfp.dsl.pipeline_channel
@@ -44,6 +44,96 @@ _speced_component_op_dict: Final[Dict[GiGLComponents, kfp.components.YamlCompone
     )
     for component in SPECED_COMPONENTS
 }
+
+
+def my_python_component(image: str):
+    def _c():
+        import time
+
+        from gigl.common.logger import Logger
+
+        logger = Logger()
+        logger.info("This is a Python component that sleeps for 1 second.")
+        logger.info("Starting sleep...")
+        time.sleep(1)
+
+    return kfp.dsl.component(
+        _c,
+        base_image=image,
+    )
+
+
+def decompose_task_config_uri_to_protos(image: str):
+    def decompose(
+        task_config_uri: str,
+    ) -> NamedTuple(
+        "outputs",
+        node_type_to_condensed_node_type=str,
+        edge_type_to_condensed_edge_type=str,
+        data_preprocessor_class_path=str,
+        data_preprocessor_args=str,
+        preprocessed_metadata_uri=str,
+    ):
+        """
+        Decomposes the task config URI into its constituent parts and writes them to output paths.
+        """
+        import json
+        from typing import NamedTuple
+
+        from gigl.common import UriFactory
+        from gigl.common.logger import Logger
+        from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+
+        logger = Logger()
+
+        logger.info(f"Task config uri: {task_config_uri}")
+        gbml_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+            gbml_config_uri=UriFactory.create_uri(task_config_uri)
+        )
+        condensed_node_type_str = "#".join(
+            f"{k}:{v}"
+            for k, v in gbml_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map.items()
+        )
+        logger.info(f"Condensed Node Types: {condensed_node_type_str}")
+        condensed_edge_type_str = "#".join(
+            f"{k[0]},{k[1]},{k[2]}:{v}"
+            for k, v in gbml_pb_wrapper.graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map.items()
+        )
+        logger.info(f"Condensed Edge Types: {condensed_edge_type_str}")
+        condensed_node_type_to_condensed_node_type = condensed_node_type_str
+        condensed_edge_type_to_condensed_edge_type = condensed_edge_type_str
+        data_preprocessor_class_path = (
+            gbml_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path
+        )
+        data_preprocessor_args = dict(
+            gbml_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_args
+        )
+        preprocessed_metadata_uri = (
+            gbml_pb_wrapper.shared_config.preprocessed_metadata_uri
+        )
+        logger.info(f"Data Preprocessor Class Path: {data_preprocessor_class_path}")
+        logger.info(f"Data Preprocessor Args: {data_preprocessor_args}")
+        logger.info(f"Preprocessed Metadata URI: {preprocessed_metadata_uri}")
+        outputs = NamedTuple(
+            "outputs",
+            node_type_to_condensed_node_type=str,
+            edge_type_to_condensed_edge_type=str,
+            data_preprocessor_class_path=str,
+            data_preprocessor_args=str,
+            preprocessed_metadata_uri=str,
+        )
+        return outputs(
+            condensed_node_type_to_condensed_node_type,
+            condensed_edge_type_to_condensed_edge_type,
+            data_preprocessor_class_path,
+            json.dumps(data_preprocessor_args),
+            preprocessed_metadata_uri,
+        )
+
+    return kfp.dsl.component(
+        decompose,
+        base_image=image,
+    )
 
 
 def _generate_component_task(
@@ -91,11 +181,36 @@ def _generate_component_task(
             **common_pipeline_component_configs.additional_job_args.get(component, {}),
         )
     elif component == GiGLComponents.DataPreprocessor:
+        # logger.info(f"Task config uri: {task_config_uri}")
+        # gbml_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        #         gbml_config_uri=UriFactory.create_uri(task_config_uri.value)
+        # )
+        # condensed_node_type_str = "#".join(f"{k}:{v}" for k, v in gbml_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map.items())
+        # logger.info(f"Condensed Node Types: {condensed_node_type_str}")
+        # condensed_edge_type_str = "#".join(f"{k[0]},{k[1]}{k[2]}:{v}" for k, v in gbml_pb_wrapper.graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map.items())
+        # logger.info(f"Condensed Edge Types: {condensed_edge_type_str}")
+        prepared_outputs = decompose_task_config_uri_to_protos(
+            image=common_pipeline_component_configs.cpu_container_image,
+        )(task_config_uri=task_config_uri)
         component_task = _speced_component_op_dict[component](
             job_name=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             custom_worker_image_uri=common_pipeline_component_configs.dataflow_container_image,
+            data_preprocessor_class_path=prepared_outputs.outputs[
+                "data_preprocessor_class_path"
+            ],
+            data_preprocessor_args=prepared_outputs.outputs["data_preprocessor_args"],
+            preprocessed_metadata_uri=prepared_outputs.outputs[
+                "preprocessed_metadata_uri"
+            ],
+            node_type_to_condensed_node_type=prepared_outputs.outputs[
+                "node_type_to_condensed_node_type"
+            ],
+            edge_type_to_condensed_edge_type=prepared_outputs.outputs[
+                "edge_type_to_condensed_edge_type"
+            ],
+            data_preprocessor_num_shards=0,
             **common_pipeline_component_configs.additional_job_args.get(component, {}),
         )
     elif component == GiGLComponents.Inferencer:
@@ -148,6 +263,12 @@ def generate_pipeline(
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
     ):
+        """
+        test_vai_launch = create_custom_training_job_from_component(
+            my_python_component(common_pipeline_component_configs.cpu_container_image),
+            replica_count=4,
+        )(project=get_, location="us-central1")
+        """
         validation_check_task = _generate_component_task(
             component=GiGLComponents.ConfigValidator,
             job_name=job_name,

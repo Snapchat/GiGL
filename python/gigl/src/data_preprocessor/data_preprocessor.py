@@ -1,8 +1,9 @@
 import argparse
 import concurrent.futures
+import json
 import sys
 import threading
-from collections import defaultdict
+from collections import abc, defaultdict
 from itertools import chain, repeat
 from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Tuple, Union
 
@@ -34,7 +35,6 @@ from gigl.src.common.types.graph_data import (
     EdgeUsageType,
     NodeType,
 )
-from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
@@ -83,18 +83,36 @@ class DataPreprocessor:
     GiGL Component to read node, edge and respective feature data from multiple data sources, and produce preprocessed / transformed versions of all this data, for subsequent components to use.
     """
 
-    __gbml_config_pb_wrapper: GbmlConfigPbWrapper
     __data_preprocessor_config: DataPreprocessorConfig
     __custom_worker_image_uri: Optional[str]
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        data_preprocessor_cls_path: str,
+        data_preprocessor_args: abc.Mapping[str, str],
+        preprocessed_metadata_uri: Uri,
+        data_preprocessor_shards: int,
+        node_type_to_condensed_node_type: abc.Mapping[NodeType, CondensedNodeType],
+        edge_type_to_condensed_edge_type: abc.Mapping[EdgeType, CondensedEdgeType],
+    ) -> None:
+        logger.info("Initializing Data Preprocessor with args:")
+        logger.info(f"data_preprocessor_cls_path: {data_preprocessor_cls_path}")
+        logger.info(f"data_preprocessor_args: {data_preprocessor_args}")
+        logger.info(f"preprocessed_metadata_uri: {preprocessed_metadata_uri}")
+        logger.info(f"data_preprocessor_shards: {data_preprocessor_shards}")
+        logger.info(
+            f"node_type_to_condensed_node_type: {node_type_to_condensed_node_type}"
+        )
+        logger.info(
+            f"edge_type_to_condensed_edge_type: {edge_type_to_condensed_edge_type}"
+        )
         self.__proto_utils = ProtoUtils()
-
-    @property
-    def gbml_config_pb_wrapper(self) -> GbmlConfigPbWrapper:
-        if not self.__gbml_config_pb_wrapper:
-            raise ValueError(f"gbml_config_pb_wrapper is not initialized before use.")
-        return self.__gbml_config_pb_wrapper
+        self._preprocessed_metadata_uri = preprocessed_metadata_uri
+        self._data_preprocessor_cls_path = data_preprocessor_cls_path
+        self._data_preprocessor_args = data_preprocessor_args
+        self._data_preprocessor_num_shards = data_preprocessor_shards
+        self._node_type_to_condensed_node_type = node_type_to_condensed_node_type
+        self._edge_type_to_condensed_edge_type = edge_type_to_condensed_edge_type
 
     @property
     def applied_task_identifier(self) -> AppliedTaskIdentifier:
@@ -115,7 +133,6 @@ class DataPreprocessor:
     def __prepare_env(
         self,
         applied_task_identifier: AppliedTaskIdentifier,
-        task_config_uri: Uri,
         custom_worker_image_uri: Optional[str],
     ):
         """
@@ -124,16 +141,16 @@ class DataPreprocessor:
         :return:
         """
         self.__applied_task_identifier = applied_task_identifier
-        self.__gbml_config_pb_wrapper = (
-            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-                gbml_config_uri=task_config_uri
-            )
+        self.__data_preprocessor_config = self.__import_data_preprocessor_config(
+            data_preprocessor_cls_str=self._data_preprocessor_cls_path,
+            data_preprocessor_args=self._data_preprocessor_args,
         )
-        self.__data_preprocessor_config = self.__import_data_preprocessor_config()
         self.__custom_worker_image_uri = custom_worker_image_uri
-        self.__prepare_staging_paths()
+        self.__prepare_staging_paths(
+            preprocessed_metadata_uri=self._preprocessed_metadata_uri
+        )
 
-    def __prepare_staging_paths(self) -> None:
+    def __prepare_staging_paths(self, preprocessed_metadata_uri: Uri) -> None:
         """
         Clean up paths that Data Preprocessor would be writing to in order to avoid clobbering of data.
         These paths are inferred from the GbmlConfig, and the AppliedTaskIdentifier.
@@ -150,29 +167,27 @@ class DataPreprocessor:
             gcs_constants.get_data_preprocessor_assets_perm_gcs_path(
                 applied_task_identifier=self.applied_task_identifier
             ),
-            UriFactory.create_uri(
-                uri=self.gbml_config_pb_wrapper.shared_config.preprocessed_metadata_uri
-            ),
+            preprocessed_metadata_uri,
         ]
         file_loader = FileLoader()
         file_loader.delete_files(uris=paths_to_delete)
         logger.info("Staging paths for Data Preprocessor prepared.")
 
-    def __import_data_preprocessor_config(self) -> DataPreprocessorConfig:
+    def __import_data_preprocessor_config(
+        self,
+        data_preprocessor_cls_str: str,
+        data_preprocessor_args: abc.Mapping[str, str],
+    ) -> DataPreprocessorConfig:
         """
         Parse DataPreprocessorConfig object from GbmlConfig proto, create an instance, and return it.
         :return:
         """
 
-        data_preprocessor_cls_str: str = (
-            self.gbml_config_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path
-        )
         data_preprocessor_cls = os_utils.import_obj(data_preprocessor_cls_str)
-        kwargs = self.gbml_config_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_args  # type: ignore
 
         try:
             data_preprocessor_config: DataPreprocessorConfig = data_preprocessor_cls(
-                **kwargs
+                **data_preprocessor_args
             )
             assert isinstance(data_preprocessor_config, DataPreprocessorConfig)
         except Exception as e:
@@ -238,11 +253,7 @@ class DataPreprocessor:
                 data_reference=data_reference,
                 preprocessing_spec=preprocessing_spec,
                 transformed_features_info=transformed_features_info,
-                num_shards=int(
-                    self.gbml_config_pb_wrapper.gbml_config_pb.feature_flags.get(
-                        "data_preprocessor_num_shards", "0"
-                    )
-                ),
+                num_shards=self._data_preprocessor_num_shards,
                 custom_worker_image_uri=self.custom_worker_image_uri,
             )
             feature_transform_pipeline_result = p.run()
@@ -462,9 +473,9 @@ class DataPreprocessor:
                 f"Adding to preprocessed metadata pb: [{node_data_ref}: {node_transformed_features_info}]"
             )
 
-            condensed_node_type: CondensedNodeType = self.gbml_config_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map[
-                node_type
-            ]
+            condensed_node_type: CondensedNodeType = (
+                self._node_type_to_condensed_node_type[node_type]
+            )
             node_identifier_output = node_transformed_features_info.identifier_output
             assert isinstance(
                 node_identifier_output, NodeOutputIdentifier
@@ -552,9 +563,9 @@ class DataPreprocessor:
                 edge_type
             ][EdgeUsageType.MAIN]
 
-            condensed_edge_type: CondensedEdgeType = self.gbml_config_pb_wrapper.graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map[
-                edge_type
-            ]
+            condensed_edge_type: CondensedEdgeType = (
+                self._edge_type_to_condensed_edge_type[edge_type]
+            )
             assert isinstance(
                 main_transformed_features_info.identifier_output, EdgeOutputIdentifier
             ), f"Identifier output should be of class {EdgeOutputIdentifier.__name__}."
@@ -623,20 +634,14 @@ class DataPreprocessor:
             self.data_preprocessor_config.get_edges_preprocessing_spec().keys()
         )
         for node_data_ref in node_data_refs:
-            if (
-                node_data_ref.node_type
-                not in self.gbml_config_pb_wrapper.graph_metadata_pb_wrapper.node_types
-            ):
+            if node_data_ref.node_type not in self._node_type_to_condensed_node_type:
                 raise ValueError(
-                    f"Node type {node_data_ref.node_type} from {node_data_ref} not found in graph metadata."
+                    f"Node type {node_data_ref.node_type} from {node_data_ref} not found in graph metadata. Node types in graph metadata: {self._node_type_to_condensed_node_type.keys()}."
                 )
         for edge_data_ref in edge_data_refs:
-            if (
-                edge_data_ref.edge_type
-                not in self.gbml_config_pb_wrapper.graph_metadata_pb_wrapper.edge_types
-            ):
+            if edge_data_ref.edge_type not in self._edge_type_to_condensed_edge_type:
                 raise ValueError(
-                    f"Edge type {edge_data_ref.edge_type} from {edge_data_ref} not found in graph metadata."
+                    f"Edge type {edge_data_ref.edge_type} from {edge_data_ref} not found in graph metadata. Edge types in graph metadata: {self._edge_type_to_condensed_edge_type.keys()}."
                 )
 
     def __patch_preprocessing_specs(
@@ -756,13 +761,11 @@ class DataPreprocessor:
     def __run(
         self,
         applied_task_identifier: AppliedTaskIdentifier,
-        task_config_uri: Uri,
         custom_worker_image_uri: Optional[str] = None,
     ) -> Uri:
         # Prepare environment
         self.__prepare_env(
             applied_task_identifier=applied_task_identifier,
-            task_config_uri=task_config_uri,
             custom_worker_image_uri=custom_worker_image_uri,
         )
 
@@ -915,20 +918,17 @@ class DataPreprocessor:
                 enumerator_edge_type_metadata=enumerator_edge_type_metadata,
             )
         )
-        preprocessed_metadata_output_uri = UriFactory.create_uri(
-            self.gbml_config_pb_wrapper.shared_config.preprocessed_metadata_uri
-        )
         self.__proto_utils.write_proto_to_yaml(
-            proto=preprocessed_metadata_pb, uri=preprocessed_metadata_output_uri
+            proto=preprocessed_metadata_pb, uri=self._preprocessed_metadata_uri
         )
         logger.info(
-            f"{preprocessed_metadata_pb.__class__.__name__} written to {preprocessed_metadata_output_uri.uri}"
+            f"{preprocessed_metadata_pb.__class__.__name__} written to {self._preprocessed_metadata_uri.uri}"
         )
 
         # Cleanup environment.
         self.__cleanup_env()
 
-        return preprocessed_metadata_output_uri
+        return self._preprocessed_metadata_uri
 
     @flushes_metrics(get_metrics_service_instance_fn=get_metrics_service_instance)
     @profileit(
@@ -938,7 +938,6 @@ class DataPreprocessor:
     def run(
         self,
         applied_task_identifier: AppliedTaskIdentifier,
-        task_config_uri: Uri,
         resource_config_uri: Uri,
         custom_worker_image_uri: Optional[str] = None,
     ) -> Uri:
@@ -954,7 +953,6 @@ class DataPreprocessor:
         try:
             preprocessed_metadata_output_uri = self.__run(
                 applied_task_identifier=applied_task_identifier,
-                task_config_uri=task_config_uri,
                 custom_worker_image_uri=custom_worker_image_uri,
             )
             return preprocessed_metadata_output_uri
@@ -996,19 +994,76 @@ if __name__ == "__main__":
         help="Docker image to use for the worker harness in dataflow",
         required=False,
     )
+    parser.add_argument(
+        "--data_preprocessor_class_path",
+        type=str,
+        help="Path to the DataPreprocessor class to use",
+    )
+    parser.add_argument(
+        "--data_preprocessor_args",
+        type=str,
+        help="Arguments to pass to the DataPreprocessor class",
+    )
+    parser.add_argument(
+        "--preprocessed_metadata_uri",
+        type=str,
+        help="URI to write preprocessed metadata to.",
+    )
+    parser.add_argument(
+        "--data_preprocessor_num_shards",
+        type=int,
+        default=0,
+        help="Number of shards for the data preprocessor.",
+    )
+    parser.add_argument(
+        "--node_type_to_condensed_node_type",
+        type=str,
+        help="Mapping of node types to condensed node types.",
+    )
+    parser.add_argument(
+        "--edge_type_to_condensed_edge_type",
+        type=str,
+        help="Mapping of edge types to condensed edge types.",
+    )
     args = parser.parse_args()
+    logger.info(f"Parsed arguments: {args}")
 
+    node_type_to_condensed_node_type: dict[NodeType, CondensedNodeType] = {}
+    for node_type_mapping in args.node_type_to_condensed_node_type.split("#"):
+        node_type, condensed_node_type = node_type_mapping.split(":")
+        node_type_to_condensed_node_type[NodeType(node_type)] = CondensedNodeType(
+            int(condensed_node_type)
+        )
+    logger.info(
+        f"Parsed node type map {args.node_type_to_condensed_node_type} to {node_type_to_condensed_node_type}"
+    )
+    edge_type_to_condensed_edge_type: dict[EdgeType, CondensedEdgeType] = {}
+    for edge_type_mapping in args.edge_type_to_condensed_edge_type.split("#"):
+        edge_type, condensed_edge_type = edge_type_mapping.split(":")
+        edge_type_to_condensed_edge_type[
+            EdgeType(*edge_type.split(","))
+        ] = CondensedEdgeType(int(condensed_edge_type))
+    logger.info(
+        f"Parsed edge type map {args.edge_type_to_condensed_edge_type} to {edge_type_to_condensed_edge_type}"
+    )
     ati = AppliedTaskIdentifier(args.job_name)
+
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
     custom_worker_image_uri = args.custom_worker_image_uri
 
     initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
 
-    data_preprocessor = DataPreprocessor()
+    data_preprocessor = DataPreprocessor(
+        data_preprocessor_cls_path=args.data_preprocessor_class_path,
+        data_preprocessor_args=json.loads(args.data_preprocessor_args),
+        preprocessed_metadata_uri=UriFactory.create_uri(args.preprocessed_metadata_uri),
+        data_preprocessor_shards=args.data_preprocessor_num_shards,
+        node_type_to_condensed_node_type=node_type_to_condensed_node_type,
+        edge_type_to_condensed_edge_type=edge_type_to_condensed_edge_type,
+    )
     data_preprocessor.run(
         applied_task_identifier=ati,
-        task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
         custom_worker_image_uri=custom_worker_image_uri,
     )
