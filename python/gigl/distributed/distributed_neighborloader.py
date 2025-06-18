@@ -16,8 +16,18 @@ from gigl.distributed.constants import (
 )
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.utils.loader import (
+    remove_labeled_edge_types,
+    set_labeled_edge_type_fanout,
+    shard_nodes_by_process,
+)
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
+)
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    to_heterogeneous_edge,
 )
 
 logger = Logger()
@@ -48,6 +58,7 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        should_skip_connection_setup: bool = False,
         _main_inference_port: int = DEFAULT_MASTER_INFERENCE_PORT,
         _main_sampling_port: int = DEFAULT_MASTER_SAMPLING_PORT,
     ):
@@ -125,31 +136,36 @@ class DistNeighborLoader(DistLoader):
                 )
             input_nodes = dataset.node_ids
 
-        if isinstance(num_neighbors, abc.Mapping):
+        # Determines if the node ids passed in are heterogeneous or homogeneous.
+        if isinstance(input_nodes, torch.Tensor):
+            node_ids = input_nodes
+            self._is_input_heterogeneous = False
+            if dataset.get_edge_types() is None:
+                node_type = None
+            else:
+                node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        else:
+            self._is_input_heterogeneous = True
+            node_type, node_ids = input_nodes
+
+        if not self._is_input_heterogeneous:
+            assert isinstance(num_neighbors, list)
+        else:
             # TODO(kmonte): We should enable this. We have two blockers:
             # 1. We need to treat `EdgeType` as a proper tuple, not the GiGL`EdgeType`.
             # 2. There are (likely) some GLT bugs around https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
             # Where if num_neighbors is a dict then we index into it improperly.
-            if not isinstance(dataset.graph, abc.Mapping):
-                raise ValueError(
-                    "When num_neighbors is a dict, the dataset must be heterogeneous."
-                )
-            if num_neighbors.keys() != dataset.graph.keys():
-                raise ValueError(
-                    f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset.graph.keys()}"
-                )
+            num_neighbors = to_heterogeneous_edge(num_neighbors)
+            dataset_edge_types = dataset.get_edge_types()
+
+            num_neighbors = set_labeled_edge_type_fanout(
+                edge_types=dataset_edge_types, num_neighbors=num_neighbors
+            )
             hops = len(next(iter(num_neighbors.values())))
             if not all(len(fanout) == hops for fanout in num_neighbors.values()):
                 raise ValueError(
                     f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
                 )
-
-        # Determines if the node ids passed in are heterogeneous or homogeneous.
-        if isinstance(input_nodes, torch.Tensor):
-            node_ids = input_nodes
-            node_type = None
-        else:
-            node_type, node_ids = input_nodes
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
@@ -190,6 +206,7 @@ class DistNeighborLoader(DistLoader):
             # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
             process_start_gap_seconds=process_start_gap_seconds,
+            should_skip_connection_setup=should_skip_connection_setup,
         )
         logger.info(
             f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
@@ -216,10 +233,6 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        # May be set by base classes.
-        if not hasattr(self, "_transforms"):
-            self._transforms = []
-
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -235,24 +248,23 @@ class DistNeighborLoader(DistLoader):
         )
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
+    def _supervised_to_homogeneous(self, data: HeteroData) -> Data:
+        """
+        Removes the label edge types from a supervised graph and converts it to homogeneous
+
+        Args:
+            data (HeteroData): Heterogeneous graph with the supervision edge type
+        Returns:
+            data (Data): Homogeneous graph with the labeled edge type removed
+        """
+        homogeneous_data = data.edge_type_subgraph(
+            [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+        ).to_homogeneous(add_edge_type=False, add_node_type=False)
+        return homogeneous_data
+
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
-        for transform in self._transforms:
-            data = transform(data)
+        data = remove_labeled_edge_types(data)
+        if not self._is_input_heterogeneous:
+            data = self._supervised_to_homogeneous(data)
         return data
-
-
-def shard_nodes_by_process(
-    input_nodes: torch.Tensor,
-    local_process_rank: int,
-    local_process_world_size: int,
-) -> torch.Tensor:
-    num_node_ids_per_process = input_nodes.size(0) // local_process_world_size
-    start_index = local_process_rank * num_node_ids_per_process
-    end_index = (
-        input_nodes.size(0)
-        if local_process_rank == local_process_world_size - 1
-        else start_index + num_node_ids_per_process
-    )
-    nodes_for_current_process = input_nodes[start_index:end_index]
-    return nodes_for_current_process

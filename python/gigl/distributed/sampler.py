@@ -17,7 +17,7 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         node: torch.Tensor,
         input_type: Optional[Union[str, NodeType]],
         # TODO (mkolodner-sc): Support multiple positive and negative label node types
-        positive_labels: torch.Tensor,
+        positive_labels: Optional[torch.Tensor],
         negative_labels: Optional[torch.Tensor],
         supervision_node_type: Optional[Union[str, NodeType]],
     ):
@@ -45,7 +45,9 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         return ABLPNodeSamplerInput(
             node=self.node[index],
             input_type=self.input_type,
-            positive_labels=self.positive_labels[index],
+            positive_labels=self.positive_labels[index]
+            if self.positive_labels is not None
+            else None,
             negative_labels=self.negative_labels[index]
             if self.negative_labels is not None
             else None,

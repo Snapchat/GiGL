@@ -32,7 +32,10 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
+from gigl.common.logger import Logger
 from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
+
+logger = Logger()
 
 
 def _sampling_worker_loop(
@@ -98,6 +101,7 @@ def _sampling_worker_loop(
             current_device,
             seed=sampling_config.seed,
         )
+        logger.info(f"Starting DistABLP sampler loop for worker {rank}")
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]
