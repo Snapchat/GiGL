@@ -17,7 +17,12 @@ def is_port_free(port: int,  hostname: str = 'localhost') -> bool:
         bool: If the port is free.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex((hostname, port)) != 0
+        try:
+            s.bind((hostname, port))
+            return True
+        except OSError:
+            # If the port is already in use, an OSError will be raised
+            return False
 
 def get_free_port() -> int:
     """
