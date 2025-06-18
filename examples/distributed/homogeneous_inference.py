@@ -35,7 +35,6 @@ from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.common.utils.vertex_ai_context import connect_worker_pool
 from gigl.distributed import (
     DistLinkPredictionDataset,
     DistributedContext,
@@ -328,7 +327,17 @@ def _run_example_inference(
 
     program_start_time = time.time()
 
-    distributed_context: DistributedContext = connect_worker_pool()
+    # The main process per machine needs to be able to talk with each other to partition and synchronize the graph data.
+    # Thus, the user is responsible here for 1. spinning up a single process per machine,
+    # and 2. init_process_group amongst these processes.
+    # Assuming this is spinning up inside VAI; it already sets up the env:// init method for us; thus we don't need anything
+    # special here.
+    torch.distributed.init_process_group(backend="gloo")
+
+    # Setup variables we can use to spin up training/inference processes and their respective process groups later.
+    master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
+    node_rank = torch.distributed.get_rank()
+    node_world_size = torch.distributed.get_world_size()
 
     logger.info(
         f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
@@ -336,9 +345,7 @@ def _run_example_inference(
 
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
     # and registering that information to a DistLinkPredictionDataset class.
-    dataset = build_dataset_from_task_config_uri(
-        task_config_uri=task_config_uri, distributed_context=distributed_context
-    )
+    dataset = build_dataset_from_task_config_uri(task_config_uri=task_config_uri)
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -391,7 +398,6 @@ def _run_example_inference(
         fn=_inference_process,
         args=(
             num_inference_processes_per_machine,
-            distributed_context,
             embedding_output_gcs_folder,
             model_uri,
             inference_batch_size,
@@ -406,12 +412,12 @@ def _run_example_inference(
     )
 
     logger.info(
-        f"--- Inference finished on rank {distributed_context.global_rank}, which took {time.time()-inference_start_time:.2f} seconds"
+        f"Inference finished on rank {node_rank}, which took {time.time()-inference_start_time:.2f} seconds"
     )
 
     # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-    if distributed_context.global_rank == 0:
-        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
+    if node_rank == 0:
+        logger.info("Machine 0 triggers loading embeddings from GCS to BigQuery")
 
         # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
         # representing the load operation, which allows user to monitor and retrieve
@@ -424,7 +430,7 @@ def _run_example_inference(
         )
 
     logger.info(
-        f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
+        f"Program finished, which took {time.time()-program_start_time:.2f} seconds"
     )
 
 
