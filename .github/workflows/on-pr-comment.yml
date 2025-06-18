@@ -73,8 +73,7 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
-          echo "Running E2E tests on branch $(git rev-parse --abbrev-ref HEAD)."
-          GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)" make run_all_e2e_tests
+          make run_all_e2e_tests
 
   lint-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
