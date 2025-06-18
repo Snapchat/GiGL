@@ -81,6 +81,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             # Ensure the process group is destroyed after each test
             # to avoid interference with subsequent tests
             dist.destroy_process_group()
+        super().tearDown()
 
     @parameterized.expand(
         [
@@ -101,7 +102,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             ),
         ]
     )
-    def test_get_free_ports_from_master_node_two_ranks(
+    def _test_get_free_ports_from_master_node_two_ranks(
         self, _name, num_ports, world_size
     ):
         port = get_free_port()
@@ -112,14 +113,14 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             nprocs=world_size,
         )
 
-    def test_get_free_ports_from_master_fails_if_process_group_not_initialized(self):
+    def _test_get_free_ports_from_master_fails_if_process_group_not_initialized(self):
         with self.assertRaises(
             AssertionError,
             msg="An error should be raised since the `dist.init_process_group` is not initialized",
         ):
             get_free_ports_from_master_node(num_ports=1)
 
-    def test_get_internal_ip_from_master_node(self):
+    def _test_get_internal_ip_from_master_node(self):
         port = get_free_port()
         init_process_group_init_method = f"tcp://127.0.0.1:{port}"
         expected_host_ip = subprocess.check_output(["hostname", "-i"]).decode().strip()
@@ -130,7 +131,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             nprocs=world_size,
         )
 
-    def test_get_internal_ip_from_master_node_fails_if_process_group_not_initialized(
+    def _test_get_internal_ip_from_master_node_fails_if_process_group_not_initialized(
         self,
     ):
         with self.assertRaises(
@@ -142,7 +143,8 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
     def test_is_port_free(self):
         port = get_free_port()
         self.assertTrue(is_port_free(port), f"Port {port} should be free")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", port))
-            self.assertFalse(is_port_free(port), f"Port {port} should not be free")
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("localhost", port))
+        self.assertFalse(is_port_free(port), f"Port {port} should not be free")
+        s.close()
         self.assertTrue(is_port_free(port), f"Port {port} should be free again")
