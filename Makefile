@@ -28,7 +28,7 @@ PY_TEST_FILES?="*_test.py"
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_config.yaml
 
-GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+GIT_BRANCH?=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 # If we're in a git repo, then find only the ".md" files in our repo to format, else we format everything ".".
 # We do this because some of our dependencies (Spark) include md files,
