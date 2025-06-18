@@ -24,6 +24,7 @@ runs:
   steps:
     - name: Submit Cloud Build job
       run: |
+        echo "Running command: ${{ inputs.cmd }} on branch $(git rev-parse --abbrev-ref HEAD)."
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
           --substitutions=_CMD="${{ inputs.cmd }}" \
