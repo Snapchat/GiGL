@@ -17,7 +17,7 @@ inputs:
   timeout:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
-  
+
 
 runs:
   using: "composite"
@@ -30,5 +30,6 @@ runs:
           --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
           --project="${{ inputs.project }}" \
           --machine-type="${{ inputs.machine_type }}" \
-          --timeout="${{ inputs.timeout }}"
+          --timeout="${{ inputs.timeout }}" \
+          --set-build-env-vars="GIT_HASH=$(git rev-parse HEAD),GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
       shell: bash
