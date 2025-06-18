@@ -1,12 +1,14 @@
 import subprocess
 import unittest
+import socket
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from parameterized import param, parameterized
 
-from gigl.distributed.utils import (
+from gigl.distributed.utils.networking import (
+    is_port_free,
     get_free_port,
     get_free_ports_from_master_node,
     get_internal_ip_from_master_node,
@@ -136,3 +138,11 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             msg="An error should be raised since the `dist.init_process_group` is not initialized",
         ):
             get_internal_ip_from_master_node()
+
+    def test_is_port_free(self):
+        port = get_free_port()
+        self.assertTrue(is_port_free(port), f"Port {port} should be free")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("localhost", port))
+            self.assertFalse(is_port_free(port), f"Port {port} should not be free")
+        self.assertTrue(is_port_free(port), f"Port {port} should be free again")
