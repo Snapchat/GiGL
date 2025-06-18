@@ -24,13 +24,11 @@ runs:
   steps:
     - name: Submit Cloud Build job
       run: |
-        echo "Running command: ${{ inputs.cmd }} on branch $(git rev-parse --abbrev-ref HEAD)."
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
           --substitutions=_CMD="${{ inputs.cmd }}" \
           --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
           --project="${{ inputs.project }}" \
           --machine-type="${{ inputs.machine_type }}" \
-          --timeout="${{ inputs.timeout }}" \
-          --set-build-env-vars="GIT_HASH=$(git rev-parse HEAD),GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+          --timeout="${{ inputs.timeout }}"
       shell: bash
