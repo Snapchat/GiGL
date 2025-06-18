@@ -30,6 +30,7 @@ GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_c
 
 GIT_BRANCH?=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
+
 # If we're in a git repo, then find only the ".md" files in our repo to format, else we format everything ".".
 # We do this because some of our dependencies (Spark) include md files,
 # but since we don't push those dependenices (or their documentation) to git,
