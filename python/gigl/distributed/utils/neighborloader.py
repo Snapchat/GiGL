@@ -1,32 +1,43 @@
 """Utils for Neighbor loaders."""
-import torch
-import copy
-from torch_geometric.typing import EdgeType
+from copy import deepcopy
 from typing import Union
 
+import torch
+from torch_geometric.data import Data, HeteroData
+from torch_geometric.typing import EdgeType
+
 from gigl.common.logger import Logger
-from gigl.types.graph import is_label_edge_type, message_passing_to_negative_label, to_heterogeneous_edge
+from gigl.types.graph import is_label_edge_type
 
 logger = Logger()
 
 
-def patch_neighbors_with_zero_fanout(
+def patch_fanout_for_sampling(
     edge_types: list[EdgeType],
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
 ) -> dict[EdgeType, list[int]]:
     """
-    Sets the labeled edge type fanout to 0 if it is present in the edge types
+    Setups an approprirate fanout for sampling.
+
+    Does the following:
+    - For all label edge types, sets the fanout to be zero.
+    - For all other edge types, if the fanout is not specified, uses the original fanout.
+
+    We add this because the existing sampling logic (below) makes strict assumptions that we need to conform to.
+    https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
+
     Args:
-        edge_types (list[EdgeType]): List of edge types
+        edge_types (list[EdgeType]): List of all edge types in the graph.
         num_neighbors (dict[EdgeType, list[int]]): Specified fanout by the user
     Returns:
-        dict[EdgeType, list[int]]: Modified fanout where the labeled edge type fanouts, if present, are set to 0.
+        dict[EdgeType, list[int]]: Modified fanout that is approariate for sampling.
     """
     if isinstance(num_neighbors, list):
         original_fanout = num_neighbors
         num_neighbors = {}
     else:
         original_fanout = next(iter(num_neighbors.values()))
+        num_neighbors = deepcopy(num_neighbors)
 
     num_hop = len(original_fanout)
     zero_samples = [0 for _ in range(num_hop)]
@@ -63,3 +74,17 @@ def shard_nodes_by_process(
     )
     nodes_for_current_process = input_nodes[start_index:end_index]
     return nodes_for_current_process
+
+
+def pyg_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> Data:
+    """
+    Users the provided supervision edge type to create a homogeneous Data object.
+    Args:
+        data (HeteroData): Heterogeneous graph with the supervision edge type
+    Returns:
+        data (Data): Homogeneous graph with the labeled edge type removed
+    """
+    homogeneous_data = data.edge_type_subgraph([supevision_edge_type]).to_homogeneous(
+        add_edge_type=False, add_node_type=False
+    )
+    return homogeneous_data

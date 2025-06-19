@@ -2,11 +2,13 @@ import unittest
 
 import torch
 from parameterized import param, parameterized
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 from gigl.distributed.utils.neighborloader import (
+    patch_fanout_for_sampling,
+    pyg_to_homogeneous,
     shard_nodes_by_process,
-    patch_neighbors_with_zero_fanout,
 )
 from gigl.types.graph import message_passing_to_positive_label
 from tests.test_assets.distributed.utils import assert_tensor_equality
@@ -52,7 +54,10 @@ class LoaderUtilsTest(unittest.TestCase):
             param(
                 "Test set_labeled_edge_type on num_neighbors dict with labeled edge type",
                 edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
-                num_neighbors={_U2I_EDGE_TYPE: [2, 7], _I2U_EDGE_TYPE: [3, 4], },
+                num_neighbors={
+                    _U2I_EDGE_TYPE: [2, 7],
+                    _I2U_EDGE_TYPE: [3, 4],
+                },
                 expected_num_neighbors={
                     _U2I_EDGE_TYPE: [2, 7],
                     _I2U_EDGE_TYPE: [3, 4],
@@ -87,5 +92,16 @@ class LoaderUtilsTest(unittest.TestCase):
         num_neighbors: dict[EdgeType, list[int]],
         expected_num_neighbors: dict[EdgeType, list[int]],
     ):
-        num_neighbors = patch_neighbors_with_zero_fanout(edge_types, num_neighbors)
+        num_neighbors = patch_fanout_for_sampling(edge_types, num_neighbors)
         self.assertEqual(num_neighbors, expected_num_neighbors)
+
+    def test_pyg_to_homogeneous(self):
+        data = HeteroData()
+        data[_U2I_EDGE_TYPE].edge_index = torch.tensor([[0, 1], [1, 0]])
+        data[_I2U_EDGE_TYPE].edge_index = torch.tensor([[1, 0], [0, 1]])
+        data["user"].x = torch.tensor([[1.0], [2.0]])
+        data["item"].x = torch.tensor([[3.0], [4.0]])
+
+        homogeneous_data = pyg_to_homogeneous(_U2I_EDGE_TYPE, data)
+        self.assertIsInstance(homogeneous_data, Data)
+        self.assertTrue(hasattr(homogeneous_data, "edge_index"))
