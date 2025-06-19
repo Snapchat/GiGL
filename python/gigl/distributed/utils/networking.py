@@ -7,7 +7,8 @@ from gigl.common.logger import Logger
 
 logger = Logger()
 
-def is_port_free(port: int,  hostname: str = 'localhost') -> bool:
+
+def is_port_free(port: int, hostname: str = "localhost") -> bool:
     """
     Check if a port is free on for the provided host..
     Args:
@@ -23,6 +24,7 @@ def is_port_free(port: int,  hostname: str = 'localhost') -> bool:
         except OSError:
             # If the port is already in use, an OSError will be raised
             return False
+
 
 def get_free_port() -> int:
     """

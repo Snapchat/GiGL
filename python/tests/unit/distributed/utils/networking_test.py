@@ -1,6 +1,6 @@
+import socket
 import subprocess
 import unittest
-import socket
 
 import torch
 import torch.distributed as dist
@@ -8,10 +8,10 @@ import torch.multiprocessing as mp
 from parameterized import param, parameterized
 
 from gigl.distributed.utils.networking import (
-    is_port_free,
     get_free_port,
     get_free_ports_from_master_node,
     get_internal_ip_from_master_node,
+    is_port_free,
 )
 
 
