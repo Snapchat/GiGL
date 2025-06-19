@@ -126,6 +126,7 @@ def _run_distributed_ablp_neighbor_loader(
         context=context,
         local_process_rank=0,
         local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
     )
 
     count = 0
@@ -183,6 +184,7 @@ def _run_cora_supervised(
         context=context,
         local_process_rank=0,
         local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
     )
     count = 0
     for datum in loader:
@@ -204,7 +206,6 @@ def _run_multiple_neighbor_loader(
     context: DistributedContext,
     expected_data_count: int,
 ):
-    # TODO (mkolodner-sc): Infer ports automatically, rather than hard-coding these
     loader_one = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -212,8 +213,6 @@ def _run_multiple_neighbor_loader(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
-        _main_inference_port=10000,
-        _main_sampling_port=20000,
     )
 
     loader_two = DistNeighborLoader(
@@ -223,8 +222,6 @@ def _run_multiple_neighbor_loader(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
-        _main_inference_port=30000,
-        _main_sampling_port=40000,
     )
 
     count = 0
@@ -242,8 +239,6 @@ def _run_multiple_neighbor_loader(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
-        _main_inference_port=50000,
-        _main_sampling_port=60000,
     )
 
     count = 0
@@ -279,6 +274,7 @@ def _run_dblp_supervised(
         local_process_rank=0,
         local_process_world_size=1,
         supervision_edge_type=supervision_edge_type,
+        pin_memory_device=torch.device("cpu"),
     )
     count = 0
     for datum in loader:
@@ -329,6 +325,7 @@ def _run_toy_heterogeneous_ablp(
         supervision_edge_type=supervision_edge_type,
         # We set the batch size to the number of "user" nodes in the heterogeneous toy graph to guarantee that the dataloader completes an epoch in 1 batch
         batch_size=15,
+        pin_memory_device=torch.device("cpu"),
     )
     count = 0
     for datum in loader:

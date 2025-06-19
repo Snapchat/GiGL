@@ -37,7 +37,6 @@ from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed import (
     DistLinkPredictionDataset,
-    DistributedContext,
     build_dataset_from_task_config_uri,
 )
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
@@ -222,7 +221,9 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = f"machine_{rank}_local_process_number_{process_number_on_current_machine}"
+    embedding_filename = (
+        f"machine_{rank}_local_process_number_{process_number_on_current_machine}"
+    )
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -393,7 +394,9 @@ def _run_example_inference(
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
     node_rank = torch.distributed.get_rank()
     node_world_size = torch.distributed.get_world_size()
-    master_default_process_group_port = gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
+    master_default_process_group_port = (
+        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
+    )
     # Destroying the process group as one will be re-initialized in the inference process using ^ information
     torch.distributed.destroy_process_group()
 
