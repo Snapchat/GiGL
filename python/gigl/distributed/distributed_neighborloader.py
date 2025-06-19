@@ -14,9 +14,9 @@ from gigl.distributed.constants import (
 )
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.utils.neighbor_loader import (
+from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
-    zero_label_edge_fanout,
+    patch_neighbors_with_zero_fanout,
 )
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -235,7 +235,7 @@ class DistNeighborLoader(DistLoader):
         )
 
         if is_labeled_heterogeneous and isinstance(num_neighbors, Dict):
-            num_neighbors = zero_label_edge_fanout(num_neighbors)
+            num_neighbors = patch_neighbors_with_zero_fanout(dataset.get_edge_types(), num_neighbors)
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,

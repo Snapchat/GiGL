@@ -4,9 +4,9 @@ import torch
 from parameterized import param, parameterized
 from torch_geometric.typing import EdgeType
 
-from gigl.distributed.utils.neighbor_loader import (
+from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
-    zero_label_edge_fanout,
+    patch_neighbors_with_zero_fanout,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
@@ -50,7 +50,8 @@ class LoaderUtilsTest(unittest.TestCase):
         [
             param(
                 "Test set_labeled_edge_type on num_neighbors dict with labeled edge type",
-                num_neighbors={_U2I_EDGE_TYPE: [2, 7], _I2U_EDGE_TYPE: [3, 4]},
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
+                num_neighbors={_U2I_EDGE_TYPE: [2, 7], _I2U_EDGE_TYPE: [3, 4], },
                 expected_num_neighbors={
                     _U2I_EDGE_TYPE: [2, 7],
                     _I2U_EDGE_TYPE: [3, 4],
@@ -59,19 +60,21 @@ class LoaderUtilsTest(unittest.TestCase):
             ),
             param(
                 "Test set_labeled_edge_type on num_neighbors dict with no labeled edge type",
-                num_neighbors={_U2I_EDGE_TYPE: [2, 7], _I2U_EDGE_TYPE: [3, 4]},
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE],
+                num_neighbors={_U2I_EDGE_TYPE: [2, 7]},
                 expected_num_neighbors={
                     _U2I_EDGE_TYPE: [2, 7],
-                    _I2U_EDGE_TYPE: [3, 4],
+                    _I2U_EDGE_TYPE: [0, 0],
                 },
             ),
         ]
     )
-    def test_zero_label_edge_fanout(
+    def test_patch_neighbors_with_zero_fanout(
         self,
         _,
+        edge_types: list[EdgeType],
         num_neighbors: dict[EdgeType, list[int]],
         expected_num_neighbors: dict[EdgeType, list[int]],
     ):
-        num_neighbors = zero_label_edge_fanout(num_neighbors=num_neighbors)
+        num_neighbors = patch_neighbors_with_zero_fanout(edge_types, num_neighbors)
         self.assertEqual(num_neighbors, expected_num_neighbors)

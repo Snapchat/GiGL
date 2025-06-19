@@ -9,7 +9,7 @@ from gigl.types.graph import is_label_edge_type, message_passing_to_negative_lab
 logger = Logger()
 
 
-def zero_label_edge_fanout(
+def patch_neighbors_with_zero_fanout(
     edge_types: list[EdgeType],
     num_neighbors: dict[EdgeType, list[int]],
 ) -> dict[EdgeType, list[int]]:
@@ -21,22 +21,14 @@ def zero_label_edge_fanout(
     Returns:
         dict[EdgeType, list[int]]: Modified fanout where the labeled edge type fanouts, if present, are set to 0.
     """
-    zeroed_num_neighors = copy.deepcopy(num_neighbors)
     num_hop = len(list(num_neighbors.values())[0])
     zero_samples = [0 for _ in range(num_hop)]
     for edge_type in edge_types:
-        if message_passing_to_negative_label(edge_type) in edge_types::
-            if is_label_edge_type(edge_type):
-                num_neighbors[edge_type] = zero_samples
-                logger.info(
-                    f"Overwrote labeled edge type {edge_type} fanout to: {zero_samples}."
-                )
-            else:
-                logger.warning(
-                    f"Edge type {edge_type} is not a labeled edge type, skipping zeroing."
-                )
-    logger.info(f"Overwrote num_neighbors to: {zeroed_num_neighbors}.")
-    return zeroed_num_neighbors
+        if is_label_edge_type(edge_type) or edge_type not in num_neighbors:
+            num_neighbors[edge_type] = zero_samples
+
+    logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
+    return num_neighbors
 
 
 def shard_nodes_by_process(
