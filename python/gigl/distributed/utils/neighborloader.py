@@ -2,16 +2,17 @@
 import torch
 import copy
 from torch_geometric.typing import EdgeType
+from typing import Union
 
 from gigl.common.logger import Logger
-from gigl.types.graph import is_label_edge_type, message_passing_to_negative_label
+from gigl.types.graph import is_label_edge_type, message_passing_to_negative_label, to_heterogeneous_edge
 
 logger = Logger()
 
 
 def patch_neighbors_with_zero_fanout(
     edge_types: list[EdgeType],
-    num_neighbors: dict[EdgeType, list[int]],
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
 ) -> dict[EdgeType, list[int]]:
     """
     Sets the labeled edge type fanout to 0 if it is present in the edge types
@@ -21,11 +22,19 @@ def patch_neighbors_with_zero_fanout(
     Returns:
         dict[EdgeType, list[int]]: Modified fanout where the labeled edge type fanouts, if present, are set to 0.
     """
-    num_hop = len(list(num_neighbors.values())[0])
+    if isinstance(num_neighbors, list):
+        original_fanout = num_neighbors
+        num_neighbors = {}
+    else:
+        original_fanout = next(iter(num_neighbors.values()))
+
+    num_hop = len(original_fanout)
     zero_samples = [0 for _ in range(num_hop)]
     for edge_type in edge_types:
-        if is_label_edge_type(edge_type) or edge_type not in num_neighbors:
+        if is_label_edge_type(edge_type):
             num_neighbors[edge_type] = zero_samples
+        elif edge_type not in num_neighbors:
+            num_neighbors[edge_type] = original_fanout
 
     logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
     return num_neighbors

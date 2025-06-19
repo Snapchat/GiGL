@@ -8,11 +8,12 @@ from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
     patch_neighbors_with_zero_fanout,
 )
+from gigl.types.graph import message_passing_to_positive_label
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 _U2I_EDGE_TYPE = ("user", "to", "item")
 _I2U_EDGE_TYPE = ("item", "to", "user")
-_LABELED_EDGE_TYPE = ("user", "to_gigl_positive", "item")
+_LABELED_EDGE_TYPE = message_passing_to_positive_label(_U2I_EDGE_TYPE)
 
 
 class LoaderUtilsTest(unittest.TestCase):
@@ -64,7 +65,17 @@ class LoaderUtilsTest(unittest.TestCase):
                 num_neighbors={_U2I_EDGE_TYPE: [2, 7]},
                 expected_num_neighbors={
                     _U2I_EDGE_TYPE: [2, 7],
-                    _I2U_EDGE_TYPE: [0, 0],
+                    _I2U_EDGE_TYPE: [2, 7],
+                },
+            ),
+            param(
+                "Test set_labeled_edge_type on num_neighbors list",
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
+                num_neighbors=[1, 3],
+                expected_num_neighbors={
+                    _U2I_EDGE_TYPE: [1, 3],
+                    _I2U_EDGE_TYPE: [1, 3],
+                    _LABELED_EDGE_TYPE: [0, 0],
                 },
             ),
         ]
