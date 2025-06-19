@@ -282,7 +282,12 @@ class HashedNodeAnchorLinkSplitter:
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         for anchor_node_type, collected_anchor_nodes in node_ids_by_node_type.items():
             max_node_id = max_node_id_by_type[anchor_node_type]
-            node_id_count = torch.zeros(max_node_id, dtype=torch.uint8)
+            # Set device explicitly here so we don't default to CPU.
+            # TODO(kmonte): We should add tests for this - but we need to enable accelerators on our CI/CD first.
+            # Also, maybe swap setting device until later?
+            node_id_count = torch.zeros(
+                max_node_id, dtype=torch.uint8, device=anchor_nodes.device
+            )
             for anchor_nodes in collected_anchor_nodes:
                 node_id_count.add_(torch.bincount(anchor_nodes, minlength=max_node_id))
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
