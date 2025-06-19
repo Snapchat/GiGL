@@ -121,7 +121,6 @@ def _inference_process(
     node_world_size: int,
     master_ip_address: str,
     master_default_process_group_port: int,
-    process_number_on_current_machine: int,
     embedding_gcs_path: GcsUri,
     model_state_dict_uri: GcsUri,
     inference_batch_size: int,
@@ -138,7 +137,7 @@ def _inference_process(
         3. Writing embeddings to GCS
 
     Args:
-        process_number_on_current_machine (int): Process number on the current machine
+        local_rank (int): Process number on the current machine
         local_world_size (int): Number of inference processes spawned by each machine
         distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
@@ -176,7 +175,7 @@ def _inference_process(
     log_every_n_batch = int(inferencer_args.get("log_every_n_batch", "50"))
 
     device = gigl.distributed.utils.get_available_device(
-        local_process_rank=process_number_on_current_machine,
+        local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
 
     rank = node_rank * local_rank
@@ -191,7 +190,7 @@ def _inference_process(
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        local_process_rank=process_number_on_current_machine,
+        local_process_rank=local_rank,
         local_process_world_size=local_world_size,
         input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
         num_workers=sampling_workers_per_inference_process,
@@ -221,9 +220,7 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = (
-        f"machine_{rank}_local_process_number_{process_number_on_current_machine}"
-    )
+    embedding_filename = f"machine_{rank}_local_process_number_{local_rank}"
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -283,7 +280,7 @@ def _inference_process(
 
         if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"Local rank {process_number_on_current_machine} processed {batch_idx} batches. "
+                f"Local rank {local_rank} processed {batch_idx} batches. "
                 f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds. "
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
@@ -294,16 +291,14 @@ def _inference_process(
 
         data_loading_start_time = time.time()
 
-    logger.info(
-        f"--- Machine {rank} local rank {process_number_on_current_machine} finished inference."
-    )
+    logger.info(f"--- Machine {rank} local rank {local_rank} finished inference.")
 
     write_embedding_start_time = time.time()
     # Flushes all remaining embeddings to GCS
     exporter.flush_embeddings()
 
     logger.info(
-        f"--- Machine {rank} local rank {process_number_on_current_machine} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Machine {rank} local rank {local_rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
@@ -316,7 +311,7 @@ def _inference_process(
     gc.collect()
 
     logger.info(
-        f"--- All machines local rank {process_number_on_current_machine} finished inference. Deleted data loader"
+        f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )
 
     # Clean up for a graceful exit
