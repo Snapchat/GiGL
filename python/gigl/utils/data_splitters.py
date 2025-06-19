@@ -341,7 +341,9 @@ class HashedNodeAnchorLinkSplitter:
 
             # Now that we've normalized the hash values, we can select the train, val, and test nodes.
             test_inds = hash_values >= 1 - self._num_test  # 1 x M
-            val_inds = (hash_values >= 1 - self._num_test - self._num_val) & ~test_inds  # 1 x M
+            val_inds = (
+                hash_values >= 1 - self._num_test - self._num_val
+            ) & ~test_inds  # 1 x M
             train_inds = ~test_inds & ~val_inds  # 1 x M
             train = nodes_to_select[train_inds]  # 1 x num_train_nodes
             val = nodes_to_select[val_inds]  # 1 x num_val_nodes
