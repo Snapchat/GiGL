@@ -28,6 +28,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
+from gigl.distributed.utils.networking import is_port_free, get_free_ports_from_master_node
 
 logger = Logger()
 
@@ -222,6 +223,9 @@ class DistNeighborLoader(DistLoader):
             f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
         )
 
+        ports = get_free_ports_from_master_node(local_process_world_size)
+        port = ports[local_process_rank]
+        logger.info(f"Using ports: {ports} for worker processes, using {port} for local process {local_process_rank}.")
         # Sets up worker options for the dataloader
         worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
@@ -256,6 +260,12 @@ class DistNeighborLoader(DistLoader):
             edge_dir=dataset.edge_dir,
             seed=None,  # it's actually optional - None means random.
         )
+        if not is_port_free(port):
+            logger.warning(f"On machine rank {context.global_rank}, local rank {local_process_rank} port {port} is not free. ")
+        else:
+            logger.info(
+                f"On machine rank {context.global_rank}, local rank {local_process_rank} port {port} is free."
+            )
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:

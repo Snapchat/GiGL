@@ -28,6 +28,7 @@ from gigl.distributed.utils.neighborloader import (
     pyg_to_homogeneous,
     shard_nodes_by_process,
 )
+from gigl.distributed.utils.networking import is_port_free, get_free_ports_from_master_node
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -260,7 +261,9 @@ class DistABLPLoader(DistLoader):
         logger.info(
             f"Finished initializing neighbor loader worker: {local_process_rank}/{local_process_world_size}"
         )
-
+        ports = get_free_ports_from_master_node(local_process_world_size)
+        port = ports[local_process_rank]
+        logger.info(f"Using ports: {ports} for worker processes, using {port} for local process {local_process_rank}.")
         # Sets up worker options for the dataloader
         worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
@@ -274,7 +277,7 @@ class DistABLPLoader(DistLoader):
             # use different master ports.
             master_addr=context.main_worker_ip_address,
             # TODO (mkolodner-sc): Automatically infer ports so that we are not relying local_process_rank
-            master_port=_main_sampling_port + local_process_rank,
+            master_port=port,
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
@@ -376,6 +379,12 @@ class DistABLPLoader(DistLoader):
             self.worker_options,
             self._channel,
         )
+        if not is_port_free(port):
+            logger.warning(f"On machine rank {context.global_rank}, local rank {local_process_rank} port {port} is not free. ")
+        else:
+            logger.info(
+                f"On machine rank {context.global_rank}, local rank {local_process_rank} port {port} is free."
+            )
         self._mp_producer.init()
 
     def _get_labels(
