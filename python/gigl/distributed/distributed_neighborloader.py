@@ -1,11 +1,9 @@
 from collections import abc
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
-from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
@@ -16,9 +14,14 @@ from gigl.distributed.constants import (
 )
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.utils.neighbor_loader import (
+    shard_nodes_by_process,
+    zero_label_edge_fanout,
+)
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
 
@@ -27,8 +30,6 @@ DEFAULT_NUM_CPU_THREADS = 2
 
 
 class DistNeighborLoader(DistLoader):
-    _transforms: Sequence[Callable[[Union[Data, HeteroData]], Union[Data, HeteroData]]]
-
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
@@ -145,9 +146,26 @@ class DistNeighborLoader(DistLoader):
                 )
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
+        is_labeled_heterogeneous = False
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
-            node_type = None
+
+            # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
+            # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
+            if isinstance(dataset.node_ids, abc.Mapping):
+                if (
+                    len(dataset.node_ids) == 1
+                    and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
+                ):
+                    node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                    is_labeled_heterogeneous = True
+                else:
+                    raise ValueError(
+                        f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
+                    )
+            else:
+                node_type = None
+
         else:
             node_type, node_ids = input_nodes
 
@@ -216,9 +234,8 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        # May be set by base classes.
-        if not hasattr(self, "_transforms"):
-            self._transforms = []
+        if is_labeled_heterogeneous and isinstance(num_neighbors, Dict):
+            num_neighbors = zero_label_edge_fanout(num_neighbors)
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
@@ -234,25 +251,3 @@ class DistNeighborLoader(DistLoader):
             seed=None,  # it's actually optional - None means random.
         )
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
-
-    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        data = super()._collate_fn(msg)
-        for transform in self._transforms:
-            data = transform(data)
-        return data
-
-
-def shard_nodes_by_process(
-    input_nodes: torch.Tensor,
-    local_process_rank: int,
-    local_process_world_size: int,
-) -> torch.Tensor:
-    num_node_ids_per_process = input_nodes.size(0) // local_process_world_size
-    start_index = local_process_rank * num_node_ids_per_process
-    end_index = (
-        input_nodes.size(0)
-        if local_process_rank == local_process_world_size - 1
-        else start_index + num_node_ids_per_process
-    )
-    nodes_for_current_process = input_nodes[start_index:end_index]
-    return nodes_for_current_process

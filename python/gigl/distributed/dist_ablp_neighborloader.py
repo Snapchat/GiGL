@@ -21,18 +21,18 @@ from gigl.distributed.constants import (
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
-from gigl.distributed.distributed_neighborloader import (
-    DEFAULT_NUM_CPU_THREADS,
-    shard_nodes_by_process,
-)
+from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.utils.neighbor_loader import (
+    shard_nodes_by_process,
+    zero_label_edge_fanout,
+)
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    is_label_edge_type,
     reverse_edge_type,
     select_label_edge_types,
     to_heterogeneous_edge,
@@ -211,18 +211,9 @@ class DistABLPLoader(DistLoader):
         )
 
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
-        if isinstance(num_neighbors, dict):
-            num_hop = len(list(num_neighbors.values())[0])
-        else:
-            num_hop = len(num_neighbors)
-        zero_samples = [0 for _ in range(num_hop)]
         num_neighbors = to_heterogeneous_edge(num_neighbors)
-        for edge_type in dataset.graph.keys():
-            if is_label_edge_type(edge_type):
-                num_neighbors[edge_type] = zero_samples
-            elif edge_type not in num_neighbors:
-                num_neighbors[edge_type] = zero_samples
         logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
+        num_neighbors = zero_label_edge_fanout(num_neighbors)
 
         if num_neighbors.keys() != dataset.graph.keys():
             raise ValueError(
@@ -267,7 +258,7 @@ class DistABLPLoader(DistLoader):
             process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
-            f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
+            f"Finished initializing neighbor loader worker: {local_process_rank}/{local_process_world_size}"
         )
 
         # Sets up worker options for the dataloader
