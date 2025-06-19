@@ -308,7 +308,7 @@ class HashedNodeAnchorLinkSplitter:
             # We want to do this *globally* e.g. across all processes,
             # so that we can ensure that the same nodes are selected for the same split across all processes.
             # If we don't do this, then if we have `[0, 1, 2, 3, 4]` on one process and `[4, 5, 6, 7]` on another,
-            # wihh the identity hash `4` may end up in Test in one process and Train in another,
+            # with the identity hash `4` may end up in Test in one rank and Train in another.
             max_hash_value = hash_values.max().item()
             min_hash_value = hash_values.min().item()
             if torch.distributed.is_initialized():
@@ -340,9 +340,9 @@ class HashedNodeAnchorLinkSplitter:
             ) / global_max_hash_value  # Normalize the hash values to [0, 1)
 
             # Now that we've normalized the hash values, we can select the train, val, and test nodes.
-            test_inds = hash_values >= 1 - self._num_test
-            val_inds = (hash_values >= 1 - self._num_test - self._num_val) & ~test_inds
-            train_inds = ~test_inds & ~val_inds
+            test_inds = hash_values >= 1 - self._num_test  # 1 x M
+            val_inds = (hash_values >= 1 - self._num_test - self._num_val) & ~test_inds  # 1 x M
+            train_inds = ~test_inds & ~val_inds  # 1 x M
             train = nodes_to_select[train_inds]  # 1 x num_train_nodes
             val = nodes_to_select[val_inds]  # 1 x num_val_nodes
             test = nodes_to_select[test_inds]  # 1 x num_test_nodes
