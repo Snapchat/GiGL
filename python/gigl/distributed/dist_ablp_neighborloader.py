@@ -21,21 +21,25 @@ from gigl.distributed.constants import (
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
-from gigl.distributed.distributed_neighborloader import (
-    DEFAULT_NUM_CPU_THREADS,
+from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
+from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.utils.neighborloader import (
+    patch_fanout_for_sampling,
+    pyg_to_homogeneous,
     shard_nodes_by_process,
 )
-from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.utils.networking import (
+    get_free_ports_from_master_node,
+    is_port_free,
+)
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    is_label_edge_type,
     reverse_edge_type,
     select_label_edge_types,
-    to_heterogeneous_edge,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
@@ -211,18 +215,9 @@ class DistABLPLoader(DistLoader):
         )
 
         # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
-        if isinstance(num_neighbors, dict):
-            num_hop = len(list(num_neighbors.values())[0])
-        else:
-            num_hop = len(num_neighbors)
-        zero_samples = [0 for _ in range(num_hop)]
-        num_neighbors = to_heterogeneous_edge(num_neighbors)
-        for edge_type in dataset.graph.keys():
-            if is_label_edge_type(edge_type):
-                num_neighbors[edge_type] = zero_samples
-            elif edge_type not in num_neighbors:
-                num_neighbors[edge_type] = zero_samples
-        logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
+        num_neighbors = patch_fanout_for_sampling(
+            dataset.get_edge_types(), num_neighbors
+        )
 
         if num_neighbors.keys() != dataset.graph.keys():
             raise ValueError(
@@ -267,9 +262,13 @@ class DistABLPLoader(DistLoader):
             process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
-            f"Finished initializing neighbor loader worker:  {local_process_rank}/{local_process_world_size}"
+            f"Finished initializing neighbor loader worker: {local_process_rank}/{local_process_world_size}"
         )
-
+        ports = get_free_ports_from_master_node(local_process_world_size)
+        port = ports[local_process_rank]
+        logger.info(
+            f"Using ports: {ports} for worker processes, using {port} for local process {local_process_rank}."
+        )
         # Sets up worker options for the dataloader
         worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
@@ -283,7 +282,7 @@ class DistABLPLoader(DistLoader):
             # use different master ports.
             master_addr=context.main_worker_ip_address,
             # TODO (mkolodner-sc): Automatically infer ports so that we are not relying local_process_rank
-            master_port=_main_sampling_port + local_process_rank,
+            master_port=port,
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
@@ -385,6 +384,14 @@ class DistABLPLoader(DistLoader):
             self.worker_options,
             self._channel,
         )
+        if not is_port_free(port):
+            logger.warning(
+                f"On machine rank {context.global_rank}, local rank {local_process_rank} port {port} is not free. "
+            )
+        else:
+            logger.info(
+                f"On machine rank {context.global_rank}, local rank {local_process_rank} port {port} is free."
+            )
         self._mp_producer.init()
 
     def _get_labels(
@@ -415,20 +422,6 @@ class DistABLPLoader(DistLoader):
             metadata["negative_labels"] if "negative_labels" in metadata else None
         )
         return (msg, positive_labels, negative_labels)
-
-    def _supervised_to_homogeneous(self, data: HeteroData) -> Data:
-        """
-        Removes the label edge types from a supervised graph and converts it to homogeneous
-
-        Args:
-            data (HeteroData): Heterogeneous graph with the supervision edge type
-        Returns:
-            data (Data): Homogeneous graph with the labeled edge type removed
-        """
-        homogeneous_data = data.edge_type_subgraph(
-            [self._supervision_edge_type]
-        ).to_homogeneous(add_edge_type=False, add_node_type=False)
-        return homogeneous_data
 
     def _set_labels(
         self,
@@ -503,6 +496,6 @@ class DistABLPLoader(DistLoader):
         msg, positive_labels, negative_labels = self._get_labels(msg)
         data = super()._collate_fn(msg)
         if not self._is_input_heterogeneous:
-            data = self._supervised_to_homogeneous(data)
+            data = pyg_to_homogeneous(self._supervision_edge_type, data)
         data = self._set_labels(data, positive_labels, negative_labels)
         return data
