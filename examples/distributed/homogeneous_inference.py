@@ -177,9 +177,11 @@ def _inference_process(
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
-
-    rank = node_rank + local_rank
+    rank = node_rank * local_world_size + local_rank
     global_world_size = node_world_size * local_world_size
+    logger.info(
+        f"Local rank {local_rank}; rank {rank} is using device {device} for inference"
+    )
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
@@ -379,12 +381,21 @@ def _run_example_inference(
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
-    local_world_size = int(
-        inferencer_args.get("num_inference_processes_per_machine", "4")
-    )  # Current large-scale setting sets this value to 4
+
+
+    local_world_size: int
+    if torch.cuda.is_available():
+        local_world_size = torch.cuda.device_count()
+        logger.info(
+            f"Detected {local_world_size} GPUs. Thus, setting local_world_size to {local_world_size}"
+        )
+    else:
+        logger.info(
+            "No GPUs detected. Thus, setting local_world_size to `num_inference_processes_per_machine`, and running inference on CPU."
+        )
+        local_world_size = inferencer_args.get("num_inference_processes_per_machine", "4")
 
     ## Inference Start
-
     # Setup variables we can use to spin up training/inference processes and their respective process groups later.
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
     node_rank = torch.distributed.get_rank()
