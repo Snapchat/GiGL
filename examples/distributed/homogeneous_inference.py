@@ -178,7 +178,7 @@ def _inference_process(
         local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
 
-    rank = node_rank * local_rank
+    rank = node_rank + local_rank
     global_world_size = node_world_size * local_world_size
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",

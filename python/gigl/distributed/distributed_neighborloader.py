@@ -124,7 +124,7 @@ class DistNeighborLoader(DistLoader):
             local_world_size = local_process_world_size
             local_rank = local_process_rank
 
-            rank = node_rank * local_rank
+            rank = node_rank + local_rank
             world_size = node_world_size * local_world_size
 
             if not torch.distributed.is_initialized():

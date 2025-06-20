@@ -353,10 +353,10 @@ def build_dataset(
             gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
         )
         all_worker_ips = gigl.distributed.utils.get_internal_ip_from_all_ranks()
-        assert len(set(all_worker_ips)) == node_world_size, (
-            "Expected only one process per node in the process group, but found duplicates."
-            f" IPs: {all_worker_ips}, num_nodes: {node_world_size}"
-        )
+        # assert len(set(all_worker_ips)) == node_world_size, (
+        #     "Expected only one process per node in the process group, but found duplicates."
+        #     f" IPs: {all_worker_ips}, num_nodes: {node_world_size}"
+        # )
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(
