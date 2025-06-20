@@ -98,6 +98,7 @@ class DistDatasetTestCase(unittest.TestCase):
                 None,
                 None,
                 use_process_group,
+                master_port if use_process_group else None,
             ),
             nprocs=self._world_size,
             join=True,
@@ -212,6 +213,8 @@ class DistDatasetTestCase(unittest.TestCase):
                 True,  # should_load_tensors_in_parallel
                 None,  # partitioner
                 split_fn,
+                True,  # use_process_group
+                master_port,  # port if using process group
             ),
             nprocs=self._world_size,
             join=True,
