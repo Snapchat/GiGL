@@ -121,9 +121,9 @@ def convert_pb_to_serialized_graph_metadata(
             tfrecord_uri_pattern=tfrecord_uri_pattern,
         )
 
-        if preprocessed_metadata_pb_wrapper.has_pos_edge_features(
-            condensed_edge_type=condensed_edge_type
-        ):
+        if preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+            condensed_edge_type
+        ].HasField("positive_edge_info"):
             pos_edge_feature_spec_dict = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_pos_edge_feature_schema_map[
                 condensed_edge_type
             ].feature_spec
@@ -139,9 +139,9 @@ def convert_pb_to_serialized_graph_metadata(
         else:
             positive_label_entity_info[edge_type] = None
 
-        if preprocessed_metadata_pb_wrapper.has_hard_neg_edge_features(
-            condensed_edge_type=condensed_edge_type
-        ):
+        if preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+            condensed_edge_type
+        ].HasField("negative_edge_info"):
             hard_neg_edge_feature_spec_dict = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_hard_neg_edge_feature_schema_map[
                 condensed_edge_type
             ].feature_spec
