@@ -17,8 +17,8 @@ from gigl.distributed.constants import (
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.utils.neighborloader import (
+    labeled_to_homogeneous,
     patch_fanout_for_sampling,
-    pyg_to_homogeneous,
     shard_nodes_by_process,
 )
 from gigl.src.common.types.graph_data import (
@@ -261,5 +261,5 @@ class DistNeighborLoader(DistLoader):
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
         if self._is_labeled_heterogeneous:
-            data = pyg_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+            data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
         return data

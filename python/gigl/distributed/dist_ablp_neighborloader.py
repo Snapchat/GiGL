@@ -24,8 +24,8 @@ from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.utils.neighborloader import (
+    labeled_to_homogeneous,
     patch_fanout_for_sampling,
-    pyg_to_homogeneous,
     shard_nodes_by_process,
 )
 from gigl.src.common.types.graph_data import (
@@ -480,6 +480,6 @@ class DistABLPLoader(DistLoader):
         msg, positive_labels, negative_labels = self._get_labels(msg)
         data = super()._collate_fn(msg)
         if not self._is_input_heterogeneous:
-            data = pyg_to_homogeneous(self._supervision_edge_type, data)
+            data = labeled_to_homogeneous(self._supervision_edge_type, data)
         data = self._set_labels(data, positive_labels, negative_labels)
         return data

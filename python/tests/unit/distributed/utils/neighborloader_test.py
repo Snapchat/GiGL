@@ -6,8 +6,8 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 from gigl.distributed.utils.neighborloader import (
+    labeled_to_homogeneous,
     patch_fanout_for_sampling,
-    pyg_to_homogeneous,
     shard_nodes_by_process,
 )
 from gigl.types.graph import message_passing_to_positive_label
@@ -102,6 +102,6 @@ class LoaderUtilsTest(unittest.TestCase):
         data["user"].x = torch.tensor([[1.0], [2.0]])
         data["item"].x = torch.tensor([[3.0], [4.0]])
 
-        homogeneous_data = pyg_to_homogeneous(_U2I_EDGE_TYPE, data)
+        homogeneous_data = labeled_to_homogeneous(_U2I_EDGE_TYPE, data)
         self.assertIsInstance(homogeneous_data, Data)
         self.assertTrue(hasattr(homogeneous_data, "edge_index"))

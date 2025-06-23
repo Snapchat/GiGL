@@ -76,9 +76,10 @@ def shard_nodes_by_process(
     return nodes_for_current_process
 
 
-def pyg_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> Data:
+def labeled_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> Data:
     """
-    Users the provided supervision edge type to create a homogeneous Data object.
+    Returns a Data object with the label edges removed.
+
     Args:
         data (HeteroData): Heterogeneous graph with the supervision edge type
     Returns:
