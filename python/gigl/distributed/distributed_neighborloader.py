@@ -142,6 +142,9 @@ class DistNeighborLoader(DistLoader):
                     "process group is not available, trying to torch.distributed.init_process_group to communicate necessary setup information."
                 )
                 should_cleanup_distributed_context = True
+                logger.info(
+                    f"Initializing process group with master ip address: {master_ip_address}, rank: {rank}, world size: {world_size}, local_rank: {local_rank}, local_world_size: {local_world_size}, device: {device}."
+                )
                 torch.distributed.init_process_group(
                     backend="gloo" if device.type == "cpu" else "nccl",
                     init_method=f"tcp://{master_ip_address}:{DEFAULT_MASTER_INFERENCE_PORT}",
