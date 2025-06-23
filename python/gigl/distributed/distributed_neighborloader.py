@@ -134,12 +134,12 @@ class DistNeighborLoader(DistLoader):
             local_world_size = local_process_world_size
             local_rank = local_process_rank
 
-            rank = node_rank + local_rank
+            rank = node_rank * local_world_size + local_rank
             world_size = node_world_size * local_world_size
 
             if not torch.distributed.is_initialized():
                 logger.info(
-                    "tprocess group is not available, trying to torch.distributed.init_process_group to communicate necessary setup information."
+                    "process group is not available, trying to torch.distributed.init_process_group to communicate necessary setup information."
                 )
                 should_cleanup_distributed_context = True
                 torch.distributed.init_process_group(
