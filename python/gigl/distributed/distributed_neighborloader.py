@@ -117,6 +117,8 @@ class DistNeighborLoader(DistLoader):
                 local_process_rank=local_rank
             )
         )
+        if device.type == "cuda":
+            torch.cuda.set_device(device)
 
         if context:
             assert (
@@ -137,7 +139,7 @@ class DistNeighborLoader(DistLoader):
 
             if not torch.distributed.is_initialized():
                 logger.info(
-                    "Distributed context is None, trying to torch.distributed.init_process_group to communicate necessary setup information."
+                    "tprocess group is not available, trying to torch.distributed.init_process_group to communicate necessary setup information."
                 )
                 should_cleanup_distributed_context = True
                 torch.distributed.init_process_group(
