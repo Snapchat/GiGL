@@ -81,7 +81,6 @@ def _fast_hash(x: torch.Tensor) -> torch.Tensor:
     Sadly, we cannot avoid the out-place shifts (I think, there may be some bit-wise voodoo here),
     but in testing we do not increase memory but more than a few MB for a 1G input so it should be fine.
 
-    Note that _fast_hash(0) = 0.
 
     Arguments:
         x (torch.Tensor): The input tensor to hash. N x M
@@ -90,6 +89,9 @@ def _fast_hash(x: torch.Tensor) -> torch.Tensor:
         The hash values of the input tensor `x`. N x M
     """
     x = x.clone().detach()
+
+    # Add one so that _fast_hash(0) != 0
+    x.add_(1)
     if x.dtype == torch.int32:
         x.bitwise_xor_(x >> 16)
         x.multiply_(0x7FEB352D)
@@ -309,8 +311,9 @@ class HashedNodeAnchorLinkSplitter:
             # so that we can ensure that the same nodes are selected for the same split across all processes.
             # If we don't do this, then if we have `[0, 1, 2, 3, 4]` on one process and `[4, 5, 6, 7]` on another,
             # with the identity hash `4` may end up in Test in one rank and Train in another.
-            max_hash_value = hash_values.max().item()
-            min_hash_value = hash_values.min().item()
+            min_hash_value, max_hash_value = map(
+                torch.Tensor.item, hash_values.aminmax()
+            )
             if torch.distributed.is_initialized():
                 all_max_and_mins = [
                     torch.zeros(2, dtype=torch.int64)
@@ -344,13 +347,15 @@ class HashedNodeAnchorLinkSplitter:
             val_inds = (
                 hash_values >= 1 - self._num_test - self._num_val
             ) & ~test_inds  # 1 x M
+            del hash_values
+            gc.collect()
             train_inds = ~test_inds & ~val_inds  # 1 x M
             train = nodes_to_select[train_inds]  # 1 x num_train_nodes
             val = nodes_to_select[val_inds]  # 1 x num_val_nodes
             test = nodes_to_select[test_inds]  # 1 x num_test_nodes
             splits[anchor_node_type] = (train, val, test)
-            # We no longer need the hash values and nodes to select, so we can clean up their memory.
-            del nodes_to_select, hash_values, train_inds, val_inds, test_inds
+            # We no longer need the nodes to select, so we can clean up their memory.
+            del nodes_to_select, train_inds, val_inds, test_inds
             gc.collect()
         if len(splits) == 0:
             raise ValueError(

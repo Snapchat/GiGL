@@ -52,11 +52,12 @@ def rank_0(process_num: int):
     assert_tensor_equality(
         train,
         torch.tensor(
-            [0, 2, 4, 6, 12, 14, 18, 20, 22, 28, 30, 36, 38], dtype=torch.int64
+            [0, 2, 4, 6, 8, 10, 12, 16, 20, 22, 26, 28, 30, 32, 34, 38],
+            dtype=torch.int64,
         ),
     )
-    assert_tensor_equality(val, torch.tensor([10, 32, 34], dtype=torch.int64))
-    assert_tensor_equality(test, torch.tensor([8, 16, 24, 26], dtype=torch.int64))
+    assert_tensor_equality(val, torch.tensor([14, 24, 36], dtype=torch.int64))
+    assert_tensor_equality(test, torch.tensor([18], dtype=torch.int64))
 
 
 def rank_1(process_num: int):
@@ -77,21 +78,43 @@ def rank_1(process_num: int):
     assert_tensor_equality(
         train,
         torch.tensor(
-            [0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 17, 18], dtype=torch.int64
+            [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 16, 17, 19], dtype=torch.int64
         ),
     )
-    assert_tensor_equality(val, torch.tensor([10, 15], dtype=torch.int64))
-    assert_tensor_equality(test, torch.tensor([8, 16, 19], dtype=torch.int64))
+    assert_tensor_equality(val, torch.tensor([9, 14], dtype=torch.int64))
+    assert_tensor_equality(test, torch.tensor([7, 15, 18], dtype=torch.int64))
 
 
 class TestDataSplitters(unittest.TestCase):
+    def setUp(self):
+        self._original_master_addr = os.environ.get(
+            "MASTER_ADDR", "SHOULD NEVER BE AN ADDR"
+        )
+        self._original_master_port = os.environ.get(
+            "MASTER_PORT", "SHOULD NEVER BE A PORT"
+        )
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = str(get_free_port())
+        super().setUp()
+
+    def tearDown(self):
+        if self._original_master_addr != "SHOULD NEVER BE AN ADDR":
+            os.environ["MASTER_ADDR"] = self._original_master_addr
+        else:
+            del os.environ["MASTER_ADDR"]
+        if self._original_master_port != "SHOULD NEVER BE A PORT":
+            os.environ["MASTER_PORT"] = self._original_master_port
+        else:
+            del os.environ["MASTER_PORT"]
+        super().tearDown()
+
     @parameterized.expand(
         [
             param(
                 "Fast hash with int32",
                 input_tensor=torch.tensor([[0, 1], [2, 3]], dtype=torch.int32),
                 expected_output=torch.tensor(
-                    [[0, 1492470133], [1071609072, 81290992]], dtype=torch.int32
+                    [[1492470133, 1071609072], [81290992, 325464930]], dtype=torch.int32
                 ),
             ),
             param(
@@ -99,8 +122,8 @@ class TestDataSplitters(unittest.TestCase):
                 input_tensor=torch.tensor([[0, 1], [2, 3]], dtype=torch.int64),
                 expected_output=torch.tensor(
                     [
-                        [0, 1622107259858988186],
-                        [3834912982681189024, 2886753494712499930],
+                        [1622107259858988186, 3834912982681189024],
+                        [2886753494712499930, 5597559336455034305],
                     ]
                 ),
             ),
@@ -186,11 +209,11 @@ class TestDataSplitters(unittest.TestCase):
                 val_num=0.1,
                 test_num=0.1,
                 expected_train=torch.tensor(
-                    [0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 17, 18],
+                    [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 16, 17, 19],
                     dtype=torch.int64,
                 ),
-                expected_val=torch.tensor([10, 15], dtype=torch.int64),
-                expected_test=torch.tensor([8, 16, 19], dtype=torch.int64),
+                expected_val=torch.tensor([9, 14], dtype=torch.int64),
+                expected_test=torch.tensor([7, 15, 18], dtype=torch.int64),
             ),
             param(
                 "Start from non-zero",
@@ -224,8 +247,6 @@ class TestDataSplitters(unittest.TestCase):
         expected_val,
         expected_test,
     ):
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = str(get_free_port())
         torch.distributed.init_process_group(rank=0, world_size=1)
         self.addCleanup(torch.distributed.destroy_process_group)
         splitter = HashedNodeAnchorLinkSplitter(
@@ -235,7 +256,9 @@ class TestDataSplitters(unittest.TestCase):
             num_test=test_num,
             should_convert_labels_to_edges=False,
         )
+
         train, val, test = splitter(edges)
+
         assert_close(train, expected_train, rtol=0, atol=0)
         assert_close(val, expected_val, rtol=0, atol=0)
         assert_close(test, expected_test, rtol=0, atol=0)
@@ -435,8 +458,6 @@ class TestDataSplitters(unittest.TestCase):
         test_num,
         expected,
     ):
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = str(get_free_port())
         torch.distributed.init_process_group(rank=0, world_size=1)
         self.addCleanup(torch.distributed.destroy_process_group)
 
@@ -462,16 +483,13 @@ class TestDataSplitters(unittest.TestCase):
             assert_close(val, expected_val, rtol=0, atol=0)
             assert_close(test, expected_test, rtol=0, atol=0)
 
-    def test_node_based_link_splitter_parallized(self):
+    def test_node_based_link_splitter_parallelized(self):
         def maybe_teardown():
             if torch.distributed.is_initialized():
                 torch.distributed.destroy_process_group()
 
         self.addCleanup(maybe_teardown)
 
-        port = str(get_free_port())
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = port
         p1 = mp.spawn(
             fn=rank_0,
             nprocs=1,
