@@ -110,6 +110,14 @@ class DistNeighborLoader(DistLoader):
 
         master_ip_address: str
         should_cleanup_distributed_context: bool = False
+        device = (
+            pin_memory_device
+            if pin_memory_device
+            else gigl.distributed.utils.get_available_device(
+                local_process_rank=local_rank
+            )
+        )
+
         if context:
             assert (
                 local_process_world_size is not None
@@ -133,7 +141,7 @@ class DistNeighborLoader(DistLoader):
                 )
                 should_cleanup_distributed_context = True
                 torch.distributed.init_process_group(
-                    backend="gloo",
+                    backend="gloo" if device.type == "cpu" else "nccl",
                     init_method=f"tcp://{master_ip_address}:{DEFAULT_MASTER_INFERENCE_PORT}",
                     rank=rank,
                     world_size=world_size,
@@ -147,6 +155,7 @@ class DistNeighborLoader(DistLoader):
             rank = torch.distributed.get_rank()
 
             rank_ip_addresses = gigl.distributed.utils.get_internal_ip_from_all_ranks()
+            master_ip_address = rank_ip_addresses[0]
             from collections import defaultdict
 
             count_ranks_per_ip_addresses: Dict[str, int] = defaultdict(int)
@@ -160,8 +169,7 @@ class DistNeighborLoader(DistLoader):
                         f"All ranks must have the same number of processes, but found {count} processes for rank ip address {rank_ip_address}, expected {local_world_size}."
                     )
 
-            master_ip_address = rank_ip_addresses[0]
-            node_world_size = len(rank_ip_addresses)
+            node_world_size = len(count_ranks_per_ip_addresses)
             local_rank = rank % local_world_size
             node_rank = rank // local_world_size
 
@@ -214,13 +222,6 @@ class DistNeighborLoader(DistLoader):
 
         input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
-        device = (
-            pin_memory_device
-            if pin_memory_device
-            else gigl.distributed.utils.get_available_device(
-                local_process_rank=local_rank
-            )
-        )
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
         logger.info(
