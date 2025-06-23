@@ -563,6 +563,20 @@ class TestDataSplitters(unittest.TestCase):
         with self.assertRaises(ValueError):
             _check_edge_index(edges)
 
+    def test_hashed_node_anchor_link_splitter_requires_process_group(self):
+        edges = torch.stack(
+            [
+                torch.arange(0, 40, 2, dtype=torch.int64),
+                torch.zeros(20, dtype=torch.int64),
+            ]
+        )
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="out",
+            should_convert_labels_to_edges=False,
+        )
+        with self.assertRaises(RuntimeError):
+            splitter(edges)
+
     def test_get_labels_for_anchor_nodes(self):
         edges = torch.tensor(
             [

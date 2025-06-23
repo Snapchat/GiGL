@@ -125,6 +125,10 @@ def _fast_hash(x: torch.Tensor) -> torch.Tensor:
 class HashedNodeAnchorLinkSplitter:
     """Selects train, val, and test nodes based on some provided edge index.
 
+    NOTE: This splitter must be called when a Torch distributed process group is initialized.
+    e.g. `torch.distributed.init_process_group` must be called before using this splitter.
+
+
     In node-based splitting, a node may only ever live in one split. E.g. if one
     node has two label edges, *both* of those edges will be placed into the same split.
 
@@ -333,11 +337,9 @@ class HashedNodeAnchorLinkSplitter:
                         global_min_hash_value, max_and_min[1].item()
                     )
             else:
-                logger.warning(
-                    "Distributed process group is not initialized, will split only on local process."
+                raise RuntimeError(
+                    f"{type(self).__name__} requires a Torch distributed process group, but none was found. Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
                 )
-                global_max_hash_value = max_hash_value
-                global_min_hash_value = min_hash_value
             hash_values = (
                 hash_values - global_min_hash_value
             ) / global_max_hash_value  # Normalize the hash values to [0, 1)

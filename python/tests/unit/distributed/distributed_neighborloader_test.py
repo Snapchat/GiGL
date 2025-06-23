@@ -552,7 +552,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             splitter=splitter,
         )
 
-        assert dataset.train_node_ids is not None
+        assert dataset.train_node_ids is not None, "Train node ids must exist."
 
         mp.spawn(
             fn=_run_cora_supervised,
