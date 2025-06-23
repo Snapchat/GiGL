@@ -559,7 +559,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(
                 dataset,
                 self._context,
-                to_homogeneous(dataset.train_node_ids).numel(),
+                to_homogeneous(
+                    dataset.train_node_ids
+                ).numel(),  # Use to_homogeneous to make MyPy happy since dataset.train_node_ids is a dict.
             ),
         )
 
