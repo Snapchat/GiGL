@@ -154,7 +154,6 @@ class DistNeighborLoader(DistLoader):
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         self._is_labeled_heterogeneous = False
-        self._is_labeled_heterogeneous = False
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
 
