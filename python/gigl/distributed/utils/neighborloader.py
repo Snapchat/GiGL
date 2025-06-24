@@ -114,5 +114,6 @@ def strip_label_edges(data: HeteroData) -> HeteroData:
     ]
     for edge_type in label_edge_types:
         del data[edge_type]
+        del data.num_sampled_edges[edge_type]
 
     return data

@@ -154,8 +154,28 @@ class DistNeighborLoader(DistLoader):
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         self._is_labeled_heterogeneous = False
+        self._is_labeled_heterogeneous = False
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
+
+            # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
+            # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
+            if isinstance(dataset.node_ids, abc.Mapping):
+                if (
+                    len(dataset.node_ids) == 1
+                    and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
+                ):
+                    node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                    self._is_labeled_heterogeneous = True
+                    num_neighbors = patch_fanout_for_sampling(
+                        dataset.get_edge_types(), num_neighbors
+                    )
+                else:
+                    raise ValueError(
+                        f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
+                    )
+            else:
+                node_type = None
 
             # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
             # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.

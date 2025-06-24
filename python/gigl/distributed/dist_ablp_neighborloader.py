@@ -468,13 +468,6 @@ class DistABLPLoader(DistLoader):
         if negative_labels is not None:
             data.y_negative = output_negative_labels
 
-        # We remove the inserted labeled edge type from the returned data object, since this is an implementation detail and should not be exposed to users.
-        if isinstance(data, HeteroData):
-            del data.num_sampled_edges[self._positive_label_edge_type]
-            del data._edge_store_dict[self._positive_label_edge_type]
-            if negative_labels is not None:
-                del data.num_sampled_edges[self._negative_label_edge_type]
-                del data._edge_store_dict[self._negative_label_edge_type]
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
