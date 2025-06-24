@@ -61,7 +61,7 @@ jobs:
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
     - name: Run E2E Tests
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      uses: .github/actions/run-command-on-pr
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}

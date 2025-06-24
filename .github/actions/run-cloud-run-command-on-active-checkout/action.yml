@@ -26,7 +26,7 @@ runs:
       run: |
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="GIT_HASH=$(git rev-parse HEAD) ${{ inputs.cmd }}" \
+          --substitutions=_CMD="${{ inputs.cmd }}",_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")" \
           --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
           --project="${{ inputs.project }}" \
           --machine-type="${{ inputs.machine_type }}" \
