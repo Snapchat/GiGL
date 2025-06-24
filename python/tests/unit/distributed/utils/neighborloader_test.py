@@ -9,6 +9,7 @@ from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     shard_nodes_by_process,
+    strip_label_edges,
 )
 from gigl.types.graph import message_passing_to_positive_label
 from tests.test_assets.distributed.utils import assert_tensor_equality
@@ -115,3 +116,26 @@ class LoaderUtilsTest(unittest.TestCase):
         self.assertTrue(hasattr(homogeneous_data, "edge_index"))
         assert_tensor_equality(homogeneous_data.num_sampled_nodes, torch.tensor([1, 1]))
         assert_tensor_equality(homogeneous_data.num_sampled_edges, torch.tensor([1, 1]))
+
+    def test_strip_label_edges(self):
+        data = HeteroData()
+        data[_U2I_EDGE_TYPE].edge_index = torch.tensor([[0, 1], [1, 0]])
+        data[_I2U_EDGE_TYPE].edge_index = torch.tensor([[1, 0], [0, 1]])
+        data[_LABELED_EDGE_TYPE].edge_index = torch.tensor([[0, 1], [1, 0]])
+        data["user"].x = torch.tensor([[1.0], [2.0]])
+        data["item"].x = torch.tensor([[3.0], [4.0]])
+        data.num_sampled_edges = {
+            _U2I_EDGE_TYPE: torch.tensor([1, 1]),
+            _I2U_EDGE_TYPE: torch.tensor([2, 2]),
+            _LABELED_EDGE_TYPE: torch.tensor([1, 1]),
+        }
+
+        stripped_data = strip_label_edges(data)
+        self.assertIsInstance(stripped_data, HeteroData)
+        self.assertFalse(_LABELED_EDGE_TYPE in stripped_data.edge_types)
+        self.assertTrue(_U2I_EDGE_TYPE in stripped_data.edge_types)
+        self.assertTrue(_I2U_EDGE_TYPE in stripped_data.edge_types)
+
+        self.assertFalse(_LABELED_EDGE_TYPE in stripped_data.num_sampled_edges)
+        self.assertTrue(_U2I_EDGE_TYPE in stripped_data.num_sampled_edges)
+        self.assertTrue(_I2U_EDGE_TYPE in stripped_data.num_sampled_edges)

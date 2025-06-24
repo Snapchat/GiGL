@@ -27,6 +27,7 @@ from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     shard_nodes_by_process,
+    strip_label_edges,
 )
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -467,18 +468,13 @@ class DistABLPLoader(DistLoader):
         if negative_labels is not None:
             data.y_negative = output_negative_labels
 
-        # We remove the inserted labeled edge type from the returned data object, since this is an implementation detail and should not be exposed to users.
-        if isinstance(data, HeteroData):
-            del data.num_sampled_edges[self._positive_label_edge_type]
-            del data._edge_store_dict[self._positive_label_edge_type]
-            if negative_labels is not None:
-                del data.num_sampled_edges[self._negative_label_edge_type]
-                del data._edge_store_dict[self._negative_label_edge_type]
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         msg, positive_labels, negative_labels = self._get_labels(msg)
         data = super()._collate_fn(msg)
+        if isinstance(data, HeteroData):
+            data = strip_label_edges(data)
         if not self._is_input_heterogeneous:
             data = labeled_to_homogeneous(self._supervision_edge_type, data)
         data = self._set_labels(data, positive_labels, negative_labels)
