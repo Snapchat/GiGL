@@ -20,6 +20,7 @@ from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     shard_nodes_by_process,
+    strip_label_edges,
 )
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -260,6 +261,9 @@ class DistNeighborLoader(DistLoader):
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
+        if isinstance(data, HeteroData):
+            data = strip_label_edges(data)
+
         if self._is_labeled_heterogeneous:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
         return data

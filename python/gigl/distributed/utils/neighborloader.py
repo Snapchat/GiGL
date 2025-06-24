@@ -94,3 +94,25 @@ def labeled_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> 
     homogeneous_data.num_sampled_nodes = data.num_sampled_nodes[sample_node_type]
     homogeneous_data.num_sampled_edges = data.num_sampled_edges[supevision_edge_type]
     return homogeneous_data
+
+
+def strip_label_edges(data: HeteroData) -> HeteroData:
+    """
+    Removes all edges of a specific type from a heterogeneous graph.
+
+    Modifies the input in place.
+
+    Args:
+        data (HeteroData): The input heterogeneous graph.
+
+    Returns:
+        HeteroData: The graph with the label edge types removed.
+    """
+
+    label_edge_types = [
+        e_type for e_type in data.edge_types if is_label_edge_type(e_type)
+    ]
+    for edge_type in label_edge_types:
+        del data[edge_type]
+
+    return data
