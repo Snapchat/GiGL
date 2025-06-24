@@ -35,59 +35,38 @@ _TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 2).reshape((2, _NUM_EDGES))
 _INVALID_TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 10).reshape((10, _NUM_EDGES))
 
 
-def _rank_0(process_num: int, init_method: str):
-    """Test for "distributed" splitting in that the same nodes are selected into the same splits across ranks."""
-    del process_num  # Unused in this function
-    torch.distributed.init_process_group(rank=0, world_size=2, init_method=init_method)
+def _run_splitter_distributed(
+    process_num: int,
+    world_size: int,
+    init_method: str,
+    edges: list[torch.Tensor],
+    expected: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+):
+    """Run the splitter in a distributed setting and check the results.
+    Args:
+        process_num (int): The rank of the current process.
+        world_size (int): Total number of processes.
+        init_method (str): The method to initialize the process group.
+        edges (list[torch.Tensor]): List of edge tensors for each process.
+        expected (list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]): Expected train, val, test splits for each process.
+    """
+    torch.distributed.init_process_group(
+        rank=process_num, world_size=world_size, init_method=init_method
+    )
     splitter = HashedNodeAnchorLinkSplitter(
         sampling_direction="out",
         should_convert_labels_to_edges=False,
+        hash_function=lambda x: x,  # Using identity hash function for simplicity
     )
-    edges = torch.stack(
-        [
-            torch.arange(0, 40, 2, dtype=torch.int64),
-            torch.zeros(20, dtype=torch.int64),
-        ]
-    )
-    train, val, test = splitter(edges)
-    assert_tensor_equality(
-        train,
-        torch.tensor(
-            [0, 2, 4, 6, 8, 10, 12, 16, 20, 22, 26, 28, 30, 32, 34, 38],
-            dtype=torch.int64,
-        ),
-    )
-    assert_tensor_equality(val, torch.tensor([14, 24, 36], dtype=torch.int64))
-    assert_tensor_equality(test, torch.tensor([18], dtype=torch.int64))
 
-
-def _rank_1(process_num: int, init_method: str):
-    """Test for "distributed" splitting in that the same nodes are selected into the same splits across ranks."""
-    del process_num
-    torch.distributed.init_process_group(rank=1, world_size=2, init_method=init_method)
-    splitter = HashedNodeAnchorLinkSplitter(
-        sampling_direction="out",
-        should_convert_labels_to_edges=False,
-    )
-    edges = torch.stack(
-        [
-            torch.arange(20, dtype=torch.int64),
-            torch.zeros(20, dtype=torch.int64),
-        ]
-    )
-    train, val, test = splitter(edges)
-    assert_tensor_equality(
-        train,
-        torch.tensor(
-            [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 16, 17, 19], dtype=torch.int64
-        ),
-    )
-    assert_tensor_equality(val, torch.tensor([9, 14], dtype=torch.int64))
-    assert_tensor_equality(test, torch.tensor([7, 15, 18], dtype=torch.int64))
+    train, val, test = splitter(edges[process_num])
+    expected_train, expected_val, expected_test = expected[process_num]
+    assert_tensor_equality(train, expected_train)
+    assert_tensor_equality(val, expected_val)
+    assert_tensor_equality(test, expected_test)
 
 
 class TestDataSplitters(unittest.TestCase):
-
     @parameterized.expand(
         [
             param(
@@ -474,20 +453,58 @@ class TestDataSplitters(unittest.TestCase):
 
         self.addCleanup(maybe_teardown)
         init_method = get_process_group_init_method()
-        p1 = mp.spawn(
-            fn=_rank_0,
-            args=(init_method,),
-            nprocs=1,
-            join=False,
+        edges = [
+            torch.stack(
+                [
+                    torch.arange(0, 20, dtype=torch.int64),
+                    torch.ones(20, dtype=torch.int64),
+                ]
+            ),
+            torch.stack(
+                [
+                    torch.arange(0, 10, dtype=torch.int64),
+                    torch.zeros(10, dtype=torch.int64),
+                ]
+            ),
+            torch.stack(
+                [
+                    torch.arange(0, 20, 2, dtype=torch.int64),
+                    torch.zeros(10, dtype=torch.int64),
+                ]
+            ),
+        ]
+        # We need to guarantee that a given node id is always selected into the same split, on every rank.
+        expected_splits = [
+            (
+                torch.arange(16, dtype=torch.int64),
+                torch.tensor([16, 17], dtype=torch.int64),
+                torch.tensor([18, 19], dtype=torch.int64),
+            ),
+            (
+                # For process 1, all of the nodes would be selected into train for this example,
+                # As the identity hash does not mix, and on process 0 [0, 9] are all train too.
+                torch.arange(10, dtype=torch.int64),
+                torch.tensor([], dtype=torch.int64),
+                torch.tensor([], dtype=torch.int64),
+            ),
+            (
+                torch.arange(0, 16, 2, dtype=torch.int64),
+                torch.tensor([16], dtype=torch.int64),
+                torch.tensor([18], dtype=torch.int64),
+            ),
+        ]
+        # Run the splitter in parallel
+        mp.spawn(
+            _run_splitter_distributed,
+            args=(
+                3,  # world_size
+                init_method,  # init_method
+                edges,  # edges
+                expected_splits,  # expected
+            ),
+            nprocs=3,
+            join=True,
         )
-        p2 = mp.spawn(
-            fn=_rank_1,
-            args=(init_method,),
-            nprocs=1,
-            join=False,
-        )
-        p1.join(timeout=60)
-        p2.join(timeout=60)
 
     @parameterized.expand(
         [
