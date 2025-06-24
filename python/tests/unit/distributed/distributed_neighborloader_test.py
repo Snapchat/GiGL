@@ -42,7 +42,10 @@ from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.distributed.utils import (
+    assert_tensor_equality,
+    get_process_group_init_method,
+)
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -378,6 +381,14 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_world_size=self._world_size,
         )
 
+    def tearDown(self):
+        if torch.distributed.is_initialized():
+            print("Destroying process group")
+            # Ensure the process group is destroyed after each test
+            # to avoid interference with subsequent tests
+            torch.distributed.destroy_process_group()
+        super().tearDown()
+
     def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         expected_data_count = 2708
@@ -540,7 +551,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
-
+        # HashedNodeAnchorLinkSplitter requires a process group to be initialized.
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
@@ -608,6 +622,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
+        # HashedNodeAnchorLinkSplitter requires a process group to be initialized.
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in",
@@ -653,6 +671,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+        )
+        # HashedNodeAnchorLinkSplitter requires a process group to be initialized.
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
         )
 
         splitter = HashedNodeAnchorLinkSplitter(
