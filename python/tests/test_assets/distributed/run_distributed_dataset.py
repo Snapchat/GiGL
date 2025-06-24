@@ -7,7 +7,6 @@ from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
-from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -53,7 +52,8 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
-    _use_process_group: bool = True,
+    _use_process_group: bool = False,
+    _port: Optional[int] = None,
 ) -> DistLinkPredictionDataset:
     """
     Runs DistLinkPredictionDataset Load() __init__ and load() functions provided a mocked dataset info
@@ -70,8 +70,8 @@ def run_distributed_dataset(
     try:
         distributed_context: Optional[DistributedContext] = None
         if _use_process_group:
-            port = get_free_port()
-            init_process_group_init_method = f"tcp://127.0.0.1:{port}"
+            assert _port is not None, "Port must be provided when using process group."
+            init_process_group_init_method = f"tcp://127.0.0.1:{_port}"
             dist.init_process_group(
                 backend="gloo",
                 init_method=init_process_group_init_method,
