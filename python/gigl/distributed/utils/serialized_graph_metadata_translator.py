@@ -97,6 +97,13 @@ def convert_pb_to_serialized_graph_metadata(
             graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map[edge_type]
         )
 
+        if not preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+            condensed_edge_type
+        ].HasField("main_edge_info"):
+            raise ValueError(
+                f"Missing required mainEdgeInfo field for edge type {edge_type}"
+            )
+
         edge_metadata = (
             preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                 condensed_edge_type
