@@ -299,7 +299,16 @@ def build_dataset(
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
     """
-    Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some SerializedGraphMetadata
+    Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some
+    SerializedGraphMetadata.
+
+    It is expected that there is only one `build_dataset` call per node (machine).
+
+    This function expects that there is a process group initialized between the process' for the nodes participating in
+    hosting the dataset partition. This is so necessary information can be communicated between the nodes
+    i.e. free port information, master IP address, et al. to enable configure RPC. If there is no process group initialized,
+    the function will initialize one using `env://` config. See :py:obj:`torch.distributed.init_process_group` for more info.
+
     Args:
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         distributed_context (deprecated field - will be removed soon) (Optional[DistributedContext]): Distributed context containing information for master_ip_address, rank, and world size.
@@ -319,6 +328,13 @@ def build_dataset(
     Returns:
         DistLinkPredictionDataset: Built GraphLearn-for-PyTorch Dataset class
     """
+    if distributed_context is not None:
+        logger.warning(
+            "The `distributed_context` argument is deprecated and will be removed in a future release. "
+            "Please setup the `torch.distributed.init_process_group` in the caller context and prevent "
+            "passing `distributed_context` argument."
+        )
+
     assert (
         sample_edge_direction == "in" or sample_edge_direction == "out"
     ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
@@ -352,11 +368,6 @@ def build_dataset(
         master_dataset_building_port = (
             gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
         )
-        all_worker_ips = gigl.distributed.utils.get_internal_ip_from_all_ranks()
-        # assert len(set(all_worker_ips)) == node_world_size, (
-        #     "Expected only one process per node in the process group, but found duplicates."
-        #     f" IPs: {all_worker_ips}, num_nodes: {node_world_size}"
-        # )
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(
@@ -411,7 +422,17 @@ def build_dataset_from_task_config_uri(
     """
     Builds a dataset from a provided `task_config_uri` as part of GiGL orchestration. Parameters to
     this step should be provided in the `inferenceArgs` field of the GbmlConfig for inference or the
-    trainerArgs field of the GbmlConfig for training. The current parsable arguments are here are
+    trainerArgs field of the GbmlConfig for training.
+
+    It is expected that there is only one `build_dataset_from_task_config_uri` call per node (machine).
+
+    This function expects that there is a process group initialized between the process' for the nodes participating in
+    hosting the dataset partition. This is so necessary information can be communicated between the nodes
+    i.e. free port information, master IP address, et al. to configure RPC. If there is no process group initialized,
+    the function will initialize one using `env://` config. See :py:obj:`torch.distributed.init_process_group` for more info.
+
+
+    The current parsable arguments are here are
     - sample_edge_direction: Direction of the graph
     - should_use_range_partitioning: Whether we should be using range-based partitioning
     - should_load_tensors_in_parallel: Whether TFRecord loading should happen in parallel across entities
@@ -424,6 +445,14 @@ def build_dataset_from_task_config_uri(
             be read from inferenceArgs. Otherwise, arguments witll be read from trainerArgs.
         _tfrecord_uri_pattern (str): INTERNAL ONLY. Regex pattern for loading serialized tf records. Defaults to ".*-of-.*\.tfrecord(\.gz)?$".
     """
+
+    if distributed_context is not None:
+        logger.warning(
+            "The `distributed_context` argument is deprecated and will be removed in a future release. "
+            "Please setup the `torch.distributed.init_process_group` in the caller context and prevent "
+            "passing `distributed_context` argument."
+        )
+
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
