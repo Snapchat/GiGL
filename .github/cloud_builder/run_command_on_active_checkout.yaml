@@ -37,6 +37,6 @@ steps:
         echo "========================="
         echo "Running command: ${_CMD}"
         echo "========================="
-        export GIT_BRANCH=$_GIT_BRANCH
+        export GIT_BRANCH=_GIT_BRANCH
         $_CMD
         echo "Finished running command"
