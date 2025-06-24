@@ -46,11 +46,13 @@ class SerializedGraphMetadata:
     edge_entity_info: Union[
         SerializedTFRecordInfo, Dict[EdgeType, SerializedTFRecordInfo]
     ]
-    # Positive Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and Dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases. If data has no positive labels across all edge types, this value is None
+    # Positive Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and Dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases.
+    # If there are no positive labels for any edge type, this value is None
     positive_label_entity_info: Optional[
         Union[SerializedTFRecordInfo, Dict[EdgeType, SerializedTFRecordInfo]]
     ] = None
-    # Negative Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and Dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases. If input has no negative labels across all edge types, this value is None.
+    # Negative Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and Dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases.
+    # If there are no negative labels for any edge type, this value is None.
     negative_label_entity_info: Optional[
         Union[SerializedTFRecordInfo, Dict[EdgeType, SerializedTFRecordInfo]]
     ] = None
