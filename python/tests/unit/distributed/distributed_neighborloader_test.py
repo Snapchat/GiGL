@@ -573,7 +573,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
-        expected_data_count = 2168
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
@@ -586,8 +585,17 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             splitter=splitter,
         )
 
+        assert dataset.train_node_ids is not None, "Train node ids must exist."
+
         mp.spawn(
-            fn=_run_cora_supervised, args=(dataset, self._context, expected_data_count)
+            fn=_run_cora_supervised,
+            args=(
+                dataset,
+                self._context,
+                to_homogeneous(
+                    dataset.train_node_ids
+                ).numel(),  # Use to_homogeneous to make MyPy happy since dataset.train_node_ids is a dict.
+            ),
         )
 
     def test_random_loading_labeled_homogeneous(self):

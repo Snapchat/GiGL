@@ -2,6 +2,7 @@ import unittest
 from collections.abc import Mapping
 
 import torch
+import torch.multiprocessing as mp
 from graphlearn_torch.data import Dataset, Topology
 from parameterized import param, parameterized
 from torch.testing import assert_close
@@ -17,6 +18,10 @@ from gigl.utils.data_splitters import (
     get_labels_for_anchor_nodes,
     select_ssl_positive_label_edges,
 )
+from tests.test_assets.distributed.utils import (
+    assert_tensor_equality,
+    get_process_group_init_method,
+)
 
 # For TestDataSplitters
 _NODE_A = NodeType("A")
@@ -30,14 +35,53 @@ _TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 2).reshape((2, _NUM_EDGES))
 _INVALID_TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 10).reshape((10, _NUM_EDGES))
 
 
+def _run_splitter_distributed(
+    process_num: int,
+    world_size: int,
+    init_method: str,
+    edges: list[torch.Tensor],
+    expected: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+):
+    """Run the splitter in a distributed setting and check the results.
+    Args:
+        process_num (int): The rank of the current process.
+        world_size (int): Total number of processes.
+        init_method (str): The method to initialize the process group.
+        edges (list[torch.Tensor]): List of edge tensors for each process.
+        expected (list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]): Expected train, val, test splits for each process.
+    """
+    torch.distributed.init_process_group(
+        rank=process_num, world_size=world_size, init_method=init_method
+    )
+    splitter = HashedNodeAnchorLinkSplitter(
+        sampling_direction="out",
+        should_convert_labels_to_edges=False,
+        hash_function=lambda x: x,  # Using identity hash function for simplicity
+    )
+
+    train, val, test = splitter(edges[process_num])
+    expected_train, expected_val, expected_test = expected[process_num]
+    assert_tensor_equality(train, expected_train)
+    assert_tensor_equality(val, expected_val)
+    assert_tensor_equality(test, expected_test)
+
+
 class TestDataSplitters(unittest.TestCase):
+    def tearDown(self):
+        if torch.distributed.is_initialized():
+            print("Destroying process group")
+            # Ensure the process group is destroyed after each test
+            # to avoid interference with subsequent tests
+            torch.distributed.destroy_process_group()
+        super().tearDown()
+
     @parameterized.expand(
         [
             param(
                 "Fast hash with int32",
                 input_tensor=torch.tensor([[0, 1], [2, 3]], dtype=torch.int32),
                 expected_output=torch.tensor(
-                    [[0, 1753845952], [697948427, 1408362973]], dtype=torch.int32
+                    [[1492470133, 1071609072], [81290992, 325464930]], dtype=torch.int32
                 ),
             ),
             param(
@@ -45,8 +89,8 @@ class TestDataSplitters(unittest.TestCase):
                 input_tensor=torch.tensor([[0, 1], [2, 3]], dtype=torch.int64),
                 expected_output=torch.tensor(
                     [
-                        [0, 6350654354804651301],
-                        [2606959014078780554, 2185194620014831856],
+                        [1622107259858988186, 3834912982681189024],
+                        [2886753494712499930, 5597559336455034305],
                     ]
                 ),
             ),
@@ -132,59 +176,11 @@ class TestDataSplitters(unittest.TestCase):
                 val_num=0.1,
                 test_num=0.1,
                 expected_train=torch.tensor(
-                    [0, 18, 15, 10, 7, 19, 17, 3, 4, 2, 16, 14, 6, 11, 5, 13],
+                    [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 16, 17, 19],
                     dtype=torch.int64,
                 ),
-                expected_val=torch.tensor([8, 1], dtype=torch.int64),
-                expected_test=torch.tensor([9, 12], dtype=torch.int64),
-            ),
-            param(
-                "With explicit val num",
-                edges=torch.stack(
-                    [
-                        torch.arange(10, dtype=torch.int64),
-                        torch.zeros(10, dtype=torch.int64),
-                    ]
-                ),
-                sampling_direction="out",
-                hash_function=lambda x: x,
-                val_num=2,
-                test_num=0.1,
-                expected_train=torch.tensor([0, 1, 2, 3, 4, 5, 6], dtype=torch.int64),
-                expected_val=torch.tensor([7, 8], dtype=torch.int64),
-                expected_test=torch.tensor([9], dtype=torch.int64),
-            ),
-            param(
-                "With explicit test num",
-                edges=torch.stack(
-                    [
-                        torch.arange(10, dtype=torch.int64),
-                        torch.zeros(10, dtype=torch.int64),
-                    ]
-                ),
-                sampling_direction="out",
-                hash_function=lambda x: x,
-                val_num=0.1,
-                test_num=3,
-                expected_train=torch.tensor([0, 1, 2, 3, 4, 5], dtype=torch.int64),
-                expected_val=torch.tensor([6], dtype=torch.int64),
-                expected_test=torch.tensor([7, 8, 9], dtype=torch.int64),
-            ),
-            param(
-                "With explicit val and test num",
-                edges=torch.stack(
-                    [
-                        torch.arange(10, dtype=torch.int64),
-                        torch.zeros(10, dtype=torch.int64),
-                    ]
-                ),
-                sampling_direction="out",
-                hash_function=lambda x: x,
-                val_num=2,
-                test_num=3,
-                expected_train=torch.tensor([0, 1, 2, 3, 4], dtype=torch.int64),
-                expected_val=torch.tensor([5, 6], dtype=torch.int64),
-                expected_test=torch.tensor([7, 8, 9], dtype=torch.int64),
+                expected_val=torch.tensor([9, 14], dtype=torch.int64),
+                expected_test=torch.tensor([7, 15, 18], dtype=torch.int64),
             ),
             param(
                 "Start from non-zero",
@@ -218,6 +214,9 @@ class TestDataSplitters(unittest.TestCase):
         expected_val,
         expected_test,
     ):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
             hash_function=hash_function,
@@ -225,6 +224,7 @@ class TestDataSplitters(unittest.TestCase):
             num_test=test_num,
             should_convert_labels_to_edges=False,
         )
+
         train, val, test = splitter(edges)
 
         assert_close(train, expected_train, rtol=0, atol=0)
@@ -245,8 +245,8 @@ class TestDataSplitters(unittest.TestCase):
                 },
                 edge_types_to_split=[EdgeType(_NODE_A, _TO, _NODE_B)],
                 hash_function=lambda x: x,
-                val_num=1,
-                test_num=1,
+                val_num=0.1,
+                test_num=0.1,
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -275,8 +275,8 @@ class TestDataSplitters(unittest.TestCase):
                     EdgeType(_NODE_A, _TO, _NODE_B),
                 ],
                 hash_function=lambda x: x,
-                val_num=1,
-                test_num=1,
+                val_num=0.1,
+                test_num=0.1,
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -296,8 +296,8 @@ class TestDataSplitters(unittest.TestCase):
                     ),
                     EdgeType(_NODE_A, _TO, _NODE_C): torch.stack(
                         [
-                            torch.zeros(10, dtype=torch.int64),
-                            torch.arange(10, 20, dtype=torch.int64),
+                            torch.zeros(20, dtype=torch.int64),
+                            torch.arange(20, dtype=torch.int64),
                         ]
                     ),
                 },
@@ -306,8 +306,8 @@ class TestDataSplitters(unittest.TestCase):
                     EdgeType(_NODE_A, _TO, _NODE_C),
                 ],
                 hash_function=lambda x: x,
-                val_num=1,
-                test_num=1,
+                val_num=0.1,
+                test_num=0.1,
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -315,9 +315,9 @@ class TestDataSplitters(unittest.TestCase):
                         torch.tensor([9], dtype=torch.int64),
                     ),
                     _NODE_C: (
-                        torch.arange(10, 18, dtype=torch.int64),
-                        torch.tensor([18], dtype=torch.int64),
-                        torch.tensor([19], dtype=torch.int64),
+                        torch.arange(16, dtype=torch.int64),
+                        torch.tensor([16, 17], dtype=torch.int64),
+                        torch.tensor([18, 19], dtype=torch.int64),
                     ),
                 },
             ),
@@ -395,7 +395,7 @@ class TestDataSplitters(unittest.TestCase):
                     EdgeType(_NODE_C, _TO, _NODE_A): torch.stack(
                         [
                             torch.zeros(2, dtype=torch.int64),
-                            torch.arange(30, 32, dtype=torch.int64),
+                            torch.arange(10, 12, dtype=torch.int64),
                         ]
                     ),
                 },
@@ -408,9 +408,9 @@ class TestDataSplitters(unittest.TestCase):
                 test_num=0.1,
                 expected={
                     _NODE_A: (
-                        torch.arange(10, dtype=torch.int64),
-                        torch.tensor([30], dtype=torch.int64),
-                        torch.tensor([31], dtype=torch.int64),
+                        torch.arange(9, dtype=torch.int64),
+                        torch.tensor([9], dtype=torch.int64),
+                        torch.tensor([10, 11], dtype=torch.int64),
                     ),
                 },
             ),
@@ -426,6 +426,10 @@ class TestDataSplitters(unittest.TestCase):
         test_num,
         expected,
     ):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in",
             hash_function=hash_function,
@@ -447,6 +451,65 @@ class TestDataSplitters(unittest.TestCase):
             assert_close(train, expected_train, rtol=0, atol=0)
             assert_close(val, expected_val, rtol=0, atol=0)
             assert_close(test, expected_test, rtol=0, atol=0)
+
+    def test_node_based_link_splitter_parallelized(self):
+        init_method = get_process_group_init_method()
+        edges = [
+            torch.stack(
+                [
+                    torch.arange(0, 20, dtype=torch.int64),
+                    torch.ones(20, dtype=torch.int64),
+                ]
+            ),
+            torch.stack(
+                [
+                    torch.arange(0, 10, dtype=torch.int64),
+                    torch.zeros(10, dtype=torch.int64),
+                ]
+            ),
+            torch.stack(
+                [
+                    torch.arange(0, 20, 2, dtype=torch.int64),
+                    torch.zeros(10, dtype=torch.int64),
+                ]
+            ),
+        ]
+        # We need to guarantee that a given node id is always selected into the same split, on every rank.
+        # _run_splitter_distributed uses the identity hash function, so we can reason about hash values easily.
+        # The way HashedNodeAnchorLinkSplitter works is that it hashes the node ids, and then splits them into train, val, test based on the hash value.
+        # The splitting is done by first normalizing the hash values to [0, 1], and then selecting the train, val, test splits based on the provided percentages.
+        # e.g. test = normalized_hash_value >= (1 - test_percentage)
+        expected_splits = [
+            (
+                torch.arange(16, dtype=torch.int64),
+                torch.tensor([16, 17], dtype=torch.int64),
+                torch.tensor([18, 19], dtype=torch.int64),
+            ),
+            (
+                # For process 1, all of the nodes would be selected into train for this example,
+                # As the identity hash does not mix, and on process 0 [0, 9] are all train too.
+                torch.arange(10, dtype=torch.int64),
+                torch.tensor([], dtype=torch.int64),
+                torch.tensor([], dtype=torch.int64),
+            ),
+            (
+                torch.arange(0, 16, 2, dtype=torch.int64),
+                torch.tensor([16], dtype=torch.int64),
+                torch.tensor([18], dtype=torch.int64),
+            ),
+        ]
+        # Run the splitter in parallel
+        mp.spawn(
+            _run_splitter_distributed,
+            args=(
+                3,  # world_size
+                init_method,  # init_method
+                edges,  # edges
+                expected_splits,  # expected
+            ),
+            nprocs=3,
+            join=True,
+        )
 
     @parameterized.expand(
         [
@@ -481,22 +544,6 @@ class TestDataSplitters(unittest.TestCase):
             )
             splitter(edge_index=edges)
 
-    def test_node_based_link_splitter_no_train_nodes(self):
-        edges = torch.stack(
-            [
-                torch.zeros(10, dtype=torch.int64),
-                torch.arange(10, dtype=torch.int64),
-            ]
-        )
-        with self.assertRaises(ValueError):
-            splitter = HashedNodeAnchorLinkSplitter(
-                sampling_direction="in",
-                num_val=5,
-                num_test=5,
-                should_convert_labels_to_edges=False,
-            )
-            splitter(edge_index=edges)
-
     @parameterized.expand(
         [
             param(
@@ -523,6 +570,20 @@ class TestDataSplitters(unittest.TestCase):
     def test_check_edge_index(self, _, edges):
         with self.assertRaises(ValueError):
             _check_edge_index(edges)
+
+    def test_hashed_node_anchor_link_splitter_requires_process_group(self):
+        edges = torch.stack(
+            [
+                torch.arange(0, 40, 2, dtype=torch.int64),
+                torch.zeros(20, dtype=torch.int64),
+            ]
+        )
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="out",
+            should_convert_labels_to_edges=False,
+        )
+        with self.assertRaises(RuntimeError):
+            splitter(edges)
 
     def test_get_labels_for_anchor_nodes(self):
         edges = torch.tensor(
