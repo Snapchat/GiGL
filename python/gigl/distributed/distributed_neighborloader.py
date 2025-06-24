@@ -146,7 +146,7 @@ class DistNeighborLoader(DistLoader):
                     f"Initializing process group with master ip address: {master_ip_address}, rank: {rank}, world size: {world_size}, local_rank: {local_rank}, local_world_size: {local_world_size}, device: {device}."
                 )
                 torch.distributed.init_process_group(
-                    backend="gloo", # We just default to gloo for this temporary process group
+                    backend="gloo",  # We just default to gloo for this temporary process group
                     init_method=f"tcp://{master_ip_address}:{DEFAULT_MASTER_INFERENCE_PORT}",
                     rank=rank,
                     world_size=world_size,

@@ -228,7 +228,7 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = f"machine_{rank}_local_process_number_{local_rank}"
+    embedding_filename = f"machine_{node_rank}_local_process_{local_rank}"
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -299,14 +299,14 @@ def _inference_process(
 
         data_loading_start_time = time.time()
 
-    logger.info(f"--- Machine {rank} local rank {local_rank} finished inference.")
+    logger.info(f"--- Machine {node_rank} local rank {local_rank} finished inference.")
 
     write_embedding_start_time = time.time()
     # Flushes all remaining embeddings to GCS
     exporter.flush_embeddings()
 
     logger.info(
-        f"--- Machine {rank} local rank {local_rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Machine {node_rank} local rank {local_rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
@@ -398,9 +398,9 @@ def _run_example_inference(
         logger.info(
             "No GPUs detected. Thus, setting local_world_size to `num_inference_processes_per_machine`, and running inference on CPU."
         )
-        local_world_size = int(inferencer_args.get(
-            "num_inference_processes_per_machine", "4"
-        ))
+        local_world_size = int(
+            inferencer_args.get("num_inference_processes_per_machine", "4")
+        )
 
     ## Inference Start
     # Setup variables we can use to spin up training/inference processes and their respective process groups later.
@@ -438,12 +438,12 @@ def _run_example_inference(
     )
 
     logger.info(
-        f"Inference finished on rank {node_rank}, which took {time.time()-inference_start_time:.2f} seconds"
+        f"--- Inference finished on rank {node_rank}, which took {time.time()-inference_start_time:.2f} seconds"
     )
 
     # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
     if node_rank == 0:
-        logger.info("Machine 0 triggers loading embeddings from GCS to BigQuery")
+        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
 
         # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
         # representing the load operation, which allows user to monitor and retrieve
@@ -456,7 +456,7 @@ def _run_example_inference(
         )
 
     logger.info(
-        f"Program finished, which took {time.time()-program_start_time:.2f} seconds"
+        f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
     )
 
 
