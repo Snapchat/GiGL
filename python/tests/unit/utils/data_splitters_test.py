@@ -67,6 +67,14 @@ def _run_splitter_distributed(
 
 
 class TestDataSplitters(unittest.TestCase):
+    def tearDown(self):
+        if torch.distributed.is_initialized():
+            print("Destroying process group")
+            # Ensure the process group is destroyed after each test
+            # to avoid interference with subsequent tests
+            torch.distributed.destroy_process_group()
+        super().tearDown()
+
     @parameterized.expand(
         [
             param(
@@ -209,7 +217,6 @@ class TestDataSplitters(unittest.TestCase):
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
-        self.addCleanup(torch.distributed.destroy_process_group)
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
             hash_function=hash_function,
@@ -422,7 +429,6 @@ class TestDataSplitters(unittest.TestCase):
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
-        self.addCleanup(torch.distributed.destroy_process_group)
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in",
@@ -447,11 +453,6 @@ class TestDataSplitters(unittest.TestCase):
             assert_close(test, expected_test, rtol=0, atol=0)
 
     def test_node_based_link_splitter_parallelized(self):
-        def maybe_teardown():
-            if torch.distributed.is_initialized():
-                torch.distributed.destroy_process_group()
-
-        self.addCleanup(maybe_teardown)
         init_method = get_process_group_init_method()
         edges = [
             torch.stack(
