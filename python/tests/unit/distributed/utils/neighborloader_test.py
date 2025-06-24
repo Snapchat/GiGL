@@ -101,7 +101,17 @@ class LoaderUtilsTest(unittest.TestCase):
         data[_I2U_EDGE_TYPE].edge_index = torch.tensor([[1, 0], [0, 1]])
         data["user"].x = torch.tensor([[1.0], [2.0]])
         data["item"].x = torch.tensor([[3.0], [4.0]])
+        data.num_sampled_edges = {
+            _U2I_EDGE_TYPE: torch.tensor([1, 1]),
+            _I2U_EDGE_TYPE: torch.tensor([2, 2]),
+        }
+        data.num_sampled_nodes = {
+            "user": torch.tensor([1, 1]),
+            "item": torch.tensor([2, 2]),
+        }
 
         homogeneous_data = labeled_to_homogeneous(_U2I_EDGE_TYPE, data)
         self.assertIsInstance(homogeneous_data, Data)
         self.assertTrue(hasattr(homogeneous_data, "edge_index"))
+        assert_tensor_equality(homogeneous_data.num_sampled_nodes, torch.tensor([1, 1]))
+        assert_tensor_equality(homogeneous_data.num_sampled_edges, torch.tensor([1, 1]))

@@ -81,6 +81,7 @@ def labeled_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> 
     Returns a Data object with the label edges removed.
 
     Args:
+        supevision_edge_type (EdgeType): The edge type that contains the supervision edges.
         data (HeteroData): Heterogeneous graph with the supervision edge type
     Returns:
         data (Data): Homogeneous graph with the labeled edge type removed
@@ -88,4 +89,8 @@ def labeled_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> 
     homogeneous_data = data.edge_type_subgraph([supevision_edge_type]).to_homogeneous(
         add_edge_type=False, add_node_type=False
     )
+    # Since this is "homogeneous", supervision_edge_type[0] and supevision_edge_type[2] are the same.
+    sample_node_type = supevision_edge_type[0]
+    homogeneous_data.num_sampled_nodes = data.num_sampled_nodes[sample_node_type]
+    homogeneous_data.num_sampled_edges = data.num_sampled_edges[supevision_edge_type]
     return homogeneous_data
