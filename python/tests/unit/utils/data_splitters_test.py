@@ -1,4 +1,3 @@
-import os
 import unittest
 from collections.abc import Mapping
 
@@ -8,7 +7,6 @@ from graphlearn_torch.data import Dataset, Topology
 from parameterized import param, parameterized
 from torch.testing import assert_close
 
-from gigl.distributed.utils.networking import get_free_port
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
 from gigl.utils.data_splitters import (
@@ -20,7 +18,10 @@ from gigl.utils.data_splitters import (
     get_labels_for_anchor_nodes,
     select_ssl_positive_label_edges,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.distributed.utils import (
+    assert_tensor_equality,
+    get_process_group_init_method,
+)
 
 # For TestDataSplitters
 _NODE_A = NodeType("A")
@@ -34,10 +35,10 @@ _TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 2).reshape((2, _NUM_EDGES))
 _INVALID_TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 10).reshape((10, _NUM_EDGES))
 
 
-def rank_0(process_num: int):
+def _rank_0(process_num: int, init_method: str):
     """Test for "distributed" splitting in that the same nodes are selected into the same splits across ranks."""
     del process_num  # Unused in this function
-    torch.distributed.init_process_group(rank=0, world_size=2)
+    torch.distributed.init_process_group(rank=0, world_size=2, init_method=init_method)
     splitter = HashedNodeAnchorLinkSplitter(
         sampling_direction="out",
         should_convert_labels_to_edges=False,
@@ -60,10 +61,10 @@ def rank_0(process_num: int):
     assert_tensor_equality(test, torch.tensor([18], dtype=torch.int64))
 
 
-def rank_1(process_num: int):
+def _rank_1(process_num: int, init_method: str):
     """Test for "distributed" splitting in that the same nodes are selected into the same splits across ranks."""
     del process_num
-    torch.distributed.init_process_group(rank=1, world_size=2)
+    torch.distributed.init_process_group(rank=1, world_size=2, init_method=init_method)
     splitter = HashedNodeAnchorLinkSplitter(
         sampling_direction="out",
         should_convert_labels_to_edges=False,
@@ -86,27 +87,6 @@ def rank_1(process_num: int):
 
 
 class TestDataSplitters(unittest.TestCase):
-    def setUp(self):
-        self._original_master_addr = os.environ.get(
-            "MASTER_ADDR", "SHOULD NEVER BE AN ADDR"
-        )
-        self._original_master_port = os.environ.get(
-            "MASTER_PORT", "SHOULD NEVER BE A PORT"
-        )
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = str(get_free_port())
-        super().setUp()
-
-    def tearDown(self):
-        if self._original_master_addr != "SHOULD NEVER BE AN ADDR":
-            os.environ["MASTER_ADDR"] = self._original_master_addr
-        else:
-            del os.environ["MASTER_ADDR"]
-        if self._original_master_port != "SHOULD NEVER BE A PORT":
-            os.environ["MASTER_PORT"] = self._original_master_port
-        else:
-            del os.environ["MASTER_PORT"]
-        super().tearDown()
 
     @parameterized.expand(
         [
@@ -247,7 +227,9 @@ class TestDataSplitters(unittest.TestCase):
         expected_val,
         expected_test,
     ):
-        torch.distributed.init_process_group(rank=0, world_size=1)
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
         self.addCleanup(torch.distributed.destroy_process_group)
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
@@ -458,7 +440,9 @@ class TestDataSplitters(unittest.TestCase):
         test_num,
         expected,
     ):
-        torch.distributed.init_process_group(rank=0, world_size=1)
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
         self.addCleanup(torch.distributed.destroy_process_group)
 
         splitter = HashedNodeAnchorLinkSplitter(
@@ -489,14 +473,16 @@ class TestDataSplitters(unittest.TestCase):
                 torch.distributed.destroy_process_group()
 
         self.addCleanup(maybe_teardown)
-
+        init_method = get_process_group_init_method()
         p1 = mp.spawn(
-            fn=rank_0,
+            fn=_rank_0,
+            args=(init_method,),
             nprocs=1,
             join=False,
         )
         p2 = mp.spawn(
-            fn=rank_1,
+            fn=_rank_1,
+            args=(init_method,),
             nprocs=1,
             join=False,
         )
