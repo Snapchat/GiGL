@@ -475,6 +475,10 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
         # We need to guarantee that a given node id is always selected into the same split, on every rank.
+        # _run_splitter_distributed uses the identity hash function, so we can reason about hash values easily.
+        # The way HashedNodeAnchorLinkSplitter works is that it hashes the node ids, and then splits them into train, val, test based on the hash value.
+        # The splitting is done by first normalizing the hash values to [0, 1], and then selecting the train, val, test splits based on the provided percentages.
+        # e.g. test = normalized_hash_value >= (1 - test_percentage)
         expected_splits = [
             (
                 torch.arange(16, dtype=torch.int64),

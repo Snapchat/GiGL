@@ -654,7 +654,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_dblp_supervised(self):
+    def test_dblp_supervised(self):
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
