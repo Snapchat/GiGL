@@ -52,7 +52,6 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         self._src_node = "src"
         self._dst_node = "dst"
 
-    # TODO: If no table name provided, call mock code to generate tables.
     def prepare_for_pipeline(
         self, applied_task_identifier: AppliedTaskIdentifier
     ) -> None:
@@ -114,19 +113,3 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
                 preprocessing_fn=preprocessing_fn,
             )
         }
-
-    # TODO: Test custom transformation
-    def custom_nodes_preprocessing_fn(
-        self, inputs: Dict[str, tf.Tensor], config: Dict[str, Any]
-    ) -> Dict[str, tf.Tensor]:
-        outputs = {}
-
-        # Pass through the node ID field
-        outputs["node_id"] = inputs["node_id"]
-
-        # Scale the float features to z-scores
-        float_features = ["f0", "f1"]
-        for feature in float_features:
-            outputs[feature] = tft.scale_to_z_score(inputs[feature])
-
-        return outputs

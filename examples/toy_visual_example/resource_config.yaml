@@ -28,19 +28,19 @@ preprocessor_config:
   edge_preprocessor_config:
     num_workers: 1
     max_num_workers: 2
-    machine_type: "n2d-highmem-32"
+    machine_type: "n2-standard-16"
     disk_size_gb: 300
   node_preprocessor_config:
     num_workers: 1
     max_num_workers: 2
-    machine_type: "n2d-highmem-64"
+    machine_type: "n2-standard-16"
     disk_size_gb: 300
 subgraph_sampler_config:
-  machine_type: "n2d-highmem-16"
+  machine_type: "n2-standard-16"
   num_local_ssds: 1
   num_replicas: 2 # Min of 2 replicas is required for subgraph sampling
 split_generator_config:
-  machine_type: n2d-standard-16
+  machine_type: "n2-standard-16"
   num_local_ssds: 1
   num_replicas: 2 #  Min of 2 replicas is required for split generation
 trainer_config:
@@ -52,5 +52,5 @@ trainer_config:
 inferencer_config:
   num_workers: 1
   max_num_workers: 1
-  machine_type: "c3-standard-22"
+  machine_type: "n2-standard-16"
   disk_size_gb: 100

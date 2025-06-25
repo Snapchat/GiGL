@@ -5,6 +5,7 @@ import yaml
 from torch_geometric.data import HeteroData
 
 
+# TODO: (svij) Investigate if we should consolidate this with creation of other mocked graphs, tests, etc.
 def load_toy_graph(graph_config: str) -> HeteroData:
     with open(graph_config, "r") as f:
         graph_config = yaml.safe_load(f)

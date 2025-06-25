@@ -28,7 +28,6 @@ extensions = [
     "sphinx.ext.viewcode",  # Add links to the source code
     "sphinx.ext.autosummary", # Generates function/method/attribute summary lists
     "autoapi.extension", # Generate API docs without need to import modules: https://sphinx-autoapi.readthedocs.io/en/latest/index.html
-    # "myst_parser", # Parsing markdown files: https://myst-parser.readthedocs.io/en/v0.15.1/sphinx/intro.html
     "sphinx_design", # Needed by themes
     "myst_nb", # Support for rendering Jupyter Notebooks: https://myst-nb.readthedocs.io/en/v1.2.0/
     "sphinx_copybutton", # Support for copying code snippets: https://sphinx-copybutton.readthedocs.io/
