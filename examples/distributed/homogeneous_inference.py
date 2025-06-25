@@ -53,6 +53,12 @@ from gigl.src.inference.lib.assets import InferenceAssets
 
 logger = Logger()
 
+# Default number of inference processes per machine incase one isnt provided in inference args
+# i.e. `local_world_size` is not provided, and we can't infer automatically.
+# If there are GPUs attached to the machine, we automatically infer to setting
+# LOCAL_WORLD_SIZE == # of gpus on the machine.
+DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
+
 
 def _init_example_gigl_homogeneous_model(
     state_dict: Dict[str, torch.Tensor],
@@ -389,18 +395,28 @@ def _run_example_inference(
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
 
     local_world_size: int
-    if torch.cuda.is_available():
-        local_world_size = torch.cuda.device_count()
-        logger.info(
-            f"Detected {local_world_size} GPUs. Thus, setting local_world_size to {local_world_size}"
-        )
+    if inferencer_args.get("local_world_size") is not None:
+        local_world_size = int(inferencer_args.get("local_world_size"))
+        logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
+        if torch.cuda.is_available() and local_world_size != torch.cuda.device_count():
+            logger.warning(
+                f"local_world_size {local_world_size} does not match the number of GPUs {torch.cuda.device_count()}. "
+                "This may lead to unexpected failures with NCCL communication incase GPUs are being used for "
+                + "training/inference. Consider setting local_world_size to the number of GPUs."
+            )
     else:
-        logger.info(
-            "No GPUs detected. Thus, setting local_world_size to `num_inference_processes_per_machine`, and running inference on CPU."
-        )
-        local_world_size = int(
-            inferencer_args.get("num_inference_processes_per_machine", "4")
-        )
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            # If GPUs are available, we set the local_world_size to the number of GPUs
+            local_world_size = torch.cuda.device_count()
+            logger.info(
+                f"Detected {local_world_size} GPUs. Thus, setting local_world_size to {local_world_size}"
+            )
+        else:
+            # If no GPUs are available, we set the local_world_size to the number of inference processes per machine
+            logger.info(
+                f"No GPUs detected. Thus, setting local_world_size to `{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
+            )
+            local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
     ## Inference Start
     # Setup variables we can use to spin up training/inference processes and their respective process groups later.
