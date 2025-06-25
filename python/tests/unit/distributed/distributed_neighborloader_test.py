@@ -38,8 +38,8 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils import LoopyIterableDataset
 from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
-from gigl.utils.loader import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -97,7 +97,7 @@ def _run_infinite_distributed_neighbor_loader(
         pin_memory_device=torch.device("cpu"),
     )
 
-    infinite_loader = InfiniteIterator(loader)
+    infinite_loader: LoopyIterableDataset = LoopyIterableDataset(loader)
 
     count = 0
     for datum in infinite_loader:
@@ -432,7 +432,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_infinite_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
-        max_num_batches = 10000
+        # Cora has 2708 nodes, let's set the max number of batches to twice the size of the dataset
+        max_num_batches = 2708 * 2
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
