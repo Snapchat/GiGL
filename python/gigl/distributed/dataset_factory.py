@@ -33,10 +33,12 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.utils import (
-    convert_pb_to_serialized_graph_metadata,
     get_free_ports_from_master_node,
     get_internal_ip_from_master_node,
     get_process_group_name,
+)
+from gigl.distributed.utils.serialized_graph_metadata_translator import (
+    convert_pb_to_serialized_graph_metadata,
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
