@@ -160,16 +160,16 @@ class DistNeighborLoader(DistLoader):
             rank_ip_addresses = gigl.distributed.utils.get_internal_ip_from_all_ranks()
             master_ip_address = rank_ip_addresses[0]
 
-            count_ranks_per_ip_addresses = Counter(rank_ip_addresses)
-            local_world_size = count_ranks_per_ip_addresses[master_ip_address]
-            for rank_ip_address, count in count_ranks_per_ip_addresses.items():
+            count_ranks_per_ip_address = Counter(rank_ip_addresses)
+            local_world_size = count_ranks_per_ip_address[master_ip_address]
+            for rank_ip_address, count in count_ranks_per_ip_address.items():
                 if count != local_world_size:
                     raise ValueError(
                         f"All ranks must have the same number of processes, but found {count} processes for rank {rank} on ip {rank_ip_address}, expected {local_world_size}."
-                        + f"count_ranks_per_ip_addresses = {count_ranks_per_ip_addresses}"
+                        + f"count_ranks_per_ip_address = {count_ranks_per_ip_address}"
                     )
 
-            node_world_size = len(count_ranks_per_ip_addresses)
+            node_world_size = len(count_ranks_per_ip_address)
             local_rank = rank % local_world_size
             node_rank = rank // local_world_size
 
