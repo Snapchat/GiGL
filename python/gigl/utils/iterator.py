@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 
 from gigl.common.logger import Logger
 
@@ -14,7 +14,7 @@ class InfiniteIterator(Iterator[_T]):
     A wrapper around iterators (objects with __iter__ and __next__ methods) that loop indefinitely over the data.
     """
 
-    def __init__(self, iterable: Iterator):
+    def __init__(self, iterable: Iterable[_T]):
         self._iterable = iterable
         self._iter = iter(iterable)
 

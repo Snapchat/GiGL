@@ -412,14 +412,11 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     def test_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
         expected_data_count = 2708
-        manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            output_dict=output_dict,
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
             master_port=master_port,
@@ -432,8 +429,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_infinite_distributed_neighbor_loader(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
-        # Cora has 2708 nodes, let's set the max number of batches to twice the size of the dataset
-        max_num_batches = 2708 * 2
         manager = Manager()
         output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
@@ -446,6 +441,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             master_ip_address=self._master_ip_address,
             master_port=master_port,
         )
+
+        assert isinstance(dataset.node_ids, torch.Tensor)
+
+        num_nodes = dataset.node_ids.size(0)
+
+        # Let's ensure we can iterate across the dataset twice with the infinite iterator
+        max_num_batches = num_nodes * 2
 
         mp.spawn(
             fn=_run_infinite_distributed_neighbor_loader,
