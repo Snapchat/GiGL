@@ -81,6 +81,7 @@ class TfRecordsIterableDataset(torch.utils.data.IterableDataset, Generic[T]):
             process_raw_sample_fn=self.__process_raw_sample_fn,
         )
 
+
 class LoopyIterableDataset(torch.utils.data.IterableDataset, Generic[T]):
     """
     Takes as input an IterableDataset and makes it "loopy," so that the dataset
