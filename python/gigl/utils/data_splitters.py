@@ -81,7 +81,6 @@ def _fast_hash(x: torch.Tensor) -> torch.Tensor:
     Sadly, we cannot avoid the out-place shifts (I think, there may be some bit-wise voodoo here),
     but in testing we do not increase memory but more than a few MB for a 1G input so it should be fine.
 
-    Note that _fast_hash(0) = 0.
 
     Arguments:
         x (torch.Tensor): The input tensor to hash. N x M
@@ -90,13 +89,28 @@ def _fast_hash(x: torch.Tensor) -> torch.Tensor:
         The hash values of the input tensor `x`. N x M
     """
     x = x.clone().detach()
+
+    # Add one so that _fast_hash(0) != 0
+    x.add_(1)
     if x.dtype == torch.int32:
         x.bitwise_xor_(x >> 16)
         x.multiply_(0x7FEB352D)
         x.bitwise_xor_(x >> 15)
         x.multiply_(0x846CA68B)
         x.bitwise_xor_(x >> 16)
+        # And again for better mixing ;)
+        x.bitwise_xor_(x >> 16)
+        x.multiply_(0x7FEB352D)
+        x.bitwise_xor_(x >> 15)
+        x.multiply_(0x846CA68B)
+        x.bitwise_xor_(x >> 16)
     elif x.dtype == torch.int64:
+        x.bitwise_xor_(x >> 30)
+        x.multiply_(0xBF58476D1CE4E5B9)
+        x.bitwise_xor_(x >> 27)
+        x.multiply_(0x94D049BB133111EB)
+        x.bitwise_xor_(x >> 31)
+        # And again for better mixing ;)
         x.bitwise_xor_(x >> 30)
         x.multiply_(0xBF58476D1CE4E5B9)
         x.bitwise_xor_(x >> 27)
@@ -110,6 +124,10 @@ def _fast_hash(x: torch.Tensor) -> torch.Tensor:
 
 class HashedNodeAnchorLinkSplitter:
     """Selects train, val, and test nodes based on some provided edge index.
+
+    NOTE: This splitter must be called when a Torch distributed process group is initialized.
+    e.g. `torch.distributed.init_process_group` must be called before using this splitter.
+
 
     In node-based splitting, a node may only ever live in one split. E.g. if one
     node has two label edges, *both* of those edges will be placed into the same split.
@@ -129,8 +147,8 @@ class HashedNodeAnchorLinkSplitter:
     def __init__(
         self,
         sampling_direction: Union[Literal["in", "out"], str],
-        num_val: Union[float, int] = 0.1,
-        num_test: Union[float, int] = 0.1,
+        num_val: float = 0.1,
+        num_test: float = 0.1,
         hash_function: Callable[[torch.Tensor], torch.Tensor] = _fast_hash,
         supervision_edge_types: Optional[list[EdgeType]] = None,
         should_convert_labels_to_edges: bool = True,
@@ -139,10 +157,8 @@ class HashedNodeAnchorLinkSplitter:
 
         Args:
             sampling_direction (Union[Literal["in", "out"], str]): The direction to sample the nodes. Either "in" or "out".
-            num_val (Union[float, int]): The percentage of nodes to use for training. Defaults to 0.1 (10%).
-                                         If an integer is provided, than exactly that number of nodes will be in the validation split.
-            num_test (Union[float, int]): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
-                                          If an integer is provided, than exactly that number of nodes will be in the test split.
+            num_val (float): The percentage of nodes to use for training. Defaults to 0.1 (10%).
+            num_test (float): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
             hash_function (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): The hash function to use. Defaults to `_fast_hash`.
             supervision_edge_types (Optional[list[EdgeType]]): The supervision edge types we should use for splitting.
                 Must be provided if we are splitting a heterogeneous graph. If None, uses the default message passing edge type in the graph.
@@ -282,7 +298,12 @@ class HashedNodeAnchorLinkSplitter:
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         for anchor_node_type, collected_anchor_nodes in node_ids_by_node_type.items():
             max_node_id = max_node_id_by_type[anchor_node_type]
-            node_id_count = torch.zeros(max_node_id, dtype=torch.uint8)
+            # Set device explicitly here so we don't default to CPU.
+            # TODO(kmonte): We should add tests for this - but we need to enable accelerators on our CI/CD first.
+            # Also, maybe swap setting device until later?
+            node_id_count = torch.zeros(
+                max_node_id, dtype=torch.uint8, device=anchor_nodes.device
+            )
             for anchor_nodes in collected_anchor_nodes:
                 node_id_count.add_(torch.bincount(anchor_nodes, minlength=max_node_id))
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
@@ -293,32 +314,56 @@ class HashedNodeAnchorLinkSplitter:
             del node_id_count
             gc.collect()
 
-            hash_values = torch.argsort(self._hash_function(nodes_to_select))  # 1 x M
-            nodes_to_select = nodes_to_select[hash_values]  # 1 x M
+            hash_values = self._hash_function(nodes_to_select)  # 1 x M
+            # Now, we want to normalize the hash values to [0, 1) range so we can select them easily into splits.
+            # We want to do this *globally* e.g. across all processes,
+            # so that we can ensure that the same nodes are selected for the same split across all processes.
+            # If we don't do this, then if we have `[0, 1, 2, 3, 4]` on one process and `[4, 5, 6, 7]` on another,
+            # with the identity hash `4` may end up in Test in one rank and Train in another.
+            min_hash_value, max_hash_value = map(
+                torch.Tensor.item, hash_values.aminmax()
+            )
+            if torch.distributed.is_initialized():
+                all_max_and_mins = [
+                    torch.zeros(2, dtype=torch.int64)
+                    for _ in range(torch.distributed.get_world_size())
+                ]
+                torch.distributed.all_gather(
+                    all_max_and_mins,
+                    torch.tensor([max_hash_value, min_hash_value], dtype=torch.int64),
+                )
+                global_max_hash_value = max_hash_value
+                global_min_hash_value = min_hash_value
+                for max_and_min in all_max_and_mins:
+                    global_max_hash_value = max(
+                        global_max_hash_value, max_and_min[0].item()
+                    )
+                    global_min_hash_value = min(
+                        global_min_hash_value, max_and_min[1].item()
+                    )
+            else:
+                raise RuntimeError(
+                    f"{type(self).__name__} requires a Torch distributed process group, but none was found. Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
+                )
+            hash_values = (
+                hash_values - global_min_hash_value
+            ) / global_max_hash_value  # Normalize the hash values to [0, 1)
 
-            # hash_values no longer needed, so we can clean up it's memory.
+            # Now that we've normalized the hash values, we can select the train, val, and test nodes.
+            test_inds = hash_values >= 1 - self._num_test  # 1 x M
+            val_inds = (
+                hash_values >= 1 - self._num_test - self._num_val
+            ) & ~test_inds  # 1 x M
             del hash_values
             gc.collect()
-
-            if isinstance(self._num_val, int):
-                num_val = self._num_val
-            else:
-                num_val = int(nodes_to_select.numel() * self._num_val)
-            if isinstance(self._num_test, int):
-                num_test = self._num_test
-            else:
-                num_test = int(nodes_to_select.numel() * self._num_test)
-
-            num_train = nodes_to_select.numel() - num_val - num_test
-            if num_train <= 0:
-                raise ValueError(
-                    f"Invalid number of nodes to split. Expected more than 0. Originally had {nodes_to_select.numel()} nodes but due to having `num_test` = {self._num_test} and `num_val` = {self._num_val} got no training node.."
-                )
-
-            train = nodes_to_select[:num_train]  # 1 x num_train_nodes
-            val = nodes_to_select[num_train : num_val + num_train]  # 1 x num_val_nodes
-            test = nodes_to_select[num_train + num_val :]  # 1 x num_test_nodes
+            train_inds = ~test_inds & ~val_inds  # 1 x M
+            train = nodes_to_select[train_inds]  # 1 x num_train_nodes
+            val = nodes_to_select[val_inds]  # 1 x num_val_nodes
+            test = nodes_to_select[test_inds]  # 1 x num_test_nodes
             splits[anchor_node_type] = (train, val, test)
+            # We no longer need the nodes to select, so we can clean up their memory.
+            del nodes_to_select, train_inds, val_inds, test_inds
+            gc.collect()
         if len(splits) == 0:
             raise ValueError(
                 f"Found no edge types to split from the provided edge index: {edge_index.keys()} using labeled edge types {self._labeled_edge_types}"
