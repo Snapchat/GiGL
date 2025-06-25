@@ -1,5 +1,5 @@
 from collections import Counter, abc
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage

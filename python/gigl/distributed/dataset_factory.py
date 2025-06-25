@@ -5,7 +5,7 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 import time
 from collections import abc
 from distutils.util import strtobool
-from typing import Dict, Literal, MutableMapping, Optional, Type, Union
+from typing import Dict, Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -212,7 +212,7 @@ def _build_dataset_process(
     output_dict: MutableMapping[str, DistLinkPredictionDataset],
     serialized_graph_metadata: SerializedGraphMetadata,
     master_ip_address: str,
-    master_dataset_building_port: int,
+    master_dataset_building_ports: Tuple[int, int],
     node_rank: int,
     node_world_size: int,
     sample_edge_direction: Literal["in", "out"],
@@ -267,9 +267,15 @@ def _build_dataset_process(
         group_name=get_process_group_name(process_number_on_current_machine),
     )
 
+    assert (
+        len(master_dataset_building_ports) == 2
+    ), f"Expected master_dataset_building_ports to be a tuple of two ports, got {master_dataset_building_ports}"
+    rpc_port = master_dataset_building_ports[0]
+    splitter_port = master_dataset_building_ports[1]
+
     init_rpc(
         master_addr=master_ip_address,
-        master_port=master_dataset_building_port,
+        master_port=rpc_port,
         num_rpc_threads=16,
     )
     # HashedNodeAnchorLinkSplitter requires rpc to be initialized, so we initialize it here.
@@ -278,9 +284,9 @@ def _build_dataset_process(
         should_teardown_process_group = True
         torch.distributed.init_process_group(
             backend="gloo",
-            init_method=f"tcp://{distributed_context.main_worker_ip_address}:{dataset_building_port}",
-            world_size=distributed_context.global_world_size,
-            rank=distributed_context.global_rank,
+            init_method=f"tcp://{master_ip_address}:{splitter_port}",
+            world_size=node_world_size,
+            rank=node_rank,
         )
 
     output_dataset: DistLinkPredictionDataset = _load_and_build_partitioned_dataset(
@@ -300,7 +306,7 @@ def _build_dataset_process(
     # machines may require rpc setup for partitioning, which will result in failure.
     barrier()
     shutdown_rpc()
-    if should_teardown_process_group:
+    if should_teardown_process_group and torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
 
 
@@ -372,7 +378,7 @@ def build_dataset(
     node_world_size: int
     node_rank: int
     master_ip_address: str
-    master_dataset_building_port: int
+    master_dataset_building_ports: Tuple[int, int]
     if distributed_context is None:
         should_cleanup_distributed_context: bool = False
         if not torch.distributed.is_initialized():
@@ -386,7 +392,7 @@ def build_dataset(
         node_world_size = torch.distributed.get_world_size()
         node_rank = torch.distributed.get_rank()
         master_ip_address = get_internal_ip_from_master_node()
-        master_dataset_building_port = get_free_ports_from_master_node(num_ports=1)[0]
+        master_dataset_building_ports = tuple(get_free_ports_from_master_node(num_ports=2))  # type: ignore[assignment]
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(
@@ -397,11 +403,14 @@ def build_dataset(
         node_world_size = distributed_context.global_world_size
         node_rank = distributed_context.global_rank
         master_ip_address = distributed_context.main_worker_ip_address
-        master_dataset_building_port = DEFAULT_MASTER_DATA_BUILDING_PORT
+        master_dataset_building_ports = (
+            DEFAULT_MASTER_DATA_BUILDING_PORT,
+            DEFAULT_MASTER_DATA_BUILDING_PORT + 1,
+        )
 
     logger.info(
         f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: "
-        + f"{master_ip_address}:{master_dataset_building_port}"
+        + f"{master_ip_address}:{master_dataset_building_ports}"
     )
 
     # Launches process for loading serialized TFRecords from disk into memory, partitioning the data across machines, and storing data inside a GLT dataset class
@@ -411,7 +420,7 @@ def build_dataset(
             output_dict,
             serialized_graph_metadata,
             master_ip_address,
-            master_dataset_building_port,
+            master_dataset_building_ports,
             node_rank,
             node_world_size,
             sample_edge_direction,
