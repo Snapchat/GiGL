@@ -81,6 +81,35 @@ def _run_distributed_neighbor_loader(
     shutdown_rpc()
 
 
+def _run_distributed_neighbor_loader_labeled_homogeneous(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    expected_data_count: int,
+):
+    assert isinstance(dataset.node_ids, abc.Mapping)
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=to_homogeneous(dataset.node_ids),
+        num_neighbors=[2, 2],
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        count += 1
+
+    assert (
+        count == expected_data_count
+    ), f"Expected {expected_data_count} batches, but got {count}."
+
+    shutdown_rpc()
+
+
 def _run_distributed_heterogeneous_neighbor_loader(
     _,
     dataset: DistLinkPredictionDataset,
@@ -531,7 +560,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
-        expected_data_count = 2168
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
@@ -544,8 +572,50 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             splitter=splitter,
         )
 
+        assert dataset.train_node_ids is not None, "Train node ids must exist."
+
         mp.spawn(
-            fn=_run_cora_supervised, args=(dataset, self._context, expected_data_count)
+            fn=_run_cora_supervised,
+            args=(
+                dataset,
+                self._context,
+                to_homogeneous(
+                    dataset.train_node_ids
+                ).numel(),  # Use to_homogeneous to make MyPy happy since dataset.train_node_ids is a dict.
+            ),
+        )
+
+    def test_random_loading_labeled_homogeneous(self):
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="in", should_convert_labels_to_edges=True
+        )
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            distributed_context=self._context,
+            sample_edge_direction="in",
+            splitter=splitter,
+        )
+        assert isinstance(dataset.node_ids, abc.Mapping)
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader_labeled_homogeneous,
+            args=(dataset, self._context, to_homogeneous(dataset.node_ids).size(0)),
         )
 
     def test_multiple_neighbor_loader(self):

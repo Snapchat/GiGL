@@ -272,6 +272,16 @@ def _build_dataset_process(
         master_port=master_dataset_building_port,
         num_rpc_threads=16,
     )
+    # HashedNodeAnchorLinkSplitter requires rpc to be initialized, so we initialize it here.
+    should_teardown_process_group = False
+    if isinstance(splitter, HashedNodeAnchorLinkSplitter):
+        should_teardown_process_group = True
+        torch.distributed.init_process_group(
+            backend="gloo",
+            init_method=f"tcp://{distributed_context.main_worker_ip_address}:{dataset_building_port}",
+            world_size=distributed_context.global_world_size,
+            rank=distributed_context.global_rank,
+        )
 
     output_dataset: DistLinkPredictionDataset = _load_and_build_partitioned_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
@@ -290,6 +300,8 @@ def _build_dataset_process(
     # machines may require rpc setup for partitioning, which will result in failure.
     barrier()
     shutdown_rpc()
+    if should_teardown_process_group:
+        torch.distributed.destroy_process_group()
 
 
 def build_dataset(
