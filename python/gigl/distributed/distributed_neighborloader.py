@@ -1,4 +1,4 @@
-from collections import abc
+from collections import Counter, abc
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -117,8 +117,6 @@ class DistNeighborLoader(DistLoader):
                 local_process_rank=local_rank
             )
         )
-        # if device.type == "cuda":
-        #     torch.cuda.set_device(device)
 
         if context:
             assert (
@@ -161,17 +159,14 @@ class DistNeighborLoader(DistLoader):
 
             rank_ip_addresses = gigl.distributed.utils.get_internal_ip_from_all_ranks()
             master_ip_address = rank_ip_addresses[0]
-            from collections import defaultdict
 
-            count_ranks_per_ip_addresses: Dict[str, int] = defaultdict(int)
-            for rank_ip_address in rank_ip_addresses:
-                count_ranks_per_ip_addresses[rank_ip_address] += 1
-
+            count_ranks_per_ip_addresses = Counter(rank_ip_addresses)
             local_world_size = count_ranks_per_ip_addresses[master_ip_address]
             for rank_ip_address, count in count_ranks_per_ip_addresses.items():
                 if count != local_world_size:
                     raise ValueError(
-                        f"All ranks must have the same number of processes, but found {count} processes for rank ip address {rank_ip_address}, expected {local_world_size}."
+                        f"All ranks must have the same number of processes, but found {count} processes for rank {rank} on ip {rank_ip_address}, expected {local_world_size}."
+                        + f"count_ranks_per_ip_addresses = {count_ranks_per_ip_addresses}"
                     )
 
             node_world_size = len(count_ranks_per_ip_addresses)

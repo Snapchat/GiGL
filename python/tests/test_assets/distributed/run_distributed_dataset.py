@@ -1,4 +1,4 @@
-from typing import Literal, MutableMapping, Optional, Type
+from typing import MutableMapping, Optional, Type
 
 import torch.distributed as dist
 
@@ -52,8 +52,8 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
-    _use_process_group: bool = False,
-    _port: Optional[int] = None,
+    _use_process_group: bool = False,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
+    _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
 ) -> DistLinkPredictionDataset:
     """
     Runs DistLinkPredictionDataset Load() __init__ and load() functions provided a mocked dataset info
@@ -63,7 +63,6 @@ def run_distributed_dataset(
         mocked_dataset_info (MockedDatasetInfo): Mocked Dataset Metadata for current run
         output_dict (MutableMapping[int, DistLinkPredictionDataset]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
-        master_ip_address (str): Master IP Address for performing distributed operations.
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[NodeAnchorLinkSplitter]): Provided splitter for testing
     """
@@ -91,7 +90,7 @@ def run_distributed_dataset(
             )
         )
 
-        sample_edge_direction: Literal["in", "out"] = "out"
+        sample_edge_direction = "out"
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=distributed_context,
