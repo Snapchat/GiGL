@@ -112,11 +112,14 @@ for ROLE in "${SA_PROJECT_ROLES[@]}"; do
     --role="$ROLE"
 done
 
-# === Grant SA permissions on GCS buckets ===
+# === Grant SA/User permissions on GCS buckets + clear GCS bucket retention ===
 for BUCKET in "${GCS_BUCKETS[@]}"; do
   echo "Granting GCS roles on $BUCKET to $SA_EMAIL"
   gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.objectAdmin" "gs://${BUCKET}_${USER_NAME}"
   gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.legacyBucketReader" "gs://${BUCKET}_${USER_NAME}"
+  echo "Granting GCS roles on $BUCKET to $USER_EMAIL"
+  gsutil iam ch "user:${USER_EMAIL}:roles/storage.legacyBucketOwner" "gs://${BUCKET}_${USER_NAME}"
+  gsutil retention clear "gs://${BUCKET}" || true
 done
 
 # === Grant SA permissions on BQ datasets ===
