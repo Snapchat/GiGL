@@ -155,7 +155,7 @@ for i in {1..30}; do
     --member="serviceAccount:${VERTEX_AGENT}" \
     --role="roles/artifactregistry.reader" \
     --quiet >/dev/null 2>&1; then
-    echo "Successfully bound Artifact Registry reader role to $VERTEX_AGENT"
+    echo "✅ Successfully bound Artifact Registry reader role to $VERTEX_AGENT"
     break
   else
     echo "Attempt $i failed — vai service account may not exist yet. Retrying in 10 seconds..."
@@ -175,6 +175,7 @@ for i in {1..30}; do
   if gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
     --member="serviceAccount:service-${PROJECT_NUMBER}@dataflow-service-producer-prod.iam.gserviceaccount.com"\
     --role="roles/iam.serviceAccountUser"; then
+    echo "✅ Successfully bound GiGL service account user role to Dataflow default account"
     break
   else
     echo "Attempt $i failed — dataflow service account may not exist yet. Retrying in 10 seconds..."
@@ -191,9 +192,10 @@ gcloud dataproc clusters create my-test-cluster-1 \
 
 for i in {1..30}; do
   if gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
-      --member="serviceAccount:service-${PROJECT_NUMBER}@dataproc-accounts.iam.gserviceaccount.com" \
-      --role="roles/iam.serviceAccountUser"; then
-      break
+    --member="serviceAccount:service-${PROJECT_NUMBER}@dataproc-accounts.iam.gserviceaccount.com" \
+    --role="roles/iam.serviceAccountUser"; then
+    echo "✅ Successfully bound GiGL service account user role to Dataproc account"
+    break
   else
     echo "Attempt $i failed — dataproc service account may not exist yet. Retrying in 10 seconds..."
     sleep 10
@@ -201,7 +203,7 @@ for i in {1..30}; do
 done
 
 
-echo ""
+echo "✅ Project setup completed successfully!"
 echo "=== Created Resources ==="
 echo "Project ID: $PROJECT_ID"
 echo "Service Account: $SA_EMAIL"
@@ -213,4 +215,3 @@ echo "BigQuery Datasets:"
 for DATASET in "${BQ_DATASETS[@]}"; do
   echo "  - ${PROJECT_ID}:${DATASET}"
 done
-echo ""
