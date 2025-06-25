@@ -82,10 +82,12 @@ class TfRecordsIterableDataset(torch.utils.data.IterableDataset, Generic[T]):
         )
 
 
+# TODO (mkolodner-sc): To be deprecated in favor of using gigl.utils.iterator.InfiniteIterator
 class LoopyIterableDataset(torch.utils.data.IterableDataset, Generic[T]):
     """
     Takes as input an IterableDataset and makes it "loopy," so that the dataset
     can be iterated over cyclically.
+    NOTE: This is deprecated in favor of gigl.utils.iterator.InfiniteIterator.
     """
 
     def __init__(self, iterable_dataset: torch.utils.data.IterableDataset[T]) -> None:

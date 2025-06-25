@@ -1,11 +1,10 @@
 import unittest
 from collections import abc
-from typing import Any, MutableMapping, Optional, Type, Union
+from typing import Any, Optional, Type, Union
 
 import graphlearn_torch as glt
 import torch
 from parameterized import param, parameterized
-from torch.multiprocessing import Manager
 from torch.testing import assert_close
 
 from gigl.common.data.load_torch_tensors import (
@@ -13,7 +12,6 @@ from gigl.common.data.load_torch_tensors import (
     SerializedTFRecordInfo,
 )
 from gigl.distributed import (
-    DistLinkPredictionDataset,
     DistPartitioner,
     DistRangePartitioner,
     DistributedContext,
@@ -96,14 +94,11 @@ class DistributedDatasetTestCase(unittest.TestCase):
     )
     def test_build_dataset(self, _, partitioner_class: Type[DistPartitioner]):
         master_port = glt.utils.get_free_port(self._master_ip_address)
-        manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            output_dict=output_dict,
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
             master_port=master_port,
@@ -117,13 +112,10 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
     def test_build_and_split_dataset_homogeneous(self):
         master_port = glt.utils.get_free_port(self._master_ip_address)
-        manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            output_dict=output_dict,
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
             master_port=master_port,
@@ -397,13 +389,10 @@ class DistributedDatasetTestCase(unittest.TestCase):
         expected_node_ids,
     ):
         master_port = glt.utils.get_free_port(self._master_ip_address)
-        manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            output_dict=output_dict,
             should_load_tensors_in_parallel=True,
             master_ip_address=self._master_ip_address,
             master_port=master_port,

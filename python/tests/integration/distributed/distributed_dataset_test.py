@@ -81,10 +81,10 @@ class DistDatasetTestCase(unittest.TestCase):
             args=(
                 self._world_size,
                 mocked_dataset_info,
-                output_dict,
                 should_load_tensors_in_parallel,
                 self._master_ip_address,
                 master_port,
+                output_dict,
             ),
             nprocs=self._world_size,
             join=True,
@@ -195,10 +195,10 @@ class DistDatasetTestCase(unittest.TestCase):
             args=(
                 self._world_size,
                 mocked_dataset_info,
-                output_dict,
                 True,  # should_load_tensors_in_parallel
                 self._master_ip_address,
                 master_port,
+                output_dict,
                 None,  # partitioner
                 split_fn,
             ),
