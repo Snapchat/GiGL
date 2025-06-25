@@ -395,8 +395,9 @@ def _run_example_inference(
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
 
     local_world_size: int
-    if inferencer_args.get("local_world_size") is not None:
-        local_world_size = int(inferencer_args.get("local_world_size"))
+    arg_local_world_size = inferencer_args.get("local_world_size")
+    if arg_local_world_size is not None:
+        local_world_size = int(arg_local_world_size)
         logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
         if torch.cuda.is_available() and local_world_size != torch.cuda.device_count():
             logger.warning(
