@@ -18,10 +18,10 @@ class InfiniteIterator(Iterator[_T]):
         self._iterable = iterable
         self._iter = iter(iterable)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[_T]:
         return self
 
-    def __next__(self):
+    def __next__(self) -> _T:
         try:
             return next(self._iter)
         except StopIteration:
