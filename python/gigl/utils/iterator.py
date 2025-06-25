@@ -1,10 +1,9 @@
 from collections.abc import Iterable, Iterator
+from typing import TypeVar
 
 from gigl.common.logger import Logger
 
 logger = Logger()
-
-from typing import TypeVar
 
 _T = TypeVar("_T")
 
