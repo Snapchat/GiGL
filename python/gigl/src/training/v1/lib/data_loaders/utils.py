@@ -1,5 +1,5 @@
 import math
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -74,7 +74,7 @@ def cast_graph_for_training(
     """
     if graph_metadata_pb_wrapper.is_heterogeneous:
         casted_graph = batch_graph_data
-        missing_node_types_list: List[NodeType] = []
+        missing_node_types_list: list[NodeType] = []
         # If we have a node type missing in the graph, insert that node type into the x_dict field
         for (
             condensed_node_type,
@@ -96,7 +96,7 @@ def cast_graph_for_training(
                 f"Found the follow node types missing from heterogeneous {batch_type} batched graph: {missing_node_types_list}. If you are seeing multiple of this log across batches and this isn't expected, please revisit the graph definition and sampling strategy."
             )
 
-        missing_edge_types_list: List[EdgeType] = []
+        missing_edge_types_list: list[EdgeType] = []
         for (
             condensed_edge_type,
             edge_feature_dim,

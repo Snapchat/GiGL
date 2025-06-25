@@ -30,7 +30,7 @@ Examples:
 import argparse
 import os
 import re
-from typing import Dict, List
+from typing import Dict
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
@@ -43,13 +43,13 @@ logger = Logger()
 _IGNORE_COMMENT = "# yaml-check: disable"
 
 
-def assert_configs_parse(directories: List[str], ignore_regex: List[str] = []) -> None:
+def assert_configs_parse(directories: list[str], ignore_regex: list[str] = []) -> None:
     """
     Validates YAML task spec and resource spec yaml files in the specified directories.
 
     Args:
-        directories (List[str]): List of directories to search for YAML files.
-        ignore_regex (List[str]): List of regex patterns to ignore files.
+        directories (list[str]): List of directories to search for YAML files.
+        ignore_regex (list[str]): List of regex patterns to ignore files.
 
     Raises:
         Exception: If any YAML file cannot be parsed as a valid configuration.

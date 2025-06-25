@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import torch
 import torch_geometric.data
@@ -71,14 +71,14 @@ class HGT(nn.Module):
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
-        output_node_types: List[NodeType],
+        output_node_types: list[NodeType],
         device: torch.device,
     ) -> Dict[NodeType, torch.Tensor]:
         """
         Runs the forward pass of the module
         Args:
             data (torch_geometric.data.hetero_data.HeteroData): Input HeteroData object.
-            output_node_types (List[NodeType]): List of node types for which to return the output embeddings.
+            output_node_types (list[NodeType]): List of node types for which to return the output embeddings.
         Returns:
             Dict[NodeType, torch.Tensor]: Dictionary with node types as keys and output tensors as values.
         """
@@ -204,7 +204,7 @@ class SimpleHGN(nn.Module):
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
-        output_node_types: List[NodeType],
+        output_node_types: list[NodeType],
         device: torch.device,
     ) -> Dict[NodeType, torch.Tensor]:
         # Align dimensions across all node-types and all edge-types, resp.

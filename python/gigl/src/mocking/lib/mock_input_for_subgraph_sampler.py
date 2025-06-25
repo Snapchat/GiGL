@@ -1,6 +1,6 @@
 import tempfile
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import tensorflow as tf
 import torch
@@ -36,7 +36,7 @@ logger = Logger()
 class _PreprocessMetadata:
     features_uri: GcsUri
     schema_uri: GcsUri
-    feature_cols: List[str]
+    feature_cols: list[str]
 
 
 @dataclass
@@ -84,7 +84,7 @@ def _generate_preprocessed_node_tfrecord_data(
     node_features: torch.Tensor,
     node_labels: Optional[torch.Tensor],
 ) -> _NodePreprocessMetadata:
-    feature_names: List[str] = [
+    feature_names: list[str] = [
         get_feature_field_name(n=i) for i in range(num_node_features)
     ]
     feature_spec_dict = {
@@ -171,7 +171,7 @@ def _generate_preprocessed_edge_tfrecord_data(
     edge_features: Optional[torch.Tensor],
     edge_usage_type: EdgeUsageType,
 ) -> _EdgePreprocessMetadata:
-    feature_names: List[str] = [
+    feature_names: list[str] = [
         get_feature_field_name(n=i) for i in range(num_edge_features)
     ]
     feature_spec_dict = {

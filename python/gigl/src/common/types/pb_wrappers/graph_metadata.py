@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 from gigl.common.logger import Logger
 from gigl.common.utils.func_tools import lru_cache
@@ -172,22 +172,22 @@ class GraphMetadataPbWrapper:
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def edge_types(self) -> List[EdgeType]:
+    def edge_types(self) -> list[EdgeType]:
         return list(self.condensed_edge_type_to_edge_type_map.values())
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def node_types(self) -> List[NodeType]:
+    def node_types(self) -> list[NodeType]:
         return list(self.condensed_node_type_to_node_type_map.values())
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def condensed_edge_types(self) -> List[CondensedEdgeType]:
+    def condensed_edge_types(self) -> list[CondensedEdgeType]:
         return list(self.condensed_edge_type_to_edge_type_map.keys())
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def condensed_node_types(self) -> List[CondensedNodeType]:
+    def condensed_node_types(self) -> list[CondensedNodeType]:
         return list(self.condensed_node_type_to_node_type_map.keys())
 
     @property  # type: ignore

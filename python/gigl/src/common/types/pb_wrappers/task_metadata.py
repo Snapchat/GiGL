@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Set, cast
+from typing import Set, cast
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.types import TaskMetadataPb
@@ -34,12 +34,12 @@ class TaskMetadataPbWrapper:
         """
         return TaskMetadataType(self.task_metadata.__class__.__name__)
 
-    def get_supervision_node_types(self) -> List[NodeType]:
+    def get_supervision_node_types(self) -> list[NodeType]:
         """
         Returns supervision node types for the Node Based Task
 
         Returns:
-            List[NodeType]: The node types in supervision node types
+            list[NodeType]: The node types in supervision node types
         """
         if self.task_metadata_type == TaskMetadataType.NODE_BASED_TASK:
             supervision_node_types_pb = (
@@ -50,17 +50,17 @@ class TaskMetadataPbWrapper:
                 f"Can only get supervision node types for Node Based Task, got {self.task_metadata_type}"
             )
 
-        supervision_node_types: List[NodeType] = []
+        supervision_node_types: list[NodeType] = []
         for supervision_node_type_pb in supervision_node_types_pb:
             supervision_node_types.append(NodeType(supervision_node_type_pb))
         return supervision_node_types
 
-    def get_supervision_edge_types(self) -> List[EdgeType]:
+    def get_supervision_edge_types(self) -> list[EdgeType]:
         """
         Returns supervision edge types for the Node Anchor Based Link Prediction and Link Based Task
 
         Returns:
-            List[EdgeType]: The edge types in supervision edge types
+            list[EdgeType]: The edge types in supervision edge types
         """
         if (
             self.task_metadata_type
@@ -78,7 +78,7 @@ class TaskMetadataPbWrapper:
                 f"Can only get supervision edge types for Node Anchor Based Link Prediction and Link Based Tasks, got {self.task_metadata_type}"
             )
 
-        supervision_edge_types: List[EdgeType] = []
+        supervision_edge_types: list[EdgeType] = []
         for supervision_edge_type_pb in supervision_edge_types_pb:
             supervision_edge_types.append(
                 EdgeType(

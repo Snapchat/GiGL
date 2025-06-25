@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import torch
 import torch_geometric.data
@@ -35,7 +35,7 @@ class SupervisedNodeClassificationBatch:
         torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
     ]  # batch-coalesced graph data used for message passing
     root_node_indices: torch.LongTensor  # dtype: int64, shape: [num_root_nodes, ]
-    root_nodes: List[Node]  # len(root_nodes) == number of graphs in Batch
+    root_nodes: list[Node]  # len(root_nodes) == number of graphs in Batch
     root_node_labels: Optional[
         torch.LongTensor
     ] = None  # dtype: int64, shape: [num_root_nodes, ]
@@ -75,10 +75,10 @@ class SupervisedNodeClassificationBatch:
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
-        samples: List[SupervisedNodeClassificationSample],
+        samples: list[SupervisedNodeClassificationSample],
     ) -> SupervisedNodeClassificationBatch:
-        ordered_root_nodes: List[Node] = list()
-        ordered_labels: List[int] = list()
+        ordered_root_nodes: list[Node] = list()
+        ordered_labels: list[int] = list()
         for sample in samples:
             ordered_root_nodes.append(sample.root_node)
             # If a sample has a label, add it.
@@ -95,7 +95,7 @@ class SupervisedNodeClassificationBatch:
         batch_graph_data = builder.build()
 
         node_mapping = batch_graph_data.global_node_to_subgraph_node_mapping
-        _batch_ordered_root_node_indices: List[NodeId] = [
+        _batch_ordered_root_node_indices: list[NodeId] = [
             node_mapping[root_node].id for root_node in ordered_root_nodes
         ]
         batch_graph_data.coalesce()
@@ -118,14 +118,14 @@ class SupervisedNodeClassificationBatch:
 
     @staticmethod
     def process_raw_pyg_samples_and_collate_fn(
-        batch: List[training_samples_schema_pb2.SupervisedNodeClassificationSample],
+        batch: list[training_samples_schema_pb2.SupervisedNodeClassificationSample],
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
     ) -> SupervisedNodeClassificationBatch:
-        ordered_root_nodes: List[Node] = []
-        ordered_labels: List[int] = []
-        graph_samples: List[graph_schema_pb2.Graph] = []
+        ordered_root_nodes: list[Node] = []
+        ordered_labels: list[int] = []
+        graph_samples: list[graph_schema_pb2.Graph] = []
         for sample in batch:
             root_node, _ = GbmlProtosTranslator.node_from_NodePb(
                 graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
@@ -149,7 +149,7 @@ class SupervisedNodeClassificationBatch:
             )
 
         node_mapping = batch_graph_data.global_node_to_subgraph_node_mapping
-        _batch_ordered_root_node_indices: List[NodeId] = [
+        _batch_ordered_root_node_indices: list[NodeId] = [
             node_mapping[root_node].id for root_node in ordered_root_nodes
         ]
         batch_graph_data.coalesce()

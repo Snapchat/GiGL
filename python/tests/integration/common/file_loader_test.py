@@ -1,7 +1,7 @@
 import os
 import unittest
 import uuid
-from typing import Dict, List
+from typing import Dict
 
 import gigl.common.utils.local_fs as local_fs
 from gigl.common import GcsUri, LocalUri, Uri
@@ -169,10 +169,10 @@ class FileLoaderTest(unittest.TestCase):
         local_src_dir: LocalUri = LocalUri.join(self.test_asset_directory, "src")
         local_dst_dir: LocalUri = LocalUri.join(self.test_asset_directory, "dst")
 
-        local_file_paths_src: List[LocalUri] = [
+        local_file_paths_src: list[LocalUri] = [
             LocalUri.join(local_src_dir, file) for file in local_files
         ]
-        local_file_paths_dst: List[LocalUri] = [
+        local_file_paths_dst: list[LocalUri] = [
             LocalUri.join(local_dst_dir, file) for file in local_files
         ]
 
@@ -197,10 +197,10 @@ class FileLoaderTest(unittest.TestCase):
             self.gcs_test_asset_directory, self.test_asset_directory, "dst"
         )
 
-        local_file_paths_src: List[LocalUri] = [
+        local_file_paths_src: list[LocalUri] = [
             LocalUri.join(local_src_dir, file) for file in local_files
         ]
-        gcs_file_paths_dst: List[GcsUri] = [
+        gcs_file_paths_dst: list[GcsUri] = [
             GcsUri.join(gcs_dst_dir, file) for file in local_files
         ]
 
@@ -231,13 +231,13 @@ class FileLoaderTest(unittest.TestCase):
         )
         local_dst_dir: LocalUri = LocalUri.join(self.test_asset_directory, "dst")
 
-        local_file_paths_src: List[LocalUri] = [
+        local_file_paths_src: list[LocalUri] = [
             LocalUri.join(local_src_dir, file) for file in local_files
         ]
-        gcs_file_paths_src: List[GcsUri] = [
+        gcs_file_paths_src: list[GcsUri] = [
             GcsUri.join(gcs_src_dir, file) for file in local_files
         ]
-        local_file_paths_dst: List[LocalUri] = [
+        local_file_paths_dst: list[LocalUri] = [
             LocalUri.join(local_dst_dir, file) for file in local_files
         ]
 

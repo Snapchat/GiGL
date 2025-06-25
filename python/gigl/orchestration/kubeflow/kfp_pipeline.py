@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Final, List, Optional
+from typing import Dict, Final, Optional
 
 import kfp
 import kfp.dsl.pipeline_channel
@@ -24,7 +24,7 @@ _COMPONENTS_BASE_PATH: Final[str] = os.path.join(
 
 logger = Logger()
 
-SPECED_COMPONENTS: Final[List[str]] = [
+SPECED_COMPONENTS: Final[list[str]] = [
     GiGLComponents.ConfigValidator.value,
     GiGLComponents.ConfigPopulator.value,
     GiGLComponents.SubgraphSampler.value,

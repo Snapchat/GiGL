@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 import torch
 import torch_geometric.data
@@ -91,7 +91,7 @@ class NodeAnchorBasedLinkPredictionBatch:
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
-        samples: List[NodeAnchorBasedLinkPredictionSample],
+        samples: list[NodeAnchorBasedLinkPredictionSample],
     ) -> NodeAnchorBasedLinkPredictionBatch:
         """
         We coalesce the various sample subgraphs to build a single unified neighborhood, which we use for message
@@ -116,7 +116,7 @@ class NodeAnchorBasedLinkPredictionBatch:
             builder.add_graph_data(graph_data=graph_data)
         batch_graph_data = builder.build()
 
-        _batch_root_nodes: List[NodeId] = list()
+        _batch_root_nodes: list[NodeId] = list()
         pos_supervision_edge_data: Dict[
             CondensedEdgeType,
             NodeAnchorBasedLinkPredictionBatch.BatchSupervisionEdgeData,
@@ -156,7 +156,7 @@ class NodeAnchorBasedLinkPredictionBatch:
                     ].dst_node_type
                 )
                 # Map each root node to its positive nodes (dst nodes of the positive edges).
-                _subgraph_pos_nodes: List[NodeId] = []
+                _subgraph_pos_nodes: list[NodeId] = []
                 for (
                     pos_node_id
                 ) in condensed_edge_type_to_supervision_edge_data.pos_nodes:
@@ -169,7 +169,7 @@ class NodeAnchorBasedLinkPredictionBatch:
                 )
 
                 # Map each root node to its hard negative edges (dst nodes of the hard negative edges).
-                _subgraph_hard_neg_nodes: List[NodeId] = []
+                _subgraph_hard_neg_nodes: list[NodeId] = []
                 for (
                     hard_neg_node_id
                 ) in condensed_edge_type_to_supervision_edge_data.hard_neg_nodes:

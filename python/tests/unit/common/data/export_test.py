@@ -2,7 +2,7 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from unittest.mock import ANY, MagicMock, patch
 
 import fastavro
@@ -21,7 +21,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         super().setUp()
         self._temp_dir = tempfile.TemporaryDirectory()
 
-        self.test_uris: List[GcsUri] = []
+        self.test_uris: list[GcsUri] = []
 
     def tearDown(self):
         super().tearDown()

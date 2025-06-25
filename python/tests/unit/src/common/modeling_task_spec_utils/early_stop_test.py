@@ -1,5 +1,5 @@
 import unittest
-from typing import List, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -80,8 +80,8 @@ class EarlyStopTests(unittest.TestCase):
     def test_early_stopping(
         self,
         _,
-        mocked_criteria_values: List[float],
-        improvement_steps: List[int],
+        mocked_criteria_values: list[float],
+        improvement_steps: list[int],
         should_maximize: bool,
         model: Optional[nn.Module],
         expected_best_criterion: float,

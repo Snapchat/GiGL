@@ -1,5 +1,4 @@
 import concurrent
-from typing import List
 
 from google.cloud import bigquery
 
@@ -69,10 +68,10 @@ def unenumerate_all_inferred_bq_assets(gbml_config_pb_wrapper: GbmlConfigPbWrapp
     )
 
     # We then collect all the assets that need to be un-enumerated and their mapping tables
-    enumerated_assets_output_tables: List = list()
-    enumerated_node_id_fields: List = list()
-    unenumerated_assets_output_tables: List = list()
-    mapping_bq_tables: List = list()
+    enumerated_assets_output_tables: list[str] = list()
+    enumerated_node_id_fields: list[str] = list()
+    unenumerated_assets_output_tables: list[str] = list()
+    mapping_bq_tables: list[str] = list()
 
     for node_type, inference_output in inference_output_map.items():
         # Get the condensed node type for the inference node type.
@@ -114,7 +113,7 @@ def unenumerate_all_inferred_bq_assets(gbml_config_pb_wrapper: GbmlConfigPbWrapp
                     gbml_config_pb_wrapper=gbml_config_pb_wrapper, node_type=node_type
                 )
             )
-            enumerated_node_id_fields.append(DEFAULT_EMBEDDINGS_TABLE_SCHEMA.node_field)
+            enumerated_node_id_fields.append(DEFAULT_EMBEDDINGS_TABLE_SCHEMA.node_field)  # type: ignore
             unenumerated_assets_output_tables.append(unenumerated_embedding_table_path)
             mapping_bq_tables.append(mapping_bq_table)
 
@@ -129,9 +128,7 @@ def unenumerate_all_inferred_bq_assets(gbml_config_pb_wrapper: GbmlConfigPbWrapp
                     gbml_config_pb_wrapper=gbml_config_pb_wrapper, node_type=node_type
                 )
             )
-            enumerated_node_id_fields.append(
-                DEFAULT_PREDICTIONS_TABLE_SCHEMA.node_field
-            )
+            enumerated_node_id_fields.append(DEFAULT_PREDICTIONS_TABLE_SCHEMA.node_field)  # type: ignore
             unenumerated_assets_output_tables.append(unenumerated_prediction_table_path)
             mapping_bq_tables.append(mapping_bq_table)
 
@@ -139,7 +136,7 @@ def unenumerate_all_inferred_bq_assets(gbml_config_pb_wrapper: GbmlConfigPbWrapp
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=get_available_cpus()
     ) as executor:
-        futures: List[concurrent.futures.Future] = list()
+        futures: list[concurrent.futures.Future] = list()
         for (
             enumerated_assets_table,
             node_id_field,

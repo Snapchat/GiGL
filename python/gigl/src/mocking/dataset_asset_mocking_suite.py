@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -395,7 +395,7 @@ class DatasetAssetMockingSuite:
 
         node_feats_dict = {}
         for node_type in node_config:
-            node_feats_list: List[str] = []
+            node_feats_list: list[str] = []
             for node in graph_config["nodes"][node_type]:
                 features = node["features"]
                 node_feats_list.append(features)
@@ -526,7 +526,7 @@ class DatasetAssetMockingSuite:
 
     def __init__(self):
         self.mocked_datasets: Dict[str, MockedDatasetInfo] = dict()
-        mocking_func_names: List[str] = [
+        mocking_func_names: list[str] = [
             attr
             for attr in dir(self)
             if callable(getattr(self, attr)) and attr.startswith("mock")

@@ -2,7 +2,7 @@ import concurrent.futures
 import sys
 import traceback
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 
 import google.cloud.bigquery as bigquery
 
@@ -244,12 +244,12 @@ class Enumerator:
     def __enumerate_all_node_references(
         self,
         node_data_references: Sequence[NodeDataReference],
-    ) -> List[EnumeratorNodeTypeMetadata]:
-        results: List[EnumeratorNodeTypeMetadata] = []
+    ) -> list[EnumeratorNodeTypeMetadata]:
+        results: list[EnumeratorNodeTypeMetadata] = []
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=get_available_cpus()
         ) as executor:
-            futures: List[concurrent.futures.Future] = list()
+            futures: list[concurrent.futures.Future] = list()
             for node_data_ref in node_data_references:
                 future = executor.submit(
                     self.__enumerate_node_reference,
@@ -267,12 +267,12 @@ class Enumerator:
         self,
         edge_data_references: Sequence[EdgeDataReference],
         map_enumerator_node_type_metadata: Dict[NodeType, EnumeratorNodeTypeMetadata],
-    ) -> List[EnumeratorEdgeTypeMetadata]:
-        results: List[EnumeratorEdgeTypeMetadata] = []
+    ) -> list[EnumeratorEdgeTypeMetadata]:
+        results: list[EnumeratorEdgeTypeMetadata] = []
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=get_available_cpus()
         ) as executor:
-            futures: List[concurrent.futures.Future] = list()
+            futures: list[concurrent.futures.Future] = list()
             for edge_data_ref in edge_data_references:
                 future = executor.submit(
                     self.__enumerate_edge_reference,
@@ -434,11 +434,11 @@ class Enumerator:
         node_data_references: Sequence[NodeDataReference],
         edge_data_references: Sequence[EdgeDataReference],
         gcp_project: str,
-    ) -> Tuple[List[EnumeratorNodeTypeMetadata], List[EnumeratorEdgeTypeMetadata]]:
+    ) -> Tuple[list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]]:
         self.__bq_utils = BqUtils(project=gcp_project)
         self.__applied_task_identifier = applied_task_identifier
 
-        enumerated_node_metadata: List[
+        enumerated_node_metadata: list[
             EnumeratorNodeTypeMetadata
         ] = self.__enumerate_all_node_references(
             node_data_references=node_data_references
@@ -449,7 +449,7 @@ class Enumerator:
             node_metadata.input_node_data_reference.node_type: node_metadata
             for node_metadata in enumerated_node_metadata
         }
-        enumerated_edge_metadata: List[
+        enumerated_edge_metadata: list[
             EnumeratorEdgeTypeMetadata
         ] = self.__enumerate_all_edge_references(
             edge_data_references=edge_data_references,
@@ -472,7 +472,7 @@ class Enumerator:
         node_data_references: Sequence[NodeDataReference],
         edge_data_references: Sequence[EdgeDataReference],
         gcp_project: str,
-    ) -> Tuple[List[EnumeratorNodeTypeMetadata], List[EnumeratorEdgeTypeMetadata]]:
+    ) -> Tuple[list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]]:
         try:
             return self.__run(
                 applied_task_identifier=applied_task_identifier,

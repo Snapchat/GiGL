@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 from gigl.src.common.types.pb_wrappers.graph_data_types import (
     EdgePbWrapper,
@@ -13,12 +13,12 @@ class TrainingSamplesSchemaProtoUtils:
     def build_NodeAnchorBasedLinkPredictionSamplePb(
         target_node: NodePbWrapper,
         target_neighborhood: GraphPbWrapper,
-        pos_neighborhoods: List[Tuple[EdgePbWrapper, GraphPbWrapper]],
+        pos_neighborhoods: list[Tuple[EdgePbWrapper, GraphPbWrapper]],
         hard_neg_neighborhoods: Optional[
-            List[Tuple[EdgePbWrapper, GraphPbWrapper]]
+            list[Tuple[EdgePbWrapper, GraphPbWrapper]]
         ] = None,
         random_neg_neighborhoods: Optional[
-            List[Tuple[EdgePbWrapper, GraphPbWrapper]]
+            list[Tuple[EdgePbWrapper, GraphPbWrapper]]
         ] = None,
     ) -> training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample:
         training_sample = (
@@ -52,7 +52,7 @@ class TrainingSamplesSchemaProtoUtils:
     def build_SupervisedNodeClassificationSamplePb(
         target_node: NodePbWrapper,
         neighborhood: GraphPbWrapper,
-        node_labels: List[training_samples_schema_pb2.Label],
+        node_labels: list[training_samples_schema_pb2.Label],
     ) -> training_samples_schema_pb2.SupervisedNodeClassificationSample:
         if node_labels:
             return training_samples_schema_pb2.SupervisedNodeClassificationSample(

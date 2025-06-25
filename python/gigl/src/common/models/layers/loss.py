@@ -1,6 +1,6 @@
 import itertools
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -70,7 +70,7 @@ class MarginLoss(nn.Module):
 
     def forward(
         self,
-        loss_input: List[Dict[CondensedEdgeType, BatchScores]],
+        loss_input: list[Dict[CondensedEdgeType, BatchScores]],
         device: torch.device = torch.device("cpu"),
     ) -> Tuple[torch.Tensor, int]:
         batch_loss = torch.tensor(0.0).to(device=device)
@@ -148,7 +148,7 @@ class SoftmaxLoss(nn.Module):
 
     def forward(
         self,
-        loss_input: List[Dict[CondensedEdgeType, BatchScores]],
+        loss_input: list[Dict[CondensedEdgeType, BatchScores]],
         device: torch.device = torch.device("cpu"),
     ) -> Tuple[torch.Tensor, int]:
         batch_loss = torch.tensor(0.0).to(device=device)

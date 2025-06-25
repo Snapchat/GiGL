@@ -4,7 +4,7 @@ import sys
 import threading
 from collections import defaultdict
 from itertools import chain, repeat
-from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, NamedTuple, Optional, Tuple, Union
 
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
@@ -140,7 +140,7 @@ class DataPreprocessor:
         :return:
         """
         logger.info("Preparing staging paths for Data Preprocessor...")
-        paths_to_delete: List[Uri] = [
+        paths_to_delete: list[Uri] = [
             local_fs_constants.get_gbml_task_local_tmp_path(
                 applied_task_identifier=self.applied_task_identifier
             ),
@@ -261,7 +261,7 @@ class DataPreprocessor:
         )
 
         def __get_feature_dimension_for_single_data_reference(
-            schema_path: Uri, feature_outputs: List[str]
+            schema_path: Uri, feature_outputs: list[str]
         ) -> int:
             schema = tfdv.load_schema_text(schema_path.uri)
             feature_spec = tft.tf_metadata.schema_utils.schema_as_feature_spec(
@@ -435,8 +435,8 @@ class DataPreprocessor:
     def generate_preprocessed_metadata_pb(
         self,
         preprocessed_metadata_references: PreprocessedMetadataReferences,
-        enumerator_node_type_metadata: List[EnumeratorNodeTypeMetadata],
-        enumerator_edge_type_metadata: List[EnumeratorEdgeTypeMetadata],
+        enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata],
+        enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata],
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata:
         preprocessed_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata()
 
@@ -647,8 +647,8 @@ class DataPreprocessor:
         edge_data_reference_to_preprocessing_spec: Dict[
             EdgeDataReference, EdgeDataPreprocessingSpec
         ],
-        enumerator_node_type_metadata: List[EnumeratorNodeTypeMetadata],
-        enumerator_edge_type_metadata: List[EnumeratorEdgeTypeMetadata],
+        enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata],
+        enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata],
     ) -> Tuple[
         Dict[NodeDataReference, NodeDataPreprocessingSpec],
         Dict[EdgeDataReference, EdgeDataPreprocessingSpec],
@@ -818,7 +818,7 @@ class DataPreprocessor:
         # Enumerate all graph data.
         enumerator = Enumerator()
         enumerator_results: Tuple[
-            List[EnumeratorNodeTypeMetadata], List[EnumeratorEdgeTypeMetadata]
+            list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]
         ] = enumerator.run(
             applied_task_identifier=self.applied_task_identifier,
             node_data_references=list(node_refs_to_specs.keys()),

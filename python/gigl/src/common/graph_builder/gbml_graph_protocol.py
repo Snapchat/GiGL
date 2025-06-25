@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Protocol, Set
+from typing import Dict, Protocol, Set
 
 import torch
 
@@ -12,14 +12,14 @@ class GbmlGraphDataProtocol(Protocol):
     @property
     def edge_types_to_be_registered(
         self,
-    ) -> List[EdgeType]:
+    ) -> list[EdgeType]:
         """Maintains a list of EdgeTypes associated with this graph data.
 
         Used in conjunction with GraphBuilder, to preserve EdgeTypes when combining
         multiple GbmlGraphDataProtocol objects together.
 
         Returns:
-            List[EdgeType]
+            list[EdgeType]
 
         """
         ...

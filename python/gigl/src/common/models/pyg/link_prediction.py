@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -35,7 +35,7 @@ class LinkPredictionGNN(nn.Module):
         data: Union[
             torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
         ],
-        output_node_types: List[NodeType],
+        output_node_types: list[NodeType],
         device: torch.device,
     ) -> Dict[NodeType, torch.Tensor]:
         if isinstance(data, torch_geometric.data.hetero_data.HeteroData):

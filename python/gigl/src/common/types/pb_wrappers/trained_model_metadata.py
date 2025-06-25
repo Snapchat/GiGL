@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List
 
 from gigl.common import Uri, UriFactory
 from snapchat.research.gbml import trained_model_metadata_pb2
@@ -9,7 +8,7 @@ from snapchat.research.gbml import trained_model_metadata_pb2
 class TrainedModelMetadataPbWrapper:
     trained_model_metadata_pb: trained_model_metadata_pb2.TrainedModelMetadata
 
-    def get_output_paths(self) -> List[Uri]:
+    def get_output_paths(self) -> list[Uri]:
         paths = [
             self.trained_model_metadata_pb.trained_model_uri,
             self.trained_model_metadata_pb.scripted_model_uri,

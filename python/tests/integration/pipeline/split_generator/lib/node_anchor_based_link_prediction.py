@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Generic, List, Optional, Set
+from typing import Generic, Optional, Set
 
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder, TGraph
@@ -22,10 +22,10 @@ class NodeAnchorBasedLinkPredictionSplitData(Generic[TGraph]):
 
 def build_single_data_split_subgraph_from_samples(
     split_main_samples: Optional[
-        List[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample]
+        list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample]
     ],
     split_random_negatives: Optional[
-        List[training_samples_schema_pb2.RootedNodeNeighborhood]
+        list[training_samples_schema_pb2.RootedNodeNeighborhood]
     ],
     graph_metadata_wrapper: GraphMetadataPbWrapper,
     graph_builder: GraphBuilder,

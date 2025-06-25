@@ -1,4 +1,4 @@
-from typing import Iterable, List, Union
+from typing import Iterable, Union
 
 import apache_beam as beam
 
@@ -27,7 +27,7 @@ class BatchProcessorDoFn(beam.DoFn):
     ):
         self.batch_generator_fn = batch_generator_fn
 
-    def process(self, element: List[RawBatchType]) -> Iterable[InferenceBatchType]:
+    def process(self, element: list[RawBatchType]) -> Iterable[InferenceBatchType]:
         yield self.batch_generator_fn(
             batch=element,
         )

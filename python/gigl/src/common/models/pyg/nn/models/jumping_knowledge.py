@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -99,10 +99,10 @@ class JumpingKnowledge(MessagePassing):
             self.att.reset_parameters()
         self.output_linear.reset_parameters()
 
-    def forward(self, xs: List[torch.Tensor]) -> Tensor:
+    def forward(self, xs: list[torch.Tensor]) -> Tensor:
         r"""
         Args:
-            xs (List[torch.Tensor]): List containing the layer-wise
+            xs (list[torch.Tensor]): List containing the layer-wise
                 representations.
         """
         if self.mode == "cat":

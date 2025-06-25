@@ -1,5 +1,3 @@
-from typing import List
-
 import torch_geometric.transforms as T
 from torch_geometric.data import HeteroData
 
@@ -22,7 +20,7 @@ def build_and_write_supervised_node_classification_subgraph_samples_from_mocked_
         mocked_dataset_info=mocked_dataset_info
     )
 
-    samples: List[
+    samples: list[
         training_samples_schema_pb2.SupervisedNodeClassificationSample
     ] = pyg_to_training_samples.build_supervised_node_classification_samples_from_pyg_heterodata(
         hetero_data=hetero_data,
@@ -67,9 +65,9 @@ def build_and_write_node_anchor_link_prediction_subgraph_samples_from_mocked_dat
     )
     unsplit_hetero_data, _, _ = dummy_split_cls(hetero_data)
 
-    na_samples: List[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample]
-    rnn_src_samples: List[training_samples_schema_pb2.RootedNodeNeighborhood]
-    rnn_dst_samples: List[training_samples_schema_pb2.RootedNodeNeighborhood]
+    na_samples: list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample]
+    rnn_src_samples: list[training_samples_schema_pb2.RootedNodeNeighborhood]
+    rnn_dst_samples: list[training_samples_schema_pb2.RootedNodeNeighborhood]
     (
         na_samples,
         rnn_src_samples,
