@@ -91,14 +91,14 @@ class DistDatasetTestCase(unittest.TestCase):
         mp.spawn(
             run_distributed_dataset,
             args=(
-                self._world_size,
-                mocked_dataset_info,
-                output_dict,
-                should_load_tensors_in_parallel,
-                None,
-                None,
-                use_process_group,
-                master_port if use_process_group else None,
+                self._world_size,  # world_size
+                mocked_dataset_info,  # mocked_dataset_info
+                output_dict,  # output_dict
+                should_load_tensors_in_parallel,  # should_load_tensors_in_parallel
+                None,  # partitioner_class
+                None,  # splitter
+                use_process_group,  # _use_process_group
+                master_port if use_process_group else None,  # _port
             ),
             nprocs=self._world_size,
             join=True,
@@ -207,14 +207,14 @@ class DistDatasetTestCase(unittest.TestCase):
         mp.spawn(
             run_distributed_dataset,
             args=(
-                self._world_size,
-                mocked_dataset_info,
-                output_dict,
+                self._world_size,  # world_size
+                mocked_dataset_info,  # mocked_dataset_info
+                output_dict,  # output_dict
                 True,  # should_load_tensors_in_parallel
-                None,  # partitioner
-                split_fn,
-                True,  # use_process_group
-                master_port,  # port if using process group
+                None,  # partitioner_class
+                split_fn,  # splitter
+                True,  # _use_process_group
+                master_port,  # _port
             ),
             nprocs=self._world_size,
             join=True,
