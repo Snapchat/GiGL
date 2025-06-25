@@ -52,7 +52,7 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
-    _use_process_group: bool = False,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
+    _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
 ) -> DistLinkPredictionDataset:
     """
