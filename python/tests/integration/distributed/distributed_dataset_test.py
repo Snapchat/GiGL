@@ -44,35 +44,35 @@ class DistDatasetTestCase(unittest.TestCase):
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=False,
                 is_heterogeneous=False,
-                use_process_group=False,
+                use_process_group=True,
             ),
             param(
                 "Test GLT Dataset Load in sequence with homogeneous toy dataset with user defined labels",
                 mocked_dataset_info=TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=False,
                 is_heterogeneous=False,
-                use_process_group=False,
+                use_process_group=True,
             ),
             param(
                 "Test GLT Dataset Load in sequence with heterogeneous toy dataset",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=False,
                 is_heterogeneous=True,
-                use_process_group=False,
+                use_process_group=True,
             ),
             param(
                 "Test GLT Dataset Load in parallel with heterogeneous toy dataset",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=True,
                 is_heterogeneous=True,
-                use_process_group=False,
+                use_process_group=True,
             ),
             param(
-                "Use process group for GLT Dataset Load in parallel with heterogeneous toy dataset",
+                "Test legacy where process group not provided",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 should_load_tensors_in_parallel=True,
                 is_heterogeneous=True,
-                use_process_group=True,
+                use_process_group=False,
             ),
         ]
     )
@@ -213,7 +213,7 @@ class DistDatasetTestCase(unittest.TestCase):
                 True,  # should_load_tensors_in_parallel
                 None,  # partitioner_class
                 split_fn,  # splitter
-                True,  # _use_process_group
+                False,  # _use_process_group
                 master_port,  # _port
             ),
             nprocs=self._world_size,
