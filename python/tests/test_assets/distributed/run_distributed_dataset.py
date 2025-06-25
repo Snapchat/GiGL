@@ -33,7 +33,7 @@ def convert_mocked_dataset_info_to_serialized_graph_metadata(
     )
     graph_metadata_pb_wrapper = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    # When loading mocked inputs to inferencer, the TFRecords are read from format `data.tfrecord`. We update the
+    # When loading mocked inputs, the TFRecords are read from format `data.tfrecord`. We update the
     # tfrecord_uri_pattern to expect this input.
     serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
         preprocessed_metadata_pb_wrapper=preprocessed_metadata_pb_wrapper,
@@ -52,7 +52,7 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
-    _use_process_group: bool = False,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
+    _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
 ) -> DistLinkPredictionDataset:
     """
