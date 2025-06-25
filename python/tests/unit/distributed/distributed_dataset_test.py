@@ -492,11 +492,17 @@ class DistributedDatasetTestCase(unittest.TestCase):
             dataset.positive_edge_label, abc.Mapping
         ), f"Positive edge indices must be a dictionary, got {type(dataset.positive_edge_label)}"
         self.assertTrue(labeled_edge_type in dataset.positive_edge_label)
+        self.assertTrue(message_passing_edge_type not in dataset.positive_edge_label)
 
         assert isinstance(
             dataset.negative_edge_label, abc.Mapping
         ), f"Negative edge indices must be a dictionary, got {type(dataset.negative_edge_label)}"
         self.assertTrue(labeled_edge_type in dataset.negative_edge_label)
+        self.assertTrue(message_passing_edge_type not in dataset.negative_edge_label)
+
+        assert isinstance(dataset.edge_pb, abc.Mapping)
+        self.assertTrue(labeled_edge_type not in dataset.edge_pb)
+        self.assertTrue(message_passing_edge_type in dataset.edge_pb)
 
 
 if __name__ == "__main__":

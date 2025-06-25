@@ -258,6 +258,10 @@ class TranslatorTestCase(unittest.TestCase):
                 serialized_positive_label_info_iterable = [
                     serialized_graph_metadata.positive_label_entity_info
                 ]
+            else:
+                raise ValueError(
+                    f"Expected positive labels to be a dictionary or of type `SerializedTFRecordInfo`, got {type(serialized_graph_metadata.positive_label_entity_info)}"
+                )
 
             self.assertEqual(
                 len(graph_metadata_pb_wrapper.edge_types),
@@ -348,6 +352,10 @@ class TranslatorTestCase(unittest.TestCase):
                 serialized_negative_label_info_iterable = [
                     serialized_graph_metadata.negative_label_entity_info
                 ]
+            else:
+                raise ValueError(
+                    f"Expected negative labels to be a dictionary or of type `SerializedTFRecordInfo`, got {type(serialized_graph_metadata.negative_label_entity_info)}"
+                )
 
             self.assertEqual(
                 len(graph_metadata_pb_wrapper.edge_types),
