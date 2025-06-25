@@ -18,7 +18,6 @@ from graphlearn_torch.distributed import (
     shutdown_rpc,
 )
 
-import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
@@ -33,9 +32,11 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
-from gigl.distributed.utils import get_process_group_name
-from gigl.distributed.utils.serialized_graph_metadata_translator import (
+from gigl.distributed.utils import (
     convert_pb_to_serialized_graph_metadata,
+    get_free_ports_from_master_node,
+    get_internal_ip_from_master_node,
+    get_process_group_name,
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -209,9 +210,9 @@ def _build_dataset_process(
     output_dict: MutableMapping[str, DistLinkPredictionDataset],
     serialized_graph_metadata: SerializedGraphMetadata,
     master_ip_address: str,
+    master_dataset_building_port: int,
     node_rank: int,
     node_world_size: int,
-    master_dataset_building_port: int,
     sample_edge_direction: Literal["in", "out"],
     should_load_tensors_in_parallel: bool,
     partitioner_class: Optional[Type[DistPartitioner]],
@@ -242,8 +243,10 @@ def _build_dataset_process(
         output_dict (MutableMapping[str, DistLinkPredictionDataset]): A dictionary spawned by a mp.manager which the built dataset
             will be written to for use by the parent process
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
-        distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
-        master_dataset_building_port (int): RPC port to use to build the dataset
+        master_ip_address (str): IP address of the master node
+        master_dataset_building_port (int): Free port on the master node to use to build the dataset
+        node_rank (int): Rank of the node (machine) on which this process is running
+        node_world_size (int): World size (total #) of the nodes participating in hosting the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
@@ -303,6 +306,8 @@ def build_dataset(
     SerializedGraphMetadata.
 
     It is expected that there is only one `build_dataset` call per node (machine).
+    This requirement exists to ensure each machine only participates once in housing a parition of a dataset; otherwise
+    a machine may end up housing multiple partitions of the same dataset which may cause memory issues.
 
     This function expects that there is a process group initialized between the process' for the nodes participating in
     hosting the dataset partition. This is so necessary information can be communicated between the nodes
@@ -312,7 +317,8 @@ def build_dataset(
     Args:
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         distributed_context (deprecated field - will be removed soon) (Optional[DistributedContext]): Distributed context containing information for master_ip_address, rank, and world size.
-            Defaults to None, in which case it will be initialized from the current torch.distributed context.
+            Defaults to None, in which case it will be initialized from the current torch.distributed context. If provided,
+            you need not initialized a process_group, one will be initialized.
         sample_edge_direction (Union[Literal["in", "out"], str]): Whether edges in the graph are directed inward or outward. Note that this is
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
@@ -357,17 +363,16 @@ def build_dataset(
         should_cleanup_distributed_context: bool = False
         if not torch.distributed.is_initialized():
             logger.info(
-                "Distributed context is None, trying to  torch.distributed.init_process_group to communicate necessary setup information."
+                "Distributed context is None, and no process group detected; will try to "
+                + "`init_process_group` to communicate necessary setup information."
             )
             should_cleanup_distributed_context = True
             torch.distributed.init_process_group(backend="gloo")
 
         node_world_size = torch.distributed.get_world_size()
         node_rank = torch.distributed.get_rank()
-        master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
-        master_dataset_building_port = (
-            gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
-        )
+        master_ip_address = get_internal_ip_from_master_node()
+        master_dataset_building_port = get_free_ports_from_master_node(num_ports=1)[0]
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(
@@ -381,7 +386,8 @@ def build_dataset(
         master_dataset_building_port = DEFAULT_MASTER_DATA_BUILDING_PORT
 
     logger.info(
-        f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: {master_ip_address}"
+        f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: "
+        + f"{master_ip_address}:{master_dataset_building_port}"
     )
 
     # Launches process for loading serialized TFRecords from disk into memory, partitioning the data across machines, and storing data inside a GLT dataset class
@@ -391,9 +397,9 @@ def build_dataset(
             output_dict,
             serialized_graph_metadata,
             master_ip_address,
+            master_dataset_building_port,
             node_rank,
             node_world_size,
-            master_dataset_building_port,
             sample_edge_direction,
             should_load_tensors_in_parallel,
             partitioner_class,
@@ -425,6 +431,9 @@ def build_dataset_from_task_config_uri(
     trainerArgs field of the GbmlConfig for training.
 
     It is expected that there is only one `build_dataset_from_task_config_uri` call per node (machine).
+    This requirement exists to ensure each machine only participates once in housing a parition of a dataset; otherwise
+    a machine may end up housing multiple partitions of the same dataset which may cause memory issues.
+
 
     This function expects that there is a process group initialized between the process' for the nodes participating in
     hosting the dataset partition. This is so necessary information can be communicated between the nodes
