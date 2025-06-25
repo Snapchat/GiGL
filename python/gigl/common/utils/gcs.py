@@ -4,7 +4,7 @@ import tempfile
 import typing
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
-from typing import IO, AnyStr, Dict, Iterable, List, Optional, Tuple, Union
+from typing import IO, AnyStr, Dict, Iterable, Optional, Tuple, Union
 
 import google.cloud.exceptions as google_exceptions
 import google.cloud.storage as storage
@@ -177,7 +177,7 @@ class GcsUtils:
         gcs_path: GcsUri,
         suffix: Optional[str] = None,
         pattern: Optional[str] = None,
-    ) -> List[GcsUri]:
+    ) -> list[GcsUri]:
         """
         List GCS URIs with a given suffix or pattern.
 
@@ -195,7 +195,7 @@ class GcsUtils:
             pattern (Optional[str]): The regex to filter URIs by. If None (the default), then no filtering on the pattern will be done.
 
         Returns:
-            List[GcsUri]: A list of GCS URIs that match the given suffix or pattern.
+            list[GcsUri]: A list of GCS URIs that match the given suffix or pattern.
         """
         if suffix and pattern:
             logger.warning(
@@ -210,7 +210,7 @@ class GcsUtils:
         gcs_uris = [GcsUri.join("gs://", blob.bucket.name, blob.name) for blob in blobs]
         return gcs_uris
 
-    def __list_file_blobs_at_gcs_path(self, gcs_path: GcsUri) -> List[storage.Blob]:
+    def __list_file_blobs_at_gcs_path(self, gcs_path: GcsUri) -> list[storage.Blob]:
         bucket_name, prefix = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
         blobs = self.__storage_client.list_blobs(
             bucket_or_name=bucket_name, prefix=prefix
@@ -244,7 +244,7 @@ class GcsUtils:
             )
 
     def download_files_from_gcs_paths_to_local_dir(
-        self, gcs_paths: List[GcsUri], local_path_dir: LocalUri
+        self, gcs_paths: list[GcsUri], local_path_dir: LocalUri
     ) -> None:
         for gcs_path in gcs_paths:
             file_blobs = self.__list_file_blobs_at_gcs_path(gcs_path)
@@ -269,7 +269,7 @@ class GcsUtils:
         gcs_path: GcsUri,
     ) -> Tuple[str, str]:
         gcs_path_str: str = gcs_path.uri
-        gcs_parts: List[str] = gcs_path_str.split(
+        gcs_parts: list[str] = gcs_path_str.split(
             "/"
         )  # "gs://bucket-name/file/path" -> ['gs:', '', 'bucket-name', 'file', 'path']
         bucket_name, blob_name = gcs_parts[2], "/".join(gcs_parts[3:])
@@ -324,7 +324,7 @@ class GcsUtils:
         logger.info(f"Files deleted in '{gcs_path}'")
 
     def delete_files(self, gcs_files: Iterable[Union[GcsUri, storage.Blob]]) -> None:
-        matching_blobs: List[storage.Blob] = list()
+        matching_blobs: list[storage.Blob] = list()
         for gcs_file in gcs_files:
             if not isinstance(gcs_file, storage.Blob):
                 bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(
@@ -335,11 +335,11 @@ class GcsUtils:
                 blob = gcs_file
             matching_blobs.append(blob)
 
-        batched_blobs_to_delete: List[List[storage.Blob]] = batch(
+        batched_blobs_to_delete: list[list[storage.Blob]] = batch(
             list_of_items=matching_blobs, chunk_size=_BLOB_BATCH_SIZE
         )
 
-        def __batch_delete_blobs(blobs: List[storage.Blob]):
+        def __batch_delete_blobs(blobs: list[storage.Blob]):
             logger.info(f"Will delete ({len(blobs)}) gcs files")
             with self.__storage_client.batch():
                 for blob in blobs:
@@ -372,9 +372,9 @@ class GcsUtils:
             dst_bucket: storage.Bucket,
             src_prefix: str,
             dst_prefix: str,
-            src_blobs: List[storage.Blob],
+            src_blobs: list[storage.Blob],
         ):
-            dst_blob_names: List[str] = [
+            dst_blob_names: list[str] = [
                 src_blob.name.replace(src_prefix, dst_prefix, 1)
                 for src_blob in src_blobs
             ]
