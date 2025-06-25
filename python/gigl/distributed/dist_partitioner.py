@@ -1269,6 +1269,7 @@ class DistPartitioner:
         """
         Partitions positive or negative labels of a graph. If heterogeneous, partitions labels for all edge type.
         Must call `partition_node` first to get the node partition book as input.
+        Note that labels are always partitioned by the source node, since the edges are always assumed to be anchor_node -> to -> supervision node.
         Args:
             node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
             is_positive (bool): Whether positive labels are currently being registered. If False, negative labels will be partitioned.

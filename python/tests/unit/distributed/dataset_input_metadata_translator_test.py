@@ -35,8 +35,8 @@ class TranslatorTestCase(unittest.TestCase):
                 SerializedTFRecordInfo,
                 Dict[NodeType, SerializedTFRecordInfo],
                 Dict[EdgeType, SerializedTFRecordInfo],
-                Dict[NodeType, Optional[SerializedTFRecordInfo]],
-                Dict[EdgeType, Optional[SerializedTFRecordInfo]],
+                Dict[NodeType, SerializedTFRecordInfo],
+                Dict[EdgeType, SerializedTFRecordInfo],
             ]
         ],
         is_heterogeneous: bool,
@@ -50,8 +50,8 @@ class TranslatorTestCase(unittest.TestCase):
                     SerializedTFRecordInfo,
                     Dict[NodeType, SerializedTFRecordInfo],
                     Dict[EdgeType, SerializedTFRecordInfo],
-                    Dict[NodeType, Optional[SerializedTFRecordInfo]],
-                    Dict[EdgeType, Optional[SerializedTFRecordInfo]],
+                    Dict[NodeType, SerializedTFRecordInfo],
+                    Dict[EdgeType, SerializedTFRecordInfo],
                 ]
             ]: Entity information of which type correctness is being checked for. If heterogeneous, this is expected to be a dictionary.
             is_heterogeneous (bool): Whether the provided input data is heterogeneous or homogeneous
@@ -230,8 +230,10 @@ class TranslatorTestCase(unittest.TestCase):
 
         has_positive_labels = all(
             [
-                preprocessed_metadata_pb_wrapper.has_pos_edge_features(
-                    condensed_edge_type=condensed_edge_type
+                preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+                    condensed_edge_type
+                ].HasField(
+                    "positive_edge_info"
                 )
                 for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types
             ]
@@ -242,16 +244,17 @@ class TranslatorTestCase(unittest.TestCase):
                 is_heterogeneous=graph_metadata_pb_wrapper.is_heterogeneous,
                 expected_entity_types=graph_metadata_pb_wrapper.edge_types,
             )
-            serialized_positive_label_info_iterable: list[
-                Optional[SerializedTFRecordInfo]
-            ]
+            serialized_positive_label_info_iterable: list[SerializedTFRecordInfo]
             if isinstance(
                 serialized_graph_metadata.positive_label_entity_info, abc.Mapping
             ):
                 serialized_positive_label_info_iterable = list(
                     serialized_graph_metadata.positive_label_entity_info.values()
                 )
-            else:
+            elif isinstance(
+                serialized_graph_metadata.positive_label_entity_info,
+                SerializedTFRecordInfo,
+            ):
                 serialized_positive_label_info_iterable = [
                     serialized_graph_metadata.positive_label_entity_info
                 ]
@@ -265,8 +268,10 @@ class TranslatorTestCase(unittest.TestCase):
                 graph_metadata_pb_wrapper.edge_types,
                 serialized_positive_label_info_iterable,
             ):
-                if preprocessed_metadata_pb_wrapper.has_pos_edge_features(
-                    condensed_edge_type=condensed_edge_type
+                if preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+                    condensed_edge_type
+                ].HasField(
+                    "positive_edge_info"
                 ):
                     assert (
                         seralized_positive_label_info is not None
@@ -315,8 +320,10 @@ class TranslatorTestCase(unittest.TestCase):
 
         has_negative_labels = all(
             [
-                preprocessed_metadata_pb_wrapper.has_hard_neg_edge_features(
-                    condensed_edge_type=condensed_edge_type
+                preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+                    condensed_edge_type
+                ].HasField(
+                    "negative_edge_info"
                 )
                 for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types
             ]
@@ -327,16 +334,17 @@ class TranslatorTestCase(unittest.TestCase):
                 is_heterogeneous=graph_metadata_pb_wrapper.is_heterogeneous,
                 expected_entity_types=graph_metadata_pb_wrapper.edge_types,
             )
-            serialized_negative_label_info_iterable: list[
-                Optional[SerializedTFRecordInfo]
-            ]
+            serialized_negative_label_info_iterable: list[SerializedTFRecordInfo]
             if isinstance(
                 serialized_graph_metadata.negative_label_entity_info, abc.Mapping
             ):
                 serialized_negative_label_info_iterable = list(
                     serialized_graph_metadata.negative_label_entity_info.values()
                 )
-            else:
+            elif isinstance(
+                serialized_graph_metadata.negative_label_entity_info,
+                SerializedTFRecordInfo,
+            ):
                 serialized_negative_label_info_iterable = [
                     serialized_graph_metadata.negative_label_entity_info
                 ]
@@ -350,8 +358,10 @@ class TranslatorTestCase(unittest.TestCase):
                 graph_metadata_pb_wrapper.edge_types,
                 serialized_negative_label_info_iterable,
             ):
-                if preprocessed_metadata_pb_wrapper.has_hard_neg_edge_features(
-                    condensed_edge_type=condensed_edge_type
+                if preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+                    condensed_edge_type
+                ].HasField(
+                    "negative_edge_info"
                 ):
                     assert (
                         serialized_negative_label_info is not None
