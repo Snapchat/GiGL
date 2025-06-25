@@ -179,7 +179,7 @@ def init_neighbor_loader_worker(
     )
     init_rpc(
         master_addr=master_ip_address,
-        master_port=master_worker_port + local_process_rank,
+        master_port=master_worker_port,
         rpc_timeout=600,
     )
 
