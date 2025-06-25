@@ -38,8 +38,8 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
-from gigl.utils import LoopyIterableDataset
 from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
+from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -97,7 +97,7 @@ def _run_infinite_distributed_neighbor_loader(
         pin_memory_device=torch.device("cpu"),
     )
 
-    infinite_loader: LoopyIterableDataset = LoopyIterableDataset(loader)
+    infinite_loader: InfiniteIterator = InfiniteIterator(loader)
 
     count = 0
     for datum in infinite_loader:
