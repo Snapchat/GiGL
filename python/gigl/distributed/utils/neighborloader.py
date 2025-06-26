@@ -1,13 +1,16 @@
 """Utils for Neighbor loaders."""
+from collections import abc
 from copy import deepcopy
-from typing import Union
+from dataclasses import dataclass
+from typing import Optional, Union
 
 import torch
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 from gigl.common.logger import Logger
-from gigl.types.graph import is_label_edge_type
+from gigl.src.common.types.graph_data import NodeType
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
 logger = Logger()
 
@@ -117,3 +120,78 @@ def strip_label_edges(data: HeteroData) -> HeteroData:
         del data.num_sampled_edges[edge_type]
 
     return data
+
+
+@dataclass(frozen=True)
+class _ResolvedNodeSamplerInput:
+    node_type: Optional[NodeType]
+    node_ids: torch.Tensor
+    is_labeled_homogeneous: bool
+
+
+# Allowed inputs for node samplers.
+# If None is provded, then all nodes in the graph will be sampled.
+# And the graph must be homogeneous.
+# If a single tensor is provided, it is assumed to be a tensor of node IDs.
+# And the graph must be homogeneous, or labled homogeneous.
+# If a tuple is provided, the first element is the node type and the second element is the tensor of node IDs.
+# If a dict is provided, the keys are node types and the values are tensors of node IDs.
+# If a dict is provided, the graph must be heterogeneous, and there must be only one key/value pair in the dict.
+# We allow dicts to be passed in as a convenenience for users who have a heterogeneous graph with only one supervision edge type.
+NodeSamplerInput = Optional[
+    Union[
+        torch.Tensor, tuple[NodeType, torch.Tensor], abc.Mapping[NodeType, torch.Tensor]
+    ]
+]
+
+
+def infer_node_sampler_input_from_user_input(
+    input_nodes: NodeSamplerInput,
+    dataset_nodes: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+) -> _ResolvedNodeSamplerInput:
+    is_labeled_homoogeneous = False
+    if isinstance(input_nodes, torch.Tensor):
+        node_ids = input_nodes
+
+        # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
+        # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
+        if isinstance(dataset_nodes, dict):
+            if (
+                len(dataset_nodes) == 1
+                and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset_nodes
+            ):
+                node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                is_labeled_homoogeneous = True
+            else:
+                raise ValueError(
+                    f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset_nodes.keys()}"
+                )
+        else:
+            node_type = None
+    elif isinstance(input_nodes, abc.Mapping):
+        if len(input_nodes) != 1:
+            raise ValueError(
+                f"If input_nodes is provided as a mapping, it must contain exactly one key/value pair. Received: {input_nodes}"
+            )
+        is_labeled_homoogeneous = True
+        node_type, node_ids = next(iter(input_nodes.items()))
+    elif isinstance(input_nodes, tuple):
+        node_type, node_ids = input_nodes
+    elif input_nodes is None:
+        if dataset_nodes is None:
+            raise ValueError(
+                "If input_nodes is None, dataset_nodes must also be provided."
+            )
+        if isinstance(dataset_nodes, torch.Tensor):
+            node_type = None
+            node_ids = dataset_nodes
+        elif isinstance(dataset_nodes, dict):
+            raise ValueError(
+                f"Input nodes must be provided for a heterogeneous graph. Received: {dataset_nodes}"
+            )
+
+    return _ResolvedNodeSamplerInput(
+        node_type=node_type,
+        node_ids=node_ids,
+        is_labeled_homogeneous=is_labeled_homoogeneous,
+    )

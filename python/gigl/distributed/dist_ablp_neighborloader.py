@@ -24,6 +24,8 @@ from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.utils.neighborloader import (
+    NodeSamplerInput,
+    infer_node_sampler_input_from_user_input,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     shard_nodes_by_process,
@@ -51,12 +53,7 @@ class DistABLPLoader(DistLoader):
         context: DistributedContext,
         local_process_rank: int,  # TODO: Move this to DistributedContext
         local_process_world_size: int,  # TODO: Move this to DistributedContext
-        input_nodes: Optional[
-            Union[
-                torch.Tensor,
-                tuple[NodeType, torch.Tensor],
-            ]
-        ] = None,
+        input_nodes: NodeSamplerInput = None,
         # TODO(kmonte): Support multiple supervision edge types.
         supervision_edge_type: Optional[EdgeType] = None,
         num_workers: int = 1,
@@ -137,50 +134,39 @@ class DistABLPLoader(DistLoader):
                 f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
             )
         self._is_input_heterogeneous: bool = False
-        if isinstance(input_nodes, tuple):
+        resolved_inputs = infer_node_sampler_input_from_user_input(
+            input_nodes=input_nodes,
+            dataset_nodes=dataset.node_ids,
+        )
+        print(f"Resolved inputs: {resolved_inputs}")
+        node_type = resolved_inputs.node_type
+        node_ids = resolved_inputs.node_ids
+        self._is_labeled_homogeneous = resolved_inputs.is_labeled_homogeneous
+
+        if node_type is None or node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE:
+            if supervision_edge_type is not None:
+                raise ValueError(
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
+                )
+            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+            supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        else:
             if supervision_edge_type is None:
                 raise ValueError(
-                    "When using heterogeneous ABLP, you must provide supervision_edge_types."
+                    "When using heterogeneous ABLP, you must provide supervision_edge_type."
                 )
             self._is_input_heterogeneous = True
-            node_type, node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
-            assert (
-                supervision_edge_type[0] == node_type
-            ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
-                got supervision edge type {supervision_edge_type} with anchor node type {node_type}"
+            if supervision_edge_type[0] != node_type:
+                raise ValueError(
+                    f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
+                    got supervision edge type {supervision_edge_type} with anchor node type {node_type}"
+                )
             supervision_node_type = supervision_edge_type[2]
             if dataset.edge_dir == "in":
                 supervision_edge_type = reverse_edge_type(supervision_edge_type)
-
-        elif isinstance(input_nodes, torch.Tensor):
-            if supervision_edge_type is not None:
-                raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
-                )
-            node_ids = input_nodes
-            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-            supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        elif input_nodes is None:
-            if dataset.node_ids is None:
-                raise ValueError(
-                    "Dataset must have node ids if input_nodes are not provided."
-                )
-            if isinstance(dataset.node_ids, abc.Mapping):
-                raise ValueError(
-                    f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
-                )
-            if supervision_edge_type is not None:
-                raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
-                )
-
-            node_ids = dataset.node_ids
-            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-            supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
 
         missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
         if missing_edge_types:
@@ -429,6 +415,10 @@ class DistABLPLoader(DistLoader):
         local_node_to_global_node: torch.Tensor
         # shape [N], where N is the number of nodes in the subgraph, and local_node_to_global_node[i] gives the global node id for local node id `i`
         if isinstance(data, HeteroData):
+            if self._supervision_edge_type is None:
+                raise ValueError(
+                    "When using heterogeneous ABLP, you must provide supervision_edge_type."
+                )
             supervision_node_type = (
                 self._supervision_edge_type[0]
                 if self.edge_dir == "in"
