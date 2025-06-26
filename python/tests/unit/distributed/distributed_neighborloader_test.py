@@ -2,13 +2,13 @@ import unittest
 from collections import abc
 from typing import Optional
 
-import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+import gigl.distributed.utils
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_context import DistributedContext
@@ -436,12 +436,14 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_distributed_neighbor_loader(self):
         expected_data_count = 2708
+        port = gigl.distributed.utils.get_free_port()
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
+            _port=port,
         )
 
         mp.spawn(
@@ -450,11 +452,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     def test_infinite_distributed_neighbor_loader(self):
+        port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
+            _port=port,
         )
 
         assert isinstance(dataset.node_ids, torch.Tensor)
@@ -663,7 +667,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     def test_multiple_neighbor_loader(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        port = gigl.distributed.utils.get_free_port()
         expected_data_count = 2708
 
         dataset = run_distributed_dataset(
@@ -671,6 +675,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
+            _port=port,
         )
 
         mp.spawn(

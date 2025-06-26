@@ -6,6 +6,7 @@ import torch
 from parameterized import param, parameterized
 from torch.testing import assert_close
 
+import gigl.distributed.utils
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     SerializedTFRecordInfo,
@@ -92,12 +93,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
         ]
     )
     def test_build_dataset(self, _, partitioner_class: Type[DistPartitioner]):
+        port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
             partitioner_class=partitioner_class,
+            _port=port,
         )
 
         self.assertIsNone(dataset.train_node_ids)
@@ -106,6 +109,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertIsInstance(dataset.node_ids, torch.Tensor)
 
     def test_build_and_split_dataset_homogeneous(self):
+        port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
@@ -118,6 +122,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                     torch.tensor([3000, 4000, 5000]),
                 ),
             ),
+            _port=port,
         )
 
         self.assert_tensor_equal(dataset.train_node_ids, torch.tensor([1000]))
@@ -386,6 +391,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
             mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
             splitter=_FakeSplitter(splits),
+            _port=gigl.distributed.utils.get_free_port(),
         )
 
         self.assert_tensor_equal(dataset.train_node_ids, expected_train_node_ids)
