@@ -89,6 +89,11 @@ class DistABLPLoader(DistLoader):
             - (optional) `y_negative`: A dict[torch.Tensor] mapping from local anchor node id to a tensor of negative
                 label node ids. This will only be present if the supervision edge type has negative labels.
 
+        NOTE: for both y_positive, and y_negative, the values represented in both the key and value of the dicts are
+        the *local* node ids of the sampled nodes, not the global node ids.
+        In order to get the global node ids, you can use the `node` field of the Data/HeteroData object.
+        e.g. global_positive_node_id_labels = data.node[data.y_positive[local_anchor_node_id]].
+
         The underlying graph engine may also add the following fields to the output Data object:
             - num_sampled_nodes: If heterogeneous. a dictionary mapping from node type to the number of sampled nodes for that type, by hop.
             if homogeneous, a tensor the number of sampled nodes, by hop.
