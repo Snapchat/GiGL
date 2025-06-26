@@ -83,7 +83,34 @@ class DistABLPLoader(DistLoader):
         In this case, the output of the loader will be a torch_geometric.data.Data object.
         Otherwise, the output will be a torch_geometric.data.HeteroData object.
 
-           Args:
+        The output of this loader will contain the additional following fields:
+            - `y_positive`: A dict[int, torch.Tensor] mapping from local anchor node id to a tensor of positive
+                label node ids.
+            - (optional) `y_negative`: A dict[torch.Tensor] mapping from local anchor node id to a tensor of negative
+                label node ids. This will only be present if the supervision edge type has negative labels.
+
+        The underlying graph engine may also add the following fields to the output Data object:
+            - num_sampled_nodes: If heterogeneous. a dictionary mapping from node type to the number of sampled nodes for that type, by hop.
+            if homogeneous, a tensor the number of sampled nodes, by hop.
+            - num_sampled_edges: If heterogeneous, a dictionary mapping from edge type to the number of sampled edges for that type, by hop.
+            If homogeneous, a tensor denoting the number of sampled edges, by hop.
+
+        Let's use the following homogeneous graph (https://is.gd/a8DK15) as an example:
+            0 -> 1 [label="Positive example" color="green"]
+            0 -> 2 [label="Negative example" color="red"]
+
+            0 -> {3, 4}
+            3 -> {5, 6}
+            4 -> {7, 8}
+
+            1 -> 9 # shouldn't be sampled
+            2 -> 10 # shouldn't be sampled
+
+        For sampling around node `0`, the fields on the output Data object will be:
+            - `y_positive`: {0: torch.tensor([1])} # 1 is the only positive label for node 0
+            - `y_negative`: {0: torch.tensor([2])} # 2 is the only negative label for node 0
+
+        Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
             num_neighbors (list[int] or Dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
