@@ -21,7 +21,7 @@ from gigl.src.data_preprocessor.lib.types import (
     NodeDataPreprocessingSpec,
     NodeOutputIdentifier,
 )
-from gigl.src.mocking.dataset_asset_mocking_suite import mocked_datasets
+from gigl.src.mocking.dataset_asset_mocking_suite import DatasetAssetMockingSuite
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
@@ -33,9 +33,9 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
         self.__mocked_dataset_name = kwargs.get("mocked_dataset_name", None)
         assert self.__mocked_dataset_name is not None, "mocked_dataset_name is required"
 
-        self.__mocked_dataset: MockedDatasetInfo = mocked_datasets[
-            self.__mocked_dataset_name
-        ]
+        self.__mocked_dataset: MockedDatasetInfo = DatasetAssetMockingSuite().compute_datasets_to_mock(
+            selected_datasets=[self.__mocked_dataset_name]
+        )
         self.__mocked_dataset_artifact_metadata = (
             get_mocked_dataset_artifact_metadata()[self.__mocked_dataset.name]
         )
