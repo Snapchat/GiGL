@@ -220,7 +220,7 @@ def sort_yaml_dict_recursively(obj: dict) -> dict:
 
 def show_colored_unified_diff(f1_lines, f2_lines, f1_name, f2_name):
     diff_lines = list(
-        unified_diff(f1_lines, f2_lines, fromfile=f1_name, tofile=f2_name)
+        unified_diff(f1_lines, f2_lines, fromfile=f2_name, tofile=f1_name)
     )
     html_lines = []
     for line in diff_lines:
