@@ -24,11 +24,11 @@ from gigl.src.mocking.lib.versioning import (
 logger = Logger()
 
 _HOMOGENEOUS_TOY_GRAPH_CONFIG = str(
-    GIGL_ROOT_DIR / "/python/gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
+    GIGL_ROOT_DIR / "python/gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
 )
 _BIPARTITE_TOY_GRAPH_CONFIG = str(
     GIGL_ROOT_DIR
-    / "/python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
+    / "python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
 )
 
 
