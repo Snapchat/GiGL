@@ -183,7 +183,7 @@ def resolve_node_sampler_input_from_user_input(
     elif isinstance(input_nodes, abc.Mapping):
         if len(input_nodes) != 1:
             raise ValueError(
-                f"If input_nodes is provided as a mapping, it must contain exactly one key/value pair. Received: {input_nodes}"
+                f"If input_nodes is provided as a mapping, it must contain exactly one key/value pair. Received: {input_nodes}. This may happen if you call Loader(node_ids=dataset.node_ids) with a heterogeneous dataset."
             )
         node_type, node_ids = next(iter(input_nodes.items()))
         is_labeled_homoogeneous = node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -191,9 +191,7 @@ def resolve_node_sampler_input_from_user_input(
         node_type, node_ids = input_nodes
     elif input_nodes is None:
         if dataset_nodes is None:
-            raise ValueError(
-                "If input_nodes is None, dataset_nodes must also be provided."
-            )
+            raise ValueError("If input_nodes is None, the dataset must have node ids.")
         if isinstance(dataset_nodes, torch.Tensor):
             node_type = None
             node_ids = dataset_nodes

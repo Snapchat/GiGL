@@ -252,3 +252,7 @@ class LoaderUtilsTest(unittest.TestCase):
     ):
         with self.assertRaises(expected_exception):
             resolve_node_sampler_input_from_user_input(input_nodes, dataset_nodes)
+
+
+if __name__ == "__main__":
+    unittest.main()
