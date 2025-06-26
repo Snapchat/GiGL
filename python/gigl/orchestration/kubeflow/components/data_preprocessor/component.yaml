@@ -5,6 +5,13 @@ inputs:
 - {name: task_config_uri, type: String, description: 'Frozen GBML config uri'}
 - {name: resource_config_uri, type: String, description: 'Runtine argument for resource and env specifications of each component'}
 - {name: custom_worker_image_uri, type: String, description: "Docker image to use for the worker harness in dataflow "}
+- {name: data_preprocessor_class_path, type: String, description: "Path to the DataPreprocessor class to use"}
+- {name: data_preprocessor_args, type: String, description: "Arguments to pass to the DataPreprocessor class"}
+- {name: preprocessed_metadata_uri, type: String, description: "URI to write preprocessed metadata to."}
+- {name: data_preprocessor_num_shards, type: Integer, description: "Number of shards for the data preprocessor."}
+- {name: node_type_to_condensed_node_type, type: String, description: "Mapping of node types to condensed node types.", optional: true, default: ""}
+- {name: edge_type_to_condensed_edge_type, type: String, description: "Mapping of edge types to condensed edge types.", optional: true, default: ""}
+
 outputs:
 
 implementation:
@@ -16,4 +23,10 @@ implementation:
       --task_config_uri, {inputValue: task_config_uri},
       --resource_config_uri, {inputValue: resource_config_uri},
       --custom_worker_image_uri, {inputValue: custom_worker_image_uri},
+      --data_preprocessor_class_path, {inputValue: data_preprocessor_class_path},
+      --data_preprocessor_args, {inputValue: data_preprocessor_args},
+      --preprocessed_metadata_uri, {inputValue: preprocessed_metadata_uri},
+      --data_preprocessor_num_shards, {inputValue: data_preprocessor_num_shards},
+      --node_type_to_condensed_node_type, {inputValue: node_type_to_condensed_node_type},
+      --edge_type_to_condensed_edge_type, {inputValue: edge_type_to_condensed_edge_type},
     ]
