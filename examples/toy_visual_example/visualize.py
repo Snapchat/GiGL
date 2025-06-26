@@ -1,10 +1,15 @@
-from typing import Union
+from difflib import unified_diff
+from typing import Type, Union
 
 import matplotlib.pyplot as plt
 import networkx as nx
+import tensorflow as tf
 import torch_geometric.utils
+import yaml
+from IPython.display import HTML, display
 from torch_geometric.data import HeteroData
 
+from gigl.common import Uri
 from snapchat.research.gbml import training_samples_schema_pb2
 
 
@@ -95,16 +100,16 @@ class GraphVisualizer:
 
         edge_colors = []
         edge_widths = []
-        for edge in output_graph.edges():
+        for output_edge in output_graph.edges():
             color: str = "black"
             edge_width = 1.0
             if hasattr(pb, "pos_edges") and pb.pos_edges:
                 for pos_edge in pb.pos_edges:
                     if (
-                        pos_edge.src_node_id == edge[0]
-                        and pos_edge.dst_node_id == edge[1]
+                        pos_edge.src_node_id == output_edge[0]
+                        and pos_edge.dst_node_id == output_edge[1]
                         and pos_edge.condensed_edge_type
-                        == output_graph[edge[0]][edge[1]]["condensed_edge_type"]
+                        == output_graph[output_edge[0]][output_edge[1]]["condensed_edge_type"]
                     ):
                         color = "red"
                         edge_width = 2.0
@@ -112,10 +117,10 @@ class GraphVisualizer:
             if hasattr(pb, "neg_edges") and pb.neg_edges:
                 for neg_edge in pb.neg_edges:
                     if (
-                        neg_edge.src_node_id == edge[0]
-                        and neg_edge.dst_node_id == edge[1]
+                        neg_edge.src_node_id == output_edge[0]
+                        and neg_edge.dst_node_id == output_edge[1]
                         and neg_edge.condensed_edge_type
-                        == output_graph[edge[0]][edge[1]]["condensed_edge_type"]
+                        == output_graph[output_edge[0]][output_edge[1]]["condensed_edge_type"]
                     ):
                         color = "blue"
                         edge_width = 2.0
@@ -133,7 +138,7 @@ class GraphVisualizer:
             else:
                 node_border_colors.append("lightgrey")
                 node_border_widths.append(1)
-            node_color = GraphVisualizer.assign_color(node_id)
+            node_color = GraphVisualizer.assign_color(str(node_id))
             node_colors.append(node_color)
 
         plt.clf()
@@ -153,3 +158,103 @@ class GraphVisualizer:
         )
         plt.show()
         return plt
+
+
+def find_node_pb(
+    tfrecord_uri_prefix: str,
+    node_id: int,
+    pb_type: Type[
+        Union[
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+            training_samples_schema_pb2.RootedNodeNeighborhood,
+        ]
+    ],
+) -> Union[
+    training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+    training_samples_schema_pb2.RootedNodeNeighborhood,
+]:
+    uri = tfrecord_uri_prefix + "*.tfrecord"
+    ds = tf.data.TFRecordDataset(tf.io.gfile.glob(uri)).as_numpy_iterator()
+    pb: Union[
+        training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+        training_samples_schema_pb2.RootedNodeNeighborhood,
+    ]
+    for bytestr in ds:
+        try:
+            if pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
+                pb = training_samples_schema_pb2.RootedNodeNeighborhood()
+            elif (
+                pb_type
+                == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+            ):
+                pb = training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample()
+            pb.ParseFromString(bytestr)
+            if pb.root_node.node_id == node_id:
+                break
+        except StopIteration:
+            break
+    return pb
+
+
+def sort_yaml_dict_recursively(obj: dict) -> dict:
+    # We sort the json recursively as the GiGL proto serialization code does not guarantee order of original keys.
+    # This is important for the diff to be stable and not show errors due to key/list order changes.
+    if isinstance(obj, dict):
+        return {k: sort_yaml_dict_recursively(obj[k]) for k in sorted(obj)}
+    elif isinstance(obj, list):
+        return [sort_yaml_dict_recursively(item) for item in obj]
+    else:
+        return obj
+
+
+def show_colored_unified_diff(f1_lines, f2_lines, f1_name, f2_name):
+    diff_lines = list(
+        unified_diff(f1_lines, f2_lines, fromfile=f1_name, tofile=f2_name)
+    )
+    html_lines = []
+    for line in diff_lines:
+        if line.startswith("+") and not line.startswith("+++"):
+            color = "#228B22"  # green
+        elif line.startswith("-") and not line.startswith("---"):
+            color = "#B22222"  # red
+        elif line.startswith("@"):
+            color = "#1E90FF"  # blue
+        else:
+            color = "#000000"  # black
+        html_lines.append(
+            f'<pre style="margin:0; color:{color}; background-color:white;">{line.rstrip()}</pre>'
+        )
+    display(HTML("".join(html_lines)))
+
+
+from gigl.src.common.utils.file_loader import FileLoader
+
+
+def show_task_config_colored_unified_diff(
+    f1_uri: Uri, f2_uri: Uri, f1_name: str, f2_name: str
+):
+    """
+    Displays a colored unified diff of two task config files.
+    Args:
+        f1_uri (Uri): URI of the first file.
+        f2_uri (Uri): URI of the second file.
+    """
+    file_loader = FileLoader()
+    frozen_task_config_file_contents: str
+    template_task_config_file_contents: str
+
+    with open(file_loader.load_to_temp_file(file_uri_src=f1_uri).name, "r") as f:
+        data = yaml.safe_load(f)
+        # sort_keys by default
+        frozen_task_config_file_contents = yaml.dump(sort_yaml_dict_recursively(data))
+
+    with open(file_loader.load_to_temp_file(file_uri_src=f2_uri).name, "r") as f:
+        data = yaml.safe_load(f)
+        template_task_config_file_contents = yaml.dump(sort_yaml_dict_recursively(data))
+
+    show_colored_unified_diff(
+        template_task_config_file_contents.splitlines(),
+        frozen_task_config_file_contents.splitlines(),
+        f1_name=f1_name,
+        f2_name=f2_name,
+    )

@@ -420,7 +420,7 @@ class DatasetAssetMockingSuite:
         self,
     ) -> MockedDatasetInfo:
         toy_data: HeteroData = load_toy_graph(
-            graph_config=_HOMOGENEOUS_TOY_GRAPH_CONFIG
+            graph_config_path=_HOMOGENEOUS_TOY_GRAPH_CONFIG
         )
 
         name: str = "toy_graph_homogeneous_node_anchor_lp"
