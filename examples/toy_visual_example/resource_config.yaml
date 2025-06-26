@@ -37,11 +37,11 @@ preprocessor_config:
     disk_size_gb: 300
 subgraph_sampler_config:
   machine_type: "n2-standard-16"
-  num_local_ssds: 1
+  num_local_ssds: 2
   num_replicas: 2 # Min of 2 replicas is required for subgraph sampling
 split_generator_config:
   machine_type: "n2-standard-16"
-  num_local_ssds: 1
+  num_local_ssds: 2
   num_replicas: 2 #  Min of 2 replicas is required for split generation
 trainer_config:
   vertex_ai_trainer_config:

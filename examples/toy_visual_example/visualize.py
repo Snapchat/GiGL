@@ -1,5 +1,5 @@
 from difflib import unified_diff
-from typing import Type, Union
+from typing import Type, Union, Optional
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -175,10 +175,11 @@ def find_node_pb(
 ]:
     uri = tfrecord_uri_prefix + "*.tfrecord"
     ds = tf.data.TFRecordDataset(tf.io.gfile.glob(uri)).as_numpy_iterator()
-    pb: Union[
+    pb: Optional[Union[
         training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
         training_samples_schema_pb2.RootedNodeNeighborhood,
-    ]
+    ]] = None
+    print(f"Searching for node {node_id} in {uri}")
     for bytestr in ds:
         try:
             if pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
@@ -188,6 +189,8 @@ def find_node_pb(
                 == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
             ):
                 pb = training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample()
+            else:
+                raise ValueError(f"Unsupported pb_type: {pb_type}")
             pb.ParseFromString(bytestr)
             if pb.root_node.node_id == node_id:
                 break
