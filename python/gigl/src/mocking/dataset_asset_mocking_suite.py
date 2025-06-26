@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import yaml
 
+from gigl.common.constants import GIGL_ROOT_DIR
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.common.types.task_metadata import TaskMetadataType
@@ -22,10 +23,8 @@ from gigl.src.mocking.lib.versioning import (
 
 logger = Logger()
 
-_HOMOGENEOUS_TOY_GRAPH_CONFIG = "gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
-_BIPARTITE_TOY_GRAPH_CONFIG = (
-    "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
-)
+_HOMOGENEOUS_TOY_GRAPH_CONFIG = str(GIGL_ROOT_DIR / "/python/gigl/src/mocking/mocking_assets/toy_graph_data.yaml")
+_BIPARTITE_TOY_GRAPH_CONFIG = str(GIGL_ROOT_DIR / "/python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml")
 
 
 class DatasetAssetMockingSuite:
@@ -539,7 +538,6 @@ class DatasetAssetMockingSuite:
             logger.debug(f"\t- {mocking_func.__name__}")
             mocked_dataset_info = mocking_func()
             self.mocked_datasets[mocked_dataset_info.name] = mocked_dataset_info
-
 
 mocked_datasets = DatasetAssetMockingSuite().mocked_datasets
 
