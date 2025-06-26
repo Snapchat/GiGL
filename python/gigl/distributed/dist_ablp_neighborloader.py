@@ -25,9 +25,9 @@ from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.utils.neighborloader import (
     NodeSamplerInput,
-    infer_node_sampler_input_from_user_input,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    resolve_node_sampler_input_from_user_input,
     shard_nodes_by_process,
     strip_label_edges,
 )
@@ -134,11 +134,10 @@ class DistABLPLoader(DistLoader):
                 f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
             )
         self._is_input_heterogeneous: bool = False
-        resolved_inputs = infer_node_sampler_input_from_user_input(
+        resolved_inputs = resolve_node_sampler_input_from_user_input(
             input_nodes=input_nodes,
             dataset_nodes=dataset.node_ids,
         )
-        print(f"Resolved inputs: {resolved_inputs}")
         node_type = resolved_inputs.node_type
         node_ids = resolved_inputs.node_ids
         self._is_labeled_homogeneous = resolved_inputs.is_labeled_homogeneous

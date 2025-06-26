@@ -17,14 +17,11 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.utils.neighborloader import (
     NodeSamplerInput,
-    infer_node_sampler_input_from_user_input,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    resolve_node_sampler_input_from_user_input,
     shard_nodes_by_process,
     strip_label_edges,
-)
-from gigl.src.common.types.graph_data import (
-    NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
@@ -216,7 +213,7 @@ class DistNeighborLoader(DistLoader):
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
 
-        resolved_inputs = infer_node_sampler_input_from_user_input(
+        resolved_inputs = resolve_node_sampler_input_from_user_input(
             input_nodes=input_nodes,
             dataset_nodes=dataset.node_ids,
         )
@@ -224,7 +221,7 @@ class DistNeighborLoader(DistLoader):
         node_ids = resolved_inputs.node_ids
         self._is_labeled_homogeneous = resolved_inputs.is_labeled_homogeneous
         if self._is_labeled_homogeneous:
-            # If the dataset is labeled heterogeneous, we need to patch the fanout for sampling.
+            # If the dataset is labeled homogeneous, we need to patch the fanout for sampling.
             num_neighbors = patch_fanout_for_sampling(
                 dataset.get_edge_types(), num_neighbors
             )

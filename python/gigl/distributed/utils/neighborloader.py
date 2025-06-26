@@ -145,10 +145,22 @@ NodeSamplerInput = Optional[
 ]
 
 
-def infer_node_sampler_input_from_user_input(
+def resolve_node_sampler_input_from_user_input(
     input_nodes: NodeSamplerInput,
     dataset_nodes: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
 ) -> _ResolvedNodeSamplerInput:
+    """Resolves the input nodes for a node sampler.
+    This function takes the user input for input nodes and resolves it to a consistent format.
+
+    See the comment above NodeSamplerInput for the allowed inputs.
+
+    Args:
+        input_nodes (NodeSamplerInput): The input nodes provided by the user.
+        dataset_nodes (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]): The nodes in the dataset.
+
+    Returns:
+        _ResolvedNodeSamplerInput: A dataclass containing the resolved node type, node IDs,
+    """
     is_labeled_homoogeneous = False
     if isinstance(input_nodes, torch.Tensor):
         node_ids = input_nodes
@@ -173,8 +185,8 @@ def infer_node_sampler_input_from_user_input(
             raise ValueError(
                 f"If input_nodes is provided as a mapping, it must contain exactly one key/value pair. Received: {input_nodes}"
             )
-        is_labeled_homoogeneous = True
         node_type, node_ids = next(iter(input_nodes.items()))
+        is_labeled_homoogeneous = node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
     elif isinstance(input_nodes, tuple):
         node_type, node_ids = input_nodes
     elif input_nodes is None:
