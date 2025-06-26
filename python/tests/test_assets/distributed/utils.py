@@ -1,6 +1,8 @@
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
+
+from gigl.distributed.utils import get_free_port
 
 
 def assert_tensor_equality(
@@ -37,3 +39,18 @@ def assert_tensor_equality(
 
         # Compare the sorted tensors
         torch.testing.assert_close(sorted_a, sorted_b)
+
+
+def get_process_group_init_method(
+    host: str = "localhost", port_picker: Callable[[], int] = get_free_port
+) -> str:
+    """
+    Returns the initialization method for the process group.
+    This is should be used with torch.distributed.init_process_group
+    Args:
+        host (str): The host address for the process group.
+        port_picker (Callable[[], int]): A callable that returns a free port number.
+    Returns:
+        str: The initialization method for the process group.
+    """
+    return f"tcp://{host}:{port_picker()}"

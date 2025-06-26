@@ -17,7 +17,7 @@ inputs:
   timeout:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
-  
+
 
 runs:
   using: "composite"

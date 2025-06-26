@@ -20,10 +20,10 @@ def run_distributed_dataset(
     rank: int,
     world_size: int,
     mocked_dataset_info: MockedDatasetInfo,
-    output_dict: MutableMapping[int, DistLinkPredictionDataset],
     should_load_tensors_in_parallel: bool,
     master_ip_address: str,
     master_port: int,
+    output_dict: Optional[MutableMapping[int, DistLinkPredictionDataset]] = None,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
 ) -> DistLinkPredictionDataset:
@@ -33,10 +33,11 @@ def run_distributed_dataset(
         rank (int): Rank of the current process
         world_size (int): World size of the current process
         mocked_dataset_info (MockedDatasetInfo): Mocked Dataset Metadata for current run
-        output_dict (MutableMapping[int, DistLinkPredictionDataset]): Dict initialized by mp.Manager().dict() in which outputs will be written to
+
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         master_ip_address (str): Master IP Address for performing distributed operations.
         master_port (int) Master Port for performing distributed operations
+        output_dict (Optional[MutableMapping[int, DistLinkPredictionDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[NodeAnchorLinkSplitter]): Provided splitter for testing
     """
@@ -75,5 +76,6 @@ def run_distributed_dataset(
         splitter=splitter,
         _dataset_building_port=master_port,
     )
-    output_dict[rank] = dataset
+    if output_dict is not None:
+        output_dict[rank] = dataset
     return dataset

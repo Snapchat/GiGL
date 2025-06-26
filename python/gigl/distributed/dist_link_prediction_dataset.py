@@ -360,7 +360,9 @@ class DistLinkPredictionDataset(DistDataset):
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
         partitioned_edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
-        partitioned_edge_ids: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
+        partitioned_edge_ids: Union[
+            Optional[torch.Tensor], Dict[EdgeType, Optional[torch.Tensor]]
+        ]
         if isinstance(partition_output.partitioned_edge_index, GraphPartitionData):
             partitioned_edge_index = partition_output.partitioned_edge_index.edge_index
             partitioned_edge_ids = partition_output.partitioned_edge_index.edge_ids
@@ -473,8 +475,16 @@ class DistLinkPredictionDataset(DistDataset):
                 with_gpu=False,
             )
             del partitioned_edge_features, partition_edge_feat_ids, edge_id2idx
-        elif isinstance(partition_output.partitioned_edge_features, abc.Mapping):
-            assert isinstance(partition_output.edge_partition_book, abc.Mapping)
+        elif (
+            isinstance(partition_output.partitioned_edge_features, abc.Mapping)
+            and len(partition_output.partitioned_edge_features) > 0
+        ):
+            assert isinstance(
+                partition_output.edge_partition_book, abc.Mapping
+            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book. Got edge partition book of type {type(partition_output.edge_partition_book)}"
+            assert (
+                len(partition_output.edge_partition_book) > 0
+            ), f"Expected at least one edge type in edge partition book, got {partition_output.edge_partition_book.keys()}."
             edge_type_to_partitioned_edge_features = {
                 edge_type: feature_partition_data.feats
                 for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()

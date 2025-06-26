@@ -3,6 +3,7 @@
 **/*.pyc
 **/*.pyo
 **/*.pyd
+**/*.pkl
 .python-version
 .mypy_cache
 _autosummary
