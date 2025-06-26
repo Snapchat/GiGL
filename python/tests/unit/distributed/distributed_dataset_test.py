@@ -92,7 +92,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
         ]
     )
     def test_build_dataset(self, _, partitioner_class: Type[DistPartitioner]):
-
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
@@ -381,7 +380,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
         expected_test_node_ids,
         expected_node_ids,
     ):
-
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
@@ -398,7 +396,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
     # This tests that if we build a dataset with a supervision edge type which is not a message passing edge type, we still correctly load the supervision edge
     def test_build_dataset_with_unique_supervision_edge_type(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
             get_mocked_dataset_artifact_metadata()[
                 TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
@@ -465,7 +462,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
             distributed_context=distributed_context,
             sample_edge_direction="in",
             should_load_tensors_in_parallel=True,
-            _dataset_building_port=master_port,
         )
 
         assert isinstance(

@@ -450,15 +450,11 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     def test_infinite_distributed_neighbor_loader(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
-
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
         )
 
         assert isinstance(dataset.node_ids, torch.Tensor)
