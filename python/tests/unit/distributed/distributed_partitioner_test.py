@@ -100,6 +100,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         expected_node_types: List[NodeType],
         expected_edge_types: List[EdgeType],
         expected_pb_dtype: torch.dtype,
+        expected_edge_feat_types: List[EdgeType],
     ) -> None:
         """
         Checks correctness for graph outputs of partitioning, including node partition book, edge partition book, and the graph edge indices + ids
@@ -114,6 +115,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             expected_edge_types (List[EdgeType]): Expected edge types for heterogeneous input
             expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
                 Otherwise, it will be a torch.uint8.
+            expected_edge_feat_types (List[EdgeType]): Expected edge types that have edge features
         """
         self._assert_data_type_correctness(
             output_data=output_node_partition_book,
@@ -121,34 +123,39 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             expected_entity_types=expected_node_types,
         )
         self._assert_data_type_correctness(
-            output_data=output_edge_partition_book,
-            is_heterogeneous=is_heterogeneous,
-            expected_entity_types=expected_edge_types,
-        )
-        self._assert_data_type_correctness(
             output_data=output_edge_index,
             is_heterogeneous=is_heterogeneous,
             expected_entity_types=expected_edge_types,
         )
+
+        if len(expected_edge_feat_types) != 0:
+            self._assert_data_type_correctness(
+                output_data=output_edge_partition_book,
+                is_heterogeneous=is_heterogeneous,
+                expected_entity_types=expected_edge_feat_types,
+            )
         # To unify logic between homogeneous and heterogeneous cases, we define an iterable which we'll loop over.
         # Each iteration contains an EdgeType, an edge partition book, and a graph consisting of edge indices and ids.
-        entity_iterable: Iterable[Tuple[EdgeType, PartitionBook, GraphPartitionData]]
-        is_edge_partition_book_homogeneous = isinstance(
-            output_edge_partition_book, (torch.Tensor, PartitionBook)
+        entity_iterable: Iterable[
+            Tuple[EdgeType, Optional[PartitionBook], GraphPartitionData]
+        ]
+        is_edge_partition_book_heterogeneous = isinstance(
+            output_edge_partition_book, abc.Mapping
         )
-        if isinstance(output_edge_partition_book, abc.Mapping) and isinstance(
+        if is_edge_partition_book_heterogeneous and isinstance(
             output_edge_index, abc.Mapping
         ):
-            # TODO (mkolodner-sc): Implement heterogeneous range-based partitioning
             entity_iterable = [
                 (
                     edge_type,
-                    output_edge_partition_book[edge_type],
+                    output_edge_partition_book[edge_type]
+                    if edge_type in output_edge_partition_book
+                    else None,
                     output_edge_index[edge_type],
                 )
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
             ]
-        elif is_edge_partition_book_homogeneous and isinstance(
+        elif not is_edge_partition_book_heterogeneous and isinstance(
             output_edge_index, GraphPartitionData
         ):
             entity_iterable = [
@@ -208,32 +215,38 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
             edge_ids = graph.edge_ids
 
-            if target_node_type == ITEM_NODE_TYPE:
-                # If the target_node_type is ITEM, we expect there to be twice as many edges as nodes since item node is the destination node of two edges.
-                self.assertEqual(
-                    edge_ids.size(0),
-                    node_ids.size(0) * 2,
+            if edge_ids is not None:
+                assert edge_partition_book is not None
+                self.assertTrue(edge_type in expected_edge_feat_types)
+                if target_node_type == ITEM_NODE_TYPE:
+                    # If the target_node_type is ITEM, we expect there to be twice as many edges as nodes since item node is the destination node of two edges.
+                    self.assertEqual(
+                        edge_ids.size(0),
+                        node_ids.size(0) * 2,
+                    )
+                else:
+                    # Otherwise, we expect there to be the same number of edges and nodes, as each user node is the source and destination node of exactly one edge.
+                    self.assertEqual(
+                        edge_ids.size(0),
+                        node_ids.size(0),
+                    )
+
+                # We expect the edge ids on the current rank to be correctly specified in the edge partition book. For example, if we are on rank 0 with edge ids [2, 4, 6], we expect
+                # edge_partition_book[[2, 4, 6]] = 0.
+                expected_edge_pidx = (
+                    torch.ones(
+                        edge_ids.size(0),
+                        dtype=expected_pb_dtype,
+                    )
+                    * rank
+                )
+                assert_tensor_equality(
+                    tensor_a=edge_partition_book[edge_ids],
+                    tensor_b=expected_edge_pidx,
                 )
             else:
-                # Otherwise, we expect there to be the same number of edges and nodes, as each user node is the source and destination node of exactly one edge.
-                self.assertEqual(
-                    edge_ids.size(0),
-                    node_ids.size(0),
-                )
-
-            # We expect the edge ids on the current rank to be correctly specified in the edge partition book. For example, if we are on rank 0 with edge ids [2, 4, 6], we expect
-            # edge_partition_book[[2, 4, 6]] = 0.
-            expected_edge_pidx = (
-                torch.ones(
-                    edge_ids.size(0),
-                    dtype=expected_pb_dtype,
-                )
-                * rank
-            )
-            assert_tensor_equality(
-                tensor_a=edge_partition_book[edge_ids],
-                tensor_b=expected_edge_pidx,
-            )
+                self.assertTrue(edge_type not in expected_edge_feat_types)
+                self.assertTrue(edge_partition_book is None)
 
     def _assert_node_feature_outputs(
         self,
@@ -413,6 +426,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     edge_type not in RANK_TO_MOCKED_GRAPH[rank].edge_features
                 )
             else:
+                assert graph.edge_ids is not None
                 if should_assign_edges_by_src_node:
                     target_node_type = edge_type.src_node_type
                 else:
@@ -604,6 +618,14 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 partitioner_class=DistRangePartitioner,
                 expected_pb_dtype=torch.int64,
             ),
+            param(
+                "Heterogeneous Partitioning By Source Node - Range Partitioning, Register minimal entities separately through register functions",
+                is_heterogeneous=True,
+                input_data_strategy=InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
+                should_assign_edges_by_src_node=True,
+                partitioner_class=DistRangePartitioner,
+                expected_pb_dtype=torch.int64,
+            ),
         ]
     )
     def test_partitioning_correctness(
@@ -662,6 +684,14 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         is_range_based_partition = partitioner_class is DistRangePartitioner
 
+        if (
+            input_data_strategy
+            == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
+        ):
+            expected_edge_feat_types = []
+        else:
+            expected_edge_feat_types = [USER_TO_USER_EDGE_TYPE]
+
         for rank, partition_output in output_dict.items():
             partitioned_edge_index = partition_output.partitioned_edge_index
             assert partitioned_edge_index is not None
@@ -675,6 +705,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 expected_node_types=MOCKED_HETEROGENEOUS_NODE_TYPES,
                 expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                 expected_pb_dtype=expected_pb_dtype,
+                expected_edge_feat_types=expected_edge_feat_types,
             )
             if isinstance(partitioned_edge_index, abc.Mapping):
                 for edge_type, graph in partitioned_edge_index.items():

@@ -107,12 +107,12 @@ def calculate_cosine_sim_between_embedding_tables(
 
 def calculate_cosine_similarity_stats(
     cosine_sim_df: pd.DataFrame,
-) -> pd.DataFrame:
+) -> pd.Series:
     """
     Calculates statistics of cosine similarity
     Args: pd.DataFrame: with columns: {DEFAULT_NODE_ID_FIELD, _emb_1, _emb_2, COSINE_SIM_FIELD}
     Returns:
-        pd.DataFrame: with columns: {count, mean, std, min, 1%, 5%, 25%, 50%, 75%, 95%, 99%, max, dtype}
+        pd.Series: with columns: {count, mean, std, min, 1%, 5%, 25%, 50%, 75%, 95%, 99%, max, dtype}
     """
     print(cosine_sim_df.head())
     return cosine_sim_df[COSINE_SIM_FIELD].describe(

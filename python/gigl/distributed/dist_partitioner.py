@@ -20,6 +20,7 @@ from gigl.types.graph import (
     PartitionOutput,
     to_heterogeneous_edge,
     to_heterogeneous_node,
+    to_homogeneous,
 )
 
 logger = Logger()
@@ -192,7 +193,7 @@ class DistPartitioner:
         self._node_feat_dim: Optional[Dict[NodeType, int]] = None
 
         self._edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
-        self._edge_ids: Optional[Dict[EdgeType, torch.Tensor]] = None
+        self._edge_ids: Optional[Dict[EdgeType, tuple[int, int]]] = None
         self._edge_feat: Optional[Dict[EdgeType, torch.Tensor]] = None
         self._edge_feat_dim: Optional[Dict[EdgeType, int]] = None
 
@@ -427,7 +428,7 @@ class DistPartitioner:
         # Gathered_num_edges is then used to identify the number of edges on each rank, allowing us to access the total number of edges across all ranks
         gathered_edge_info: Dict[str, Tuple[int, Dict[EdgeType, int]]]
         self._num_edges = {}
-        edge_ids: Dict[EdgeType, torch.Tensor] = {}
+        edge_ids: Dict[EdgeType, tuple[int, int]] = {}
         edge_type_to_num_edges: Dict[EdgeType, int] = {
             edge_type: input_edge_index[edge_type].size(1)
             for edge_type in sorted(input_edge_index.keys())
@@ -456,9 +457,9 @@ class DistPartitioner:
             self._num_edges[edge_type] = sum(num_edges_all_ranks)
 
             # Setting all the edge ids on the current rank
-            edge_ids[edge_type] = torch.arange(start, end)
+            edge_ids[edge_type] = (start, end)
 
-        self._edge_ids = convert_to_tensor(edge_ids, dtype=torch.int64)
+        self._edge_ids = edge_ids
 
     def register_node_features(
         self, node_features: Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
@@ -819,8 +820,11 @@ class DistPartitioner:
         self,
         node_partition_book: Dict[NodeType, PartitionBook],
         edge_type: EdgeType,
-    ) -> Tuple[GraphPartitionData, Optional[FeaturePartitionData], PartitionBook]:
-        r"""Partition graph topology and edge features of a specific edge type.
+    ) -> Tuple[
+        GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+    ]:
+        r"""Partition graph topology and edge features of a specific edge type. If there are no edge features for the current edge type,
+        both the returned edge feature and edge partition book will be None.
 
         Args:
             node_partition_book (Dict[NodeType, PartitionBook]): The partition books of all graph nodes.
@@ -828,8 +832,8 @@ class DistPartitioner:
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            FeaturePartitionData: The edge features on the current partition
-            PartitionBook: The partition book of graph edges.
+            Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
+            Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
 
         assert (
@@ -838,10 +842,17 @@ class DistPartitioner:
             and self._num_edges is not None
         ), "Must have registered edges prior to partitioning them"
 
+        should_skip_edge_feats = (
+            self._edge_feat is None or edge_type not in self._edge_feat
+        )
+
         # Partitioning Edge Indices
 
         edge_index = self._edge_index[edge_type]
-        edge_ids = self._edge_ids[edge_type]
+        edge_ids_start, edge_ids_end = self._edge_ids[edge_type]
+        edge_ids = convert_to_tensor(
+            torch.arange(edge_ids_start, edge_ids_end), dtype=torch.int64
+        )
         num_edges = self._num_edges[edge_type]
 
         if self._should_assign_edges_by_src_node:
@@ -861,13 +872,8 @@ class DistPartitioner:
             rank_indices=edge_ids,
             partition_function=_edge_pfn,
             total_val_size=num_edges,
-            generate_pb=True,
+            generate_pb=not should_skip_edge_feats,
         )
-
-        # We add this check both to ensure generate_pb was set to True for above call and to correctly type edge_partition_book as a torch tensor
-        assert isinstance(
-            edge_partition_book, torch.Tensor
-        ), "Ensure `generate_pb` is set to true prior to calling _partition_by_chunk for edge partitioning"
 
         del edge_index, target_indices
         del self._edge_index[edge_type]
@@ -888,7 +894,10 @@ class DistPartitioner:
                 ),
                 dim=0,
             )
-            partitioned_edge_ids = torch.cat([r[2] for r in edge_res_list])
+            if should_skip_edge_feats:
+                partitioned_edge_ids = None
+            else:
+                partitioned_edge_ids = torch.cat([r[2] for r in edge_res_list])
 
         current_graph_part = GraphPartitionData(
             edge_index=partitioned_edge_index,
@@ -901,7 +910,7 @@ class DistPartitioner:
 
         # Partitioning Edge Features
 
-        if self._edge_feat is None or edge_type not in self._edge_feat:
+        if should_skip_edge_feats:
             logger.info(
                 f"No edge features detected for edge type {edge_type}, will only partition edge indices for this edge type."
             )
@@ -913,10 +922,13 @@ class DistPartitioner:
             gc.collect()
         else:
             assert self._edge_feat_dim is not None and edge_type in self._edge_feat_dim
+            assert self._edge_feat is not None and edge_type in self._edge_feat
+            assert edge_partition_book is not None
             edge_feat = self._edge_feat[edge_type]
             edge_feat_dim = self._edge_feat_dim[edge_type]
 
             def _edge_feature_pfn(edge_feature_ids, _):
+                assert edge_partition_book is not None
                 return edge_partition_book[edge_feature_ids]
 
             # partitioned_results is a list of tuples. Each tuple correpsonds
@@ -954,9 +966,9 @@ class DistPartitioner:
             current_feat_part = FeaturePartitionData(
                 feats=partitioned_edge_features, ids=partitioned_edge_feat_ids
             )
-        logger.info(
-            f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
-        )
+            logger.info(
+                f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
+            )
 
         return current_graph_part, current_feat_part, edge_partition_book
 
@@ -977,6 +989,10 @@ class DistPartitioner:
         Returns:
             torch.Tensor: Edge index tensor of positive or negative labels, depending on is_positive flag
         """
+        if edge_type.src_node_type not in node_partition_book:
+            raise ValueError(
+                f"Edge type {edge_type} source node type {edge_type.src_node_type} not found in the node partition book node keys: {node_partition_book.keys()}"
+            )
 
         target_node_partition_book = node_partition_book[edge_type.src_node_type]
         if is_positive:
@@ -1145,10 +1161,12 @@ class DistPartitioner:
     def partition_edge_index_and_edge_features(
         self, node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]]
     ) -> Union[
-        Tuple[GraphPartitionData, Optional[FeaturePartitionData], PartitionBook],
+        Tuple[
+            GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+        ],
         Tuple[
             Dict[EdgeType, GraphPartitionData],
-            Optional[Dict[EdgeType, FeaturePartitionData]],
+            Dict[EdgeType, FeaturePartitionData],
             Dict[EdgeType, PartitionBook],
         ],
     ]:
@@ -1216,8 +1234,9 @@ class DistPartitioner:
                 node_partition_book=transformed_node_partition_book, edge_type=edge_type
             )
             partitioned_edge_index[edge_type] = partitioned_edge_index_per_edge_type
-            edge_partition_book[edge_type] = edge_partition_book_per_edge_type
             if partitioned_edge_features_per_edge_type is not None:
+                assert edge_partition_book_per_edge_type is not None
+                edge_partition_book[edge_type] = edge_partition_book_per_edge_type
                 partitioned_edge_features[
                     edge_type
                 ] = partitioned_edge_features_per_edge_type
@@ -1226,15 +1245,14 @@ class DistPartitioner:
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
 
         if self._is_input_homogeneous:
-            return_edge_features = (
-                partitioned_edge_features[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-                if partitioned_edge_features
-                else None
-            )
             return (
-                partitioned_edge_index[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
-                return_edge_features,
-                edge_partition_book[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
+                to_homogeneous(partitioned_edge_index),
+                to_homogeneous(partitioned_edge_features)
+                if len(partitioned_edge_features) > 0
+                else None,
+                to_homogeneous(edge_partition_book)
+                if len(edge_partition_book) > 0
+                else None,
             )
         else:
             return (
@@ -1251,6 +1269,7 @@ class DistPartitioner:
         """
         Partitions positive or negative labels of a graph. If heterogeneous, partitions labels for all edge type.
         Must call `partition_node` first to get the node partition book as input.
+        Note that labels are always partitioned by the source node, since the edges are always assumed to be anchor_node -> to -> supervision node.
         Args:
             node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
             is_positive (bool): Whether positive labels are currently being registered. If False, negative labels will be partitioned.
@@ -1265,12 +1284,6 @@ class DistPartitioner:
                 self._positive_label_edge_index is not None
             ), "Must register positive labels prior to partitioning them"
 
-            self._assert_data_type_consistency(
-                input_entity=self._positive_label_edge_index,
-                is_node_entity=False,
-                is_subset=True,
-            )
-
             edge_label_types = sorted(self._positive_label_edge_index.keys())
 
             logger.info("Partitioning Positive Labels ...")
@@ -1279,12 +1292,6 @@ class DistPartitioner:
             assert (
                 self._negative_label_edge_index is not None
             ), "Must register negative labels partitioning them"
-
-            self._assert_data_type_consistency(
-                input_entity=self._negative_label_edge_index,
-                is_node_entity=False,
-                is_subset=True,
-            )
 
             edge_label_types = sorted(self._negative_label_edge_index.keys())
 
