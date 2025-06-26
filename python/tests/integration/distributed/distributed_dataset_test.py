@@ -93,8 +93,8 @@ class DistDatasetTestCase(unittest.TestCase):
             args=(
                 self._world_size,  # world_size
                 mocked_dataset_info,  # mocked_dataset_info
-                output_dict,  # output_dict
                 should_load_tensors_in_parallel,  # should_load_tensors_in_parallel
+                output_dict,  # output_dict
                 None,  # partitioner_class
                 None,  # splitter
                 use_process_group,  # _use_process_group
@@ -209,8 +209,8 @@ class DistDatasetTestCase(unittest.TestCase):
             args=(
                 self._world_size,  # world_size
                 mocked_dataset_info,  # mocked_dataset_info
-                output_dict,  # output_dict
                 True,  # should_load_tensors_in_parallel
+                output_dict,  # output_dict
                 None,  # partitioner_class
                 split_fn,  # splitter
                 False,  # _use_process_group

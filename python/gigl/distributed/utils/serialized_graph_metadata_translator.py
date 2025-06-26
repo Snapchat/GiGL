@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Tuple, Union
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
@@ -62,8 +62,8 @@ def convert_pb_to_serialized_graph_metadata(
 
     node_entity_info: Dict[NodeType, SerializedTFRecordInfo] = {}
     edge_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
-    positive_label_entity_info: Dict[EdgeType, Optional[SerializedTFRecordInfo]] = {}
-    negative_label_entity_info: Dict[EdgeType, Optional[SerializedTFRecordInfo]] = {}
+    positive_label_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
+    negative_label_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
 
     preprocessed_metadata_pb = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
 
@@ -103,27 +103,23 @@ def convert_pb_to_serialized_graph_metadata(
             ]
         )
 
-        edge_feature_spec_dict = (
-            preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_schema_map[
-                condensed_edge_type
-            ].feature_spec
-        )
-
         edge_key = (
             edge_metadata.src_node_id_key,
             edge_metadata.dst_node_id_key,
         )
 
-        edge_entity_info[edge_type] = _build_serialized_tfrecord_entity_info(
-            preprocessed_metadata=edge_metadata.main_edge_info,
-            feature_spec_dict=edge_feature_spec_dict,
-            entity_key=edge_key,
-            tfrecord_uri_pattern=tfrecord_uri_pattern,
-        )
+        if edge_metadata.HasField("main_edge_info"):
+            edge_feature_spec_dict = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_schema_map[
+                condensed_edge_type
+            ].feature_spec
+            edge_entity_info[edge_type] = _build_serialized_tfrecord_entity_info(
+                preprocessed_metadata=edge_metadata.main_edge_info,
+                feature_spec_dict=edge_feature_spec_dict,
+                entity_key=edge_key,
+                tfrecord_uri_pattern=tfrecord_uri_pattern,
+            )
 
-        if preprocessed_metadata_pb_wrapper.has_pos_edge_features(
-            condensed_edge_type=condensed_edge_type
-        ):
+        if edge_metadata.HasField("positive_edge_info"):
             pos_edge_feature_spec_dict = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_pos_edge_feature_schema_map[
                 condensed_edge_type
             ].feature_spec
@@ -136,12 +132,8 @@ def convert_pb_to_serialized_graph_metadata(
                 entity_key=edge_key,
                 tfrecord_uri_pattern=tfrecord_uri_pattern,
             )
-        else:
-            positive_label_entity_info[edge_type] = None
 
-        if preprocessed_metadata_pb_wrapper.has_hard_neg_edge_features(
-            condensed_edge_type=condensed_edge_type
-        ):
+        if edge_metadata.HasField("negative_edge_info"):
             hard_neg_edge_feature_spec_dict = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_hard_neg_edge_feature_schema_map[
                 condensed_edge_type
             ].feature_spec
@@ -154,31 +146,27 @@ def convert_pb_to_serialized_graph_metadata(
                 entity_key=edge_key,
                 tfrecord_uri_pattern=tfrecord_uri_pattern,
             )
-        else:
-            negative_label_entity_info[edge_type] = None
 
     if not graph_metadata_pb_wrapper.is_heterogeneous:
         # If our input is homogeneous, we remove the node/edge type component of the metadata fields.
         return SerializedGraphMetadata(
             node_entity_info=to_homogeneous(node_entity_info),
             edge_entity_info=to_homogeneous(edge_entity_info),
-            positive_label_entity_info=to_homogeneous(positive_label_entity_info),
-            negative_label_entity_info=to_homogeneous(negative_label_entity_info),
+            positive_label_entity_info=to_homogeneous(positive_label_entity_info)
+            if len(positive_label_entity_info) > 0
+            else None,
+            negative_label_entity_info=to_homogeneous(negative_label_entity_info)
+            if len(negative_label_entity_info) > 0
+            else None,
         )
     else:
         return SerializedGraphMetadata(
             node_entity_info=node_entity_info,
             edge_entity_info=edge_entity_info,
             positive_label_entity_info=positive_label_entity_info
-            if not all(
-                entity_info is None
-                for entity_info in positive_label_entity_info.values()
-            )
+            if len(positive_label_entity_info) > 0
             else None,
             negative_label_entity_info=negative_label_entity_info
-            if not all(
-                entity_info is None
-                for entity_info in negative_label_entity_info.values()
-            )
+            if len(negative_label_entity_info) > 0
             else None,
         )

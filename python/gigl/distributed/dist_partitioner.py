@@ -989,6 +989,10 @@ class DistPartitioner:
         Returns:
             torch.Tensor: Edge index tensor of positive or negative labels, depending on is_positive flag
         """
+        if edge_type.src_node_type not in node_partition_book:
+            raise ValueError(
+                f"Edge type {edge_type} source node type {edge_type.src_node_type} not found in the node partition book node keys: {node_partition_book.keys()}"
+            )
 
         target_node_partition_book = node_partition_book[edge_type.src_node_type]
         if is_positive:
@@ -1265,6 +1269,7 @@ class DistPartitioner:
         """
         Partitions positive or negative labels of a graph. If heterogeneous, partitions labels for all edge type.
         Must call `partition_node` first to get the node partition book as input.
+        Note that labels are always partitioned by the source node, since the edges are always assumed to be anchor_node -> to -> supervision node.
         Args:
             node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
             is_positive (bool): Whether positive labels are currently being registered. If False, negative labels will be partitioned.
@@ -1279,12 +1284,6 @@ class DistPartitioner:
                 self._positive_label_edge_index is not None
             ), "Must register positive labels prior to partitioning them"
 
-            self._assert_data_type_consistency(
-                input_entity=self._positive_label_edge_index,
-                is_node_entity=False,
-                is_subset=True,
-            )
-
             edge_label_types = sorted(self._positive_label_edge_index.keys())
 
             logger.info("Partitioning Positive Labels ...")
@@ -1293,12 +1292,6 @@ class DistPartitioner:
             assert (
                 self._negative_label_edge_index is not None
             ), "Must register negative labels partitioning them"
-
-            self._assert_data_type_consistency(
-                input_entity=self._negative_label_edge_index,
-                is_node_entity=False,
-                is_subset=True,
-            )
 
             edge_label_types = sorted(self._negative_label_edge_index.keys())
 

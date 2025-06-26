@@ -48,8 +48,8 @@ def run_distributed_dataset(
     rank: int,
     world_size: int,
     mocked_dataset_info: MockedDatasetInfo,
-    output_dict: MutableMapping[int, DistLinkPredictionDataset],
     should_load_tensors_in_parallel: bool,
+    output_dict: Optional[MutableMapping[int, DistLinkPredictionDataset]] = None,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
@@ -61,8 +61,9 @@ def run_distributed_dataset(
         rank (int): Rank of the current process
         world_size (int): World size of the current process
         mocked_dataset_info (MockedDatasetInfo): Mocked Dataset Metadata for current run
-        output_dict (MutableMapping[int, DistLinkPredictionDataset]): Dict initialized by mp.Manager().dict() in which outputs will be written to
+
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
+        output_dict (Optional[MutableMapping[int, DistLinkPredictionDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[NodeAnchorLinkSplitter]): Provided splitter for testing
     """
@@ -103,5 +104,6 @@ def run_distributed_dataset(
         if dist.is_initialized():
             dist.destroy_process_group()
 
-    output_dict[rank] = dataset
+    if output_dict is not None:
+        output_dict[rank] = dataset
     return dataset
