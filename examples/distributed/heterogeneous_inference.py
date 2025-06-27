@@ -343,7 +343,9 @@ def _run_example_inference(
 
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
     # and registering that information to a DistLinkPredictionDataset class.
-    dataset = build_dataset_from_task_config_uri(task_config_uri=task_config_uri)
+    dataset = build_dataset_from_task_config_uri(
+        task_config_uri=task_config_uri, distributed_context=distributed_context
+    )
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
