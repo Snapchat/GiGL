@@ -7,8 +7,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import CondensedEdgeType
 from gigl.src.common.types.task_inputs import BatchCombinedScores, BatchScores
+
+logger = Logger()
 
 
 class ModelResultType(Enum):
@@ -337,6 +340,10 @@ class RetrievalLoss(nn.Module):
         candidate_sampling_probability: Optional[torch.FloatTensor] = None,
         device: torch.device = torch.device("cpu"),
     ) -> Tuple[torch.Tensor, int]:
+        logger.warning(
+            "Calculating retrieval loss with the `BatchCombinedScores` argument is deprecated and will be removed in a future release. "
+            "Please use the `forward` method which provides arguments as separate torch tensors"
+        )
         candidate_ids = torch.cat(
             (
                 batch_combined_scores.positive_ids.to(device=device),
@@ -357,6 +364,35 @@ class RetrievalLoss(nn.Module):
             loss = torch.tensor(0.0).to(device=device)
             batch_size = 1
         return loss, batch_size
+
+    def compute_loss(
+        self,
+        repeated_candidate_scores: torch.Tensor,
+        positive_ids: torch.Tensor,
+        hard_neg_ids: torch.Tensor,
+        random_neg_ids: torch.Tensor,
+        repeated_query_ids: torch.Tensor,
+        device: torch.device,
+        candidate_sampling_probability: Optional[torch.Tensor] = None,
+    ):
+        candidate_ids = torch.cat(
+            (
+                positive_ids.to(device=device),
+                hard_neg_ids.to(device=device),
+                random_neg_ids.to(device=device),
+            )
+        )
+        if repeated_query_ids.numel():
+            loss = self.calculate_batch_retrieval_loss(
+                scores=repeated_candidate_scores,
+                candidate_sampling_probability=candidate_sampling_probability,
+                query_ids=repeated_query_ids,
+                candidate_ids=candidate_ids,
+                device=device,
+            )
+        else:
+            loss = torch.tensor(0.0).to(device=device)
+        return loss
 
 
 class GRACELoss(nn.Module):

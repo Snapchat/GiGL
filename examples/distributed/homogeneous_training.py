@@ -12,7 +12,6 @@ from typing import List, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-import torch.nn as nn
 from graphlearn_torch.distributed.dist_context import init_worker_group
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
@@ -35,7 +34,6 @@ from gigl.src.common.models.pyg.link_prediction import (
     LinkPredictionGNN,
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.types.task_inputs import BatchCombinedScores
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
@@ -95,7 +93,7 @@ def _compute_loss(
     model: DistributedDataParallel,
     main_data: Union[Data, HeteroData],
     random_neg_data: Union[Data, HeteroData],
-    loss_fn: nn.Module,
+    loss_layer: RetrievalLoss,
     device: torch.device,
 ) -> torch.Tensor:
     main_embeddings = model(
@@ -137,16 +135,12 @@ def _compute_loss(
         ),
     )
 
-    batch_combined_scores = BatchCombinedScores(
+    loss = loss_layer.compute_loss(
         repeated_candidate_scores=repeated_candidate_scores,
         positive_ids=positive_ids,
         hard_neg_ids=hard_neg_ids,
         random_neg_ids=random_neg_ids,
         repeated_query_ids=repeated_query_node_ids,
-    )
-    loss, _ = loss_fn(
-        batch_combined_scores=batch_combined_scores,
-        repeated_query_embeddings=repeated_query_embeddings,
         device=device,
     )
 
@@ -346,7 +340,7 @@ def _training_process(
     optimizer = torch.optim.AdamW(
         params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
-    loss_fn = RetrievalLoss(
+    loss_layer = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -422,7 +416,7 @@ def _training_process(
                     model=model,
                     main_loader=val_main_loader,
                     random_negative_loader=val_random_negative_loader,
-                    loss_fn=loss_fn,
+                    loss_layer=loss_layer,
                     device=training_device,
                     args_use_amp=use_amp,
                     log_every_n_batch=log_every_n_batch,  # Not intend to log validation progress, use the same log frequency as training for now
@@ -446,7 +440,7 @@ def _training_process(
                     model=model,
                     main_data=main_data,
                     random_neg_data=random_data,
-                    loss_fn=loss_fn,
+                    loss_layer=loss_layer,
                     device=training_device,
                 )
             optimizer.zero_grad()
@@ -515,7 +509,7 @@ def _run_test_loops(
     model: DistributedDataParallel,
     main_loader: collections.abc.Iterator,
     random_negative_loader: collections.abc.Iterator,
-    loss_fn: torch.nn.Module,
+    loss_layer: RetrievalLoss,
     device: torch.device,
     args_use_amp: bool,
     log_every_n_batch: int = 10000,
@@ -571,7 +565,7 @@ def _run_test_loops(
                 model=model,
                 main_data=main_data,
                 random_neg_data=random_data,
-                loss_fn=loss_fn,
+                loss_layer=loss_layer,
                 device=device,
             )
 
@@ -730,7 +724,7 @@ def _test_process(
     logger.info(
         f"Model initialized on machine {node_rank} test device {test_device} with weights loaded from {model_uri.uri}\n{model}"
     )
-    loss_fn = RetrievalLoss(
+    loss_layer = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -746,7 +740,7 @@ def _test_process(
         model=model,
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
-        loss_fn=loss_fn,
+        loss_layer=loss_layer,
         device=test_device,
         args_use_amp=use_amp,
         log_every_n_batch=log_every_n_batch,
