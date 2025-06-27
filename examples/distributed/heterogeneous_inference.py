@@ -36,10 +36,8 @@ from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.common.utils.vertex_ai_context import connect_worker_pool
 from gigl.distributed import (
     DistLinkPredictionDataset,
-    DistributedContext,
     build_dataset_from_task_config_uri,
 )
 from gigl.src.common.models.pyg.heterogeneous import HGT
@@ -397,6 +395,11 @@ def _run_example_inference(
     num_inference_processes_per_machine = int(
         inferencer_args.get("num_inference_processes_per_machine", "4")
     )  # Current large-scale setting sets this value to 4
+    if num_inference_processes_per_machine >= torch.cuda.device_count():
+        logger.warning(
+            f"Number of inference processes per machine ({num_inference_processes_per_machine}) is greater than number of available GPUs ({torch.cuda.device_count()}). "
+        )
+        num_inference_processes_per_machine = torch.cuda.device_count()
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
     node_rank = torch.distributed.get_rank()
@@ -432,19 +435,19 @@ def _run_example_inference(
         mp.spawn(
             fn=_inference_process,
             args=(
-                num_inference_processes_per_machine, # local_world_size
+                num_inference_processes_per_machine,  # local_world_size
                 node_rank,  # node_rank
                 node_world_size,  # node_world_size
-                master_ip_address, # master_ip_address
-                master_default_process_group_port, # master_default_process_group_port
-                embedding_output_gcs_folder, # embedding_gcs_path
-                model_uri, # model_state_dict_uri
-                inference_batch_size, # inference_batch_size
-                dataset, # dataset
-                inferencer_args, # inferencer_args
-                inference_node_type, # inference_node_type
-                node_type_to_feature_dim, # node_type_to_feature_dim
-                edge_type_to_feature_dim, # edge_type_to_feature_dim
+                master_ip_address,  # master_ip_address
+                master_default_process_group_port,  # master_default_process_group_port
+                embedding_output_gcs_folder,  # embedding_gcs_path
+                model_uri,  # model_state_dict_uri
+                inference_batch_size,  # inference_batch_size
+                dataset,  # dataset
+                inferencer_args,  # inferencer_args
+                inference_node_type,  # inference_node_type
+                node_type_to_feature_dim,  # node_type_to_feature_dim
+                edge_type_to_feature_dim,  # edge_type_to_feature_dim
             ),
             nprocs=num_inference_processes_per_machine,
             join=True,
