@@ -85,8 +85,6 @@ class DistABLPLoader(DistLoader):
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
-            context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.            local_process_rank (int): The local rank of the current process within a node.
-            local_process_world_size (int): The total number of processes within a node.
             input_nodes (torch.Tensor or tuple[str, torch.Tensor]): The
                 indices of seed nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
@@ -117,6 +115,9 @@ class DistABLPLoader(DistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
+            local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
+            local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -135,13 +136,6 @@ class DistABLPLoader(DistLoader):
 
         master_ip_address: str
         should_cleanup_distributed_context: bool = False
-        device = (
-            pin_memory_device
-            if pin_memory_device
-            else gigl.distributed.utils.get_available_device(
-                local_process_rank=local_rank
-            )
-        )
 
         if context:
             assert (
@@ -166,7 +160,7 @@ class DistABLPLoader(DistLoader):
                 )
                 should_cleanup_distributed_context = True
                 logger.info(
-                    f"Initializing process group with master ip address: {master_ip_address}, rank: {rank}, world size: {world_size}, local_rank: {local_rank}, local_world_size: {local_world_size}, device: {device}."
+                    f"Initializing process group with master ip address: {master_ip_address}, rank: {rank}, world size: {world_size}, local_rank: {local_rank}, local_world_size: {local_world_size}"
                 )
                 torch.distributed.init_process_group(
                     backend="gloo",  # We just default to gloo for this temporary process group
@@ -362,6 +356,12 @@ class DistABLPLoader(DistLoader):
             channel_size=channel_size,
             pin_memory=self.to_device.type == "cuda",
         )
+
+        if should_cleanup_distributed_context and torch.distributed.is_initialized():
+            logger.info(
+                f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
+            )
+            torch.distributed.destroy_process_group()
 
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,

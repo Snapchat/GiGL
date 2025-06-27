@@ -118,13 +118,6 @@ class DistNeighborLoader(DistLoader):
 
         master_ip_address: str
         should_cleanup_distributed_context: bool = False
-        device = (
-            pin_memory_device
-            if pin_memory_device
-            else gigl.distributed.utils.get_available_device(
-                local_process_rank=local_rank
-            )
-        )
 
         if context:
             assert (
@@ -149,7 +142,7 @@ class DistNeighborLoader(DistLoader):
                 )
                 should_cleanup_distributed_context = True
                 logger.info(
-                    f"Initializing process group with master ip address: {master_ip_address}, rank: {rank}, world size: {world_size}, local_rank: {local_rank}, local_world_size: {local_world_size}, device: {device}."
+                    f"Initializing process group with master ip address: {master_ip_address}, rank: {rank}, world size: {world_size}, local_rank: {local_rank}, local_world_size: {local_world_size}."
                 )
                 torch.distributed.init_process_group(
                     backend="gloo",  # We just default to gloo for this temporary process group
@@ -186,6 +179,14 @@ class DistNeighborLoader(DistLoader):
             local_process_rank,
             local_process_world_size,
         )  # delete deprecated vars so we don't accidentally use them.
+
+        device = (
+            pin_memory_device
+            if pin_memory_device
+            else gigl.distributed.utils.get_available_device(
+                local_process_rank=local_rank
+            )
+        )
         logger.info(
             f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: {master_ip_address}"
         )
