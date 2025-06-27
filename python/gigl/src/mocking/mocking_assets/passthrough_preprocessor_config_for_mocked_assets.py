@@ -33,8 +33,10 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
         self.__mocked_dataset_name = kwargs.get("mocked_dataset_name", None)
         assert self.__mocked_dataset_name is not None, "mocked_dataset_name is required"
 
-        self.__mocked_dataset: MockedDatasetInfo = DatasetAssetMockingSuite().compute_datasets_to_mock(
-            selected_datasets=[self.__mocked_dataset_name]
+        self.__mocked_dataset: MockedDatasetInfo = (
+            DatasetAssetMockingSuite().compute_datasets_to_mock(
+                selected_datasets=[self.__mocked_dataset_name]
+            )
         )
         self.__mocked_dataset_artifact_metadata = (
             get_mocked_dataset_artifact_metadata()[self.__mocked_dataset.name]
