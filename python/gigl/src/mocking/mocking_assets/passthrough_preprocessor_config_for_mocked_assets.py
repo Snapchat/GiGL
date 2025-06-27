@@ -1,6 +1,7 @@
 from typing import Any, Dict, List
 
 import gigl.src.mocking.lib.constants as test_tasks_constants
+from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.data_preprocessor.lib.data_preprocessor_config import (
     DataPreprocessorConfig,
@@ -26,17 +27,21 @@ from gigl.src.mocking.lib.feature_handling import get_feature_field_name
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 
+logger = Logger()
+
 
 class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
         self.__mocked_dataset_name = kwargs.get("mocked_dataset_name", None)
         assert self.__mocked_dataset_name is not None, "mocked_dataset_name is required"
-
+        logger.info(
+            f"Creating PassthroughPreprocessorConfigForMockedAssets for dataset: {self.__mocked_dataset_name}"
+        )
         self.__mocked_dataset: MockedDatasetInfo = (
-            DatasetAssetMockingSuite().compute_datasets_to_mock(
-                selected_datasets=[self.__mocked_dataset_name]
-            )
+            DatasetAssetMockingSuite().compute_datasets_to_mock()[
+                self.__mocked_dataset_name
+            ]
         )
         self.__mocked_dataset_artifact_metadata = (
             get_mocked_dataset_artifact_metadata()[self.__mocked_dataset.name]

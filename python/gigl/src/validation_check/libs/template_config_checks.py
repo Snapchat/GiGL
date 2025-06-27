@@ -249,16 +249,16 @@ def check_if_data_preprocessor_config_cls_valid(
     )
     try:
         data_preprocessor_cls = os_utils.import_obj(data_preprocessor_config_cls_path)
-        data_preprocessor_config: DataPreprocessorConfig = data_preprocessor_cls(
-            **runtime_args
-        )
-        assert isinstance(data_preprocessor_config, DataPreprocessorConfig)
     except Exception as e:
         raise ValueError(
             f"Invalid 'dataPreprocessorConfigClsPath' in frozen config: datasetConfig - dataPreprocessorConfig. "
             f"'dataPreprocessorConfigClsPath' provided: {data_preprocessor_config_cls_path}. "
             f"Error: {e}"
         )
+    data_preprocessor_config: DataPreprocessorConfig = data_preprocessor_cls(
+        **runtime_args
+    )
+    assert isinstance(data_preprocessor_config, DataPreprocessorConfig)
 
 
 def check_if_trainer_cls_valid(
