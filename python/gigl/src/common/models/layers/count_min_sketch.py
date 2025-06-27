@@ -55,7 +55,7 @@ class CountMinSketch(object):
             self.__table[i][hashed_value % self.__width] += delta
         self.__total += delta
 
-    def add_torch_long_tensor(self, tensor: torch.LongTensor) -> None:
+    def add_torch_long_tensor(self, tensor: torch.Tensor) -> None:
         """
         Add all items in a torch long tensor to the sketch
         """
@@ -79,7 +79,7 @@ class CountMinSketch(object):
             for i, hashed_value in enumerate(hashed_values)
         )
 
-    def estimate_torch_long_tensor(self, tensor: torch.LongTensor) -> torch.LongTensor:
+    def estimate_torch_long_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
         """
         Return the estimated count of all items in a torch long tensor
         """
@@ -97,7 +97,7 @@ class CountMinSketch(object):
 
 
 def calculate_in_batch_candidate_sampling_probability(
-    frequency_tensor: torch.LongTensor, total_cnt: int, batch_size: int
+    frequency_tensor: torch.Tensor, total_cnt: int, batch_size: int
 ) -> torch.Tensor:
     """
     Calculate in batch negative sampling rate given the frequency tensor, total count and batch size.
@@ -114,7 +114,7 @@ def calculate_in_batch_candidate_sampling_probability(
     Note that the estimation for positive and hard negatives may be less accurate than for random negatives
     because there is a larger error in P(candidate in batch | x) ~= P(candidate in batch)
     """
-    estimated_prob: torch.FloatTensor = (
+    estimated_prob: torch.Tensor = (
         batch_size * frequency_tensor.float() / total_cnt  # type: ignore
     )
     return estimated_prob.clamp(max=1.0)

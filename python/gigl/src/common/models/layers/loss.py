@@ -334,7 +334,7 @@ class RetrievalLoss(nn.Module):
         self,
         batch_combined_scores: BatchCombinedScores,
         repeated_query_embeddings: torch.FloatTensor,
-        candidate_sampling_probability: Optional[torch.FloatTensor],
+        candidate_sampling_probability: Optional[torch.FloatTensor] = None,
         device: torch.device = torch.device("cpu"),
     ) -> Tuple[torch.Tensor, int]:
         candidate_ids = torch.cat(

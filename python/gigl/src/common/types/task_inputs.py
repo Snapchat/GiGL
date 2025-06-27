@@ -40,12 +40,12 @@ class BatchScores:
 # Returns combined scores across all anchor nodes with repeated anchor node embeddings for each positive supervision edge
 @dataclass
 class BatchCombinedScores:
-    repeated_candidate_scores: torch.FloatTensor
-    positive_ids: torch.LongTensor
-    hard_neg_ids: torch.LongTensor
-    random_neg_ids: torch.LongTensor
-    repeated_query_ids: Optional[torch.LongTensor]
-    num_unique_query_ids: Optional[int]
+    repeated_candidate_scores: torch.Tensor
+    positive_ids: torch.Tensor
+    hard_neg_ids: torch.Tensor
+    random_neg_ids: torch.Tensor
+    repeated_query_ids: Optional[torch.Tensor] = None
+    num_unique_query_ids: Optional[int] = None
 
 
 # Combined object used for storing all outputs of forwarding through NABLP encoder and decoder, minimizing redundant calculation

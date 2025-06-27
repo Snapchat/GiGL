@@ -143,13 +143,13 @@ class DistABLPLoader(DistLoader):
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
             self._is_input_heterogeneous = True
-            node_type, node_ids = input_nodes
+            anchor_node_type, anchor_node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
             assert (
-                supervision_edge_type[0] == node_type
+                supervision_edge_type[0] == anchor_node_type
             ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
-                got supervision edge type {supervision_edge_type} with anchor node type {node_type}"
+                got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
             supervision_node_type = supervision_edge_type[2]
             if dataset.edge_dir == "in":
                 supervision_edge_type = reverse_edge_type(supervision_edge_type)
@@ -159,8 +159,8 @@ class DistABLPLoader(DistLoader):
                 raise ValueError(
                     f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
                 )
-            node_ids = input_nodes
-            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            anchor_node_ids = input_nodes
+            anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
             supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         elif input_nodes is None:
@@ -177,10 +177,12 @@ class DistABLPLoader(DistLoader):
                     f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
                 )
 
-            node_ids = dataset.node_ids
-            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            anchor_node_ids = dataset.node_ids
+            anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
             supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+
+        self._anchor_node_type = anchor_node_type
 
         missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
         if missing_edge_types:
@@ -188,8 +190,10 @@ class DistABLPLoader(DistLoader):
                 f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
             )
 
-        if len(node_ids.shape) != 1:
-            raise ValueError(f"input_nodes must be a 1D tensor, got {node_ids.shape}.")
+        if len(anchor_node_ids.shape) != 1:
+            raise ValueError(
+                f"input_nodes must be a 1D tensor, got {anchor_node_ids.shape}."
+            )
         (
             self._positive_label_edge_type,
             self._negative_label_edge_type,
@@ -198,7 +202,7 @@ class DistABLPLoader(DistLoader):
 
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset=dataset,
-            node_ids=node_ids,
+            node_ids=anchor_node_ids,
             positive_label_edge_type=self._positive_label_edge_type,
             negative_label_edge_type=self._negative_label_edge_type,
         )
@@ -227,7 +231,7 @@ class DistABLPLoader(DistLoader):
             )
 
         curr_process_nodes = shard_nodes_by_process(
-            input_nodes=node_ids,
+            input_nodes=anchor_node_ids,
             local_process_rank=local_process_rank,
             local_process_world_size=local_process_world_size,
         )
@@ -286,7 +290,7 @@ class DistABLPLoader(DistLoader):
 
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
-            input_type=node_type,
+            input_type=anchor_node_type,
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             supervision_node_type=supervision_node_type,
@@ -468,6 +472,19 @@ class DistABLPLoader(DistLoader):
         if negative_labels is not None:
             data.y_negative = output_negative_labels
 
+        return data
+
+    def _set_batch(
+        self, data: Union[Data, HeteroData], positive_labels: dict[int, torch.Tensor]
+    ):
+        if isinstance(data, HeteroData):
+            data[self._anchor_node_type].batch = data[self._anchor_node_type].batch[
+                : len(positive_labels)
+            ]
+            data[self._anchor_node_type].batch_size = len(positive_labels)
+        else:
+            data.batch = data.batch[: len(positive_labels)]
+            data.batch_size = len(positive_labels)
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:

@@ -51,7 +51,7 @@ def _init_example_gigl_homogeneous_model(
     trainer_args: dict[str, str],
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
-) -> LinkPredictionGNN:
+) -> DistributedDataParallel:
     encoder_model = GraphSAGE(
         in_dim=node_feature_dim,
         hid_dim=int(trainer_args.get("hid_dim", 16)),
@@ -64,7 +64,7 @@ def _init_example_gigl_homogeneous_model(
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
 
-    model: LinkPredictionGNN = LinkPredictionGNN(
+    model: Union[LinkPredictionGNN, DistributedDataParallel] = LinkPredictionGNN(
         encoder=encoder_model,
         decoder=decoder_model,
     )
@@ -92,31 +92,22 @@ def _sync_loss_across_processes(local_loss: torch.Tensor) -> float:
 
 
 def _compute_loss(
-    model: torch.nn.parallel.DistributedDataParallel,
+    model: DistributedDataParallel,
     main_data: Union[Data, HeteroData],
     random_neg_data: Union[Data, HeteroData],
     loss_fn: nn.Module,
     device: torch.device,
 ) -> torch.Tensor:
-    # print(f"main_data: {main_data}")
-    # print(f"random_neg_data: {random_neg_data}")
-    main_embeddings = to_homogeneous(
-        model(
-            main_data, output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE], device=device
-        )
-    )
-    random_negative_embeddings = to_homogeneous(
-        model(
-            random_neg_data,
-            output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-            device=device,
-        )
-    )
+    main_embeddings = model(
+        main_data, output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE], device=device
+    )[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+    random_negative_embeddings = model(
+        random_neg_data,
+        output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+        device=device,
+    )[DEFAULT_HOMOGENEOUS_NODE_TYPE]
 
-    # TODO (set bactch size correctly).
-    query_node_ids: torch.Tensor = torch.tensor(list(main_data.y_positive.keys())).to(
-        device
-    )
+    query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
     random_neg_ids: torch.Tensor = torch.arange(random_neg_data.batch_size).to(device)
 
     positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
@@ -152,19 +143,17 @@ def _compute_loss(
         hard_neg_ids=hard_neg_ids,
         random_neg_ids=random_neg_ids,
         repeated_query_ids=repeated_query_node_ids,
-        num_unique_query_ids=None,
     )
     loss, _ = loss_fn(
         batch_combined_scores=batch_combined_scores,
         repeated_query_embeddings=repeated_query_embeddings,
         device=device,
-        candidate_sampling_probability=None,
     )
 
     return loss
 
 
-def training_process(
+def _training_process(
     local_rank: int,
     local_world_size: int,
     node_rank: int,
@@ -250,9 +239,7 @@ def training_process(
         context=distributed_context,
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
-        input_nodes=to_homogeneous(
-            dataset.train_node_ids
-        ),  # can remove once https://github.com/Snapchat/GiGL/pull/115 is in.
+        input_nodes=to_homogeneous(dataset.train_node_ids),
         num_workers=main_sampling_workers_per_training_process,
         batch_size=main_batch_size,
         pin_memory_device=training_device,
@@ -265,6 +252,8 @@ def training_process(
     logger.info(
         f"Finished setting up train main loader with {to_homogeneous(dataset.train_node_ids).size(0)} nodes"
     )
+
+    assert isinstance(dataset.node_ids, abc.Mapping)
     train_random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -523,7 +512,7 @@ def training_process(
 @torch.inference_mode()
 def _run_test_loops(
     local_rank: int,
-    model: Union[torch.nn.Module, torch.nn.parallel.DistributedDataParallel],
+    model: DistributedDataParallel,
     main_loader: collections.abc.Iterator,
     random_negative_loader: collections.abc.Iterator,
     loss_fn: torch.nn.Module,
@@ -617,7 +606,7 @@ def _run_test_loops(
     return batch_losses
 
 
-def test_process(
+def _test_process(
     local_rank: int,
     local_world_size: int,
     node_rank: int,
@@ -860,14 +849,11 @@ def _run_example_train(
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
-    # TODO (mkolodner-sc): Find a better way to use these arguments to the spawned processes
-    # os.environ["MASTER_ADDR"] = master_ip_address
-    # os.environ["MASTER_PORT"] = str(master_default_process_group_port)
 
     logger.info("--- Launching training processes ...\n")
     start_time = time.time()
     torch.multiprocessing.spawn(
-        training_process,
+        _training_process,
         args=(
             local_world_size,
             node_rank,
@@ -887,7 +873,7 @@ def _run_example_train(
     logger.info("--- Launching test processes ...\n")
     start_time = time.time()
     torch.multiprocessing.spawn(
-        test_process,
+        _test_process,
         args=(
             local_world_size,
             node_rank,
