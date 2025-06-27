@@ -1,15 +1,34 @@
 #!/bin/bash
 
+: '
+===============================================================================
+GiGL GCP Project Setup Script
+
+This script automates the setup of a Google Cloud Platform (GCP) project for
+the GiGL environment. It performs the following actions:
+  - Grants required IAM roles to the user and service account
+  - Enables necessary GCP APIs
+  - Creates a service account for GiGL development
+  - Creates GCS buckets and BigQuery datasets with user-specific names
+  - Sets up Artifact Registry for Docker images
+  - Grants permissions to service agents (Vertex AI, Dataflow, Dataproc)
+  - Configures storage and BigQuery access for the service account
+
+Usage:
+  ./setup_gcp_project.sh [USER_EMAIL](optional)
+===============================================================================
+'
+
 set -euo pipefail
 trap 'echo "❌ Script failed on line $LINENO"; exit 1' ERR
 
-if [ $# -lt 1 ]; then
-  echo "Usage: $0 <user_email>"
-  exit 1
+if [ $# -ge 1 ]; then
+  USER_EMAIL="$1"
+else
+  USER_EMAIL="$(gcloud config get-value account)"
 fi
 
 # === Inputs & Derived Values ===
-USER_EMAIL="$1"
 USER_NAME="${USER_EMAIL%@*}"
 PROJECT_ID="$(gcloud config get-value project)"
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")"
@@ -19,7 +38,7 @@ SA_NAME="gigl-dev"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # === Resources ===
-GCS_BUCKETS=(gigl_temp_assets gigl_perm_assets)
+GCS_BUCKETS=("gigl_temp_assets_${USER_NAME}" "gigl_perm_assets_${USER_NAME}")
 BQ_DATASETS=(gigl_temp_assets gigl_embeddings)
 PROJECT_ROLES=(
   roles/editor
@@ -72,11 +91,15 @@ for API in "${APIS[@]}"; do
   gcloud services enable "$API" --project="$PROJECT_ID"
 done
 
+# === Create service account ===
+echo "Creating service account: $SA_EMAIL"
+gcloud iam service-accounts create "$SA_NAME" \
+  --display-name="GIGL Dev Service Account" || true
 
 # === Create GCS buckets ===
 for BUCKET in "${GCS_BUCKETS[@]}"; do
   echo "Creating GCS bucket: $BUCKET"
-  gsutil mb -c standard -l "$LOCATION" -p "$PROJECT_ID" "gs://${BUCKET}_${USER_NAME}/"
+  gsutil mb -c standard -l "$LOCATION" -p "$PROJECT_ID" "gs://${BUCKET}/"
 done
 
 # === Create BigQuery datasets ===
@@ -92,17 +115,18 @@ gcloud artifacts repositories create gigl-base-images \
   --location="$REGION" \
   --description="Base Docker images for GIGL" || true
 
-# === Create service account ===
-echo "Creating service account: $SA_EMAIL"
-gcloud iam service-accounts create "$SA_NAME" \
-  --display-name="GIGL Dev Service Account" || true
-
-sleep 5
-
 # === Allow the SA to use itself ===
-gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
-  --member="serviceAccount:$SA_EMAIL" \
-  --role="roles/iam.serviceAccountUser"
+for i in {1..30}; do
+  if gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/iam.serviceAccountUser"; then
+    echo "✅ Successfully bound SA user role to $SA_EMAIL"
+    break
+  else
+    echo "Attempt $i failed — service account may not exist yet. Retrying in 10 seconds..."
+    sleep 10
+  fi
+done
 
 # === Grant project-level roles to SA ===
 for ROLE in "${SA_PROJECT_ROLES[@]}"; do
@@ -115,10 +139,10 @@ done
 # === Grant SA/User permissions on GCS buckets + clear GCS bucket retention ===
 for BUCKET in "${GCS_BUCKETS[@]}"; do
   echo "Granting GCS roles on $BUCKET to $SA_EMAIL"
-  gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.objectAdmin" "gs://${BUCKET}_${USER_NAME}"
-  gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.legacyBucketReader" "gs://${BUCKET}_${USER_NAME}"
+  gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.objectAdmin" "gs://${BUCKET}"
+  gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.legacyBucketReader" "gs://${BUCKET}"
   echo "Granting GCS roles on $BUCKET to $USER_EMAIL"
-  gsutil iam ch "user:${USER_EMAIL}:roles/storage.legacyBucketOwner" "gs://${BUCKET}_${USER_NAME}"
+  gsutil iam ch "user:${USER_EMAIL}:roles/storage.legacyBucketOwner" "gs://${BUCKET}"
   gsutil retention clear "gs://${BUCKET}" || true
 done
 
@@ -209,7 +233,7 @@ echo "Project ID: $PROJECT_ID"
 echo "Service Account: $SA_EMAIL"
 echo "GCS Buckets:"
 for BUCKET in "${GCS_BUCKETS[@]}"; do
-  echo "  - gs://${BUCKET}_${USER_NAME}/"
+  echo "  - gs://${BUCKET}/"
 done
 echo "BigQuery Datasets:"
 for DATASET in "${BQ_DATASETS[@]}"; do
