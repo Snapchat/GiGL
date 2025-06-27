@@ -488,7 +488,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
     # This tests that we can build a dataset when manually specifying a port.
     # TODO (mkolodner-sc): Remove this test once we deprecate the `port` field
-    def test_build_dataset_with_maunual_port(self):
+    def test_build_dataset_with_manual_port(self):
         mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
             get_mocked_dataset_artifact_metadata()[
                 TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
