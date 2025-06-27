@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import yaml
 
+from gigl.common.constants import PYTHON_ROOT_DIR
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.common.types.task_metadata import TaskMetadataType
@@ -22,9 +23,11 @@ from gigl.src.mocking.lib.versioning import (
 
 logger = Logger()
 
-_HOMOGENEOUS_TOY_GRAPH_CONFIG = "gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
-_BIPARTITE_TOY_GRAPH_CONFIG = (
-    "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
+_HOMOGENEOUS_TOY_GRAPH_CONFIG = str(
+    PYTHON_ROOT_DIR / "gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
+)
+_BIPARTITE_TOY_GRAPH_CONFIG = str(
+    PYTHON_ROOT_DIR / "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
 )
 
 
