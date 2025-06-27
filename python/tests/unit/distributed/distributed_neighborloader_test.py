@@ -1,15 +1,14 @@
 import unittest
 from collections import abc
-from typing import MutableMapping, Optional
+from typing import Optional
 
-import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
-from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
+import gigl.distributed.utils
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_context import DistributedContext
@@ -39,6 +38,7 @@ from gigl.types.graph import (
     to_homogeneous,
 )
 from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
+from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -106,6 +106,36 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
     assert (
         count == expected_data_count
     ), f"Expected {expected_data_count} batches, but got {count}."
+
+    shutdown_rpc()
+
+
+def _run_infinite_distributed_neighbor_loader(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+    max_num_batches: int,
+):
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    infinite_loader: InfiniteIterator = InfiniteIterator(loader)
+
+    count = 0
+    for datum in infinite_loader:
+        assert isinstance(datum, Data)
+        count += 1
+        if count == max_num_batches:
+            break
+
+    # Ensure we have looped through the dataloader for the max number of batches
+    assert count == max_num_batches
 
     shutdown_rpc()
 
@@ -235,7 +265,6 @@ def _run_multiple_neighbor_loader(
     context: DistributedContext,
     expected_data_count: int,
 ):
-    # TODO (mkolodner-sc): Infer ports automatically, rather than hard-coding these
     loader_one = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -243,8 +272,6 @@ def _run_multiple_neighbor_loader(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
-        _main_inference_port=10000,
-        _main_sampling_port=20000,
     )
 
     loader_two = DistNeighborLoader(
@@ -254,8 +281,6 @@ def _run_multiple_neighbor_loader(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
-        _main_inference_port=30000,
-        _main_sampling_port=40000,
     )
 
     count = 0
@@ -273,8 +298,6 @@ def _run_multiple_neighbor_loader(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
-        _main_inference_port=50000,
-        _main_sampling_port=60000,
     )
 
     count = 0
@@ -412,19 +435,15 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     def test_distributed_neighbor_loader(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         expected_data_count = 2708
-        manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+        port = gigl.distributed.utils.get_free_port()
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            output_dict=output_dict,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
+            _port=port,
         )
 
         mp.spawn(
@@ -432,22 +451,38 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, expected_data_count),
         )
 
+    def test_infinite_distributed_neighbor_loader(self):
+        port = gigl.distributed.utils.get_free_port()
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            should_load_tensors_in_parallel=True,
+            _port=port,
+        )
+
+        assert isinstance(dataset.node_ids, torch.Tensor)
+
+        num_nodes = dataset.node_ids.size(0)
+
+        # Let's ensure we can iterate across the dataset twice with the infinite iterator
+        max_num_batches = num_nodes * 2
+
+        mp.spawn(
+            fn=_run_infinite_distributed_neighbor_loader,
+            args=(dataset, self._context, max_num_batches),
+        )
+
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         expected_data_count = 4057
-        manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            output_dict=output_dict,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
         )
 
         mp.spawn(
@@ -632,19 +667,15 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     def test_multiple_neighbor_loader(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        port = gigl.distributed.utils.get_free_port()
         expected_data_count = 2708
-        manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            output_dict=output_dict,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
+            _port=port,
         )
 
         mp.spawn(
