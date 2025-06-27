@@ -77,17 +77,15 @@ class DistABLPLoader(DistLoader):
         Note that for this class, the dataset must *always* be heterogeneous,
         as we need separate edge types for positive and negative labels.
 
-        If you provide `input_nodes` for homogeneous input (only as a Tensor),
-        Then we will attempt to infer the positive and optional negative labels
-        from the dataset.
-        In this case, the output of the loader will be a torch_geometric.data.Data object.
-        Otherwise, the output will be a torch_geometric.data.HeteroData object.
+        By default, the loader will return {py:class} `torch_geometric.data.HeteroData` (heterogeneous) objects,
+        but will return a {py:class}`torch_geometric.data.Data` (homogeneous) object if the dataset is "labeled homogeneous".
 
-        The output of this loader will contain the additional following fields:
-            - `y_positive`: A dict[int, torch.Tensor] mapping from local anchor node id to a tensor of positive
+        The following fields may also be present:
+        - `y_positive`: `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of positive
                 label node ids.
-            - (optional) `y_negative`: A dict[torch.Tensor] mapping from local anchor node id to a tensor of negative
+        - `y_negative`: (Optional) `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of negative
                 label node ids. This will only be present if the supervision edge type has negative labels.
+
 
         NOTE: for both y_positive, and y_negative, the values represented in both the key and value of the dicts are
         the *local* node ids of the sampled nodes, not the global node ids.
@@ -125,9 +123,8 @@ class DistABLPLoader(DistLoader):
             context (DistributedContext): Distributed context information of the current process.
             local_process_rank (int): The local rank of the current process within a node.
             local_process_world_size (int): The total number of processes within a node.
-            input_nodes (torch.Tensor or tuple[str, torch.Tensor]): The
-                indices of seed nodes to start sampling from.
-                It is of type `torch.LongTensor` for homogeneous graphs.
+            input_nodes (Optional[torch.Tensor, tuple[NodeType, torch.Tensor]]):
+                Indices of seed nodes to start sampling from.
                 If set to `None` for homogeneous settings, all nodes will be considered.
                 In heterogeneous graphs, this flag must be passed in as a tuple that holds
                 the node type and node indices. (default: `None`)
