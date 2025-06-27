@@ -181,6 +181,11 @@ class DistNeighborLoader(DistLoader):
             local_rank = rank % local_world_size
             node_rank = rank // local_world_size
 
+        del (
+            context,
+            local_process_rank,
+            local_process_world_size,
+        )  # delete deprecated vars so we don't accidentally use them.
         logger.info(
             f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: {master_ip_address}"
         )
