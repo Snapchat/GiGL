@@ -1,11 +1,12 @@
 import argparse
 import collections
 import datetime
-import os
+import pickle
 import statistics
 import time
 from collections import abc
 from distutils.util import strtobool
+from pathlib import Path
 from typing import List, Optional, Union
 
 import torch
@@ -36,7 +37,7 @@ from gigl.src.common.models.pyg.link_prediction import (
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.task_inputs import BatchCombinedScores
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
-from gigl.types.graph import to_homogeneous
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
@@ -76,6 +77,7 @@ def _init_example_gigl_homogeneous_model(
     if state_dict is not None:
         model.load_state_dict(state_dict)
 
+    # Like this for CPU https://github.com/Snapchat/GiGL/pull/80/files#diff-69340023aa15486dd1efd4e9782010b0abd3ea15e75ec4593b4fe1dc279788eaR284-R286
     model = DistributedDataParallel(model, device_ids=[device])
 
     return model
@@ -96,10 +98,25 @@ def _compute_loss(
     loss_fn: nn.Module,
     device: torch.device,
 ) -> torch.Tensor:
-    main_embeddings = model(main_data)
-    random_negative_embeddings = model(random_neg_data)
+    # print(f"main_data: {main_data}")
+    # print(f"random_neg_data: {random_neg_data}")
+    main_embeddings = to_homogeneous(
+        model(
+            main_data, output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE], device=device
+        )
+    )
+    random_negative_embeddings = to_homogeneous(
+        model(
+            random_neg_data,
+            output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            device=device,
+        )
+    )
 
-    query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
+    # TODO (set bactch size correctly).
+    query_node_ids: torch.Tensor = torch.tensor(list(main_data.y_positive.keys())).to(
+        device
+    )
     random_neg_ids: torch.Tensor = torch.arange(random_neg_data.batch_size).to(device)
 
     positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
@@ -135,11 +152,13 @@ def _compute_loss(
         hard_neg_ids=hard_neg_ids,
         random_neg_ids=random_neg_ids,
         repeated_query_ids=repeated_query_node_ids,
+        num_unique_query_ids=None,
     )
     loss, _ = loss_fn(
         batch_combined_scores=batch_combined_scores,
         repeated_query_embeddings=repeated_query_embeddings,
         device=device,
+        candidate_sampling_probability=None,
     )
 
     return loss
@@ -222,7 +241,7 @@ def training_process(
         "sampling_worker_shared_channel_size", "4GB"
     )
 
-    process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "30"))
+    process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
 
     assert isinstance(dataset.train_node_ids, abc.Mapping)
     train_main_loader = DistABLPLoader(
@@ -231,7 +250,9 @@ def training_process(
         context=distributed_context,
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
-        input_nodes=to_homogeneous(dataset.train_node_ids),
+        input_nodes=to_homogeneous(
+            dataset.train_node_ids
+        ),  # can remove once https://github.com/Snapchat/GiGL/pull/115 is in.
         num_workers=main_sampling_workers_per_training_process,
         batch_size=main_batch_size,
         pin_memory_device=training_device,
@@ -291,6 +312,7 @@ def training_process(
         worker_concurrency=main_sampling_workers_per_training_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
+        _main_sampling_port=23000,
     )
 
     logger.info(
@@ -302,9 +324,6 @@ def training_process(
     val_random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        context=distributed_context,
-        local_process_rank=local_rank,
-        local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.node_ids),
         num_workers=random_sampling_workers_per_training_process,
         batch_size=random_batch_size,
@@ -327,7 +346,7 @@ def training_process(
 
     model = _init_example_gigl_homogeneous_model(
         node_feature_dim=node_feature_dim,
-        edge_featre_dim=edge_feature_dim,
+        edge_feature_dim=edge_feature_dim,
         trainer_args=trainer_args,
         device=training_device,
     )
@@ -335,7 +354,9 @@ def training_process(
     learning_rate = float(trainer_args.get("learning_rate", "0.0005"))
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
     use_amp = bool(strtobool(trainer_args.get("use_amp", "False")))
-    optimizer = torch.optim.AdamW(lr=learning_rate, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(
+        params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
+    )
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
@@ -412,7 +433,7 @@ def training_process(
                     model=model,
                     main_loader=val_main_loader,
                     random_negative_loader=val_random_negative_loader,
-                    loss=loss,
+                    loss_fn=loss_fn,
                     device=training_device,
                     args_use_amp=use_amp,
                     log_every_n_batch=log_every_n_batch,  # Not intend to log validation progress, use the same log frequency as training for now
@@ -450,7 +471,7 @@ def training_process(
             batch_idx += 1
             if batch_idx % log_every_n_batch == 0:
                 logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, total_positive_labels_processed={total_positive_labels_processed}, latest local train_loss={loss_output:.6f}"
+                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, total_positive_labels_processed={total_positive_labels_processed}, latest local train_loss={loss:.6f}"
                 )
                 logger.info(
                     f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, main data num_nodes: {main_data.num_nodes}"
@@ -577,7 +598,7 @@ def _run_test_loops(
                 f"process_rank={local_rank}, batch={batch_idx}, random_data: {random_data}"
             )
             logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, total_positive_labels_processed={total_positive_labels_processed}, latest test_loss={loss_output:.6f}"
+                f"process_rank={local_rank}, batch={batch_idx}, total_positive_labels_processed={total_positive_labels_processed}, latest test_loss={loss:.6f}"
             )
             # Wait for GPU operations to finish
             torch.cuda.synchronize()
@@ -662,7 +683,7 @@ def test_process(
     sampling_worker_shared_channel_size: str = trainer_args.get(
         "sampling_worker_shared_channel_size", "4GB"
     )
-    process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "30"))
+    process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
 
     assert isinstance(dataset.test_node_ids, abc.Mapping)
 
@@ -778,13 +799,21 @@ def _run_example_train(
     torch.distributed.destroy_process_group()
 
     logger.info(f"--- Launching data loading process ---")
-    dataset = build_dataset_from_task_config_uri(
-        task_config_uri=task_config_uri,
-        is_inference=False,
-    )
-    logger.info(
-        f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"
-    )
+    dataset_file = Path(__file__).parent / "dataset.pkl"
+    if dataset_file.exists():
+        dataset = DistLinkPredictionDataset.from_ipc_handle(
+            pickle.loads(dataset_file.read_bytes())
+        )
+    else:
+        dataset = build_dataset_from_task_config_uri(
+            task_config_uri=task_config_uri,
+            is_inference=False,
+            _tfrecord_uri_pattern=".*tfrecord",
+        )
+        logger.info(
+            f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"
+        )
+        dataset_file.write_bytes(pickle.dumps(dataset.share_ipc()))
 
     # Parsing arguments for trainer
 
@@ -832,8 +861,8 @@ def _run_example_train(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
     # TODO (mkolodner-sc): Find a better way to use these arguments to the spawned processes
-    os.environ["MASTER_ADDR"] = master_ip_address
-    os.environ["MASTER_PORT"] = str(master_default_process_group_port)
+    # os.environ["MASTER_ADDR"] = master_ip_address
+    # os.environ["MASTER_PORT"] = str(master_default_process_group_port)
 
     logger.info("--- Launching training processes ...\n")
     start_time = time.time()
