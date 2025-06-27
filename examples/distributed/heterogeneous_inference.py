@@ -25,6 +25,7 @@ import time
 from typing import Dict, List, Optional, Union
 
 import torch
+import torch.distributed
 import torch.multiprocessing as mp
 import torch.nn as nn
 from graphlearn_torch.distributed import barrier, shutdown_rpc
@@ -116,9 +117,12 @@ def _init_example_gigl_heterogeneous_model(
 def _inference_process(
     # When spawning processes, each process will be assigned a rank ranging
     # from [0, num_processes).
-    process_number_on_current_machine: int,
-    num_inference_processes_per_machine: int,
-    distributed_context: DistributedContext,
+    local_rank: int,
+    local_world_size: int,
+    node_rank: int,
+    node_world_size: int,
+    master_ip_address: str,
+    master_default_process_group_port: int,
     embedding_gcs_path: GcsUri,
     model_state_dict_uri: GcsUri,
     inference_batch_size: int,
@@ -135,9 +139,8 @@ def _inference_process(
         3. Writing embeddings to GCS
 
     Args:
-        process_number_on_current_machine (int): Process number on the current machine
-        num_inference_processes_per_machine (int): Number of inference processes spawned by each machine
-        distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
+        local_rank (int): Process number on the current machine
+        local_world_size (int): Number of inference processes spawned by each machine
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
@@ -169,10 +172,20 @@ def _inference_process(
     )
 
     log_every_n_batch = int(inferencer_args.get("log_every_n_batch", "50"))
-
     device = gigl.distributed.utils.get_available_device(
-        local_process_rank=process_number_on_current_machine,
+        local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
+    rank = node_rank * local_world_size + local_rank
+    world_size = node_world_size * local_world_size
+    torch.distributed.init_process_group(
+        backend="gloo" if device.type == "cpu" else "nccl",
+        init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
+        rank=rank,
+        world_size=world_size,
+    )
+    logger.info(
+        f"Local rank {local_rank} in machine {node_rank} has rank {rank}/{world_size} and using device {device} for inference"
+    )
 
     # Get the node ids on the current machine for the current node type
     node_type_to_input_node_ids: Optional[
@@ -186,9 +199,6 @@ def _inference_process(
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        context=distributed_context,
-        local_process_rank=process_number_on_current_machine,
-        local_process_world_size=num_inference_processes_per_machine,
         # We must pass in a tuple of (node_type, node_ids_on_current_process) for heterogeneous input
         input_nodes=(inference_node_type, input_node_ids),
         num_workers=sampling_workers_per_inference_process,
@@ -218,7 +228,7 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = f"machine_{distributed_context.global_rank}_local_process_number_{process_number_on_current_machine}"
+    embedding_filename = f"machine_{node_rank}_local_process_number_{local_rank}"
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -278,7 +288,7 @@ def _inference_process(
 
         if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"Local rank {process_number_on_current_machine} processed {batch_idx} batches for node type {inference_node_type}. "
+                f"Local rank {local_rank} processed {batch_idx} batches for node type {inference_node_type}. "
                 f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds for node type {inference_node_type}. "
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds."
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
@@ -290,7 +300,7 @@ def _inference_process(
         data_loading_start_time = time.time()
 
     logger.info(
-        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished inference for node type {inference_node_type}."
+        f"--- Machine {node_rank} local rank {local_rank} finished inference for node type {inference_node_type}."
     )
 
     write_embedding_start_time = time.time()
@@ -298,7 +308,7 @@ def _inference_process(
     exporter.flush_embeddings()
 
     logger.info(
-        f"--- Machine {distributed_context.global_rank} local rank {process_number_on_current_machine} finished writing embeddings to GCS for node type {inference_node_type}, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Machine {node_rank} local rank {local_rank} finished writing embeddings to GCS for node type {inference_node_type}, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
@@ -311,7 +321,7 @@ def _inference_process(
     gc.collect()
 
     logger.info(
-        f"--- All machines local rank {process_number_on_current_machine} finished inference for node type {inference_node_type}. Deleted data loader"
+        f"--- All machines local rank {local_rank} finished inference for node type {inference_node_type}. Deleted data loader"
     )
 
     # Clean up for a graceful exit
@@ -334,8 +344,12 @@ def _run_example_inference(
     # - the total number of machines (world size)
 
     program_start_time = time.time()
-
-    distributed_context: DistributedContext = connect_worker_pool()
+    # The main process per machine needs to be able to talk with each other to partition and synchronize the graph data.
+    # Thus, the user is responsible here for 1. spinning up a single process per machine,
+    # and 2. init_process_group amongst these processes.
+    # Assuming this is spinning up inside VAI; it already sets up the env:// init method for us; thus we don't need anything
+    # special here.
+    torch.distributed.init_process_group(backend="gloo")
 
     logger.info(
         f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
@@ -344,7 +358,7 @@ def _run_example_inference(
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
     # and registering that information to a DistLinkPredictionDataset class.
     dataset = build_dataset_from_task_config_uri(
-        task_config_uri=task_config_uri, distributed_context=distributed_context
+        task_config_uri=task_config_uri,
     )
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
@@ -384,6 +398,13 @@ def _run_example_inference(
         inferencer_args.get("num_inference_processes_per_machine", "4")
     )  # Current large-scale setting sets this value to 4
 
+    master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
+    node_rank = torch.distributed.get_rank()
+    node_world_size = torch.distributed.get_world_size()
+    master_default_process_group_port = (
+        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
+    )
+
     ## Inference Start
 
     inference_start_time = time.time()
@@ -411,27 +432,30 @@ def _run_example_inference(
         mp.spawn(
             fn=_inference_process,
             args=(
-                num_inference_processes_per_machine,
-                distributed_context,
-                embedding_output_gcs_folder,
-                model_uri,
-                inference_batch_size,
-                dataset,
-                inferencer_args,
-                inference_node_type,
-                node_type_to_feature_dim,
-                edge_type_to_feature_dim,
+                num_inference_processes_per_machine, # local_world_size
+                node_rank,  # node_rank
+                node_world_size,  # node_world_size
+                master_ip_address, # master_ip_address
+                master_default_process_group_port, # master_default_process_group_port
+                embedding_output_gcs_folder, # embedding_gcs_path
+                model_uri, # model_state_dict_uri
+                inference_batch_size, # inference_batch_size
+                dataset, # dataset
+                inferencer_args, # inferencer_args
+                inference_node_type, # inference_node_type
+                node_type_to_feature_dim, # node_type_to_feature_dim
+                edge_type_to_feature_dim, # edge_type_to_feature_dim
             ),
             nprocs=num_inference_processes_per_machine,
             join=True,
         )
 
         logger.info(
-            f"--- Inference finished on rank {distributed_context.global_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
+            f"--- Inference finished on rank {node_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
         )
 
         # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-        if distributed_context.global_rank == 0:
+        if node_rank == 0:
             logger.info(
                 f"--- Machine 0 triggers loading embeddings from GCS to BigQuery for node type {inference_node_type}"
             )
