@@ -314,13 +314,15 @@ def build_dataset(
     serialized_graph_metadata: SerializedGraphMetadata,
     sample_edge_direction: Union[Literal["in", "out"], str],
     distributed_context: Optional[DistributedContext] = None,
-    dataset_building_port: Optional[int] = None,
     should_load_tensors_in_parallel: bool = True,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    _dataset_building_port: Optional[
+        int
+    ] = None,  # WARNING: This field will be deprecated in the future
 ) -> DistLinkPredictionDataset:
     """
     Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some
@@ -340,8 +342,6 @@ def build_dataset(
         distributed_context (deprecated field - will be removed soon) (Optional[DistributedContext]): Distributed context containing information for master_ip_address, rank, and world size.
             Defaults to None, in which case it will be initialized from the current torch.distributed context. If provided,
             you need not initialized a process_group, one will be initialized.
-        dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
-            be initialized from the current torch.distributed context.
         sample_edge_direction (Union[Literal["in", "out"], str]): Whether edges in the graph are directed inward or outward. Note that this is
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
@@ -353,6 +353,8 @@ def build_dataset(
             If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
+        _dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
+            be initialized from the current torch.distributed context.
 
     Returns:
         DistLinkPredictionDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -384,9 +386,9 @@ def build_dataset(
     master_dataset_building_ports: Tuple[int, int]
     if distributed_context is None:
         should_cleanup_distributed_context: bool = False
-        if dataset_building_port is not None:
+        if _dataset_building_port is not None:
             logger.warning(
-                f"Found specified dataset building port {dataset_building_port} but no distributed context is provided, will instead infer free ports automatically for dataset building"
+                f"Found specified dataset building port {_dataset_building_port} but no distributed context is provided, will instead infer free ports automatically for dataset building"
             )
 
         if not torch.distributed.is_initialized():
@@ -411,7 +413,7 @@ def build_dataset(
         node_world_size = distributed_context.global_world_size
         node_rank = distributed_context.global_rank
         master_ip_address = distributed_context.main_worker_ip_address
-        if dataset_building_port is None:
+        if _dataset_building_port is None:
             master_dataset_building_ports = (
                 DEFAULT_MASTER_DATA_BUILDING_PORT,  # Used for partitioning rpc
                 DEFAULT_MASTER_DATA_BUILDING_PORT
@@ -419,8 +421,8 @@ def build_dataset(
             )
         else:
             master_dataset_building_ports = (
-                dataset_building_port,  # Used for partitioning rpc
-                dataset_building_port
+                _dataset_building_port,  # Used for partitioning rpc
+                _dataset_building_port
                 + 1,  # Used for distributed communication with the splitter, will not be used if no splitter is provided
             )
 
