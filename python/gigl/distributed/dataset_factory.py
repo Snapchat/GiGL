@@ -246,7 +246,7 @@ def _build_dataset_process(
             will be written to for use by the parent process
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         master_ip_address (str): IP address of the master node
-        master_dataset_building_port (int): Free port on the master node to use to build the dataset
+        master_dataset_building_ports (Tuple[int, int]): Free ports on the master node to use to build the dataset, the first port is used for partitioning and the second is used for splitting
         node_rank (int): Rank of the node (machine) on which this process is running
         node_world_size (int): World size (total #) of the nodes participating in hosting the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
@@ -314,6 +314,7 @@ def build_dataset(
     serialized_graph_metadata: SerializedGraphMetadata,
     sample_edge_direction: Union[Literal["in", "out"], str],
     distributed_context: Optional[DistributedContext] = None,
+    dataset_building_port: Optional[int] = None,
     should_load_tensors_in_parallel: bool = True,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
@@ -339,6 +340,8 @@ def build_dataset(
         distributed_context (deprecated field - will be removed soon) (Optional[DistributedContext]): Distributed context containing information for master_ip_address, rank, and world size.
             Defaults to None, in which case it will be initialized from the current torch.distributed context. If provided,
             you need not initialized a process_group, one will be initialized.
+        dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
+            be initialized from the current torch.distributed context.
         sample_edge_direction (Union[Literal["in", "out"], str]): Whether edges in the graph are directed inward or outward. Note that this is
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
@@ -381,6 +384,11 @@ def build_dataset(
     master_dataset_building_ports: Tuple[int, int]
     if distributed_context is None:
         should_cleanup_distributed_context: bool = False
+        if dataset_building_port is not None:
+            logger.warning(
+                f"Found specified dataset building port {dataset_building_port} but no distributed context is provided, will instead infer free ports automatically for dataset building"
+            )
+
         if not torch.distributed.is_initialized():
             logger.info(
                 "Distributed context is None, and no process group detected; will try to "
@@ -403,10 +411,18 @@ def build_dataset(
         node_world_size = distributed_context.global_world_size
         node_rank = distributed_context.global_rank
         master_ip_address = distributed_context.main_worker_ip_address
-        master_dataset_building_ports = (
-            DEFAULT_MASTER_DATA_BUILDING_PORT,
-            DEFAULT_MASTER_DATA_BUILDING_PORT + 1,
-        )
+        if dataset_building_port is None:
+            master_dataset_building_ports = (
+                DEFAULT_MASTER_DATA_BUILDING_PORT,  # Used for partitioning rpc
+                DEFAULT_MASTER_DATA_BUILDING_PORT
+                + 1,  # Used for distributed communication with the splitter, will not be used if no splitter is provided,
+            )
+        else:
+            master_dataset_building_ports = (
+                dataset_building_port,  # Used for partitioning rpc
+                dataset_building_port
+                + 1,  # Used for distributed communication with the splitter, will not be used if no splitter is provided
+            )
 
     logger.info(
         f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: "
