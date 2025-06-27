@@ -246,7 +246,7 @@ def _build_dataset_process(
             will be written to for use by the parent process
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         master_ip_address (str): IP address of the master node
-        master_dataset_building_port (int): Free port on the master node to use to build the dataset
+        master_dataset_building_ports (Tuple[int, int]): Free ports on the master node to use to build the dataset, the first port is used for partitioning and the second is used for splitting
         node_rank (int): Rank of the node (machine) on which this process is running
         node_world_size (int): World size (total #) of the nodes participating in hosting the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
@@ -320,6 +320,9 @@ def build_dataset(
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     splitter: Optional[NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    _dataset_building_port: Optional[
+        int
+    ] = None,  # WARNING: This field will be deprecated in the future
 ) -> DistLinkPredictionDataset:
     """
     Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some
@@ -350,6 +353,8 @@ def build_dataset(
             If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
+        _dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
+            be initialized from the current torch.distributed context.
 
     Returns:
         DistLinkPredictionDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -381,6 +386,11 @@ def build_dataset(
     master_dataset_building_ports: Tuple[int, int]
     if distributed_context is None:
         should_cleanup_distributed_context: bool = False
+        if _dataset_building_port is not None:
+            logger.warning(
+                f"Found specified dataset building port {_dataset_building_port} but no distributed context is provided, will instead infer free ports automatically for dataset building"
+            )
+
         if not torch.distributed.is_initialized():
             logger.info(
                 "Distributed context is None, and no process group detected; will try to "
@@ -403,10 +413,18 @@ def build_dataset(
         node_world_size = distributed_context.global_world_size
         node_rank = distributed_context.global_rank
         master_ip_address = distributed_context.main_worker_ip_address
-        master_dataset_building_ports = (
-            DEFAULT_MASTER_DATA_BUILDING_PORT,
-            DEFAULT_MASTER_DATA_BUILDING_PORT + 1,
-        )
+        if _dataset_building_port is None:
+            master_dataset_building_ports = (
+                DEFAULT_MASTER_DATA_BUILDING_PORT,  # Used for partitioning rpc
+                DEFAULT_MASTER_DATA_BUILDING_PORT
+                + 1,  # Used for distributed communication with the splitter, will not be used if no splitter is provided,
+            )
+        else:
+            master_dataset_building_ports = (
+                _dataset_building_port,  # Used for partitioning rpc
+                _dataset_building_port
+                + 1,  # Used for distributed communication with the splitter, will not be used if no splitter is provided
+            )
 
     logger.info(
         f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: "
