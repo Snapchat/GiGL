@@ -42,11 +42,15 @@ from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.distributed.utils import (
+    assert_tensor_equality,
+    get_process_group_init_method,
+)
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 
+# TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
 
 # GLT requires subclasses of DistNeighborLoader to be run in a separate process. Otherwise, we may run into segmentation fault
 # or other memory issues. Calling these functions in separate proceses also allows us to use shutdown_rpc() to ensure cleanup of
@@ -177,14 +181,14 @@ def _run_distributed_ablp_neighbor_loader(
     expected_positive_labels: dict[int, torch.Tensor],
     expected_negative_labels: Optional[dict[int, torch.Tensor]],
 ):
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
         input_nodes=torch.tensor([10, 15]),
         batch_size=2,
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -236,13 +240,13 @@ def _run_cora_supervised(
     context: DistributedContext,
     expected_data_count: int,
 ):
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
         input_nodes=to_homogeneous(dataset.train_node_ids),
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
     count = 0
@@ -265,21 +269,18 @@ def _run_multiple_neighbor_loader(
     context: DistributedContext,
     expected_data_count: int,
 ):
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
     loader_one = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
     loader_two = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -294,9 +295,6 @@ def _run_multiple_neighbor_loader(
     loader_three = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -433,6 +431,14 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             global_rank=0,
             global_world_size=self._world_size,
         )
+
+    def tearDown(self):
+        if torch.distributed.is_initialized():
+            print("Destroying process group")
+            # Ensure the process group is destroyed after each test
+            # to avoid interference with subsequent tests
+            torch.distributed.destroy_process_group()
+        super().tearDown()
 
     def test_distributed_neighbor_loader(self):
         expected_data_count = 2708
