@@ -143,14 +143,15 @@ class DistributedDatasetTestCase(unittest.TestCase):
             train_nodes.tolist()
             + val_nodes.tolist()
             + test_nodes.tolist()
-            + list(range(mocked_dataset_info.num_nodes[mocked_dataset_info.default_node_type]))
+            + list(
+                range(
+                    mocked_dataset_info.num_nodes[mocked_dataset_info.default_node_type]
+                )
+            )
         )
 
         # Check that the node ids have *all* node ids, including nodes not included in train, val, and test.
-        self.assert_tensor_equal(
-            dataset.node_ids,
-            expected_node_ids
-        )
+        self.assert_tensor_equal(dataset.node_ids, expected_node_ids)
 
     @parameterized.expand(
         [
