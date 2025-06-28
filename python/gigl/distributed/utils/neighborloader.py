@@ -93,6 +93,7 @@ def labeled_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> 
     sample_node_type = supevision_edge_type[0]
     homogeneous_data.num_sampled_nodes = data.num_sampled_nodes[sample_node_type]
     homogeneous_data.num_sampled_edges = data.num_sampled_edges[supevision_edge_type]
+    homogeneous_data.batch_size = homogeneous_data.batch.numel()
     return homogeneous_data
 
 
