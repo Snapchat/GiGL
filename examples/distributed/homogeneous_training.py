@@ -768,6 +768,9 @@ def _run_example_train(
             )
             local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
+    # TODO (mkolodner-sc): Don't hardcode this
+    local_world_size = 1
+
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
     node_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
