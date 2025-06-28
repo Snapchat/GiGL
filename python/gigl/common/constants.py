@@ -1,6 +1,15 @@
 from pathlib import Path
 from typing import Dict, Final
 
+
+# TODO: (svij) https://github.com/Snapchat/GiGL/issues/125
+python_or_gigl_dir: Final[Path] = Path(__file__).resolve().parent.parent.parent
+GIGL_ROOT_DIR: Final[Path] = (
+    python_or_gigl_dir
+    if (python_or_gigl_dir / "setup.py").exists()
+    else python_or_gigl_dir.parent
+)
+
 GIGL_ROOT_DIR: Final[Path] = (
     Path(__file__).resolve().parent.parent.parent.parent
 )  # common -> gigl -> python -> root
