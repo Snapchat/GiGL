@@ -474,17 +474,15 @@ class DistABLPLoader(DistLoader):
 
         return data
 
-    def _set_batch(
-        self, data: Union[Data, HeteroData], positive_labels: dict[int, torch.Tensor]
-    ):
+    def _set_batch(self, data: Union[Data, HeteroData], positive_labels: torch.Tensor):
         if isinstance(data, HeteroData):
             data[self._anchor_node_type].batch = data[self._anchor_node_type].batch[
-                : len(positive_labels)
+                : positive_labels.size(0)
             ]
-            data[self._anchor_node_type].batch_size = len(positive_labels)
+            data[self._anchor_node_type].batch_size = positive_labels.size(0)
         else:
-            data.batch = data.batch[: len(positive_labels)]
-            data.batch_size = len(positive_labels)
+            data.batch = data.batch[: positive_labels.size(0)]
+            data.batch_size = positive_labels.size(0)
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
