@@ -159,6 +159,14 @@ def _training_process(
     master_default_process_group_port: int,
     trainer_args: dict[str, str],
     model_uri: Uri,
+    subgraph_fanout: list[int],
+    sampling_workers_per_process: int,
+    main_batch_size: int,
+    random_batch_size: int,
+    sampling_worker_shared_channel_size: str,
+    process_start_gap_seconds: int,
+    use_amp: bool,
+    log_every_n_batch: int,
 ):
     # TODO (mkolodner-sc): Add check to ensure that we are doing GPU training -- cpu training is not yet supported
 
@@ -206,26 +214,6 @@ def _training_process(
         group_name=sampler_group_name,
     )
 
-    main_batch_size = int(trainer_args.get("main_batch_size", 512))
-    random_batch_size = int(trainer_args.get("random_batch_size", 512))
-    fanout_per_hop = int(trainer_args.get("fanout_per_hop", "10"))
-
-    subgraph_fanout: List[int] = [fanout_per_hop, fanout_per_hop]
-
-    main_sampling_workers_per_training_process: int = int(
-        trainer_args.get("main_sampling_workers_per_training_process", "4")
-    )
-
-    random_sampling_workers_per_training_process: int = int(
-        trainer_args.get("random_sampling_workers_per_training_process", "4")
-    )
-
-    sampling_worker_shared_channel_size: str = trainer_args.get(
-        "sampling_worker_shared_channel_size", "4GB"
-    )
-
-    process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
-
     assert isinstance(dataset.train_node_ids, abc.Mapping)
     train_main_loader = DistABLPLoader(
         dataset=dataset,
@@ -234,10 +222,10 @@ def _training_process(
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.train_node_ids),
-        num_workers=main_sampling_workers_per_training_process,
+        num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
         pin_memory_device=training_device,
-        worker_concurrency=main_sampling_workers_per_training_process,
+        worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=True,
@@ -255,10 +243,10 @@ def _training_process(
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.node_ids),
-        num_workers=random_sampling_workers_per_training_process,
+        num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=training_device,
-        worker_concurrency=random_sampling_workers_per_training_process,
+        worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds / 2,
         shuffle=True,
@@ -289,10 +277,10 @@ def _training_process(
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.val_node_ids),
-        num_workers=main_sampling_workers_per_training_process,
+        num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
         pin_memory_device=training_device,
-        worker_concurrency=main_sampling_workers_per_training_process,
+        worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         _main_sampling_port=23000,
@@ -308,10 +296,10 @@ def _training_process(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         input_nodes=to_homogeneous(dataset.node_ids),
-        num_workers=random_sampling_workers_per_training_process,
+        num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=training_device,
-        worker_concurrency=random_sampling_workers_per_training_process,
+        worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds / 2,
     )
@@ -336,7 +324,6 @@ def _training_process(
 
     learning_rate = float(trainer_args.get("learning_rate", "0.0005"))
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
-    use_amp = bool(strtobool(trainer_args.get("use_amp", "False")))
     optimizer = torch.optim.AdamW(
         params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
@@ -357,7 +344,6 @@ def _training_process(
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
     num_epoch = int(trainer_args.get("num_epoch", "10"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
-    log_every_n_batch = int(trainer_args.get("log_every_n_batch", "25"))
 
     # Entering the training loop
     training_start_time = time.time()
@@ -612,6 +598,14 @@ def _test_process(
     master_default_process_group_port: int,
     trainer_args: dict[str, str],
     model_uri: Uri,
+    subgraph_fanout: list[int],
+    sampling_workers_per_process: int,
+    main_batch_size: int,
+    random_batch_size: int,
+    sampling_worker_shared_channel_size: str,
+    process_start_gap_seconds: int,
+    use_amp: bool,
+    log_every_n_batch: int,
 ):
     # TODO (mkolodner-sc): Add check to ensure that we are doing GPU training -- cpu training is not yet supported
 
@@ -653,21 +647,6 @@ def _test_process(
         group_name=sampler_group_name,
     )
 
-    fanout_per_hop = int(trainer_args.get("fanout_per_hop", "10"))
-    subgraph_fanout: List[int] = [fanout_per_hop, fanout_per_hop]
-    main_sampling_workers_per_testing_process: int = int(
-        trainer_args.get("main_sampling_workers_per_testing_process", "4")
-    )
-    random_sampling_workers_per_testing_process: int = int(
-        trainer_args.get("random_sampling_workers_per_testing_process", "4")
-    )
-    main_batch_size = int(trainer_args.get("main_batch_size", 512))
-    random_batch_size = int(trainer_args.get("random_batch_size", 512))
-    sampling_worker_shared_channel_size: str = trainer_args.get(
-        "sampling_worker_shared_channel_size", "4GB"
-    )
-    process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
-
     assert isinstance(dataset.test_node_ids, abc.Mapping)
 
     test_main_loader = DistABLPLoader(
@@ -677,10 +656,10 @@ def _test_process(
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.test_node_ids),
-        num_workers=main_sampling_workers_per_testing_process,
+        num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
         pin_memory_device=test_device,
-        worker_concurrency=main_sampling_workers_per_testing_process,
+        worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
     )
@@ -697,10 +676,10 @@ def _test_process(
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.node_ids),
-        num_workers=random_sampling_workers_per_testing_process,
+        num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=test_device,
-        worker_concurrency=random_sampling_workers_per_testing_process,
+        worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds / 2,
     )
@@ -729,8 +708,6 @@ def _test_process(
         temperature=0.07,
         remove_accidental_hits=True,
     )
-    use_amp = bool(strtobool(trainer_args.get("use_amp", "False")))
-    log_every_n_batch = int(trainer_args.get("log_every_n_batch", "25"))
 
     assert is_distributed_available_and_initialized()
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
@@ -798,8 +775,6 @@ def _run_example_train(
         )
         dataset_file.write_bytes(pickle.dumps(dataset.share_ipc()))
 
-    # Parsing arguments for trainer
-
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
@@ -844,6 +819,22 @@ def _run_example_train(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
+    # Training Hyperparameters shared among the training and test processes
+
+    fanout_per_hop = int(trainer_args.get("fanout_per_hop", "10"))
+    subgraph_fanout: list[int] = [fanout_per_hop, fanout_per_hop]
+    sampling_workers_per_process: int = int(
+        trainer_args.get("sampling_workers_per_process", "4")
+    )
+    main_batch_size = int(trainer_args.get("main_batch_size", 512))
+    random_batch_size = int(trainer_args.get("random_batch_size", 512))
+    sampling_worker_shared_channel_size: str = trainer_args.get(
+        "sampling_worker_shared_channel_size", "4GB"
+    )
+    process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
+    use_amp = bool(strtobool(trainer_args.get("use_amp", "False")))
+    log_every_n_batch = int(trainer_args.get("log_every_n_batch", "25"))
+
     logger.info("--- Launching training processes ...\n")
     start_time = time.time()
     torch.multiprocessing.spawn(
@@ -859,6 +850,14 @@ def _run_example_train(
             master_default_process_group_port,
             trainer_args,
             model_uri,
+            subgraph_fanout,
+            sampling_workers_per_process,
+            main_batch_size,
+            random_batch_size,
+            sampling_worker_shared_channel_size,
+            process_start_gap_seconds,
+            use_amp,
+            log_every_n_batch,
         ),
         nprocs=local_world_size,
         join=True,
@@ -879,6 +878,14 @@ def _run_example_train(
             master_default_process_group_port,
             trainer_args,
             model_uri,
+            subgraph_fanout,
+            sampling_workers_per_process,
+            main_batch_size,
+            random_batch_size,
+            sampling_worker_shared_channel_size,
+            process_start_gap_seconds,
+            use_amp,
+            log_every_n_batch,
         ),
         nprocs=local_world_size,
         join=True,
