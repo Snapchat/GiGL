@@ -54,8 +54,10 @@ def _compute_loss(
     loss_layer: RetrievalLoss,
     device: torch.device,
 ) -> torch.Tensor:
-    main_embeddings = model(data=main_data, device=device)
-    random_negative_embeddings = model(data=random_neg_data, device=device)
+    main_embeddings = model.module.encode(data=main_data, device=device)
+    random_negative_embeddings = model.module.encode(
+        data=random_neg_data, device=device
+    )
 
     query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
     random_neg_ids: torch.Tensor = torch.arange(random_neg_data.batch_size).to(device)

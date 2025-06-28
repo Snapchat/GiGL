@@ -212,7 +212,7 @@ def _inference_process(
 
         # These arguments to forward are specific to the GiGL LinkPredictionGNN model.
         # If just using a nn.Module, you can just use output = model(data)
-        output = model(data=data, device=device)
+        output = model.encode(data=data, device=device)
 
         # The anchor node IDs are contained inside of the .batch field of the data
         node_ids = data.batch.cpu()
