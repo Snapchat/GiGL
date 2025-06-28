@@ -31,7 +31,7 @@ from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.src.common.models.layers.loss import RetrievalLoss
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_homogeneous
+from gigl.types.graph import to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
@@ -54,14 +54,8 @@ def _compute_loss(
     loss_layer: RetrievalLoss,
     device: torch.device,
 ) -> torch.Tensor:
-    main_embeddings = model(
-        main_data, output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE], device=device
-    )[DEFAULT_HOMOGENEOUS_NODE_TYPE]
-    random_negative_embeddings = model(
-        random_neg_data,
-        output_node_types=[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-        device=device,
-    )[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+    main_embeddings = model(data=main_data, device=device)
+    random_negative_embeddings = model(data=random_neg_data, device=device)
 
     query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
     random_neg_ids: torch.Tensor = torch.arange(random_neg_data.batch_size).to(device)
