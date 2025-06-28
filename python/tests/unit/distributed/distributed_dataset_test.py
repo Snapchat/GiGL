@@ -2,11 +2,11 @@ import unittest
 from collections import abc
 from typing import Any, Optional, Type, Union
 
-import graphlearn_torch as glt
 import torch
 from parameterized import param, parameterized
 from torch.testing import assert_close
 
+import gigl.distributed.utils
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     SerializedTFRecordInfo,
@@ -93,16 +93,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
         ]
     )
     def test_build_dataset(self, _, partitioner_class: Type[DistPartitioner]):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
-
+        port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
             partitioner_class=partitioner_class,
+            _port=port,
         )
 
         self.assertIsNone(dataset.train_node_ids)
@@ -111,7 +109,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertIsInstance(dataset.node_ids, torch.Tensor)
 
     def test_build_and_split_dataset_homogeneous(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        port = gigl.distributed.utils.get_free_port()
         mocked_dataset_info = TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
         print("mocked_dataset_info.node_feats", mocked_dataset_info.node_feats)
 
@@ -124,8 +122,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
             world_size=1,
             mocked_dataset_info=mocked_dataset_info,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
             splitter=_FakeSplitter(
                 (
                     train_nodes,
@@ -133,6 +129,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                     test_nodes,
                 ),
             ),
+            _port=port,
         )
 
         self.assert_tensor_equal(dataset.train_node_ids, train_nodes)
@@ -366,15 +363,13 @@ class DistributedDatasetTestCase(unittest.TestCase):
         expected_test_node_ids,
         expected_node_ids,
     ):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
-            master_ip_address=self._master_ip_address,
-            master_port=master_port,
             splitter=_FakeSplitter(splits),
+            _port=gigl.distributed.utils.get_free_port(),
         )
 
         self.assert_tensor_equal(dataset.train_node_ids, expected_train_node_ids)
@@ -385,7 +380,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
     # This tests that if we build a dataset with a supervision edge type which is not a message passing edge type, we still correctly load the supervision edge
     def test_build_dataset_with_unique_supervision_edge_type(self):
-        master_port = glt.utils.get_free_port(self._master_ip_address)
         mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
             get_mocked_dataset_artifact_metadata()[
                 TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
@@ -452,7 +446,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
             distributed_context=distributed_context,
             sample_edge_direction="in",
             should_load_tensors_in_parallel=True,
-            _dataset_building_port=master_port,
         )
 
         assert isinstance(
@@ -470,6 +463,47 @@ class DistributedDatasetTestCase(unittest.TestCase):
         assert isinstance(dataset.edge_pb, abc.Mapping)
         self.assertTrue(labeled_edge_type not in dataset.edge_pb)
         self.assertTrue(message_passing_edge_type in dataset.edge_pb)
+
+    # This tests that we can build a dataset when manually specifying a port.
+    # TODO (mkolodner-sc): Remove this test once we deprecate the `port` field
+    def test_build_dataset_with_manual_port(self):
+        mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
+            get_mocked_dataset_artifact_metadata()[
+                TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+            ]
+        )
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=mocked_dataset_artifact_metadata.frozen_gbml_config_uri
+            )
+        )
+
+        preprocessed_metadata_pb_wrapper = (
+            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
+        )
+        graph_metadata_pb_wrapper = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*\.tfrecord(\.gz)?$",
+        )
+
+        distributed_context = DistributedContext(
+            main_worker_ip_address="localhost",
+            global_rank=0,
+            global_world_size=1,
+        )
+
+        port = gigl.distributed.utils.get_free_port()
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            distributed_context=distributed_context,
+            sample_edge_direction="in",
+            should_load_tensors_in_parallel=True,
+            _dataset_building_port=port,
+        )
 
 
 if __name__ == "__main__":
