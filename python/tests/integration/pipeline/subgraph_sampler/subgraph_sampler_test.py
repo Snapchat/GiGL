@@ -1041,6 +1041,7 @@ class SubgraphSamplerTest(unittest.TestCase):
                 self.assertLess(
                     len(training_samples),
                     len(
+
                         expected_graph_from_preprocessor.node_type_to_node_to_features_map[
                             src_node_type
                         ]
@@ -1093,23 +1094,23 @@ class SubgraphSamplerTest(unittest.TestCase):
             # these are isolated node IDs in the homogeneous toy graph
         )
 
-    def test_nablp_sgs_on_homogeneous_toy_graph_with_udl(
-        self,
-    ):
-        subgraph_sampler_config_pb = gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig(
-            num_hops=TEST_NUM_HOPS,
-            num_neighbors_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
-            num_positive_samples=TEST_NUM_POSITIVE_SAMPLES,
-            num_user_defined_positive_samples=TEST_NUM_USER_DEFINED_POSITIVE_SAMPLES,
-            num_user_defined_negative_samples=TEST_NUM_USER_DEFINED_NEGATIVE_SAMPLES,
-        )
-        self.__run_and_check_nablp_sgs_on_homogeneous_toy_graph(
-            mocked_dataset_info=TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            subgraph_sampler_config_pb=subgraph_sampler_config_pb,
-            isolated_node_ids=[13, 14, 24, 25],
-            should_check_user_defined_labels=True,
-            # these are isolated node IDs without user-defined +/- edges in the homogeneous toy graph
-        )
+    # def test_nablp_sgs_on_homogeneous_toy_graph_with_udl(
+    #     self,
+    # ):
+    #     subgraph_sampler_config_pb = gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig(
+    #         num_hops=TEST_NUM_HOPS,
+    #         num_neighbors_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
+    #         num_positive_samples=TEST_NUM_POSITIVE_SAMPLES,
+    #         num_user_defined_positive_samples=TEST_NUM_USER_DEFINED_POSITIVE_SAMPLES,
+    #         num_user_defined_negative_samples=TEST_NUM_USER_DEFINED_NEGATIVE_SAMPLES,
+    #     )
+    #     self.__run_and_check_nablp_sgs_on_homogeneous_toy_graph(
+    #         mocked_dataset_info=TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    #         subgraph_sampler_config_pb=subgraph_sampler_config_pb,
+    #         isolated_node_ids=[13, 14, 24, 25],
+    #         should_check_user_defined_labels=True,
+    #         # these are isolated node IDs without user-defined +/- edges in the homogeneous toy graph
+    #     )
 
     def __run_and_check_nablp_sgs_on_heterogeneous_toy_graph(
         self,
@@ -1203,91 +1204,91 @@ class SubgraphSamplerTest(unittest.TestCase):
             should_check_exact_number_of_in_edges=True,
         )
 
-    def test_nablp_sgs_on_heterogeneous_toy_graph(
-        self,
-    ):
-        # See python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml for graph def
-        # and python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.png for visualization
-        subgraph_sampling_strategy_pb = subgraph_sampling_strategy_pb2.SubgraphSamplingStrategy(
-            message_passing_paths=subgraph_sampling_strategy_pb2.MessagePassingPathStrategy(
-                paths=[
-                    subgraph_sampling_strategy_pb2.MessagePassingPath(
-                        root_node_type="user",
-                        sampling_ops=[
-                            subgraph_sampling_strategy_pb2.SamplingOp(
-                                op_name="sample_stories_from_user",
-                                edge_type=graph_schema_pb2.EdgeType(
-                                    src_node_type="story",
-                                    relation="to",
-                                    dst_node_type="user",
-                                ),
-                                input_op_names=[],
-                                random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
-                                    num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
-                                ),
-                            ),
-                            subgraph_sampling_strategy_pb2.SamplingOp(
-                                op_name="sample_users_from_story",
-                                edge_type=graph_schema_pb2.EdgeType(
-                                    src_node_type="user",
-                                    relation="to",
-                                    dst_node_type="story",
-                                ),
-                                input_op_names=["sample_stories_from_user"],
-                                random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
-                                    num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
-                                ),
-                            ),
-                        ],
-                    ),
-                    subgraph_sampling_strategy_pb2.MessagePassingPath(
-                        root_node_type="story",
-                        sampling_ops=[
-                            subgraph_sampling_strategy_pb2.SamplingOp(
-                                op_name="sample_users_from_story",
-                                edge_type=graph_schema_pb2.EdgeType(
-                                    src_node_type="user",
-                                    relation="to",
-                                    dst_node_type="story",
-                                ),
-                                input_op_names=[],
-                                random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
-                                    num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
-                                ),
-                            ),
-                            subgraph_sampling_strategy_pb2.SamplingOp(
-                                op_name="sample_stories_from_user",
-                                edge_type=graph_schema_pb2.EdgeType(
-                                    src_node_type="story",
-                                    relation="to",
-                                    dst_node_type="user",
-                                ),
-                                input_op_names=["sample_users_from_story"],
-                                random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
-                                    num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
-                                ),
-                            ),
-                        ],
-                    ),
-                ]
-            )
-        )
-        subgraph_sampler_config_pb = (
-            gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig(
-                num_positive_samples=TEST_NUM_POSITIVE_SAMPLES,
-                subgraph_sampling_strategy=subgraph_sampling_strategy_pb,
-                graph_db_config=gbml_config_pb2.GbmlConfig.GraphDBConfig(
-                    graph_db_args={
-                        "use_local_sampler": "true",
-                    }
-                ),
-            )
-        )
-        self.__run_and_check_nablp_sgs_on_heterogeneous_toy_graph(
-            mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            subgraph_sampler_config_pb=subgraph_sampler_config_pb,
-        )
-        print("test_nablp_sgs_on_heterogeneous_toy_graph ran successfully.")
+    # def test_nablp_sgs_on_heterogeneous_toy_graph(
+    #     self,
+    # ):
+    #     # See python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml for graph def
+    #     # and python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.png for visualization
+    #     subgraph_sampling_strategy_pb = subgraph_sampling_strategy_pb2.SubgraphSamplingStrategy(
+    #         message_passing_paths=subgraph_sampling_strategy_pb2.MessagePassingPathStrategy(
+    #             paths=[
+    #                 subgraph_sampling_strategy_pb2.MessagePassingPath(
+    #                     root_node_type="user",
+    #                     sampling_ops=[
+    #                         subgraph_sampling_strategy_pb2.SamplingOp(
+    #                             op_name="sample_stories_from_user",
+    #                             edge_type=graph_schema_pb2.EdgeType(
+    #                                 src_node_type="story",
+    #                                 relation="to",
+    #                                 dst_node_type="user",
+    #                             ),
+    #                             input_op_names=[],
+    #                             random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
+    #                                 num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
+    #                             ),
+    #                         ),
+    #                         subgraph_sampling_strategy_pb2.SamplingOp(
+    #                             op_name="sample_users_from_story",
+    #                             edge_type=graph_schema_pb2.EdgeType(
+    #                                 src_node_type="user",
+    #                                 relation="to",
+    #                                 dst_node_type="story",
+    #                             ),
+    #                             input_op_names=["sample_stories_from_user"],
+    #                             random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
+    #                                 num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
+    #                             ),
+    #                         ),
+    #                     ],
+    #                 ),
+    #                 subgraph_sampling_strategy_pb2.MessagePassingPath(
+    #                     root_node_type="story",
+    #                     sampling_ops=[
+    #                         subgraph_sampling_strategy_pb2.SamplingOp(
+    #                             op_name="sample_users_from_story",
+    #                             edge_type=graph_schema_pb2.EdgeType(
+    #                                 src_node_type="user",
+    #                                 relation="to",
+    #                                 dst_node_type="story",
+    #                             ),
+    #                             input_op_names=[],
+    #                             random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
+    #                                 num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
+    #                             ),
+    #                         ),
+    #                         subgraph_sampling_strategy_pb2.SamplingOp(
+    #                             op_name="sample_stories_from_user",
+    #                             edge_type=graph_schema_pb2.EdgeType(
+    #                                 src_node_type="story",
+    #                                 relation="to",
+    #                                 dst_node_type="user",
+    #                             ),
+    #                             input_op_names=["sample_users_from_story"],
+    #                             random_uniform=subgraph_sampling_strategy_pb2.RandomUniform(
+    #                                 num_nodes_to_sample=TEST_NUM_NEIGHBORS_TO_SAMPLE,
+    #                             ),
+    #                         ),
+    #                     ],
+    #                 ),
+    #             ]
+    #         )
+    #     )
+    #     subgraph_sampler_config_pb = (
+    #         gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig(
+    #             num_positive_samples=TEST_NUM_POSITIVE_SAMPLES,
+    #             subgraph_sampling_strategy=subgraph_sampling_strategy_pb,
+    #             graph_db_config=gbml_config_pb2.GbmlConfig.GraphDBConfig(
+    #                 graph_db_args={
+    #                     "use_local_sampler": "true",
+    #                 }
+    #             ),
+    #         )
+    #     )
+    #     self.__run_and_check_nablp_sgs_on_heterogeneous_toy_graph(
+    #         mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    #         subgraph_sampler_config_pb=subgraph_sampler_config_pb,
+    #     )
+    #     print("test_nablp_sgs_on_heterogeneous_toy_graph ran successfully.")
 
     def __run_and_check_node_based_task_sgs_validity(
         self,

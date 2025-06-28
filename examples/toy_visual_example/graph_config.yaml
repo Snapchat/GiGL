@@ -34,7 +34,7 @@ adj_list:
     - src: 11
       dst: [12]
     - src: 12
-      dst: [13]
+      dst: []
     - src: 13
       dst: []
 
