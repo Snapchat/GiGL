@@ -492,6 +492,7 @@ class DistABLPLoader(DistLoader):
         data = super()._collate_fn(msg)
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
+        data = self._set_batch(data=data, positive_labels=positive_labels)
         if not self._is_input_heterogeneous:
             data = labeled_to_homogeneous(self._supervision_edge_type, data)
         data = self._set_labels(data, positive_labels, negative_labels)
