@@ -12,6 +12,7 @@ from typing import List, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
+from examples.models import init_example_gigl_homogeneous_cora_model
 from graphlearn_torch.distributed.dist_context import init_worker_group
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
@@ -28,11 +29,6 @@ from gigl.distributed import (
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.src.common.models.layers.loss import RetrievalLoss
-from gigl.src.common.models.pyg.homogeneous import GraphSAGE
-from gigl.src.common.models.pyg.link_prediction import (
-    LinkPredictionDecoder,
-    LinkPredictionGNN,
-)
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, to_homogeneous
@@ -41,44 +37,6 @@ from gigl.utils.iterator import InfiniteIterator
 logger = Logger()
 
 DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
-
-
-def _init_example_gigl_homogeneous_model(
-    node_feature_dim: int,
-    edge_feature_dim: int,
-    trainer_args: dict[str, str],
-    device: Optional[torch.device] = None,
-    state_dict: Optional[dict[str, torch.Tensor]] = None,
-) -> DistributedDataParallel:
-    encoder_model = GraphSAGE(
-        in_dim=node_feature_dim,
-        hid_dim=int(trainer_args.get("hid_dim", 16)),
-        out_dim=int(trainer_args.get("out_dim", 16)),
-        edge_dim=edge_feature_dim if edge_feature_dim > 0 else None,
-        num_layers=int(trainer_args.get("num_layers", 2)),
-        conv_kwargs={},  # Use default conv args for this model type
-        should_l2_normalize_embedding_layer_output=True,
-    )
-
-    decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-
-    model: Union[LinkPredictionGNN, DistributedDataParallel] = LinkPredictionGNN(
-        encoder=encoder_model,
-        decoder=decoder_model,
-    )
-
-    # Push the model to the specified device.
-    if device is None:
-        device = torch.device("cpu")
-    model.to(device)
-
-    if state_dict is not None:
-        model.load_state_dict(state_dict)
-
-    # Like this for CPU https://github.com/Snapchat/GiGL/pull/80/files#diff-69340023aa15486dd1efd4e9782010b0abd3ea15e75ec4593b4fe1dc279788eaR284-R286
-    model = DistributedDataParallel(model, device_ids=[device])
-
-    return model
 
 
 def _sync_loss_across_processes(local_loss: torch.Tensor) -> float:
@@ -194,6 +152,7 @@ def _training_process(
     # timeout of 30 minutes.
     torch.distributed.init_process_group(
         backend="nccl",
+        init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
         rank=training_process_global_rank,
         world_size=training_process_world_size,
         timeout=datetime.timedelta(minutes=30),
@@ -201,6 +160,8 @@ def _training_process(
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process group initialized"
     )
+
+    # TODO (mkolodner-sc): Deprecate passing this in once DistABLPLoader no longer requires this argument
     distributed_context = DistributedContext(
         main_worker_ip_address=master_ip_address,
         global_rank=node_rank,
@@ -229,6 +190,8 @@ def _training_process(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=True,
+        _main_inference_port=21000,
+        _main_sampling_port=22000,
     )
 
     logger.info(
@@ -239,9 +202,6 @@ def _training_process(
     train_random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        context=distributed_context,
-        local_process_rank=local_rank,
-        local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
@@ -283,7 +243,8 @@ def _training_process(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
-        _main_sampling_port=23000,
+        _main_inference_port=23000,
+        _main_sampling_port=24000,
     )
 
     logger.info(
@@ -315,15 +276,23 @@ def _training_process(
         f"---Machine {node_rank} local rank {local_rank} validation data loaders initialized"
     )
 
-    model = _init_example_gigl_homogeneous_model(
-        node_feature_dim=node_feature_dim,
-        edge_feature_dim=edge_feature_dim,
-        trainer_args=trainer_args,
-        device=training_device,
+    model = DistributedDataParallel(
+        init_example_gigl_homogeneous_cora_model(
+            node_feature_dim=node_feature_dim,
+            edge_feature_dim=edge_feature_dim,
+            args=trainer_args,
+            device=training_device,
+        ),
+        device_ids=[training_device],
     )
 
     learning_rate = float(trainer_args.get("learning_rate", "0.0005"))
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
+    num_max_train_batches = int(trainer_args.get("num_max_train_batches", "100"))
+    num_val_batches = int(trainer_args.get("num_val_batches", "100"))
+    num_epoch = int(trainer_args.get("num_epoch", "10"))
+    val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
+
     optimizer = torch.optim.AdamW(
         params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
@@ -339,11 +308,6 @@ def _training_process(
     assert is_distributed_available_and_initialized()
     # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
     torch.distributed.barrier()
-
-    num_max_train_batches = int(trainer_args.get("num_max_train_batches", "100"))
-    num_val_batches = int(trainer_args.get("num_val_batches", "100"))
-    num_epoch = int(trainer_args.get("num_epoch", "10"))
-    val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
     # Entering the training loop
     training_start_time = time.time()
@@ -662,6 +626,8 @@ def _test_process(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
+        _main_inference_port=25000,
+        _main_sampling_port=26000,
     )
 
     logger.info(
@@ -672,9 +638,6 @@ def _test_process(
     test_random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        context=distributed_context,
-        local_process_rank=local_rank,
-        local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
@@ -692,12 +655,15 @@ def _test_process(
         load_from_uri=model_uri, device=test_device
     )
 
-    model = _init_example_gigl_homogeneous_model(
-        node_feature_dim=node_feature_dim,
-        edge_feature_dim=edge_feature_dim,
-        trainer_args=trainer_args,
-        device=test_device,
-        state_dict=model_state_dict,
+    model = DistributedDataParallel(
+        init_example_gigl_homogeneous_cora_model(
+            node_feature_dim=node_feature_dim,
+            edge_feature_dim=edge_feature_dim,
+            args=trainer_args,
+            device=test_device,
+            state_dict=model_state_dict,
+        ),
+        device_ids=[test_device],
     )
 
     logger.info(
