@@ -5,9 +5,9 @@ from typing import Dict, Final
 # common -> gigl -> python (or root dir in Docker container)
 python_or_gigl_dir: Final[Path] = Path(__file__).resolve().parent.parent.parent
 GIGL_ROOT_DIR: Final[Path] = (
-    python_or_gigl_dir
+    python_or_gigl_dir.parent  # common -> gigl -> python -> root
     if (python_or_gigl_dir / "setup.py").exists()
-    else python_or_gigl_dir.parent  # common -> gigl -> python -> root
+    else python_or_gigl_dir
 )
 PYTHON_ROOT_DIR: Final[Path] = python_or_gigl_dir
 
