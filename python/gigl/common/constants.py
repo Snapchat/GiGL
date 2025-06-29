@@ -1,18 +1,16 @@
 from pathlib import Path
 from typing import Dict, Final
 
-
 # TODO: (svij) https://github.com/Snapchat/GiGL/issues/125
+# common -> gigl -> python (or root dir in Docker container)
 python_or_gigl_dir: Final[Path] = Path(__file__).resolve().parent.parent.parent
 GIGL_ROOT_DIR: Final[Path] = (
     python_or_gigl_dir
     if (python_or_gigl_dir / "setup.py").exists()
-    else python_or_gigl_dir.parent
+    else python_or_gigl_dir.parent  # common -> gigl -> python -> root
 )
+PYTHON_ROOT_DIR: Final[Path] = python_or_gigl_dir
 
-GIGL_ROOT_DIR: Final[Path] = (
-    Path(__file__).resolve().parent.parent.parent.parent
-)  # common -> gigl -> python -> root
 PATH_GIGL_PKG_INIT_FILE: Final[Path] = Path.joinpath(
     GIGL_ROOT_DIR, "python", "gigl", "__init__.py"
 )
