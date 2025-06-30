@@ -111,11 +111,17 @@ class LoaderUtilsTest(unittest.TestCase):
             "item": torch.tensor([2, 2]),
         }
 
+        data.batch = torch.tensor([0, 1])
+
         homogeneous_data = labeled_to_homogeneous(_U2I_EDGE_TYPE, data)
         self.assertIsInstance(homogeneous_data, Data)
         self.assertTrue(hasattr(homogeneous_data, "edge_index"))
+        self.assertTrue(hasattr(homogeneous_data, "batch"))
+        self.assertTrue(hasattr(homogeneous_data, "batch_size"))
         assert_tensor_equality(homogeneous_data.num_sampled_nodes, torch.tensor([1, 1]))
         assert_tensor_equality(homogeneous_data.num_sampled_edges, torch.tensor([1, 1]))
+        assert_tensor_equality(homogeneous_data.batch, torch.tensor([0, 1]))
+        self.assertEqual(homogeneous_data.batch_size, 2)
 
     def test_strip_label_edges(self):
         data = HeteroData()

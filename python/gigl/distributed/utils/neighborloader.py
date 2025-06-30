@@ -76,23 +76,24 @@ def shard_nodes_by_process(
     return nodes_for_current_process
 
 
-def labeled_to_homogeneous(supevision_edge_type: EdgeType, data: HeteroData) -> Data:
+def labeled_to_homogeneous(supervision_edge_type: EdgeType, data: HeteroData) -> Data:
     """
     Returns a Data object with the label edges removed.
 
     Args:
-        supevision_edge_type (EdgeType): The edge type that contains the supervision edges.
+        supervision_edge_type (EdgeType): The edge type that contains the supervision edges.
         data (HeteroData): Heterogeneous graph with the supervision edge type
     Returns:
         data (Data): Homogeneous graph with the labeled edge type removed
     """
-    homogeneous_data = data.edge_type_subgraph([supevision_edge_type]).to_homogeneous(
+    homogeneous_data = data.edge_type_subgraph([supervision_edge_type]).to_homogeneous(
         add_edge_type=False, add_node_type=False
     )
-    # Since this is "homogeneous", supervision_edge_type[0] and supevision_edge_type[2] are the same.
-    sample_node_type = supevision_edge_type[0]
+    # Since this is "homogeneous", supervision_edge_type[0] and supervision_edge_type[2] are the same.
+    sample_node_type = supervision_edge_type[0]
     homogeneous_data.num_sampled_nodes = data.num_sampled_nodes[sample_node_type]
-    homogeneous_data.num_sampled_edges = data.num_sampled_edges[supevision_edge_type]
+    homogeneous_data.num_sampled_edges = data.num_sampled_edges[supervision_edge_type]
+    homogeneous_data.batch_size = homogeneous_data.batch.numel()
     return homogeneous_data
 
 
