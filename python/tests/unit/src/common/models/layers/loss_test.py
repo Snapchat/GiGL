@@ -125,7 +125,7 @@ class RetrievalLossTest(unittest.TestCase):
 
         loss = RetrievalLoss(remove_accidental_hits=True)
         scores = torch.mm(self.query_embeddings, self.candidate_embeddings.T)
-        actual2 = loss.__calculate_batch_retrieval_loss(
+        actual2 = loss._calculate_batch_retrieval_loss(
             scores,
             candidate_ids=self.candidate_ids,
         )
