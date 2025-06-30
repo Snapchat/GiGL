@@ -77,13 +77,43 @@ class DistABLPLoader(DistLoader):
         Note that for this class, the dataset must *always* be heterogeneous,
         as we need separate edge types for positive and negative labels.
 
-        If you provide `input_nodes` for homogeneous input (only as a Tensor),
-        Then we will attempt to infer the positive and optional negative labels
-        from the dataset.
-        In this case, the output of the loader will be a torch_geometric.data.Data object.
-        Otherwise, the output will be a torch_geometric.data.HeteroData object.
+        By default, the loader will return {py:class} `torch_geometric.data.HeteroData` (heterogeneous) objects,
+        but will return a {py:class}`torch_geometric.data.Data` (homogeneous) object if the dataset is "labeled homogeneous".
 
-           Args:
+        The following fields may also be present:
+        - `y_positive`: `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of positive
+                label node ids.
+        - `y_negative`: (Optional) `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of negative
+                label node ids. This will only be present if the supervision edge type has negative labels.
+
+
+        NOTE: for both y_positive, and y_negative, the values represented in both the key and value of the dicts are
+        the *local* node ids of the sampled nodes, not the global node ids.
+        In order to get the global node ids, you can use the `node` field of the Data/HeteroData object.
+        e.g. global_positive_node_id_labels = data.node[data.y_positive[local_anchor_node_id]].
+
+        The underlying graph engine may also add the following fields to the output Data object:
+            - num_sampled_nodes: If heterogeneous. a dictionary mapping from node type to the number of sampled nodes for that type, by hop.
+            if homogeneous, a tensor the number of sampled nodes, by hop.
+            - num_sampled_edges: If heterogeneous, a dictionary mapping from edge type to the number of sampled edges for that type, by hop.
+            If homogeneous, a tensor denoting the number of sampled edges, by hop.
+
+        Let's use the following homogeneous graph (https://is.gd/a8DK15) as an example:
+            0 -> 1 [label="Positive example" color="green"]
+            0 -> 2 [label="Negative example" color="red"]
+
+            0 -> {3, 4}
+            3 -> {5, 6}
+            4 -> {7, 8}
+
+            1 -> 9 # shouldn't be sampled
+            2 -> 10 # shouldn't be sampled
+
+        For sampling around node `0`, the fields on the output Data object will be:
+            - `y_positive`: {0: torch.tensor([1])} # 1 is the only positive label for node 0
+            - `y_negative`: {0: torch.tensor([2])} # 2 is the only negative label for node 0
+
+        Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
             num_neighbors (list[int] or Dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
@@ -93,9 +123,8 @@ class DistABLPLoader(DistLoader):
             context (DistributedContext): Distributed context information of the current process.
             local_process_rank (int): The local rank of the current process within a node.
             local_process_world_size (int): The total number of processes within a node.
-            input_nodes (torch.Tensor or tuple[str, torch.Tensor]): The
-                indices of seed nodes to start sampling from.
-                It is of type `torch.LongTensor` for homogeneous graphs.
+            input_nodes (Optional[torch.Tensor, tuple[NodeType, torch.Tensor]]):
+                Indices of seed nodes to start sampling from.
                 If set to `None` for homogeneous settings, all nodes will be considered.
                 In heterogeneous graphs, this flag must be passed in as a tuple that holds
                 the node type and node indices. (default: `None`)

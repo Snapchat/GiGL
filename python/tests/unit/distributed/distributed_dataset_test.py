@@ -486,6 +486,47 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertTrue(labeled_edge_type not in dataset.edge_pb)
         self.assertTrue(message_passing_edge_type in dataset.edge_pb)
 
+    # This tests that we can build a dataset when manually specifying a port.
+    # TODO (mkolodner-sc): Remove this test once we deprecate the `port` field
+    def test_build_dataset_with_manual_port(self):
+        mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
+            get_mocked_dataset_artifact_metadata()[
+                TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+            ]
+        )
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=mocked_dataset_artifact_metadata.frozen_gbml_config_uri
+            )
+        )
+
+        preprocessed_metadata_pb_wrapper = (
+            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
+        )
+        graph_metadata_pb_wrapper = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*\.tfrecord(\.gz)?$",
+        )
+
+        distributed_context = DistributedContext(
+            main_worker_ip_address="localhost",
+            global_rank=0,
+            global_world_size=1,
+        )
+
+        port = gigl.distributed.utils.get_free_port()
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            distributed_context=distributed_context,
+            sample_edge_direction="in",
+            should_load_tensors_in_parallel=True,
+            _dataset_building_port=port,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
