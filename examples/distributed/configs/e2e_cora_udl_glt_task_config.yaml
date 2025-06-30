@@ -27,11 +27,6 @@ sharedConfig:
   shouldSkipInference: false
   # Model Evaluation is only applicable for V1 GiGL -- we do not need it for V2
   shouldSkipModelEvaluation: true
-  trainedModelMetadata:
-    # This is an example model trained on the CORA dataset. To train a custom CORA model, please refer to the
-    # `gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml` config template.
-    # You can run a pipeline for training on CORA using `make run_cora_udl_e2e_kfp_test`.
-    trainedModelUri: gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features_user_defined_labels/trainer/models/model.pt
 taskMetadata:
   nodeAnchorBasedLinkPredictionTaskMetadata:
     supervisionEdgeTypes:
