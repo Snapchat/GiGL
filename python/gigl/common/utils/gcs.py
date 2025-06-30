@@ -18,6 +18,7 @@ from gigl.common.utils.retry import retry
 logger = Logger()
 
 UPLOAD_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to upload something
+DELETE_RETRY_DEADLINE_S = 60 * 60      # limit of 1 hour maximum to delete something
 
 # No more than 100 calls should be included in a single batch request.
 # The total batch request payload must be less than 10MB
@@ -239,9 +240,10 @@ class GcsUtils:
                 logger.info(f"Could not find and download {gcs_path}.")
 
         with ThreadPoolExecutor(max_workers=None) as executor:
-            executor.map(
+            results = executor.map(
                 lambda params: self.__download_blob_from_gcs(*params), blobs_and_paths
             )
+            list(results)  # wait for all downloads to finish
 
     def download_files_from_gcs_paths_to_local_dir(
         self, gcs_paths: List[GcsUri], local_path_dir: LocalUri
@@ -259,10 +261,11 @@ class GcsUtils:
             logger.info(f"Downloading blobs: {file_blobs}")
 
             with ThreadPoolExecutor(max_workers=None) as executor:
-                executor.map(
+                results = executor.map(
                     lambda params: self.__download_blob_from_gcs(*params),
                     zip(file_blobs, local_dest_paths),
                 )
+                list(results)  # wait for all downloads to finish
 
     @staticmethod
     def get_bucket_and_blob_path_from_gcs_path(
@@ -323,6 +326,7 @@ class GcsUtils:
         self.delete_files(gcs_files=matching_blobs)
         logger.info(f"Files deleted in '{gcs_path}'")
 
+    @retry(deadline_s=DELETE_RETRY_DEADLINE_S)
     def delete_files(self, gcs_files: Iterable[Union[GcsUri, storage.Blob]]) -> None:
         matching_blobs: List[storage.Blob] = list()
         for gcs_file in gcs_files:
@@ -346,7 +350,8 @@ class GcsUtils:
                     blob.delete()
 
         with ThreadPoolExecutor(max_workers=None) as executor:
-            executor.map(__batch_delete_blobs, batched_blobs_to_delete)
+            results = executor.map(__batch_delete_blobs, batched_blobs_to_delete)
+            list(results)  # wait for all deletions to finish
 
     def copy_gcs_path(self, src_gcs_path: GcsUri, dst_gcs_path: GcsUri):
         src_bucket_name, src_prefix = self.get_bucket_and_blob_path_from_gcs_path(
