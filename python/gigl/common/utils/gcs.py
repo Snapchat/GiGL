@@ -68,7 +68,7 @@ def _upload_files_to_gcs_parallel(
                 [project] * len(local_file_path_to_gcs_path_map),
             ),
         )
-        list(results)  # wait for all uploads to finish
+        list(results)  # wait for all uploads to finish - also throws exceptions from processes, if any failed
 
 
 class GcsUtils:
@@ -243,7 +243,7 @@ class GcsUtils:
             results = executor.map(
                 lambda params: self.__download_blob_from_gcs(*params), blobs_and_paths
             )
-            list(results)  # wait for all downloads to finish
+            list(results)  # wait for all downloads to finish - also throws exceptions from threads, if any failed
 
     def download_files_from_gcs_paths_to_local_dir(
         self, gcs_paths: List[GcsUri], local_path_dir: LocalUri
@@ -265,7 +265,7 @@ class GcsUtils:
                     lambda params: self.__download_blob_from_gcs(*params),
                     zip(file_blobs, local_dest_paths),
                 )
-                list(results)  # wait for all downloads to finish
+                list(results)  # wait for all downloads to finish - also throws exceptions from threads, if any failed
 
     @staticmethod
     def get_bucket_and_blob_path_from_gcs_path(
@@ -351,7 +351,7 @@ class GcsUtils:
 
         with ThreadPoolExecutor(max_workers=None) as executor:
             results = executor.map(__batch_delete_blobs, batched_blobs_to_delete)
-            list(results)  # wait for all deletions to finish
+            list(results)  # wait for all deletions to finish - also throws exceptions from threads, if any failed
 
     def copy_gcs_path(self, src_gcs_path: GcsUri, dst_gcs_path: GcsUri):
         src_bucket_name, src_prefix = self.get_bucket_and_blob_path_from_gcs_path(
