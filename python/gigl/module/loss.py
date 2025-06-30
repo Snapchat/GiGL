@@ -179,14 +179,11 @@ class RetrievalLoss(nn.Module):
                 When given will be used to correct the logits to reflect the sampling probability of negative candidates.
                 Tensor shape: [num_positives + num_hard_negatives + num_random_negatives]
         """
-        if repeated_query_ids.numel():
-            loss = self._calculate_batch_retrieval_loss(
-                scores=repeated_candidate_scores,
-                candidate_sampling_probability=candidate_sampling_probability,
-                query_ids=repeated_query_ids,
-                candidate_ids=candidate_ids,
-                device=device,
-            )
-        else:
-            loss = torch.tensor(0.0).to(device=device)
+        loss = self._calculate_batch_retrieval_loss(
+            scores=repeated_candidate_scores,
+            candidate_sampling_probability=candidate_sampling_probability,
+            query_ids=repeated_query_ids,
+            candidate_ids=candidate_ids,
+            device=device,
+        )
         return loss
