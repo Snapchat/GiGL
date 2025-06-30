@@ -19,12 +19,10 @@ You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test
 import argparse
 import collections
 import datetime
-import pickle
 import statistics
 import time
 from collections import abc
 from distutils.util import strtobool
-from pathlib import Path
 from typing import List, Optional, Union
 
 import torch
@@ -650,26 +648,18 @@ def _run_example_training(
     master_default_process_group_port = (
         gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
     )
-    # Destroying the process group as one will be re-initialized in the training process using ^ information
+    # Destroying the process group as one will be re-initialized in the training process using above information
     torch.distributed.destroy_process_group()
 
     logger.info(f"--- Launching data loading process ---")
-    dataset_file = Path(__file__).parent / "dataset.pkl"
-    if dataset_file.exists():
-        dataset = DistLinkPredictionDataset.from_ipc_handle(
-            pickle.loads(dataset_file.read_bytes())
-        )
-    else:
-        dataset = build_dataset_from_task_config_uri(
-            task_config_uri=task_config_uri,
-            is_inference=False,
-            _tfrecord_uri_pattern=".*tfrecord",
-        )
-        logger.info(
-            f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"
-        )
-        dataset_file.write_bytes(pickle.dumps(dataset.share_ipc()))
-
+    dataset = build_dataset_from_task_config_uri(
+        task_config_uri=task_config_uri,
+        is_inference=False,
+        _tfrecord_uri_pattern=".*tfrecord",
+    )
+    logger.info(
+        f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"
+    )
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
