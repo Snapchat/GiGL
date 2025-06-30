@@ -51,7 +51,7 @@ def _compute_loss(
     model: DistributedDataParallel,
     main_data: Union[Data, HeteroData],
     random_neg_data: Union[Data, HeteroData],
-    loss_layer: RetrievalLoss,
+    loss_fn: RetrievalLoss,
     device: torch.device,
 ) -> torch.Tensor:
     main_embeddings = model(data=main_data, device=device)
@@ -95,7 +95,7 @@ def _compute_loss(
         )
     )
 
-    loss = loss_layer(
+    loss = loss_fn(
         repeated_candidate_scores=repeated_candidate_scores,
         candidate_ids=candidate_ids,
         repeated_query_ids=repeated_query_node_ids,
@@ -126,7 +126,11 @@ def _training_process(
     use_amp: bool,
     log_every_n_batch: int,
 ):
-    # TODO (mkolodner-sc): Add check to ensure that we are doing GPU training -- cpu training is not yet supported
+    # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
+    if not torch.cuda.is_available():
+        raise NotImplementedError(
+            "Currently, only GPU training is supported with this example training loop"
+        )
 
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process started"
@@ -288,7 +292,7 @@ def _training_process(
 
     learning_rate = float(trainer_args.get("learning_rate", "0.0005"))
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
-    num_max_train_batches = int(trainer_args.get("num_max_train_batches", "100"))
+    num_max_train_batches = int(trainer_args.get("num_max_train_batches", "1000"))
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
     num_epoch = int(trainer_args.get("num_epoch", "10"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
@@ -296,7 +300,7 @@ def _training_process(
     optimizer = torch.optim.AdamW(
         params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
-    loss_layer = RetrievalLoss(
+    loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -366,7 +370,7 @@ def _training_process(
                     model=model,
                     main_loader=val_main_loader,
                     random_negative_loader=val_random_negative_loader,
-                    loss_layer=loss_layer,
+                    loss_fn=loss_fn,
                     device=training_device,
                     args_use_amp=use_amp,
                     log_every_n_batch=log_every_n_batch,  # Not intend to log validation progress, use the same log frequency as training for now
@@ -390,7 +394,7 @@ def _training_process(
                     model=model,
                     main_data=main_data,
                     random_neg_data=random_data,
-                    loss_layer=loss_layer,
+                    loss_fn=loss_fn,
                     device=training_device,
                 )
             optimizer.zero_grad()
@@ -459,7 +463,7 @@ def _run_test_loops(
     model: DistributedDataParallel,
     main_loader: collections.abc.Iterator,
     random_negative_loader: collections.abc.Iterator,
-    loss_layer: RetrievalLoss,
+    loss_fn: RetrievalLoss,
     device: torch.device,
     args_use_amp: bool,
     log_every_n_batch: int = 10000,
@@ -515,7 +519,7 @@ def _run_test_loops(
                 model=model,
                 main_data=main_data,
                 random_neg_data=random_data,
-                loss_layer=loss_layer,
+                loss_fn=loss_fn,
                 device=device,
             )
 
@@ -670,7 +674,7 @@ def _test_process(
     logger.info(
         f"Model initialized on machine {node_rank} test device {test_device} with weights loaded from {model_uri.uri}\n{model}"
     )
-    loss_layer = RetrievalLoss(
+    loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -684,7 +688,7 @@ def _test_process(
         model=model,
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
-        loss_layer=loss_layer,
+        loss_fn=loss_fn,
         device=test_device,
         args_use_amp=use_amp,
         log_every_n_batch=log_every_n_batch,
