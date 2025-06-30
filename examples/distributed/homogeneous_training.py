@@ -28,7 +28,7 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.src.common.models.layers.loss import RetrievalLoss
+from gigl.module.loss import RetrievalLoss
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.types.graph import to_homogeneous
@@ -87,11 +87,17 @@ def _compute_loss(
         ),
     )
 
-    loss = loss_layer.compute_loss(
+    candidate_ids = torch.cat(
+        (
+            positive_ids,
+            hard_neg_ids,
+            random_neg_ids,
+        )
+    )
+
+    loss = loss_layer(
         repeated_candidate_scores=repeated_candidate_scores,
-        positive_ids=positive_ids,
-        hard_neg_ids=hard_neg_ids,
-        random_neg_ids=random_neg_ids,
+        candidate_ids=candidate_ids,
         repeated_query_ids=repeated_query_node_ids,
         device=device,
     )
