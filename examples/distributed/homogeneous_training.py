@@ -1,6 +1,6 @@
 """
 This file contains an example for how to run homogeneous training using newGLT (GraphLearn-for-PyTorch) bindings that GiGL has.
-While `run_example_training` is coupled with GiGL orchestration, the `_training_process` and `test_process` functions are generic
+While `run_example_training` is coupled with GiGL orchestration, the `_training_process` and `testing_process` functions are generic
 and can be used as references for writing training for pipelines not dependent on GiGL orchestration.
 
 To run this file with GiGL orchestration, set the fields similar to below:
@@ -31,17 +31,13 @@ import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.models import init_example_gigl_homogeneous_cora_model
-from graphlearn_torch.distributed.dist_context import init_worker_group
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
-from gigl.common.utils.torch_training import (
-    is_distributed_available_and_initialized,
-    sync_metric_across_processes,
-)
+from gigl.common.utils.torch_training import sync_metric_across_processes
 from gigl.distributed import (
     DistABLPLoader,
     DistLinkPredictionDataset,
@@ -134,7 +130,7 @@ def _training_process(
     random_batch_size: int,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
-    use_amp: bool,
+    use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
 ):
     # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
@@ -146,6 +142,7 @@ def _training_process(
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process started"
     )
+    train_main_loader: collections.abc.Iterator
     train_random_negative_loader: collections.abc.Iterator
     val_main_loader: collections.abc.Iterator
     val_random_negative_loader: collections.abc.Iterator
@@ -224,13 +221,9 @@ def _training_process(
         f"Finished setting up train random negative with {to_homogeneous(dataset.node_ids).size(0)} nodes"
     )
 
-    # Note that we wrap train_random_negative_loader with InfiniteIterator to avoid
-    # pushing shuffled indices to the task_queue whenever we finish one epoch of main_loader.
-    # Otherwise we will have a lot of indices in the task_queue, which may cause OOM.
-    # See https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_sampling_producer.py#L241
-    # for more details
-
+    train_main_loader = InfiniteIterator(train_main_loader)
     train_random_negative_loader = InfiniteIterator(train_random_negative_loader)
+
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training data loaders initialized"
     )
@@ -276,9 +269,9 @@ def _training_process(
         f"Finished setting up val random negative with {to_homogeneous(dataset.node_ids).size(0)} nodes"
     )
 
-    val_main_loader, val_random_negative_loader = InfiniteIterator(
-        val_main_loader
-    ), InfiniteIterator(val_random_negative_loader)
+    val_main_loader = InfiniteIterator(val_main_loader)
+    val_random_negative_loader = InfiniteIterator(val_random_negative_loader)
+
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} validation data loaders initialized"
     )
@@ -297,7 +290,6 @@ def _training_process(
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
     num_max_train_batches = int(trainer_args.get("num_max_train_batches", "1000"))
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
-    num_epoch = int(trainer_args.get("num_epoch", "10"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
     optimizer = torch.optim.AdamW(
@@ -312,8 +304,7 @@ def _training_process(
         f"Model initialized on machine {node_rank} training device {training_device}\n{model.module}"
     )
 
-    assert is_distributed_available_and_initialized()
-    # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
+    # We add a barrier to wait for all processes to finish preparing the dataloader prior to the start of training
     torch.distributed.barrier()
 
     # Entering the training loop
@@ -322,133 +313,89 @@ def _training_process(
     avg_train_loss = 0.0
     last_n_batch_avg_loss = []
     last_n_batch_time = []
-    should_exit_training_loop = False
-    total_positive_labels_processed = 0
     scaler = torch.GradScaler(
-        "cuda", enabled=use_amp
+        "cuda", enabled=use_automatic_mixed_precision
     )  # Used in mixed precision training to avoid gradients underflow due to float16 precision
-    num_max_train_batches_per_process: Optional[int] = (
+    num_max_train_batches_per_process = (
         num_max_train_batches // training_process_world_size
-        if num_max_train_batches
-        else None
     )
     num_val_batches_per_process = num_val_batches // training_process_world_size
-    if num_max_train_batches_per_process:
-        logger.info(
-            f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
-        )
-    else:
-        logger.info("num_max_train_batches is not set, training until epoch finishes")
+    logger.info(
+        f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
+    )
 
     model.train()
 
     # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
-    start_time = batch_start = time.time()
-    num_positive_processed_since_last_log = 0
-    for epoch in range(num_epoch):
-        for main_data, random_data in zip(
-            train_main_loader, train_random_negative_loader
+    batch_start = time.time()
+    for main_data, random_data in zip(train_main_loader, train_random_negative_loader):
+        if (
+            num_max_train_batches_per_process
+            and batch_idx >= num_max_train_batches_per_process
         ):
-            # TODO (mkolodner-sc): currently exiting when reaching the targeted number of epoch does
-            # not work, since different training processes have different batches in
-            # one epoch. One possible solution is to use torch.distributed.all_reduce
-            # and ReduceOp.MIN to figure out the minimum number of batches in one epoch
-            # across all training processes, and use that as one epoch for all ranks.
-            if (
-                num_max_train_batches_per_process
-                and batch_idx >= num_max_train_batches_per_process
-            ):
-                logger.info(
-                    f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
-                    f"stopping training on machine {node_rank} local rank {local_rank}"
-                )
-                should_exit_training_loop = True
-                torch.distributed.barrier()
-                break
-            if batch_idx % val_every_n_batch == 0:
-                logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, validating..."
-                )
-                batch_losses = _run_test_loops(
-                    local_rank=local_rank,
-                    model=model,
-                    main_loader=val_main_loader,
-                    random_negative_loader=val_random_negative_loader,
-                    loss_fn=loss_fn,
-                    device=training_device,
-                    args_use_amp=use_amp,
-                    log_every_n_batch=log_every_n_batch,  # Not intend to log validation progress, use the same log frequency as training for now
-                    num_batches=num_val_batches_per_process,
-                )
-                local_avg_val_loss = statistics.mean(batch_losses)
-                logger.info(
-                    f"process_rank={local_rank} finished validation, {local_avg_val_loss=:.6f}"
-                )
-                global_avg_val_loss = sync_metric_across_processes(
-                    local_loss=torch.tensor(local_avg_val_loss, device=training_device)
-                )
-                logger.info(f"process_rank={local_rank} {global_avg_val_loss=:.6f}")
-                # Put the model back to training mode
-                model.train()
-            # Note that we should only wrap the forward pass with autocast, and let PyTorch handle the backward pass
-            # This is to avoid the potential gradient underflow due to float16 precision
-            # https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html#adding-torch-autocast
-            with torch.autocast("cuda", enabled=use_amp):
-                loss = _compute_loss(
-                    model=model,
-                    main_data=main_data,
-                    random_neg_data=random_data,
-                    loss_fn=loss_fn,
-                    device=training_device,
-                )
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            avg_train_loss = sync_metric_across_processes(loss)
-            last_n_batch_avg_loss.append(avg_train_loss)
-            last_n_batch_time.append(time.time() - batch_start)
-            batch_start = time.time()
-            batch_idx += 1
-            if batch_idx % log_every_n_batch == 0:
-                logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, total_positive_labels_processed={total_positive_labels_processed}, latest local train_loss={loss:.6f}"
-                )
-                logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, main data num_nodes: {main_data.num_nodes}"
-                )
-                logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, random data num_nodes: {random_data.num_nodes}"
-                )
-                # If mixed precision training is enabled, the scale factor will be adjusted during the training process, otherwise it will be 1.0
-                logger.info(
-                    f"process_rank={local_rank}, batch={batch_idx}, {scaler.get_scale()}"
-                )
-                # Wait for GPU operations to finish
-                torch.cuda.synchronize()
-                last_n_batch_throughput = num_positive_processed_since_last_log / (
-                    time.time() - start_time
-                )
-                num_positive_processed_since_last_log = 0
-                start_time = time.time()
-                logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, last {log_every_n_batch} batches throughput avg={last_n_batch_throughput:.1f} rows/sec"
-                )
-                logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
-                )
-                last_n_batch_time.clear()
-                # log the global average training loss
-                logger.info(
-                    f"process_rank={local_rank}, epoch={epoch}, batch={batch_idx}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
-                )
-                last_n_batch_avg_loss.clear()
-        if should_exit_training_loop:
-            torch.distributed.barrier()
+            logger.info(
+                f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
+                f"stopping training on machine {node_rank} local rank {local_rank}"
+            )
             break
+        if batch_idx % val_every_n_batch == 0:
+            logger.info(f"process_rank={local_rank}, batch={batch_idx}, validating...")
+            _run_validation_loops(
+                local_rank=local_rank,
+                model=model,
+                main_loader=val_main_loader,
+                random_negative_loader=val_random_negative_loader,
+                loss_fn=loss_fn,
+                device=training_device,
+                use_automatic_mixed_precision=use_automatic_mixed_precision,
+                log_every_n_batch=log_every_n_batch,
+                num_batches=num_val_batches_per_process,
+            )
+        # Note that we should only wrap the forward pass with autocast, and let PyTorch handle the backward pass
+        # This is to avoid the potential gradient underflow due to float16 precision
+        # https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html#adding-torch-autocast
+        with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
+            loss = _compute_loss(
+                model=model,
+                main_data=main_data,
+                random_neg_data=random_data,
+                loss_fn=loss_fn,
+                device=training_device,
+            )
+        optimizer.zero_grad()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        avg_train_loss = sync_metric_across_processes(metric=loss)
+        last_n_batch_avg_loss.append(avg_train_loss)
+        last_n_batch_time.append(time.time() - batch_start)
+        batch_start = time.time()
+        batch_idx += 1
+        if batch_idx % log_every_n_batch == 0:
+            logger.info(
+                f"process_rank={local_rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
+            )
+            # If mixed precision training is enabled, the scale factor will be adjusted during the training process, otherwise it will be 1.0
+            logger.info(
+                f"process_rank={local_rank}, batch={batch_idx}, {scaler.get_scale()}"
+            )
+            # Wait for GPU operations to finish
+            torch.cuda.synchronize()
+            logger.info(
+                f"process_rank={local_rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+            )
+            last_n_batch_time.clear()
+            # log the global average training loss
+            logger.info(
+                f"process_rank={local_rank}, batch={batch_idx}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+            )
+            last_n_batch_avg_loss.clear()
+
+    torch.distributed.barrier()
 
     logger.info(f"---Machine {node_rank} local rank {local_rank} finished training")
 
+    # We save the model on the process with the 0th node rank and 0th local rank.
     if node_rank == 0 and local_rank == 0:
         logger.info(
             f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
@@ -462,25 +409,23 @@ def _training_process(
 
 
 @torch.inference_mode()
-def _run_test_loops(
+def _run_validation_loops(
     local_rank: int,
     model: DistributedDataParallel,
     main_loader: collections.abc.Iterator,
     random_negative_loader: collections.abc.Iterator,
     loss_fn: RetrievalLoss,
     device: torch.device,
-    args_use_amp: bool,
+    use_automatic_mixed_precision: bool,
     log_every_n_batch: int = 10000,
     num_batches: Optional[int] = None,
-) -> List[float]:
+) -> None:
     """
     Shared test loop for both validation and test purposes.
     When num_batches is set, the test loop will stop after processing num_batches batches,
         which is useful for validation loops.
     When num_batches is not set, the test loop will stop when the data loader is exhausted,
         which is useful for test loops.
-    Returns:
-        batch_losses: List of test losses for each batch
     """
     logger.info(
         f"Running test loop on process_rank={local_rank}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
@@ -489,36 +434,21 @@ def _run_test_loops(
     batch_idx = 0
     batch_losses: List[float] = []
     last_n_batch_time = []
-    total_positive_labels_processed = 0
+    batch_start = time.time()
 
-    # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
-    start_time = batch_start = time.time()
-    num_positives_processed_since_last_log = 0
-    # We call iter() on the data loaders to initialize them when they are not infinite
-    # iterators. For infinite iterators, iter() is called internally.
-    main_loader = (
-        iter(main_loader)
-        if not isinstance(main_loader, InfiniteIterator)
-        else main_loader
-    )
-    random_negative_loader = (
-        iter(random_negative_loader)
-        if not isinstance(random_negative_loader, InfiniteIterator)
-        else random_negative_loader
-    )
     while True:
         if num_batches and batch_idx >= num_batches:
-            # If num_batches is set, we stop the test loop after processing num_batches batches
+            # If num_batches is set, we stop the validation loop after processing num_batches batches. This is not expected to be used for _testing_process.
             break
         try:
             main_data = next(main_loader)
             random_data = next(random_negative_loader)
         except StopIteration:
-            # If the test data loader is exhausted, we stop the test loop
-            # Note that validation dataloaders are infinite, so this is not expected to happen
+            # If the test data loader is exhausted, we stop the test loop.
+            # Note that validation dataloaders are infinite, so this is not expected to happen during training.
             break
         # We only wrap the forward pass with autocast, also we keep the autocast context manager located similarly to training for consistency
-        with torch.autocast("cuda", enabled=args_use_amp):
+        with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
             loss = _compute_loss(
                 model=model,
                 main_data=main_data,
@@ -533,29 +463,28 @@ def _run_test_loops(
         batch_idx += 1
         if batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, main_data: {main_data}"
-            )
-            logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, random_data: {random_data}"
-            )
-            logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, total_positive_labels_processed={total_positive_labels_processed}, latest test_loss={loss:.6f}"
+                f"process_rank={local_rank}, batch={batch_idx}, latest test_loss={loss:.6f}"
             )
             # Wait for GPU operations to finish
             torch.cuda.synchronize()
-            last_n_batch_throughput = num_positives_processed_since_last_log / (
-                time.time() - start_time
-            )
-            num_positives_processed_since_last_log = 0
-            start_time = time.time()
-            logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, last {log_every_n_batch} batches throughput={last_n_batch_throughput:.1f} rows/sec"
-            )
             logger.info(
                 f"process_rank={local_rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
             last_n_batch_time.clear()
-    return batch_losses
+    local_avg_loss = statistics.mean(batch_losses)
+    logger.info(
+        f"process_rank={local_rank} finished validation loop, local loss: {local_avg_loss=:.6f}"
+    )
+    global_avg_val_loss = sync_metric_across_processes(
+        metric=torch.tensor(local_avg_loss, device=device)
+    )
+    logger.info(
+        f"process_rank={local_rank} got global validation loss {global_avg_val_loss=:.6f}"
+    )
+
+    # Put the model back in train mode
+    model.train()
+    return
 
 
 def _testing_process(
@@ -576,10 +505,16 @@ def _testing_process(
     random_batch_size: int,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
-    use_amp: bool,
+    use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
 ):
-    # TODO (mkolodner-sc): Add check to ensure that we are doing GPU training -- cpu training is not yet supported
+    # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
+    if not torch.cuda.is_available():
+        raise NotImplementedError(
+            "Currently, only GPU training is supported with this example training loop"
+        )
+    test_main_loader: collections.abc.Iterator
+    test_random_negative_loader: collections.abc.Iterator
 
     test_process_world_size = node_world_size * local_world_size
     test_process_global_rank = node_rank * local_world_size + local_rank
@@ -611,13 +546,6 @@ def _testing_process(
         main_worker_ip_address=master_ip_address,
         global_rank=node_rank,
         global_world_size=node_world_size,
-    )
-
-    sampler_group_name = f"distributed-sampler-{local_rank}"
-    init_worker_group(
-        world_size=node_world_size,
-        rank=node_rank,
-        group_name=sampler_group_name,
     )
 
     assert isinstance(dataset.test_node_ids, abc.Mapping)
@@ -656,6 +584,9 @@ def _testing_process(
         process_start_gap_seconds=process_start_gap_seconds / 2,
     )
 
+    test_main_loader = iter(test_main_loader)
+    test_random_negative_loader = iter(test_random_negative_loader)
+
     logger.info(
         f"Finished setting up test random negative loader with {to_homogeneous(dataset.node_ids).size(0)} nodes"
     )
@@ -684,29 +615,19 @@ def _testing_process(
         remove_accidental_hits=True,
     )
 
-    assert is_distributed_available_and_initialized()
-    # (Optional) Add a explicit barrier to make sure all processes finished setting up all dataloaders
+    # We add a barrier to wait for all processes to finish preparing the dataloader prior to the start of training
     torch.distributed.barrier()
-    batch_losses = _run_test_loops(
+
+    _run_validation_loops(
         local_rank=local_rank,
         model=model,
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
         loss_fn=loss_fn,
         device=test_device,
-        args_use_amp=use_amp,
+        use_automatic_mixed_precision=use_automatic_mixed_precision,
         log_every_n_batch=log_every_n_batch,
         num_batches=None,  # Test loop will stop when the data loader is exhausted
-    )
-    local_avg_test_loss = statistics.mean(batch_losses)
-    logger.info(
-        f"---Machine {node_rank} local rank {local_rank} finished testing, local_avg_test_loss={local_avg_test_loss:.6f}"
-    )
-    global_avg_test_loss = sync_metric_across_processes(
-        local_loss=torch.tensor(local_avg_test_loss, device=test_device)
-    )
-    logger.info(
-        f"---Machine {node_rank} local rank {local_rank} global_avg_test_loss={global_avg_test_loss:.6f}"
     )
 
     # Clean up test process group, also the implicit barrier gracefully shutdown data loaders and cleanup
@@ -786,7 +707,9 @@ def _run_example_training(
         "sampling_worker_shared_channel_size", "4GB"
     )
     process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
-    use_amp = bool(strtobool(trainer_args.get("use_amp", "False")))
+    use_automatic_mixed_precision = bool(
+        strtobool(trainer_args.get("use_automatic_mixed_precision", "False"))
+    )
     log_every_n_batch = int(trainer_args.get("log_every_n_batch", "25"))
 
     logger.info("--- Launching training processes ...\n")
@@ -810,7 +733,7 @@ def _run_example_training(
             random_batch_size,
             sampling_worker_shared_channel_size,
             process_start_gap_seconds,
-            use_amp,
+            use_automatic_mixed_precision,
             log_every_n_batch,
         ),
         nprocs=local_world_size,
@@ -838,7 +761,7 @@ def _run_example_training(
             random_batch_size,
             sampling_worker_shared_channel_size,
             process_start_gap_seconds,
-            use_amp,
+            use_automatic_mixed_precision,
             log_every_n_batch,
         ),
         nprocs=local_world_size,
