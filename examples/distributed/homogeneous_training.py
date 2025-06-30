@@ -1,3 +1,21 @@
+"""
+This file contains an example for how to run homogeneous training using newGLT (GraphLearn-for-PyTorch) bindings that GiGL has.
+While `run_example_training` is coupled with GiGL orchestration, the `_training_process` and `test_process` functions are generic
+and can be used as references for writing training for pipelines not dependent on GiGL orchestration.
+
+To run this file with GiGL orchestration, set the fields similar to below:
+
+trainerConfig:
+  trainerArgs:
+    # Example argument to trainer
+    log_every_n_batch: "50"
+  command: python -m examples.distributed.homogeneous_training
+featureFlags:
+  should_run_glt_backend: 'True'
+
+You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test` from GiGL root.
+"""
+
 import argparse
 import collections
 import datetime
@@ -35,8 +53,6 @@ from gigl.types.graph import to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
-
-DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
 
 
 def _sync_loss_across_processes(local_loss: torch.Tensor) -> float:
@@ -710,8 +726,7 @@ def _test_process(
     del test_main_loader, test_random_negative_loader
 
 
-def _run_example_train(
-    job_name: str,
+def _run_example_training(
     task_config_uri: str,
 ):
     start_time = time.time()
@@ -870,21 +885,15 @@ def _run_example_train(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Arguments for distributed model inference on VertexAI"
-    )
-    parser.add_argument(
-        "--job_name",
-        type=str,
-        help="Inference job name",
+        description="Arguments for distributed model training on VertexAI"
     )
     parser.add_argument("--task_config_uri", type=str, help="Gbml config uri")
 
-    # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for distributed inference
+    # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for distributed trainer
     args, unused_args = parser.parse_known_args()
     logger.info(f"Unused arguments: {unused_args}")
 
-    # We only need `job_name` and `task_config_uri` for running inference
-    _run_example_train(
-        job_name=args.job_name,
+    # We only need `task_config_uri` for running trainer
+    _run_example_training(
         task_config_uri=args.task_config_uri,
     )
