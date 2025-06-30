@@ -57,55 +57,59 @@ def _compute_loss(
     main_data: Union[Data, HeteroData],
     random_neg_data: Union[Data, HeteroData],
     loss_fn: RetrievalLoss,
+    use_automatic_mixed_precision: bool,
     device: torch.device,
 ) -> torch.Tensor:
-    main_embeddings = model(data=main_data, device=device)
-    random_negative_embeddings = model(data=random_neg_data, device=device)
+    with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
+        main_embeddings = model(data=main_data, device=device)
+        random_negative_embeddings = model(data=random_neg_data, device=device)
 
-    query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
-    random_neg_ids: torch.Tensor = torch.arange(random_neg_data.batch_size).to(device)
-
-    positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-        device
-    )
-    hard_neg_ids: torch.Tensor = torch.cat(list(main_data.y_negative.values())).to(
-        device
-    )
-    repeated_query_node_ids = query_node_ids.repeat_interleave(
-        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-    )
-
-    repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
-    pos_node_embeddings = main_embeddings[positive_ids]
-    hard_neg_embeddings = main_embeddings[hard_neg_ids]
-    random_neg_embeddings = random_negative_embeddings[: random_neg_data.batch_size]
-
-    repeated_candidate_scores = model.module.decode(
-        query_embeddings=repeated_query_embeddings,
-        candidate_embeddings=torch.cat(
-            [
-                pos_node_embeddings,
-                hard_neg_embeddings,
-                random_neg_embeddings,
-            ],
-            dim=0,
-        ),
-    )
-
-    candidate_ids = torch.cat(
-        (
-            positive_ids,
-            hard_neg_ids,
-            random_neg_ids,
+        query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
+        random_neg_ids: torch.Tensor = torch.arange(random_neg_data.batch_size).to(
+            device
         )
-    )
 
-    loss = loss_fn(
-        repeated_candidate_scores=repeated_candidate_scores,
-        candidate_ids=candidate_ids,
-        repeated_query_ids=repeated_query_node_ids,
-        device=device,
-    )
+        positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
+            device
+        )
+        hard_neg_ids: torch.Tensor = torch.cat(list(main_data.y_negative.values())).to(
+            device
+        )
+        repeated_query_node_ids = query_node_ids.repeat_interleave(
+            torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
+        )
+
+        repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
+        pos_node_embeddings = main_embeddings[positive_ids]
+        hard_neg_embeddings = main_embeddings[hard_neg_ids]
+        random_neg_embeddings = random_negative_embeddings[: random_neg_data.batch_size]
+
+        repeated_candidate_scores = model.module.decode(
+            query_embeddings=repeated_query_embeddings,
+            candidate_embeddings=torch.cat(
+                [
+                    pos_node_embeddings,
+                    hard_neg_embeddings,
+                    random_neg_embeddings,
+                ],
+                dim=0,
+            ),
+        )
+
+        candidate_ids = torch.cat(
+            (
+                positive_ids,
+                hard_neg_ids,
+                random_neg_ids,
+            )
+        )
+
+        loss = loss_fn(
+            repeated_candidate_scores=repeated_candidate_scores,
+            candidate_ids=candidate_ids,
+            repeated_query_ids=repeated_query_node_ids,
+            device=device,
+        )
 
     return loss
 
@@ -349,17 +353,14 @@ def _training_process(
                 log_every_n_batch=log_every_n_batch,
                 num_batches=num_val_batches_per_process,
             )
-        # Note that we should only wrap the forward pass with autocast, and let PyTorch handle the backward pass
-        # This is to avoid the potential gradient underflow due to float16 precision
-        # https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html#adding-torch-autocast
-        with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
-            loss = _compute_loss(
-                model=model,
-                main_data=main_data,
-                random_neg_data=random_data,
-                loss_fn=loss_fn,
-                device=training_device,
-            )
+        loss = _compute_loss(
+            model=model,
+            main_data=main_data,
+            random_neg_data=random_data,
+            loss_fn=loss_fn,
+            use_automatic_mixed_precision=use_automatic_mixed_precision,
+            device=training_device,
+        )
         optimizer.zero_grad()
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -445,15 +446,15 @@ def _run_validation_loops(
             # If the test data loader is exhausted, we stop the test loop.
             # Note that validation dataloaders are infinite, so this is not expected to happen during training.
             break
-        # We only wrap the forward pass with autocast, also we keep the autocast context manager located similarly to training for consistency
-        with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
-            loss = _compute_loss(
-                model=model,
-                main_data=main_data,
-                random_neg_data=random_data,
-                loss_fn=loss_fn,
-                device=device,
-            )
+
+        loss = _compute_loss(
+            model=model,
+            main_data=main_data,
+            random_neg_data=random_data,
+            loss_fn=loss_fn,
+            use_automatic_mixed_precision=use_automatic_mixed_precision,
+            device=device,
+        )
 
         batch_losses.append(loss.item())
         last_n_batch_time.append(time.time() - batch_start)
@@ -625,7 +626,6 @@ def _testing_process(
         device=test_device,
         use_automatic_mixed_precision=use_automatic_mixed_precision,
         log_every_n_batch=log_every_n_batch,
-        num_batches=None,  # Test loop will stop when the data loader is exhausted
     )
 
     # Clean up test process group, also the implicit barrier gracefully shutdown data loaders and cleanup

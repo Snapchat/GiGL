@@ -279,11 +279,6 @@ def _run_example_inference(
         job_name (str): Name of current job
         task_config_uri (str): Path to frozen GBMLConfigPbWrapper
     """
-    # All machines run this logic to connect together, and return a distributed context with:
-    # - the (GCP) internal IP address of the rank 0 machine, which will be used for building RPC connections.
-    # - the current machine rank
-    # - the total number of machines (world size)
-
     program_start_time = time.time()
 
     # The main process per machine needs to be able to talk with each other to partition and synchronize the graph data.
