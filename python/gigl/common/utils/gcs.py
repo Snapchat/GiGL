@@ -18,7 +18,7 @@ from gigl.common.utils.retry import retry
 logger = Logger()
 
 UPLOAD_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to upload something
-DELETE_RETRY_DEADLINE_S = 60 * 60      # limit of 1 hour maximum to delete something
+DELETE_RETRY_DEADLINE_S = 60 * 60  # limit of 1 hour maximum to delete something
 
 # No more than 100 calls should be included in a single batch request.
 # The total batch request payload must be less than 10MB
@@ -318,6 +318,12 @@ class GcsUtils:
             logger.exception(f"Could not delete {blob.name}; {repr(e)}")
 
     def delete_files_in_bucket_dir(self, gcs_path: GcsUri) -> None:
+        """Deletes all files in the specified GCS path.
+        If this method is unable to verify deletion of the dir, it will raise an AssertionError.
+
+        Args:
+            gcs_path (GcsUri): The GCS path to delete files from. This should be a directory path, e.g. gs://bucket-name/dir/
+        """
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
         matching_blobs = list(
             self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
@@ -325,6 +331,12 @@ class GcsUtils:
         logger.info(f"bucket {bucket_name}, prefix {blob_name}")
         self.delete_files(gcs_files=matching_blobs)
         logger.info(f"Files deleted in '{gcs_path}'")
+        post_deletion_matching_blobs = list(
+            self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
+        )
+        assert (
+            len(post_deletion_matching_blobs) == 0
+        ), f"The GCS dir {gcs_path} could not be deleted completely. Remaining files: {post_deletion_matching_blobs}"
 
     @retry(deadline_s=DELETE_RETRY_DEADLINE_S)
     def delete_files(self, gcs_files: Iterable[Union[GcsUri, storage.Blob]]) -> None:
