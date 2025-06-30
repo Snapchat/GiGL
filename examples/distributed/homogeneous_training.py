@@ -790,8 +790,8 @@ def _run_example_train(
     sampling_workers_per_process: int = int(
         trainer_args.get("sampling_workers_per_process", "4")
     )
-    main_batch_size = int(trainer_args.get("main_batch_size", 512))
-    random_batch_size = int(trainer_args.get("random_batch_size", 512))
+    main_batch_size = int(trainer_args.get("main_batch_size", 16))
+    random_batch_size = int(trainer_args.get("random_batch_size", 16))
     sampling_worker_shared_channel_size: str = trainer_args.get(
         "sampling_worker_shared_channel_size", "4GB"
     )
