@@ -18,7 +18,7 @@ from gigl.common.utils.retry import retry
 logger = Logger()
 
 UPLOAD_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to upload something
-DELETE_RETRY_DEADLINE_S = 60 * 60  # limit of 1 hour maximum to delete something
+DELETE_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to delete something
 
 # No more than 100 calls should be included in a single batch request.
 # The total batch request payload must be less than 10MB
