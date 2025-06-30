@@ -182,8 +182,6 @@ class DistABLPLoader(DistLoader):
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
             supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
 
-        self._anchor_node_type = anchor_node_type
-
         missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
         if missing_edge_types:
             raise ValueError(
