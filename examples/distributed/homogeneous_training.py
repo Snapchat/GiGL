@@ -38,7 +38,10 @@ from torch_geometric.data import Data, HeteroData
 import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
-from gigl.common.utils.torch_training import is_distributed_available_and_initialized
+from gigl.common.utils.torch_training import (
+    is_distributed_available_and_initialized,
+    sync_metric_across_processes,
+)
 from gigl.distributed import (
     DistABLPLoader,
     DistLinkPredictionDataset,
@@ -53,14 +56,6 @@ from gigl.types.graph import to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
-
-
-def _sync_loss_across_processes(local_loss: torch.Tensor) -> float:
-    assert is_distributed_available_and_initialized(), "DDP is not initialized"
-    # Make a copy of the local loss tensor
-    loss_tensor = local_loss.detach().clone()
-    torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
-    return loss_tensor.item() / torch.distributed.get_world_size()
 
 
 def _compute_loss(
@@ -188,13 +183,6 @@ def _training_process(
         global_world_size=node_world_size,
     )
 
-    sampler_group_name = f"distributed-sampler-{local_rank}"
-    init_worker_group(
-        world_size=node_world_size,
-        rank=node_rank,
-        group_name=sampler_group_name,
-    )
-
     assert isinstance(dataset.train_node_ids, abc.Mapping)
     train_main_loader = DistABLPLoader(
         dataset=dataset,
@@ -236,7 +224,6 @@ def _training_process(
         f"Finished setting up train random negative with {to_homogeneous(dataset.node_ids).size(0)} nodes"
     )
 
-    # TODO(zfan3): Revisit when we have multiple main loaders for multi-task training
     # Note that we wrap train_random_negative_loader with InfiniteIterator to avoid
     # pushing shuffled indices to the task_queue whenever we finish one epoch of main_loader.
     # Otherwise we will have a lot of indices in the task_queue, which may cause OOM.
@@ -354,6 +341,7 @@ def _training_process(
         logger.info("num_max_train_batches is not set, training until epoch finishes")
 
     model.train()
+
     # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
     start_time = batch_start = time.time()
     num_positive_processed_since_last_log = 0
@@ -361,7 +349,7 @@ def _training_process(
         for main_data, random_data in zip(
             train_main_loader, train_random_negative_loader
         ):
-            # TODO: currently exiting when reaching the targeted number of epoch does
+            # TODO (mkolodner-sc): currently exiting when reaching the targeted number of epoch does
             # not work, since different training processes have different batches in
             # one epoch. One possible solution is to use torch.distributed.all_reduce
             # and ReduceOp.MIN to figure out the minimum number of batches in one epoch
@@ -396,7 +384,7 @@ def _training_process(
                 logger.info(
                     f"process_rank={local_rank} finished validation, {local_avg_val_loss=:.6f}"
                 )
-                global_avg_val_loss = _sync_loss_across_processes(
+                global_avg_val_loss = sync_metric_across_processes(
                     local_loss=torch.tensor(local_avg_val_loss, device=training_device)
                 )
                 logger.info(f"process_rank={local_rank} {global_avg_val_loss=:.6f}")
@@ -417,7 +405,7 @@ def _training_process(
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            avg_train_loss = _sync_loss_across_processes(loss)
+            avg_train_loss = sync_metric_across_processes(loss)
             last_n_batch_avg_loss.append(avg_train_loss)
             last_n_batch_time.append(time.time() - batch_start)
             batch_start = time.time()
@@ -570,7 +558,7 @@ def _run_test_loops(
     return batch_losses
 
 
-def _test_process(
+def _testing_process(
     local_rank: int,
     local_world_size: int,
     node_rank: int,
@@ -714,7 +702,7 @@ def _test_process(
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} finished testing, local_avg_test_loss={local_avg_test_loss:.6f}"
     )
-    global_avg_test_loss = _sync_loss_across_processes(
+    global_avg_test_loss = sync_metric_across_processes(
         local_loss=torch.tensor(local_avg_test_loss, device=test_device)
     )
     logger.info(
@@ -741,7 +729,7 @@ def _run_example_training(
     master_default_process_group_port = (
         gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
     )
-    # Destroying the process group as one will be re-initialized in the inference process using ^ information
+    # Destroying the process group as one will be re-initialized in the training process using ^ information
     torch.distributed.destroy_process_group()
 
     logger.info(f"--- Launching data loading process ---")
@@ -767,32 +755,9 @@ def _run_example_training(
 
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    local_world_size: int
-    arg_local_world_size = trainer_args.get("local_world_size")
-    if arg_local_world_size is not None:
-        local_world_size = int(arg_local_world_size)
-        logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
-        if torch.cuda.is_available() and local_world_size != torch.cuda.device_count():
-            logger.warning(
-                f"local_world_size {local_world_size} does not match the number of GPUs {torch.cuda.device_count()}. "
-                "This may lead to unexpected failures with NCCL communication incase GPUs are being used for "
-                + "training/inference. Consider setting local_world_size to the number of GPUs."
-            )
-    else:
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            # If GPUs are available, we set the local_world_size to the number of GPUs
-            local_world_size = torch.cuda.device_count()
-            logger.info(
-                f"Detected {local_world_size} GPUs. Thus, setting local_world_size to {local_world_size}"
-            )
-        else:
-            # If no GPUs are available, we set the local_world_size to the number of inference processes per machine
-            logger.info(
-                f"No GPUs detected. Thus, setting local_world_size to `{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
-            )
-            local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+    # We currently fix the local world size to be 1.
+    # TODO (mkolodner-sc): Investigate training with greater local world sizes
 
-    # TODO (mkolodner-sc): Don't hardcode this
     local_world_size = 1
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
@@ -855,7 +820,7 @@ def _run_example_training(
     logger.info("--- Launching test processes ...\n")
     start_time = time.time()
     torch.multiprocessing.spawn(
-        _test_process,
+        _testing_process,
         args=(
             local_world_size,
             node_rank,
