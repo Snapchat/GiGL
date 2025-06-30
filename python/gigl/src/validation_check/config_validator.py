@@ -234,7 +234,7 @@ def kfp_validation_checks(
     if gbml_config_pb.shared_config.should_skip_training == True:
         assert_trained_model_exists(gbml_config_pb=gbml_config_pb)
 
-    logger.info("[SUCCESS] All checks passed successfully.")
+    logger.info("[✅ SUCCESS] All checks passed successfully.")
 
 
 if __name__ == "__main__":

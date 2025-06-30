@@ -34,12 +34,12 @@ adj_list:
     - src: 11
       dst: [12]
     - src: 12
-      dst: [13]
+      dst: []
     - src: 13
       dst: []
 
 nodes:
-  user: 
+  user:
     - src: 0
       features: [0.0, 0]
     - src: 1

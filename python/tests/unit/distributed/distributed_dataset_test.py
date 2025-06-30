@@ -110,67 +110,45 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
     def test_build_and_split_dataset_homogeneous(self):
         port = gigl.distributed.utils.get_free_port()
+        mocked_dataset_info = TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
+        print("mocked_dataset_info.node_feats", mocked_dataset_info.node_feats)
+
+        train_nodes = torch.tensor([1000])
+        val_nodes = torch.tensor([2000, 3000])
+        test_nodes = torch.tensor([3000, 4000, 5000])
+
         dataset = run_distributed_dataset(
             rank=0,
-            world_size=self._world_size,
-            mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            world_size=1,
+            mocked_dataset_info=mocked_dataset_info,
             should_load_tensors_in_parallel=True,
             splitter=_FakeSplitter(
                 (
-                    torch.tensor([1000]),
-                    torch.tensor([2000, 3000]),
-                    torch.tensor([3000, 4000, 5000]),
+                    train_nodes,
+                    val_nodes,
+                    test_nodes,
                 ),
             ),
             _port=port,
         )
 
-        self.assert_tensor_equal(dataset.train_node_ids, torch.tensor([1000]))
-        self.assert_tensor_equal(dataset.val_node_ids, torch.tensor([2000, 3000]))
-        self.assert_tensor_equal(
-            dataset.test_node_ids, torch.tensor([3000, 4000, 5000])
+        self.assert_tensor_equal(dataset.train_node_ids, train_nodes)
+        self.assert_tensor_equal(dataset.val_node_ids, val_nodes)
+        self.assert_tensor_equal(dataset.test_node_ids, test_nodes)
+
+        expected_node_ids = torch.tensor(
+            train_nodes.tolist()
+            + val_nodes.tolist()
+            + test_nodes.tolist()
+            + list(
+                range(
+                    mocked_dataset_info.num_nodes[mocked_dataset_info.default_node_type]
+                )
+            )
         )
+
         # Check that the node ids have *all* node ids, including nodes not included in train, val, and test.
-        self.assert_tensor_equal(
-            dataset.node_ids,
-            torch.tensor(
-                [
-                    1000,
-                    2000,
-                    3000,
-                    3000,
-                    4000,
-                    5000,
-                    0,
-                    1,
-                    2,
-                    3,
-                    4,
-                    5,
-                    6,
-                    7,
-                    8,
-                    9,
-                    10,
-                    11,
-                    12,
-                    13,
-                    14,
-                    15,
-                    16,
-                    17,
-                    18,
-                    19,
-                    20,
-                    21,
-                    22,
-                    23,
-                    24,
-                    25,
-                    26,
-                ]
-            ),
-        )
+        self.assert_tensor_equal(dataset.node_ids, expected_node_ids)
 
     @parameterized.expand(
         [

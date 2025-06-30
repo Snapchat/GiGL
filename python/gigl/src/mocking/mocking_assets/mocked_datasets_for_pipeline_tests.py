@@ -1,4 +1,7 @@
-from gigl.src.mocking.dataset_asset_mocking_suite import mocked_datasets
+from gigl.src.mocking.dataset_asset_mocking_suite import DatasetAssetMockingSuite
+
+# TODO: (svij) clean up as we dont want to compute the mocked dataset every time this is imported
+mocked_datasets = DatasetAssetMockingSuite().compute_datasets_to_mock()
 
 CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO = mocked_datasets[
     "cora_homogeneous_supervised_node_classification_edge_features"
