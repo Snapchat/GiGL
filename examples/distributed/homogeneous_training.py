@@ -744,9 +744,11 @@ def _run_example_training(
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
     node_rank = torch.distributed.get_rank()
     node_world_size = torch.distributed.get_world_size()
-    master_default_process_group_port = (
-        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
+    master_default_process_group_ports = (
+        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=2)
     )
+    master_process_group_port_for_training = master_default_process_group_ports[0]
+    master_process_group_port_for_testing = master_default_process_group_ports[1]
     # Destroying the process group as one will be re-initialized in the training process using above information
     torch.distributed.destroy_process_group()
 
@@ -823,7 +825,7 @@ def _run_example_training(
             node_feature_dim,
             edge_feature_dim,
             master_ip_address,
-            master_default_process_group_port,
+            master_process_group_port_for_training,
             trainer_args,
             model_uri,
             subgraph_fanout,
@@ -851,7 +853,7 @@ def _run_example_training(
             node_feature_dim,
             edge_feature_dim,
             master_ip_address,
-            master_default_process_group_port,
+            master_process_group_port_for_testing,
             trainer_args,
             model_uri,
             subgraph_fanout,
