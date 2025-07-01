@@ -30,7 +30,7 @@ class LinkPredictionGNN(nn.Module):
         data: Union[Data, HeteroData],
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-    ) -> dict[NodeType, torch.Tensor]:
+    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
         if isinstance(data, HeteroData):
             if output_node_types is None:
                 raise ValueError(

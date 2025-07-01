@@ -1,5 +1,5 @@
 """
-This file contains an example for how to run homogeneous training using live subgraph sampling power by GraphLearn-for-PyTorch (GLT).
+This file contains an example for how to run homogeneous training using live subgraph sampling powered by GraphLearn-for-PyTorch (GLT).
 While `run_example_training` is coupled with GiGL orchestration, the `_training_process` and `testing_process` functions are generic
 and can be used as references for writing training for pipelines not dependent on GiGL orchestration.
 
@@ -493,7 +493,7 @@ def _run_validation_loops(
     model.eval()
     batch_idx = 0
     batch_losses: list[float] = []
-    last_n_batch_time = []
+    last_n_batch_time: list[float] = []
     batch_start = time.time()
 
     while True:
@@ -748,7 +748,7 @@ def _run_example_training(
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
     local_world_size = int(trainer_args.get("local_world_size", "1"))
-    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+    if torch.cuda.is_available():
         if local_world_size > torch.cuda.device_count():
             raise ValueError(
                 f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
