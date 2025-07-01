@@ -21,6 +21,7 @@ You can run this example in a full pipeline with `make run_dblp_glt_kfp_test` fr
 
 import argparse
 import gc
+from pathlib import Path
 import time
 from typing import Dict, List, Optional, Union
 
@@ -355,8 +356,10 @@ def _run_example_inference(
 
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
     # and registering that information to a DistLinkPredictionDataset class.
+    dataset_pickle = Path(__file__).parent /
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
+        _tfrecord_uri_pattern=".*.tfrecord",
     )
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
