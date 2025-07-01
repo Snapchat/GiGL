@@ -7,7 +7,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 import yaml
+from torch_geometric.data import HeteroData
 
+from gigl.common.constants import GIGL_ROOT_DIR, PYTHON_ROOT_DIR
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.common.types.task_metadata import TaskMetadataType
@@ -19,12 +21,15 @@ from gigl.src.mocking.lib.versioning import (
     MockedDatasetArtifactMetadata,
     update_mocked_dataset_artifact_metadata,
 )
+from gigl.src.mocking.toy_asset_mocker import load_toy_graph
 
 logger = Logger()
 
-_HOMOGENEOUS_TOY_GRAPH_CONFIG = "gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
+_HOMOGENEOUS_TOY_GRAPH_CONFIG = str(
+    GIGL_ROOT_DIR / "examples/toy_visual_example/graph_config.yaml"
+)
 _BIPARTITE_TOY_GRAPH_CONFIG = (
-    "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
+    PYTHON_ROOT_DIR / "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
 )
 
 
@@ -417,25 +422,53 @@ class DatasetAssetMockingSuite:
     def mock_toy_graph_homogeneous_node_anchor_based_link_prediction_dataset(
         self,
     ) -> MockedDatasetInfo:
-        toy_data = self._create_custom_toy_graph(
-            graph_config=_HOMOGENEOUS_TOY_GRAPH_CONFIG
+        toy_data: HeteroData = load_toy_graph(
+            graph_config_path=_HOMOGENEOUS_TOY_GRAPH_CONFIG
         )
+
+        name: str = "toy_graph_homogeneous_node_anchor_lp"
+        task_metadata_type: TaskMetadataType = (
+            TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK
+        )
+        edge_index: Dict[EdgeType, torch.Tensor]
+        node_feats: Dict[NodeType, torch.Tensor]
+        edge_feats: Optional[Dict[EdgeType, torch.Tensor]] = None
+
+        # Extract edge types and node types from the HeteroData object
+        edge_types = list(toy_data.edge_types)
+        node_types = list(toy_data.node_types)
+
+        # Build edge_index, node_feats, and edge_feats dictionaries
+        edge_index = {
+            EdgeType(
+                src_node_type=et[0],
+                relation=et[1],
+                dst_node_type=et[2],
+            ): toy_data[et].edge_index
+            for et in edge_types
+        }
+        node_feats = {NodeType(nt): toy_data[nt].x for nt in node_types}
+        edge_feats = {
+            EdgeType(
+                src_node_type=et[0],
+                relation=et[1],
+                dst_node_type=et[2],
+            ): toy_data[et].edge_attr
+            for et in edge_types
+            if hasattr(toy_data[et], "edge_attr")
+        }
+
         mocked_dataset_info = MockedDatasetInfo(
-            name="toy_graph_homogeneous_node_anchor_lp",
-            task_metadata_type=TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK,
-            edge_index={
-                edge_type: toy_data.edge_indices[edge_type_str]
-                for edge_type_str, edge_type in toy_data.edge_types.items()
-            },
-            node_feats={
-                node_type: toy_data.node_feats[node_type_str]
-                for node_type_str, node_type in toy_data.node_types.items()
-            },
-            edge_feats={
-                edge_type: toy_data.edge_feats[edge_type_str]
-                for edge_type_str, edge_type in toy_data.edge_types.items()
-            },
-            sample_edge_type=list(toy_data.edge_types.values())[0],
+            name=name,
+            task_metadata_type=task_metadata_type,
+            edge_index=edge_index,
+            node_feats=node_feats,
+            edge_feats=edge_feats,
+            sample_edge_type=EdgeType(
+                src_node_type=edge_types[0][0],
+                relation=edge_types[0][1],
+                dst_node_type=edge_types[0][2],
+            ),
         )
         return mocked_dataset_info
 
@@ -524,24 +557,45 @@ class DatasetAssetMockingSuite:
         )
         return mocked_dataset_info
 
-    def __init__(self):
-        self.mocked_datasets: Dict[str, MockedDatasetInfo] = dict()
-        mocking_func_names: List[str] = [
+    def compute_datasets_to_mock(
+        self, selected_datasets: Optional[List[str]] = None
+    ) -> Dict[str, MockedDatasetInfo]:
+        """
+        Returns a dictionary of mocked datasets to be used in the mocking suite.
+        If `selected_datasets` is provided, only those datasets will be returned.
+        """
+        mocked_datasets: Dict[str, MockedDatasetInfo] = dict()
+        all_mocking_func_names: List[str] = [
             attr
             for attr in dir(self)
             if callable(getattr(self, attr)) and attr.startswith("mock")
         ]
+        print(f"All mocking functions: {all_mocking_func_names}")
+        print(f"Selected datasets: {selected_datasets}")
+
+        mocking_func_names: List[str]
+        if selected_datasets:
+            mocking_func_names = [
+                func_name
+                for func_name in all_mocking_func_names
+                if func_name in selected_datasets
+            ]
+        else:
+            mocking_func_names = all_mocking_func_names
+
         mocking_funcs = [getattr(self, attr) for attr in mocking_func_names]
+
         logger.debug("Registering mocked datasets...")
 
         mocked_dataset_info: MockedDatasetInfo
         for mocking_func in mocking_funcs:
             logger.debug(f"\t- {mocking_func.__name__}")
             mocked_dataset_info = mocking_func()
-            self.mocked_datasets[mocked_dataset_info.name] = mocked_dataset_info
+            mocked_datasets[mocked_dataset_info.name] = mocked_dataset_info
 
+        logger.info(f"Mocked datasets registered successfully: {list(mocked_datasets)}")
+        return mocked_datasets
 
-mocked_datasets = DatasetAssetMockingSuite().mocked_datasets
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Allows mocking of dataset assets.")
@@ -565,10 +619,11 @@ if __name__ == "__main__":
     )
     args, _ = parser.parse_known_args()
 
-    if args.select:
-        mocked_datasets = {k: v for k, v in mocked_datasets.items() if k in args.select}
-
     logger.info(f"Will generate mocked data with version {args.version}")
+
+    mocked_datasets = DatasetAssetMockingSuite().compute_datasets_to_mock(
+        selected_datasets=args.select
+    )
     logger.info(f"Will run {len(mocked_datasets)} mocking funcs:")
 
     mocker = DatasetAssetMocker()

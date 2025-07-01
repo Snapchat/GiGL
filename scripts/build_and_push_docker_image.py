@@ -123,10 +123,12 @@ def build_and_push_image(
     if base_image:
         build_command.extend(["--build-arg", f"BASE_IMAGE={base_image}"])
 
-    build_command.append(".")
+    build_command.append(root_dir.as_posix())
 
     logger.info(f"Running command: {' '.join(build_command)}")
-    subprocess.run(build_command, check=True)
+    subprocess.run(
+        build_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+    )
 
     # Push image if it's not a multi-arch build (multi-arch images are pushed in the build step)
     if not multi_arch:
