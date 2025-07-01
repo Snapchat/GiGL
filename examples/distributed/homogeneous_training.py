@@ -745,7 +745,7 @@ def _run_example_training(
 
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    local_world_size = trainer_args.get("local_world_size", 1)
+    local_world_size = int(trainer_args.get("local_world_size", "1"))
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
         if local_world_size > torch.cuda.device_count():
             raise ValueError(
