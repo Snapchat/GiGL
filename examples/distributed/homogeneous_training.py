@@ -55,59 +55,92 @@ logger = Logger()
 def _compute_loss(
     model: DistributedDataParallel,
     main_data: Union[Data, HeteroData],
-    random_neg_data: Union[Data, HeteroData],
-    loss_fn: RetrievalLoss,
+    random_negative_data: Union[Data, HeteroData],
+    loss_cls: RetrievalLoss,
     use_automatic_mixed_precision: bool,
     device: torch.device,
 ) -> torch.Tensor:
+    """
+    With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
+    Args:
+        model (DistributedDataParallel): DDP-wrapped torch model for training
+        main_data (Union[Data, HeteroData]): The batch of data containing query nodes, positive nodes, and hard negative nodes
+        random_negative_data (Union[Data, HeteroData]): The batch of data containing random negative nodes
+        loss_cls (RetrievalLoss): Initialized class to use for loss calculation
+        use_automatic_mixed_precision (bool): Whether we should use automatic mixed precision with training
+        device (torch.device): Device for training or validation
+    Returns:
+        torch.Tensor: Final loss for the current batch on the current process
+    """
     with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
+        # Forward pass through encoder
         main_embeddings = model(data=main_data, device=device)
-        random_negative_embeddings = model(data=random_neg_data, device=device)
+        random_negative_embeddings = model(data=random_negative_data, device=device)
 
-        query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
-        random_neg_ids: torch.Tensor = torch.arange(random_neg_data.batch_size).to(
+        # Extracting local query, random negative, positive, hard_negative, and random_negative ids, where local means we can directly index into the corresponding tensors
+        query_node_ids: torch.Tensor = torch.cat(list(main_data.y_positive.keys())).to(
             device
         )
-
+        random_negative_ids: torch.Tensor = torch.arange(
+            random_negative_data.batch_size
+        ).to(device)
         positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
             device
         )
-        hard_neg_ids: torch.Tensor = torch.cat(list(main_data.y_negative.values())).to(
-            device
-        )
+
+        # We also extract a repeated query node id tensor which upsamples each query node based on the number of positives it has
         repeated_query_node_ids = query_node_ids.repeat_interleave(
             torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
         )
+        if hasattr(main_data, "y_negative"):
+            hard_negative_ids: torch.Tensor = torch.cat(
+                list(main_data.y_negative.values())
+            ).to(device)
+        else:
+            hard_negative_ids = torch.empty(0, dtype=torch.long).to(device)
 
+        # Use local IDs to get the corresponding embeddings in the tensors
+
+        hard_negative_embeddings = main_embeddings[hard_negative_ids]
         repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
-        pos_node_embeddings = main_embeddings[positive_ids]
-        hard_neg_embeddings = main_embeddings[hard_neg_ids]
-        random_neg_embeddings = random_negative_embeddings[: random_neg_data.batch_size]
+        positive_node_embeddings = main_embeddings[positive_ids]
+        hard_negative_embeddings = main_embeddings[hard_negative_ids]
+        random_negative_embeddings = random_negative_embeddings[
+            : random_negative_data.batch_size
+        ]
+
+        # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
 
         repeated_candidate_scores = model.module.decode(
             query_embeddings=repeated_query_embeddings,
             candidate_embeddings=torch.cat(
                 [
-                    pos_node_embeddings,
-                    hard_neg_embeddings,
-                    random_neg_embeddings,
+                    positive_node_embeddings,
+                    hard_negative_embeddings,
+                    random_negative_embeddings,
                 ],
                 dim=0,
             ),
         )
 
-        candidate_ids = torch.cat(
+        # Compute the global candidate ids and concatentate into a single tensor
+
+        global_candidate_ids = torch.cat(
             (
-                positive_ids,
-                hard_neg_ids,
-                random_neg_ids,
+                main_data.node[positive_ids],
+                main_data.node[hard_negative_ids],
+                random_negative_data.node[random_negative_ids],
             )
         )
 
-        loss = loss_fn(
+        global_repeated_query_ids = main_data.node[repeated_query_node_ids]
+
+        # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
+
+        loss = loss_cls(
             repeated_candidate_scores=repeated_candidate_scores,
-            candidate_ids=candidate_ids,
-            repeated_query_ids=repeated_query_node_ids,
+            candidate_ids=global_candidate_ids,
+            repeated_query_ids=global_repeated_query_ids,
             device=device,
         )
 
@@ -297,7 +330,7 @@ def _training_process(
     optimizer = torch.optim.AdamW(
         params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
-    loss_fn = RetrievalLoss(
+    loss_cls = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -347,7 +380,7 @@ def _training_process(
                 model=model,
                 main_loader=val_main_loader,
                 random_negative_loader=val_random_negative_loader,
-                loss_fn=loss_fn,
+                loss_cls=loss_cls,
                 device=training_device,
                 use_automatic_mixed_precision=use_automatic_mixed_precision,
                 log_every_n_batch=log_every_n_batch,
@@ -356,8 +389,8 @@ def _training_process(
         loss = _compute_loss(
             model=model,
             main_data=main_data,
-            random_neg_data=random_data,
-            loss_fn=loss_fn,
+            random_negative_data=random_data,
+            loss_cls=loss_cls,
             use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=training_device,
         )
@@ -413,7 +446,7 @@ def _run_validation_loops(
     model: DistributedDataParallel,
     main_loader: collections.abc.Iterator,
     random_negative_loader: collections.abc.Iterator,
-    loss_fn: RetrievalLoss,
+    loss_cls: RetrievalLoss,
     device: torch.device,
     use_automatic_mixed_precision: bool,
     log_every_n_batch: int = 10000,
@@ -450,8 +483,8 @@ def _run_validation_loops(
         loss = _compute_loss(
             model=model,
             main_data=main_data,
-            random_neg_data=random_data,
-            loss_fn=loss_fn,
+            random_negative_data=random_data,
+            loss_cls=loss_cls,
             use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=device,
         )
@@ -608,7 +641,7 @@ def _testing_process(
     logger.info(
         f"Model initialized on machine {node_rank} test device {test_device} with weights loaded from {model_uri.uri}\n{model}"
     )
-    loss_fn = RetrievalLoss(
+    loss_cls = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -622,7 +655,7 @@ def _testing_process(
         model=model,
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
-        loss_fn=loss_fn,
+        loss_cls=loss_cls,
         device=test_device,
         use_automatic_mixed_precision=use_automatic_mixed_precision,
         log_every_n_batch=log_every_n_batch,
