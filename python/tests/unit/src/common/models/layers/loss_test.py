@@ -3,7 +3,8 @@ import unittest
 import torch
 import torch.nn.functional as F
 
-from gigl.src.common.models.layers.loss import RetrievalLoss
+from gigl.module.loss import RetrievalLoss
+from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
 class RetrievalLossTest(unittest.TestCase):
@@ -105,7 +106,7 @@ class RetrievalLossTest(unittest.TestCase):
         min_float = torch.finfo(torch.float).min
         loss = RetrievalLoss(remove_accidental_hits=False)
         scores = torch.mm(self.query_embeddings, self.candidate_embeddings.T)
-        actual1 = loss.calculate_batch_retrieval_loss(scores)
+        actual1 = loss._calculate_batch_retrieval_loss(scores)
         expected1 = torch.tensor(
             [
                 [0.8321, 0.8647, 0.0000, 0.0000, 0.6748, 0.7376],
@@ -125,7 +126,7 @@ class RetrievalLossTest(unittest.TestCase):
 
         loss = RetrievalLoss(remove_accidental_hits=True)
         scores = torch.mm(self.query_embeddings, self.candidate_embeddings.T)
-        actual2 = loss.calculate_batch_retrieval_loss(
+        actual2 = loss._calculate_batch_retrieval_loss(
             scores,
             candidate_ids=self.candidate_ids,
         )
@@ -146,7 +147,7 @@ class RetrievalLossTest(unittest.TestCase):
         )
 
         # by filtering out other positives from the same query, we should see smaller loss
-        actual3 = loss.calculate_batch_retrieval_loss(
+        actual3 = loss._calculate_batch_retrieval_loss(
             scores,
             candidate_ids=self.candidate_ids,
             query_ids=self.query_ids,
@@ -166,3 +167,14 @@ class RetrievalLossTest(unittest.TestCase):
                 atol=1e-6,
             )
         )
+
+    def test_empty_loss(self):
+        loss_fn = RetrievalLoss(remove_accidental_hits=True)
+        query_ids = torch.empty(0)
+        empty_scores = torch.empty((0, 5))
+        candidate_ids = torch.tensor([0, 1, 2, 3, 4])
+        expected_loss = torch.tensor(0.0)
+        loss = loss_fn._calculate_batch_retrieval_loss(
+            scores=empty_scores, query_ids=query_ids, candidate_ids=candidate_ids
+        )
+        assert_tensor_equality(loss, expected_loss)

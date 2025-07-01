@@ -87,7 +87,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             num_sampled_nodes_hetero: dict[NodeType, list[torch.Tensor]] = {}
             num_sampled_edges_hetero: dict[EdgeType, list[torch.Tensor]] = {}
             src_dict = inducer.init_node(input_nodes)
-            batch = src_dict
+            batch = {input_type: input_seeds}
             merge_dict(src_dict, out_nodes_hetero)
             count_dict(src_dict, num_sampled_nodes_hetero, 1)
 
@@ -151,7 +151,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         else:
             assert input_type == supervision_node_type
             srcs = inducer.init_node(input_nodes[input_type])
-            batch = srcs
+            batch = input_seeds
             out_nodes: list[torch.Tensor] = []
             out_edges: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
             num_sampled_nodes: list[torch.Tensor] = []
