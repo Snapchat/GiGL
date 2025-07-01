@@ -164,6 +164,11 @@ def _training_process(
     process_start_gap_seconds: int,
     use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
+    learning_rate: float,
+    weight_decay: float,
+    num_max_train_batches: int,
+    num_val_batches: int,
+    val_every_n_batch: int,
 ) -> None:
     """
     This function is spawned by each machine for training a GNN model given some loaded distributed dataset.
@@ -187,7 +192,12 @@ def _training_process(
         process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
             field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
         use_automatic_mixed_precision (bool): Whether we should train with mixed precision
-        log_every_n_batch (int): The frequency we should log batch information when training and validating
+        log_every_n_batch (int): The frequency we should log batch information when training
+        learning_rate (float): Learning rate for training
+        weight_decay (float): Weight decay for training
+        num_max_train_batches (int): The maximum number of batches to train for across all training processes
+        num_val_batches (int): The number of batches to do validation for across all training processes
+        val_every_n_batch: (int): The frequency we should log batch information when validating
     """
     # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
     if not torch.cuda.is_available():
@@ -199,7 +209,7 @@ def _training_process(
         f"---Machine {node_rank} local rank {local_rank} training process started"
     )
 
-    # We have one training device for each
+    # We use one training device for each local process
     training_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")
     torch.cuda.set_device(training_device)
     logger.info(
@@ -321,12 +331,6 @@ def _training_process(
         ),
         device_ids=[training_device],
     )
-
-    learning_rate = float(trainer_args.get("learning_rate", "0.0005"))
-    weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
-    num_max_train_batches = int(trainer_args.get("num_max_train_batches", "1000"))
-    num_val_batches = int(trainer_args.get("num_val_batches", "100"))
-    val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
     optimizer = torch.optim.AdamW(
         params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
@@ -606,9 +610,9 @@ def _testing_process(
         f"---Machine {node_rank} local rank {local_rank} test process group initialized"
     )
     logger.info(f"---Machine {node_rank} local rank {local_rank} test process started")
-    test_device = torch.device(
-        f"cuda:{local_rank + node_rank % torch.cuda.device_count()}"
-    )
+
+    # We use one testing device for each local process
+    test_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")
     torch.cuda.set_device(test_device)
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} test process set device {test_device}"
@@ -741,10 +745,12 @@ def _run_example_training(
 
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    # We currently fix the local world size to be 1.
-    # TODO (mkolodner-sc): Investigate training with greater local world sizes
-
-    local_world_size = 1
+    local_world_size = trainer_args.get("local_world_size", 1)
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        if local_world_size > torch.cuda.device_count():
+            raise ValueError(
+                f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
+            )
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
@@ -787,6 +793,19 @@ def _run_example_training(
     )
     log_every_n_batch = int(trainer_args.get("log_every_n_batch", "25"))
 
+    learning_rate = float(trainer_args.get("learning_rate", "0.0005"))
+    weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
+    num_max_train_batches = int(trainer_args.get("num_max_train_batches", "1000"))
+    num_val_batches = int(trainer_args.get("num_val_batches", "100"))
+    val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
+
+    logger.info(
+        f"Got training args local_world_size={local_world_size}, fanout_per_hop={fanout_per_hop}, sampling_workers_per_process={sampling_workers_per_process}, \
+        main_batch_size={main_batch_size}, random_batch_size={random_batch_size}, sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, \
+        process_start_gap_seconds={process_start_gap_seconds}, use_automatic_mixed_precision={use_automatic_mixed_precision}, log_every_n_batch={log_every_n_batch}, \
+        learning_rate={learning_rate}, weight_decay={weight_decay}, num_max_train_batches={num_max_train_batches}, num_val_batches={num_val_batches}, val_every_n_batch={val_every_n_batch}"
+    )
+
     logger.info("--- Launching training processes ...\n")
     start_time = time.time()
     torch.multiprocessing.spawn(
@@ -810,6 +829,11 @@ def _run_example_training(
             process_start_gap_seconds,  # process_start_gap_seconds
             use_automatic_mixed_precision,  # use_automatic_mixed_precision
             log_every_n_batch,  # log_every_n_batch
+            learning_rate,  # learning_rate
+            weight_decay,  # weight_decay
+            num_max_train_batches,  # num_max_train_batches
+            num_val_batches,  # num_val_batches
+            val_every_n_batch,  # val_every_n_batch
         ),
         nprocs=local_world_size,
         join=True,
