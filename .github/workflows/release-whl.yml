@@ -35,7 +35,7 @@ jobs:
         run: (cd python && python -m build)
 
       - name: Store the distribution packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: python-package-distributions
           path: python/dist/
@@ -49,7 +49,7 @@ jobs:
       id-token: write
     steps:
       - name: Download distribution
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: python/dist/
