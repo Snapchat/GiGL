@@ -21,7 +21,6 @@ You can run this example in a full pipeline with `make run_dblp_glt_kfp_test` fr
 
 import argparse
 import gc
-from pathlib import Path
 import time
 from typing import Dict, List, Optional, Union
 
@@ -176,6 +175,7 @@ def _inference_process(
     )  # The device is automatically inferred based off the local process rank and the available devices
     rank = node_rank * local_world_size + local_rank
     world_size = node_world_size * local_world_size
+    torch.cuda.set_device(device)  # Set the device for the current process
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
@@ -356,7 +356,6 @@ def _run_example_inference(
 
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
     # and registering that information to a DistLinkPredictionDataset class.
-    dataset_pickle = Path(__file__).parent /
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
         _tfrecord_uri_pattern=".*.tfrecord",
