@@ -139,6 +139,10 @@ def _inference_process(
     Args:
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of inference processes spawned by each machine
+        node_rank (int): Machine number in the distributed setup
+        node_world_size (int): Total number of machines in the distributed setup
+        master_ip_address (str): IP address of the master node in the distributed setup
+        master_default_process_group_port (int): Port on the master node in the distributed setup to setup Torch process group on
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
@@ -175,7 +179,9 @@ def _inference_process(
     )  # The device is automatically inferred based off the local process rank and the available devices
     rank = node_rank * local_world_size + local_rank
     world_size = node_world_size * local_world_size
-    torch.cuda.set_device(device)  # Set the device for the current process
+    torch.cuda.set_device(
+        device
+    )  # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
@@ -393,14 +399,24 @@ def _run_example_inference(
 
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
 
+    if torch.cuda.is_available():
+        default_num_inference_processes_per_machine = torch.cuda.device_count()
+    else:
+        default_num_inference_processes_per_machine = 2
     num_inference_processes_per_machine = int(
-        inferencer_args.get("num_inference_processes_per_machine", "4")
-    )  # Current large-scale setting sets this value to 4
-    if num_inference_processes_per_machine >= torch.cuda.device_count():
-        logger.warning(
-            f"Number of inference processes per machine ({num_inference_processes_per_machine}) is greater than number of available GPUs ({torch.cuda.device_count()}). "
+        inferencer_args.get(
+            "num_inference_processes_per_machine",
+            default_num_inference_processes_per_machine,
         )
-        num_inference_processes_per_machine = torch.cuda.device_count()
+    )  # Current large-scale setting sets this value to 4
+
+    if (
+        torch.cuda.is_available()
+        and num_inference_processes_per_machine > torch.cuda.device_count()
+    ):
+        raise ValueError(
+            f"Number of inference processes per machine ({num_inference_processes_per_machine}) must not be more than the number of GPUs: ({torch.cuda.device_count()})"
+        )
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
     node_rank = torch.distributed.get_rank()
