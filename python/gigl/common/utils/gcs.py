@@ -323,7 +323,7 @@ class GcsUtils:
         except Exception as e:
             logger.exception(f"Could not delete {blob.name}; {repr(e)}")
 
-    @retry(deadline_s=DELETE_RETRY_DEADLINE_S)
+    @retry(deadline_s=DELETE_RETRY_DEADLINE_S, backoff=4)
     def delete_files_in_bucket_dir(self, gcs_path: GcsUri) -> None:
         """Deletes all files in the specified GCS path.
         If this method is unable to verify deletion of the dir, it will raise an AssertionError.
