@@ -65,12 +65,9 @@ class DistNeighborLoader(DistLoader):
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
-            input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
-                indices of seed nodes to start sampling from.
-                It is of type `torch.LongTensor` for homogeneous graphs.
-                If set to `None` for homogeneous settings, all nodes will be considered.
-                In heterogeneous graphs, this flag must be passed in as a tuple that holds
-                the node type and node indices. (default: `None`)
+            input_nodes (NodeSamplerInput):
+                Indices of seed nodes to start sampling from.
+                See documentation for `gigl.distributed.utils.neighborloader.NodeSamplerInput` for more details.
             num_workers (int): How many workers to use (subprocesses to spwan) for
                     distributed neighbor sampling of the current process. (default: ``1``).
             batch_size (int, optional): how many samples per batch to load

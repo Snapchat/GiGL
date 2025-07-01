@@ -120,11 +120,9 @@ class DistABLPLoader(DistLoader):
             context (DistributedContext): Distributed context information of the current process.
             local_process_rank (int): The local rank of the current process within a node.
             local_process_world_size (int): The total number of processes within a node.
-            input_nodes (Optional[torch.Tensor, tuple[NodeType, torch.Tensor]]):
+            input_nodes (NodeSamplerInput):
                 Indices of seed nodes to start sampling from.
-                If set to `None` for homogeneous settings, all nodes will be considered.
-                In heterogeneous graphs, this flag must be passed in as a tuple that holds
-                the node type and node indices. (default: `None`)
+                See documentation for `gigl.distributed.utils.neighborloader.NodeSamplerInput` for more details.
             num_workers (int): How many workers to use (subprocesses to spwan) for
                     distributed neighbor sampling of the current process. (default: ``1``).
             batch_size (int, optional): how many samples per batch to load
