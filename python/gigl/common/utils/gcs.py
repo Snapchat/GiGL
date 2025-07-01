@@ -18,6 +18,7 @@ from gigl.common.utils.retry import retry
 logger = Logger()
 
 UPLOAD_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to upload something
+DELETE_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to delete something
 
 # No more than 100 calls should be included in a single batch request.
 # The total batch request payload must be less than 10MB
@@ -67,7 +68,9 @@ def _upload_files_to_gcs_parallel(
                 [project] * len(local_file_path_to_gcs_path_map),
             ),
         )
-        list(results)  # wait for all uploads to finish
+        list(
+            results
+        )  # wait for all uploads to finish - also throws exceptions from processes, if any failed
 
 
 class GcsUtils:
@@ -239,9 +242,12 @@ class GcsUtils:
                 logger.info(f"Could not find and download {gcs_path}.")
 
         with ThreadPoolExecutor(max_workers=None) as executor:
-            executor.map(
+            results = executor.map(
                 lambda params: self.__download_blob_from_gcs(*params), blobs_and_paths
             )
+            list(
+                results
+            )  # wait for all downloads to finish - also throws exceptions from threads, if any failed
 
     def download_files_from_gcs_paths_to_local_dir(
         self, gcs_paths: List[GcsUri], local_path_dir: LocalUri
@@ -259,10 +265,13 @@ class GcsUtils:
             logger.info(f"Downloading blobs: {file_blobs}")
 
             with ThreadPoolExecutor(max_workers=None) as executor:
-                executor.map(
+                results = executor.map(
                     lambda params: self.__download_blob_from_gcs(*params),
                     zip(file_blobs, local_dest_paths),
                 )
+                list(
+                    results
+                )  # wait for all downloads to finish - also throws exceptions from threads, if any failed
 
     @staticmethod
     def get_bucket_and_blob_path_from_gcs_path(
@@ -314,14 +323,15 @@ class GcsUtils:
         except Exception as e:
             logger.exception(f"Could not delete {blob.name}; {repr(e)}")
 
+    @retry(deadline_s=DELETE_RETRY_DEADLINE_S, backoff=4)
     def delete_files_in_bucket_dir(self, gcs_path: GcsUri) -> None:
-        bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
-        matching_blobs = list(
-            self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
-        )
-        logger.info(f"bucket {bucket_name}, prefix {blob_name}")
-        self.delete_files(gcs_files=matching_blobs)
-        logger.info(f"Files deleted in '{gcs_path}'")
+        """Deletes all files in the specified GCS path.
+        If this method is unable to verify deletion of the dir, it will raise an AssertionError.
+
+        Args:
+            gcs_path (GcsUri): The GCS path to delete files from. This should be a directory path, e.g. gs://bucket-name/dir/
+        """
+        self._delete_files_in_bucket_dir(gcs_path=gcs_path)
 
     def delete_files(self, gcs_files: Iterable[Union[GcsUri, storage.Blob]]) -> None:
         matching_blobs: List[storage.Blob] = list()
@@ -346,7 +356,10 @@ class GcsUtils:
                     blob.delete()
 
         with ThreadPoolExecutor(max_workers=None) as executor:
-            executor.map(__batch_delete_blobs, batched_blobs_to_delete)
+            results = executor.map(__batch_delete_blobs, batched_blobs_to_delete)
+            list(
+                results
+            )  # wait for all deletions to finish - also throws exceptions from threads, if any failed
 
     def copy_gcs_path(self, src_gcs_path: GcsUri, dst_gcs_path: GcsUri):
         src_bucket_name, src_prefix = self.get_bucket_and_blob_path_from_gcs_path(
@@ -479,3 +492,18 @@ class GcsUtils:
         )
         remove_file_if_exist(local_file_path)
         logger.info(f"Moved {local_file_path} to {gcs_file_path}")
+
+    def _delete_files_in_bucket_dir(self, gcs_path: GcsUri) -> None:
+        bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
+        matching_blobs = list(
+            self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
+        )
+        logger.info(f"bucket {bucket_name}, prefix {blob_name}")
+        self.delete_files(gcs_files=matching_blobs)
+        logger.info(f"Files deleted in '{gcs_path}'")
+        post_deletion_matching_blobs = list(
+            self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
+        )
+        assert (
+            len(post_deletion_matching_blobs) == 0
+        ), f"The GCS dir {gcs_path} could not be deleted completely. Remaining files: {post_deletion_matching_blobs}"
