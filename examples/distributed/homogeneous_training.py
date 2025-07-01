@@ -37,7 +37,6 @@ from gigl.common.utils.torch_training import sync_metric_across_processes
 from gigl.distributed import (
     DistABLPLoader,
     DistLinkPredictionDataset,
-    DistributedContext,
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -233,19 +232,9 @@ def _training_process(
         f"---Machine {node_rank} local rank {local_rank} training process group initialized"
     )
 
-    # TODO (mkolodner-sc): Deprecate passing this in once DistABLPLoader no longer requires this argument
-    distributed_context = DistributedContext(
-        main_worker_ip_address=master_ip_address,
-        global_rank=node_rank,
-        global_world_size=node_world_size,
-    )
-
     train_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        context=distributed_context,
-        local_process_rank=local_rank,
-        local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.train_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
@@ -254,8 +243,6 @@ def _training_process(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=True,
-        _main_inference_port=21000,
-        _main_sampling_port=22000,
     )
 
     logger.info("Finished setting up train main loader.")
@@ -285,9 +272,6 @@ def _training_process(
     val_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        context=distributed_context,
-        local_process_rank=local_rank,
-        local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.val_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
@@ -295,8 +279,6 @@ def _training_process(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
-        _main_inference_port=23000,
-        _main_sampling_port=24000,
     )
 
     logger.info("Finished setting up val main loader.")
@@ -618,18 +600,9 @@ def _testing_process(
         f"---Machine {node_rank} local rank {local_rank} test process set device {test_device}"
     )
 
-    distributed_context = DistributedContext(
-        main_worker_ip_address=master_ip_address,
-        global_rank=node_rank,
-        global_world_size=node_world_size,
-    )
-
     test_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        context=distributed_context,
-        local_process_rank=local_rank,
-        local_process_world_size=local_world_size,
         input_nodes=to_homogeneous(dataset.test_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
@@ -637,8 +610,6 @@ def _testing_process(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
-        _main_inference_port=25000,
-        _main_sampling_port=26000,
     )
 
     logger.info("Finished setting up test main loader.")
