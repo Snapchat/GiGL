@@ -490,15 +490,6 @@ stop_toaster:
 	docker system prune -a --volumes
 	docker buildx prune
 
-release_gigl:
-	python -m pip install --upgrade build
-	python -m pip install --upgrade twine
-	(cd python && python -m build)
-	gcloud config set artifacts/location us-central1
-	python -m twine check python/dist/*
-	python -m twine upload --repository-url https://us-central1-python.pkg.dev/${GIGL_PROJECT}/gigl python/dist/*
-
-
 build_docs:
 	sphinx-build -M clean . gh_pages_build
 	sphinx-build -M html . gh_pages_build
