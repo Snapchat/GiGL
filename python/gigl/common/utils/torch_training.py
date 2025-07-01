@@ -80,3 +80,18 @@ def is_distributed_available_and_initialized() -> bool:
         bool: True if distributed training is available and initialized, False otherwise
     """
     return torch.distributed.is_available() and torch.distributed.is_initialized()
+
+
+def sync_metric_across_processes(metric: torch.Tensor) -> float:
+    """
+    Takes the average of a training metric across multiple processes. Note that this function requires DDP to be initialized.
+    Args:
+        metric (torch.Tensor): The metric, expressed as a torch Tensor, which should be synced across multiple processes
+    Returns:
+        float: The average of the provided metric across all training processes
+    """
+    assert is_distributed_available_and_initialized(), "DDP is not initialized"
+    # Make a copy of the local loss tensor
+    loss_tensor = metric.detach().clone()
+    torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
+    return loss_tensor.item() / torch.distributed.get_world_size()
