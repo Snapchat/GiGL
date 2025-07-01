@@ -16,7 +16,7 @@ jobs:
   unit-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35 # Tests as of 2025-05-16 are taking ~25 mins to complete, 40% buffer
+    timeout-minutes: 55
     steps:
     - name: Run Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main

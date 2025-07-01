@@ -177,11 +177,14 @@ def _run_distributed_ablp_neighbor_loader(
     expected_positive_labels: dict[int, torch.Tensor],
     expected_negative_labels: Optional[dict[int, torch.Tensor]],
 ):
+    input_nodes = torch.tensor([10, 15])
+    batch_size = 2
+
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        input_nodes=torch.tensor([10, 15]),
-        batch_size=2,
+        input_nodes=input_nodes,
+        batch_size=batch_size,
         context=context,
         local_process_rank=0,
         local_process_world_size=1,
@@ -224,6 +227,10 @@ def _run_distributed_ablp_neighbor_loader(
     dsts, srcs, *_ = datum.coo()
     assert_tensor_equality(datum.node[srcs], expected_srcs)
     assert_tensor_equality(datum.node[dsts], expected_dsts)
+
+    # Check that the batch and batch_size attributes of the class are correct
+    assert_tensor_equality(datum.batch, input_nodes)
+    assert datum.batch_size == batch_size
 
     # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
     # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
@@ -393,10 +400,16 @@ def _run_toy_heterogeneous_ablp(
     assert isinstance(datum, HeteroData)
     assert hasattr(datum, "y_positive")
     assert isinstance(datum.y_positive, dict)
+
     # Ensure that the node ids we should be fanout from are all found in the batch
     assert_tensor_equality(
         dataset.train_node_ids[anchor_node_type], datum[anchor_node_type].batch
     )
+    assert (
+        dataset.train_node_ids[anchor_node_type].size(0)
+        == datum[anchor_node_type].batch_size
+    )
+
     global_anchor_nodes = []
     for local_anchor_node, local_positive_supervision_nodes in datum.y_positive.items():
         global_anchor_node = datum[anchor_node_type].node[local_anchor_node]

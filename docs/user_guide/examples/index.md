@@ -1,11 +1,11 @@
 # Examples
 
-This section is WIP; please expect updates soon
-
 ```{toctree}
-:maxdepth: 2
-:caption: Examples
+---
+maxdepth: 2
+caption: Examples
+---
 
-example1
-example2
+../../../examples/toy_visual_example/toy_example_walkthrough.ipynb
+../../../examples/MAG240M/README.md
 ```

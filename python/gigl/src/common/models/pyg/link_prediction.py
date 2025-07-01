@@ -4,10 +4,13 @@ import torch
 import torch.nn as nn
 import torch_geometric
 
+from gigl.common.logger import Logger
 from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.task import NodeAnchorBasedLinkPredictionTasks
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.model import GraphBackend
+
+logger = Logger()
 
 
 class LinkPredictionGNN(nn.Module):
@@ -26,6 +29,11 @@ class LinkPredictionGNN(nn.Module):
         tasks: Optional[NodeAnchorBasedLinkPredictionTasks] = None,
     ) -> None:
         super().__init__()
+
+        logger.warning(
+            "gigl.src.common.models.layers.nn.link_prediction.LinkPredictionGNN is deprecated and will be removed in a future release. "
+            "Please use the `gigl.module.models.LinkPredictionGNN` class instead."
+        )
         self.__encoder = encoder
         self.__decoder = decoder
         self.__tasks = tasks
