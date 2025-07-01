@@ -42,10 +42,6 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.src.common.models.pyg.heterogeneous import HGT
-from gigl.src.common.models.pyg.link_prediction import (
-    LinkPredictionDecoder,
-    LinkPredictionGNN,
-)
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
