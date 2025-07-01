@@ -12,60 +12,68 @@ jobs:
   build:
     name: Build distribution 📦
     runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    environment:
+      name: release
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup development environment
+    # - uses: actions/checkout@v4
+    # - name: Setup development environment
+    #   uses: snapchat/gigl/.github/actions/setup-python-tools@main
+    #   with:
+    #       setup_gcloud: "true"
+    #       gcp_project_id: ${{ secrets.gcp_project_id }}
+    #       workload_identity_provider: ${{ secrets.workload_identity_provider }}
+    #       gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    # - name: Run Unit Tests
+    #   # We use cloud run here instead of using github hosted runners because of limitation of tests
+    #   # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
+    #   # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
+    #   # https://github.com/tensorflow/tensorflow/issues/57104
+    #   uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+    #   with:
+    #     cmd: "make release_gigl"
+    #     service_account:  ${{ secrets.gcp_service_account_email }}
+    #     project:  ${{ secrets.gcp_project_id }}
+    # =====================================
+    - name: Checkout
+      uses: actions/checkout@v4
+    # autodoc analyses the code and docstrings by introspection after importing the modules.
+    # For importing to work, we have to make sure that your modules can be found by Sphinx and
+    # that dependencies can be resolved.
+    - name: Setup Machine for releasing documentation
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
+          install_dev_deps: "true"
           setup_gcloud: "true"
-          gcp_project_id: ${{ secrets.gcp_project_id }}
-          workload_identity_provider: ${{ secrets.workload_identity_provider }}
-          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run Unit Tests
-      # We use cloud run here instead of using github hosted runners because of limitation of tests
-      # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
-      # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
-      # https://github.com/tensorflow/tensorflow/issues/57104
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+          gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+    # We also make gigl available w/ editable install `-e` so that autodoc can find it.
+    - name: Setup environment for publishing Python package
+      env:
+        PYPIRC_CONTENTS: ${{ secrets.PYPIRC_CONTENTS }}
+        PIP_CONF_CONTENTS: ${{ secrets.PIP_CONF_CONTENTS }}
+      run: |
+        echo "$PYPIRC_CONTENTS" > ~/.pypirc
+        mkdir -p ~/.pip
+        echo "$PIP_CONF_CONTENTS" > ~/.pip/pip.conf
+        python -m pip install --upgrade build twine keyrings.google-artifactregistry-auth
+
+    - name: Build Binary Distribution
+      run: (cd python && python -m build)
+
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v4
       with:
-        cmd: "make release_gigl"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
-      # - name: Checkout
-      #   uses: actions/checkout@v4
-      # # autodoc analyses the code and docstrings by introspection after importing the modules.
-      # # For importing to work, we have to make sure that your modules can be found by Sphinx and
-      # # that dependencies can be resolved.
-      # - name: Setup Machine for releasing documentation
-      #   uses: snapchat/gigl/.github/actions/setup-python-tools@main
-      #   with:
-      #       install_dev_deps: "true"
-      #       setup_gcloud: "true"
-      #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-      #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-      #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-      # # We also make gigl available w/ editable install `-e` so that autodoc can find it.
-      # - name: Install necessary doc dependencies
-      #   run: |
-      #     python -m pip install --upgrade build
-      #     python -m pip install --upgrade twine
+        name: python-package-distributions
+        path: python/dist/
 
-      # - name: Build Binary Distribution
-      #   run: (cd python && python -m build)
-
-      # - name: Store the distribution packages
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: python-package-distributions
-      #     path: python/dist/
-
-      # - name: Publish Package 🚀
-      #   env:
-      #     PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      #   run: |
-      #     gcloud config set artifacts/location us-central1
-      #     python -m twine check python/dist/*
-      #     python -m twine upload --repository-url https://us-central1-python.pkg.dev/${PROJECT_ID}/gigl python/dist/*
+    - name: Publish Package 🚀
+      run: |
+        gcloud config set artifacts/location us-central1
+        python -m twine check python/dist/*
+        python -m twine upload --repository-url https://us-central1-python.pkg.dev/${PROJECT_ID}/gigl python/dist/*
 
 
 
