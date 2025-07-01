@@ -14,6 +14,7 @@ featureFlags:
   should_run_glt_backend: 'True'
 
 You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test` from GiGL root.
+TODO (mkolodner-sc): Add example of how to run locally once CPU support is enabled
 """
 
 import argparse
@@ -21,14 +22,14 @@ import statistics
 import time
 from collections.abc import Iterator
 from distutils.util import strtobool
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.models import init_example_gigl_homogeneous_cora_model
 from torch.nn.parallel import DistributedDataParallel
-from torch_geometric.data import Data, HeteroData
+from torch_geometric.data import Data
 
 import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
@@ -51,8 +52,8 @@ logger = Logger()
 
 def _compute_loss(
     model: DistributedDataParallel,
-    main_data: Union[Data, HeteroData],
-    random_negative_data: Union[Data, HeteroData],
+    main_data: Data,
+    random_negative_data: Data,
     loss_fn: RetrievalLoss,
     use_automatic_mixed_precision: bool,
     device: torch.device,
@@ -61,8 +62,8 @@ def _compute_loss(
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
         model (DistributedDataParallel): DDP-wrapped torch model for training and testing
-        main_data (Union[Data, HeteroData]): The batch of data containing query nodes, positive nodes, and hard negative nodes
-        random_negative_data (Union[Data, HeteroData]): The batch of data containing random negative nodes
+        main_data (Data): The batch of data containing query nodes, positive nodes, and hard negative nodes
+        random_negative_data (Data): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         use_automatic_mixed_precision (bool): Whether we should use automatic mixed precision with training
         device (torch.device): Device for training or validation
@@ -76,6 +77,7 @@ def _compute_loss(
 
         # Extracting local query, random negative, positive, hard_negative, and random_negative ids.
         # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
+        # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local id for global id `50`
         query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
         random_negative_ids: torch.Tensor = torch.arange(
             random_negative_data.batch_size
@@ -333,8 +335,8 @@ def _training_process(
     training_start_time = time.time()
     batch_idx = 0
     avg_train_loss = 0.0
-    last_n_batch_avg_loss = []
-    last_n_batch_time = []
+    last_n_batch_avg_loss: list[float] = []
+    last_n_batch_time: list[float] = []
     scaler = torch.GradScaler(
         "cuda", enabled=use_automatic_mixed_precision
     )  # Used in mixed precision training to avoid gradients underflow due to float16 precision
@@ -680,9 +682,9 @@ def _run_example_training(
     task_config_uri: str,
 ):
     """
-    Runs an example training pipeline using GiGL Orchestration.
+    Runs an example training + testing loop using GiGL Orchestration.
     Args:
-        task_config_uri (str): Path to frozen GBMLConfigPbWrapper
+        task_config_uri (str): Path to YAML-serialized GbmlConfig proto.
     """
     start_time = time.time()
     mp.set_start_method("spawn")
@@ -705,7 +707,6 @@ def _run_example_training(
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
         is_inference=False,
-        _tfrecord_uri_pattern=".*tfrecord",
     )
     logger.info(
         f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"
@@ -771,10 +772,20 @@ def _run_example_training(
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
     logger.info(
-        f"Got training args local_world_size={local_world_size}, fanout_per_hop={fanout_per_hop}, sampling_workers_per_process={sampling_workers_per_process}, \
-        main_batch_size={main_batch_size}, random_batch_size={random_batch_size}, sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, \
-        process_start_gap_seconds={process_start_gap_seconds}, use_automatic_mixed_precision={use_automatic_mixed_precision}, log_every_n_batch={log_every_n_batch}, \
-        learning_rate={learning_rate}, weight_decay={weight_decay}, num_max_train_batches={num_max_train_batches}, num_val_batches={num_val_batches}, val_every_n_batch={val_every_n_batch}"
+        f"Got training args local_world_size={local_world_size}, \
+        fanout_per_hop={fanout_per_hop}, \
+        sampling_workers_per_process={sampling_workers_per_process}, \
+        main_batch_size={main_batch_size}, \
+        random_batch_size={random_batch_size}, \
+        sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, \
+        process_start_gap_seconds={process_start_gap_seconds}, \
+        use_automatic_mixed_precision={use_automatic_mixed_precision}, \
+        log_every_n_batch={log_every_n_batch}, \
+        learning_rate={learning_rate}, \
+        weight_decay={weight_decay}, \
+        num_max_train_batches={num_max_train_batches}, \
+        num_val_batches={num_val_batches}, \
+        val_every_n_batch={val_every_n_batch}"
     )
 
     logger.info("--- Launching training processes ...\n")
