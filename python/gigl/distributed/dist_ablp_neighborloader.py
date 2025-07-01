@@ -328,8 +328,8 @@ class DistABLPLoader(DistLoader):
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=anchor_node_ids,
-            local_process_rank=local_process_rank,
-            local_process_world_size=local_process_world_size,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
         )
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
