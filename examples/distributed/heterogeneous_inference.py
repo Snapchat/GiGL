@@ -358,7 +358,6 @@ def _run_example_inference(
     # and registering that information to a DistLinkPredictionDataset class.
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
-        _tfrecord_uri_pattern=".*.tfrecord",
     )
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
