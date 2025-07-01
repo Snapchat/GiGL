@@ -44,7 +44,8 @@ jobs:
     name: Publish to TestPyPi 🚀
     runs-on: ubuntu-latest
     needs: build
-    environment: release
+    environment:
+      name: release
     permissions:
       id-token: write
     steps:
