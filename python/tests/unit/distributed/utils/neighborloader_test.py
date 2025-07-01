@@ -6,7 +6,6 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 from gigl.distributed.utils.neighborloader import (
-    _ResolvedNodeSamplerInput,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     resolve_node_sampler_input_from_user_input,
@@ -158,11 +157,9 @@ class LoaderUtilsTest(unittest.TestCase):
                 "homogeneous_tensor_input",
                 input_nodes=torch.tensor([1, 2, 3]),
                 dataset_nodes=torch.tensor([1, 2, 3, 4]),
-                expected=_ResolvedNodeSamplerInput(
-                    node_type=None,
-                    node_ids=torch.tensor([1, 2, 3]),
-                    is_labeled_homogeneous=False,
-                ),
+                expected_node_type=None,
+                expected_node_ids=torch.tensor([1, 2, 3]),
+                expected_is_labeled_homogeneous=False,
             ),
             param(
                 "labeled_homogeneous_tensor_input",
@@ -170,11 +167,9 @@ class LoaderUtilsTest(unittest.TestCase):
                 dataset_nodes={
                     DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.tensor([1, 2, 3, 4])
                 },
-                expected=_ResolvedNodeSamplerInput(
-                    node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                    node_ids=torch.tensor([1, 2, 3]),
-                    is_labeled_homogeneous=True,
-                ),
+                expected_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                expected_node_ids=torch.tensor([1, 2, 3]),
+                expected_is_labeled_homogeneous=True,
             ),
             param(
                 "heterogeneous_mapping_input",
@@ -183,41 +178,45 @@ class LoaderUtilsTest(unittest.TestCase):
                     "user": torch.tensor([1, 2, 3]),
                     "item": torch.tensor([4, 5]),
                 },
-                expected=_ResolvedNodeSamplerInput(
-                    node_type=NodeType("user"),
-                    node_ids=torch.tensor([1, 2]),
-                    is_labeled_homogeneous=False,
-                ),
+                expected_node_type=NodeType("user"),
+                expected_node_ids=torch.tensor([1, 2]),
+                expected_is_labeled_homogeneous=False,
             ),
             param(
                 "tuple_input",
                 input_nodes=("user", torch.tensor([1, 2])),
                 dataset_nodes=None,
-                expected=_ResolvedNodeSamplerInput(
-                    node_type=NodeType("user"),
-                    node_ids=torch.tensor([1, 2]),
-                    is_labeled_homogeneous=False,
-                ),
+                expected_node_type=NodeType("user"),
+                expected_node_ids=torch.tensor([1, 2]),
+                expected_is_labeled_homogeneous=False,
             ),
             param(
                 "none_input_homogeneous_dataset",
                 input_nodes=None,
                 dataset_nodes=torch.tensor([1, 2, 3]),
-                expected=_ResolvedNodeSamplerInput(
-                    node_type=None,
-                    node_ids=torch.tensor([1, 2, 3]),
-                    is_labeled_homogeneous=False,
-                ),
+                expected_node_type=None,
+                expected_node_ids=torch.tensor([1, 2, 3]),
+                expected_is_labeled_homogeneous=False,
             ),
         ]
     )
     def test_resolve_node_sampler_input_valid(
-        self, _, input_nodes, dataset_nodes, expected
+        self,
+        _,
+        input_nodes,
+        dataset_nodes,
+        expected_node_type,
+        expected_node_ids,
+        expected_is_labeled_homogeneous,
     ):
-        result = resolve_node_sampler_input_from_user_input(input_nodes, dataset_nodes)
-        self.assertEqual(result.node_type, expected.node_type)
-        assert_tensor_equality(result.node_ids, expected.node_ids)
-        self.assertEqual(result.is_labeled_homogeneous, expected.is_labeled_homogeneous)
+        (
+            node_type,
+            node_ids,
+            is_labeled_homogeneous,
+        ) = resolve_node_sampler_input_from_user_input(input_nodes, dataset_nodes)
+        self.assertEqual(node_type, expected_node_type)
+        assert_tensor_equality(node_ids, expected_node_ids)
+        self.assertEqual(is_labeled_homogeneous, expected_is_labeled_homogeneous)
 
     @parameterized.expand(
         [

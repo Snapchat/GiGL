@@ -214,26 +214,28 @@ class DistNeighborLoader(DistLoader):
                 )
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
-
-        resolved_inputs = resolve_node_sampler_input_from_user_input(
+        (
+            anchor_node_type,
+            anchor_node_ids,
+            self._is_labeled_homogeneous,
+        ) = resolve_node_sampler_input_from_user_input(
             input_nodes=input_nodes,
             dataset_nodes=dataset.node_ids,
         )
-        node_type = resolved_inputs.node_type
-        node_ids = resolved_inputs.node_ids
-        self._is_labeled_homogeneous = resolved_inputs.is_labeled_homogeneous
         if self._is_labeled_homogeneous:
             # If the dataset is labeled homogeneous, we need to patch the fanout for sampling.
             num_neighbors = patch_fanout_for_sampling(
                 dataset.get_edge_types(), num_neighbors
             )
         curr_process_nodes = shard_nodes_by_process(
-            input_nodes=node_ids,
+            input_nodes=anchor_node_ids,
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
         )
 
-        input_data = GLTNodeSamplerInput(node=curr_process_nodes, input_type=node_type)
+        input_data = GLTNodeSamplerInput(
+            node=curr_process_nodes, input_type=anchor_node_type
+        )
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.

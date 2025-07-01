@@ -1,7 +1,6 @@
 """Utils for Neighbor loaders."""
 from collections import abc
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
@@ -123,13 +122,6 @@ def strip_label_edges(data: HeteroData) -> HeteroData:
     return data
 
 
-@dataclass(frozen=True)
-class _ResolvedNodeSamplerInput:
-    node_type: Optional[NodeType]
-    node_ids: torch.Tensor
-    is_labeled_homogeneous: bool
-
-
 # Allowed inputs for node samplers.
 # If None is provded, then all nodes in the graph will be sampled.
 # And the graph must be homogeneous.
@@ -149,7 +141,7 @@ NodeSamplerInput = Optional[
 def resolve_node_sampler_input_from_user_input(
     input_nodes: NodeSamplerInput,
     dataset_nodes: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
-) -> _ResolvedNodeSamplerInput:
+) -> tuple[Optional[NodeType], torch.Tensor, bool]:
     """Resolves the input nodes for a node sampler.
     This function takes the user input for input nodes and resolves it to a consistent format.
 
@@ -160,7 +152,10 @@ def resolve_node_sampler_input_from_user_input(
         dataset_nodes (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]): The nodes in the dataset.
 
     Returns:
-        _ResolvedNodeSamplerInput: A dataclass containing the resolved node type, node IDs,
+        tuple[NodeType, torch.Tensor, bool]: A tuple containing:
+            - node_type (NodeType): The type of the nodes.
+            - node_ids (torch.Tensor): The tensor of node IDs.
+            - is_labeled_homogeneous (bool): Whether the dataset is a labeled homogeneous graph.
     """
     is_labeled_homoogeneous = False
     if isinstance(input_nodes, torch.Tensor):
@@ -201,8 +196,8 @@ def resolve_node_sampler_input_from_user_input(
                 f"Input nodes must be provided for a heterogeneous graph. Received: {dataset_nodes}"
             )
 
-    return _ResolvedNodeSamplerInput(
-        node_type=node_type,
-        node_ids=node_ids,
-        is_labeled_homogeneous=is_labeled_homoogeneous,
+    return (
+        node_type,
+        node_ids,
+        is_labeled_homoogeneous,
     )

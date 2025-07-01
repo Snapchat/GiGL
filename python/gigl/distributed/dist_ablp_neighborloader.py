@@ -230,13 +230,14 @@ class DistABLPLoader(DistLoader):
                 f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
             )
         self._is_input_heterogeneous: bool = False
-        resolved_inputs = resolve_node_sampler_input_from_user_input(
+        (
+            anchor_node_type,
+            anchor_node_ids,
+            self._is_labeled_homogeneous,
+        ) = resolve_node_sampler_input_from_user_input(
             input_nodes=input_nodes,
             dataset_nodes=dataset.node_ids,
         )
-        anchor_node_type = resolved_inputs.node_type
-        anchor_node_ids = resolved_inputs.node_ids
-        self._is_labeled_homogeneous = resolved_inputs.is_labeled_homogeneous
 
         if (
             anchor_node_type is None
@@ -246,7 +247,6 @@ class DistABLPLoader(DistLoader):
                 raise ValueError(
                     f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
                 )
-            node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
             supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         else:
