@@ -491,7 +491,13 @@ stop_toaster:
 	docker buildx prune
 
 release_gigl:
-	@echo "This needs to be implemented"
+	python -m pip install --upgrade build
+	python -m pip install --upgrade twine
+	(cd python && python -m build)
+	gcloud config set artifacts/location us-central1
+	python -m twine check python/dist/*
+	python -m twine upload --repository-url https://us-central1-python.pkg.dev/${GIGL_PROJECT}/gigl python/dist/*
+
 
 build_docs:
 	sphinx-build -M clean . gh_pages_build
