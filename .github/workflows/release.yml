@@ -4,7 +4,6 @@ on:
   # Triggers the workflow manually for now until we have full support for releasing:
   # - building and releasing docker images
   # - building and releasing KFP pipeline
-  push:
   workflow_dispatch:
 
 permissions:
