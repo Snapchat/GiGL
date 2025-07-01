@@ -234,6 +234,11 @@ def _training_process(
         f"---Machine {node_rank} local rank {local_rank} training process group initialized"
     )
 
+    # We initialize the train dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
+    # where the number indicates the local process rank. There is a `process_start_gap_seconds / 2` time.sleep() call in between each of
+    # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
+    # loaders at the same time can lead to OOM.
+
     train_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -243,11 +248,15 @@ def _training_process(
         pin_memory_device=training_device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
+        # Each train_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=True,
     )
 
     logger.info("Finished setting up train main loader.")
+
+    # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
+    time.sleep(process_start_gap_seconds / 2)
 
     train_random_negative_loader: Iterator[Data] = DistNeighborLoader(
         dataset=dataset,
@@ -258,7 +267,7 @@ def _training_process(
         pin_memory_device=training_device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds / 2,
+        process_start_gap_seconds=0,
         shuffle=True,
     )
 
@@ -271,6 +280,14 @@ def _training_process(
         f"---Machine {node_rank} local rank {local_rank} training data loaders initialized"
     )
 
+    # We add a barrier to wait for all the training loaders to finish initializing before we initialize the val loaders to reduce the peak memory usage.
+    torch.distributed.barrier()
+
+    # We initialize the val dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
+    # where the number indicates the local process rank. There is a `process_start_gap_seconds / 2` time.sleep() call in between each of
+    # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
+    # loaders at the same time can lead to OOM.
+
     val_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -280,10 +297,14 @@ def _training_process(
         pin_memory_device=training_device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
+        # Each val_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
     logger.info("Finished setting up val main loader.")
+
+    # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
+    time.sleep(process_start_gap_seconds / 2)
 
     val_random_negative_loader: Iterator[Data] = DistNeighborLoader(
         dataset=dataset,
@@ -294,7 +315,7 @@ def _training_process(
         pin_memory_device=training_device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds / 2,
+        process_start_gap_seconds=0,
     )
 
     logger.info("Finished setting up val random negative loader.")
@@ -602,6 +623,11 @@ def _testing_process(
         f"---Machine {node_rank} local rank {local_rank} test process set device {test_device}"
     )
 
+    # We initialize the test dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
+    # where the number indicates the local process rank. There is a `process_start_gap_seconds / 2` time.sleep() call in between each of
+    # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
+    # loaders at the same time can lead to OOM.
+
     test_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -611,10 +637,14 @@ def _testing_process(
         pin_memory_device=test_device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
+        # Each test_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
     logger.info("Finished setting up test main loader.")
+
+    # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
+    time.sleep(process_start_gap_seconds / 2)
 
     test_random_negative_loader: Iterator[Data] = DistNeighborLoader(
         dataset=dataset,
@@ -625,7 +655,7 @@ def _testing_process(
         pin_memory_device=test_device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds / 2,
+        process_start_gap_seconds=0,
     )
 
     test_main_loader = iter(test_main_loader)
