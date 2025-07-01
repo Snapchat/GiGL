@@ -45,6 +45,7 @@ jobs:
         env:
           PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
+          gcloud config set artifacts/location us-central1
           python -m twine check python/dist/*
           python -m twine upload --repository-url https://us-central1-python.pkg.dev/${PROJECT_ID}/gigl python/dist/*
 
