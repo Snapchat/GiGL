@@ -1,7 +1,6 @@
 from typing import Optional
 
 import torch
-import torch.nn as nn
 
 from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
@@ -14,7 +13,7 @@ def init_example_gigl_homogeneous_cora_model(
     args: dict[str, str],
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
-) -> nn.Module:
+) -> LinkPredictionGNN:
     """
     Initializes a homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
     any `nn.Module` subclass can work with GiGL training or inference.

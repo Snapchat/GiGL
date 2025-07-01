@@ -25,7 +25,7 @@ inferencerConfig:
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false
-  # Model Evaluation is only applicable for V1 GiGL -- we do not need it for V2
+  # Model Evaluation is only applicable for offline SGS pipelines -- we do not need it for live SGS pipelines
   shouldSkipModelEvaluation: true
 taskMetadata:
   nodeAnchorBasedLinkPredictionTaskMetadata:

@@ -1,5 +1,5 @@
 """
-This file contains an example for how to run homogeneous training using newGLT (GraphLearn-for-PyTorch) bindings that GiGL has.
+This file contains an example for how to run homogeneous training using live subgraph sampling power by GraphLearn-for-PyTorch (GLT).
 While `run_example_training` is coupled with GiGL orchestration, the `_training_process` and `testing_process` functions are generic
 and can be used as references for writing training for pipelines not dependent on GiGL orchestration.
 
@@ -17,13 +17,11 @@ You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test
 """
 
 import argparse
-import collections
-import datetime
 import statistics
 import time
-from collections import abc
+from collections.abc import Iterator
 from distutils.util import strtobool
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import torch
 import torch.distributed
@@ -56,7 +54,7 @@ def _compute_loss(
     model: DistributedDataParallel,
     main_data: Union[Data, HeteroData],
     random_negative_data: Union[Data, HeteroData],
-    loss_cls: RetrievalLoss,
+    loss_fn: RetrievalLoss,
     use_automatic_mixed_precision: bool,
     device: torch.device,
 ) -> torch.Tensor:
@@ -66,7 +64,7 @@ def _compute_loss(
         model (DistributedDataParallel): DDP-wrapped torch model for training and testing
         main_data (Union[Data, HeteroData]): The batch of data containing query nodes, positive nodes, and hard negative nodes
         random_negative_data (Union[Data, HeteroData]): The batch of data containing random negative nodes
-        loss_cls (RetrievalLoss): Initialized class to use for loss calculation
+        loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         use_automatic_mixed_precision (bool): Whether we should use automatic mixed precision with training
         device (torch.device): Device for training or validation
     Returns:
@@ -77,7 +75,8 @@ def _compute_loss(
         main_embeddings = model(data=main_data, device=device)
         random_negative_embeddings = model(data=random_negative_data, device=device)
 
-        # Extracting local query, random negative, positive, hard_negative, and random_negative ids, where local means we can directly index into the corresponding tensors
+        # Extracting local query, random negative, positive, hard_negative, and random_negative ids.
+        # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
         query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
         random_negative_ids: torch.Tensor = torch.arange(
             random_negative_data.batch_size
@@ -135,7 +134,7 @@ def _compute_loss(
 
         # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
 
-        loss = loss_cls(
+        loss = loss_fn(
             repeated_candidate_scores=repeated_candidate_scores,
             candidate_ids=global_candidate_ids,
             repeated_query_ids=global_repeated_query_ids,
@@ -199,13 +198,9 @@ def _training_process(
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process started"
     )
-    train_main_loader: collections.abc.Iterator
-    train_random_negative_loader: collections.abc.Iterator
-    val_main_loader: collections.abc.Iterator
-    val_random_negative_loader: collections.abc.Iterator
-    training_device = torch.device(
-        f"cuda:{local_rank + node_rank % torch.cuda.device_count()}"
-    )
+
+    # We have one training device for each
+    training_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")
     torch.cuda.set_device(training_device)
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process set device {training_device}"
@@ -216,16 +211,14 @@ def _training_process(
     logger.info(
         f"---Current training process global rank: {training_process_global_rank}, training process world size: {training_process_world_size}"
     )
-    # We initialize DDP to connect all GPUs across all machines.
-    # The default timeout is 10 mins for NCCL backend. We explicitly set a longer
-    # timeout of 30 minutes.
+
     torch.distributed.init_process_group(
         backend="nccl",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
         rank=training_process_global_rank,
         world_size=training_process_world_size,
-        timeout=datetime.timedelta(minutes=30),
     )
+
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process group initialized"
     )
@@ -237,8 +230,7 @@ def _training_process(
         global_world_size=node_world_size,
     )
 
-    assert isinstance(dataset.train_node_ids, abc.Mapping)
-    train_main_loader = DistABLPLoader(
+    train_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         context=distributed_context,
@@ -256,12 +248,9 @@ def _training_process(
         _main_sampling_port=22000,
     )
 
-    logger.info(
-        f"Finished setting up train main loader with {to_homogeneous(dataset.train_node_ids).size(0)} nodes"
-    )
+    logger.info("Finished setting up train main loader.")
 
-    assert isinstance(dataset.node_ids, abc.Mapping)
-    train_random_negative_loader = DistNeighborLoader(
+    train_random_negative_loader: Iterator[Data] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         input_nodes=to_homogeneous(dataset.node_ids),
@@ -274,9 +263,7 @@ def _training_process(
         shuffle=True,
     )
 
-    logger.info(
-        f"Finished setting up train random negative with {to_homogeneous(dataset.node_ids).size(0)} nodes"
-    )
+    logger.info("Finished setting up train random negative loader")
 
     train_main_loader = InfiniteIterator(train_main_loader)
     train_random_negative_loader = InfiniteIterator(train_random_negative_loader)
@@ -285,9 +272,7 @@ def _training_process(
         f"---Machine {node_rank} local rank {local_rank} training data loaders initialized"
     )
 
-    assert isinstance(dataset.val_node_ids, abc.Mapping)
-
-    val_main_loader = DistABLPLoader(
+    val_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         context=distributed_context,
@@ -304,13 +289,9 @@ def _training_process(
         _main_sampling_port=24000,
     )
 
-    logger.info(
-        f"Finished setting up val main negative with {to_homogeneous(dataset.val_node_ids).size(0)} nodes"
-    )
+    logger.info("Finished setting up val main loader.")
 
-    assert isinstance(dataset.node_ids, abc.Mapping)
-
-    val_random_negative_loader = DistNeighborLoader(
+    val_random_negative_loader: Iterator[Data] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         input_nodes=to_homogeneous(dataset.node_ids),
@@ -322,9 +303,7 @@ def _training_process(
         process_start_gap_seconds=process_start_gap_seconds / 2,
     )
 
-    logger.info(
-        f"Finished setting up val random negative with {to_homogeneous(dataset.node_ids).size(0)} nodes"
-    )
+    logger.info("Finished setting up val random negative loader.")
 
     val_main_loader = InfiniteIterator(val_main_loader)
     val_random_negative_loader = InfiniteIterator(val_random_negative_loader)
@@ -352,7 +331,7 @@ def _training_process(
     optimizer = torch.optim.AdamW(
         params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
-    loss_cls = RetrievalLoss(
+    loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -402,7 +381,7 @@ def _training_process(
                 model=model,
                 main_loader=val_main_loader,
                 random_negative_loader=val_random_negative_loader,
-                loss_cls=loss_cls,
+                loss_fn=loss_fn,
                 device=training_device,
                 use_automatic_mixed_precision=use_automatic_mixed_precision,
                 log_every_n_batch=log_every_n_batch,
@@ -412,7 +391,7 @@ def _training_process(
             model=model,
             main_data=main_data,
             random_negative_data=random_data,
-            loss_cls=loss_cls,
+            loss_fn=loss_fn,
             use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=training_device,
         )
@@ -456,8 +435,10 @@ def _training_process(
         )
         save_state_dict(model=model, save_to_path_uri=model_uri)
 
-    # Clean up training process group, also the implicit barrier gracefully shutdown data loaders and cleanup
     torch.distributed.destroy_process_group()
+
+    # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
+    # observed that not all memory may be cleaned up, leading to OOM.
     del train_main_loader, train_random_negative_loader
     del val_main_loader, val_random_negative_loader
 
@@ -466,22 +447,23 @@ def _training_process(
 def _run_validation_loops(
     local_rank: int,
     model: DistributedDataParallel,
-    main_loader: collections.abc.Iterator,
-    random_negative_loader: collections.abc.Iterator,
-    loss_cls: RetrievalLoss,
+    main_loader: Iterator,
+    random_negative_loader: Iterator,
+    loss_fn: RetrievalLoss,
     device: torch.device,
     use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
     num_batches: Optional[int] = None,
 ) -> None:
     """
-    Runs validation using the provided models and dataloaders.This function is shared for both validation while training and testing after training has completed.
+    Runs validation using the provided models and dataloaders.
+    This function is shared for both validation while training and testing after training has completed.
     Args:
         local_rank (int): Process number on the current machine
         model (DistributedDataParallel): DDP-wrapped torch model for training and testing
-        main_loader (collections.abc.Iterator): Dataloader for loading main batch data with query and labeled nodes
-        random_negative_loader (collections.abc.Iterator): Dataloader for loading random negative data
-        loss_cls (RetrievalLoss): Initialized class to use for loss calculation
+        main_loader (Iterator): Dataloader for loading main batch data with query and labeled nodes
+        random_negative_loader (Iterator): Dataloader for loading random negative data
+        loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         device (torch.device): Device to use for training or testing
         use_automatic_mixed_precision (bool): Whether we should train with mixed precision
         log_every_n_batch (int): The frequency we should log batch information when training and validating
@@ -501,7 +483,7 @@ def _run_validation_loops(
 
     model.eval()
     batch_idx = 0
-    batch_losses: List[float] = []
+    batch_losses: list[float] = []
     last_n_batch_time = []
     batch_start = time.time()
 
@@ -521,7 +503,7 @@ def _run_validation_loops(
             model=model,
             main_data=main_data,
             random_negative_data=random_data,
-            loss_cls=loss_cls,
+            loss_fn=loss_fn,
             use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=device,
         )
@@ -606,8 +588,6 @@ def _testing_process(
         raise NotImplementedError(
             "Currently, only GPU training is supported with this example training loop"
         )
-    test_main_loader: collections.abc.Iterator
-    test_random_negative_loader: collections.abc.Iterator
 
     test_process_world_size = node_world_size * local_world_size
     test_process_global_rank = node_rank * local_world_size + local_rank
@@ -621,7 +601,6 @@ def _testing_process(
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
         rank=test_process_global_rank,
         world_size=test_process_world_size,
-        timeout=datetime.timedelta(minutes=30),
     )
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} test process group initialized"
@@ -641,9 +620,7 @@ def _testing_process(
         global_world_size=node_world_size,
     )
 
-    assert isinstance(dataset.test_node_ids, abc.Mapping)
-
-    test_main_loader = DistABLPLoader(
+    test_main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         context=distributed_context,
@@ -660,12 +637,9 @@ def _testing_process(
         _main_sampling_port=26000,
     )
 
-    logger.info(
-        f"Finished setting up test main loader with {to_homogeneous(dataset.test_node_ids).size(0)} nodes"
-    )
+    logger.info("Finished setting up test main loader.")
 
-    assert isinstance(dataset.node_ids, abc.Mapping)
-    test_random_negative_loader = DistNeighborLoader(
+    test_random_negative_loader: Iterator[Data] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         input_nodes=to_homogeneous(dataset.node_ids),
@@ -680,9 +654,7 @@ def _testing_process(
     test_main_loader = iter(test_main_loader)
     test_random_negative_loader = iter(test_random_negative_loader)
 
-    logger.info(
-        f"Finished setting up test random negative loader with {to_homogeneous(dataset.node_ids).size(0)} nodes"
-    )
+    logger.info("Finished setting up test random negative loader.")
 
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_uri, device=test_device
@@ -702,7 +674,7 @@ def _testing_process(
     logger.info(
         f"Model initialized on machine {node_rank} test device {test_device} with weights loaded from {model_uri.uri}\n{model}"
     )
-    loss_cls = RetrievalLoss(
+    loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
@@ -716,14 +688,16 @@ def _testing_process(
         model=model,
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
-        loss_cls=loss_cls,
+        loss_fn=loss_fn,
         device=test_device,
         use_automatic_mixed_precision=use_automatic_mixed_precision,
         log_every_n_batch=log_every_n_batch,
     )
 
-    # Clean up test process group, also the implicit barrier gracefully shutdown data loaders and cleanup
     torch.distributed.destroy_process_group()
+
+    # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
+    # observed that not all memory may be cleaned up, leading to OOM.
     del test_main_loader, test_random_negative_loader
 
 
@@ -817,25 +791,25 @@ def _run_example_training(
     start_time = time.time()
     torch.multiprocessing.spawn(
         _training_process,
-        args=(
-            local_world_size,
-            node_rank,
-            node_world_size,
-            dataset,
-            node_feature_dim,
-            edge_feature_dim,
-            master_ip_address,
-            master_process_group_port_for_training,
-            trainer_args,
-            model_uri,
-            subgraph_fanout,
-            sampling_workers_per_process,
-            main_batch_size,
-            random_batch_size,
-            sampling_worker_shared_channel_size,
-            process_start_gap_seconds,
-            use_automatic_mixed_precision,
-            log_every_n_batch,
+        args=(  # Corresponding arguments in `_training_process` function
+            local_world_size,  # local_world_size
+            node_rank,  # node_rank
+            node_world_size,  # node_world_size
+            dataset,  # dataset
+            node_feature_dim,  # node_feature_dim
+            edge_feature_dim,  # edge_feature_dim
+            master_ip_address,  # master_ip_address
+            master_process_group_port_for_training,  # master_default_process_group_port
+            trainer_args,  # trainer_args
+            model_uri,  # model_uri
+            subgraph_fanout,  # subgraph_fanout
+            sampling_workers_per_process,  # sampling_workers_per_process
+            main_batch_size,  # main_batch_size
+            random_batch_size,  # random_batch_size
+            sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
+            process_start_gap_seconds,  # process_start_gap_seconds
+            use_automatic_mixed_precision,  # use_automatic_mixed_precision
+            log_every_n_batch,  # log_every_n_batch
         ),
         nprocs=local_world_size,
         join=True,
@@ -845,25 +819,25 @@ def _run_example_training(
     start_time = time.time()
     torch.multiprocessing.spawn(
         _testing_process,
-        args=(
-            local_world_size,
-            node_rank,
-            node_world_size,
-            dataset,
-            node_feature_dim,
-            edge_feature_dim,
-            master_ip_address,
-            master_process_group_port_for_testing,
-            trainer_args,
-            model_uri,
-            subgraph_fanout,
-            sampling_workers_per_process,
-            main_batch_size,
-            random_batch_size,
-            sampling_worker_shared_channel_size,
-            process_start_gap_seconds,
-            use_automatic_mixed_precision,
-            log_every_n_batch,
+        args=(  # Corresponding arguments in `_testing_process` function
+            local_world_size,  # local_world_size
+            node_rank,  # node_rank
+            node_world_size,  # node_world_size
+            dataset,  # dataset
+            node_feature_dim,  # node_feature_dim
+            edge_feature_dim,  # edge_feature_dim
+            master_ip_address,  # master_ip_address
+            master_process_group_port_for_testing,  # master_default_process_group_port
+            trainer_args,  # trainer_args
+            model_uri,  # model_uri
+            subgraph_fanout,  # subgraph_fanout
+            sampling_workers_per_process,  # sampling_workers_per_process
+            main_batch_size,  # main_batch_size
+            random_batch_size,  # random_batch_size
+            sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
+            process_start_gap_seconds,  # process_start_gap_seconds
+            use_automatic_mixed_precision,  # use_automatic_mixed_precision
+            log_every_n_batch,  # log_every_n_batch
         ),
         nprocs=local_world_size,
         join=True,

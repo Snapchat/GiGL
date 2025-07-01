@@ -84,7 +84,7 @@ def is_distributed_available_and_initialized() -> bool:
 
 def sync_metric_across_processes(metric: torch.Tensor) -> float:
     """
-    Takes the average of a training metric across multiple processes
+    Takes the average of a training metric across multiple processes. Note that this function requires DDP to be initialized.
     Args:
         metric (torch.Tensor): The metric, expressed as a torch Tensor, which should be synced across multiple processes
     Returns:
