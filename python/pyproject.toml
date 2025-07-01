@@ -35,6 +35,8 @@ dependencies = [
     "tensorflow==2.15.1",
     # https://developer.apple.com/metal/tensorflow-plugin/
     "tensorflow-metal ; platform_system=='Darwin' and platform_machine=='arm64'",
+    "nbconvert==7.16.6",
+    "nbformat==5.10.4",
     "numpy==1.24.3",
     "pandas",
     "scikit-learn",
