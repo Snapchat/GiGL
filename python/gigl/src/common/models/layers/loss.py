@@ -7,8 +7,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import CondensedEdgeType
 from gigl.src.common.types.task_inputs import BatchCombinedScores, BatchScores
+
+logger = Logger()
 
 
 class ModelResultType(Enum):
@@ -205,6 +208,10 @@ class RetrievalLoss(nn.Module):
                 f"The temperature is expected to be greater than 1e-12, however you provided {self._temperature}"
             )
         self._remove_accidental_hits = remove_accidental_hits
+        logger.warning(
+            "Calculating retrieval loss with the class at gigl.src.common.models.layers.loss.RetrievalLoss is deprecated and will be removed in a future release. "
+            "Please use the `gigl.module.loss.RetrievalLoss` class instead."
+        )
 
     def calculate_batch_retrieval_loss(
         self,
@@ -334,7 +341,7 @@ class RetrievalLoss(nn.Module):
         self,
         batch_combined_scores: BatchCombinedScores,
         repeated_query_embeddings: torch.FloatTensor,
-        candidate_sampling_probability: Optional[torch.FloatTensor],
+        candidate_sampling_probability: Optional[torch.FloatTensor] = None,
         device: torch.device = torch.device("cpu"),
     ) -> Tuple[torch.Tensor, int]:
         candidate_ids = torch.cat(
