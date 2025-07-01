@@ -55,10 +55,12 @@ jobs:
         PYPIRC_CONTENTS: ${{ secrets.PYPIRC_CONTENTS }}
         PIP_CONF_CONTENTS: ${{ secrets.PIP_CONF_CONTENTS }}
       run: |
+        python -m pip install --upgrade build twine keyrings.google-artifactregistry-auth
+        gcloud config set artifacts/location us-central1
+        gcloud config set artifacts/repository gigl
         echo "$PYPIRC_CONTENTS" > ~/.pypirc
         mkdir -p ~/.pip
         echo "$PIP_CONF_CONTENTS" > ~/.pip/pip.conf
-        python -m pip install --upgrade build twine keyrings.google-artifactregistry-auth
 
     - name: Build Binary Distribution
       run: (cd python && python -m build)
