@@ -63,7 +63,7 @@ def _compute_loss(
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
-        model (DistributedDataParallel): DDP-wrapped torch model for training
+        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
         main_data (Union[Data, HeteroData]): The batch of data containing query nodes, positive nodes, and hard negative nodes
         random_negative_data (Union[Data, HeteroData]): The batch of data containing random negative nodes
         loss_cls (RetrievalLoss): Initialized class to use for loss calculation
@@ -78,9 +78,7 @@ def _compute_loss(
         random_negative_embeddings = model(data=random_negative_data, device=device)
 
         # Extracting local query, random negative, positive, hard_negative, and random_negative ids, where local means we can directly index into the corresponding tensors
-        query_node_ids: torch.Tensor = torch.cat(list(main_data.y_positive.keys())).to(
-            device
-        )
+        query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
         random_negative_ids: torch.Tensor = torch.arange(
             random_negative_data.batch_size
         ).to(device)
@@ -167,7 +165,31 @@ def _training_process(
     process_start_gap_seconds: int,
     use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
-):
+) -> None:
+    """
+    This function is spawned by each machine for training a GNN model given some loaded distributed dataset.
+    Args:
+        local_rank (int): Process number on the current machine
+        local_world_size (int): Number of training processes spawned by each machine
+        node_rank (int): Rank of the current machine
+        node_world_size (int): Total number of machines
+        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training
+        node_feature_dim (int): Input node feature dimension for the model
+        edge_feature_dim (int): Input edge feature dimension for the model
+        master_ip_address (str): IP Address of the master worker for distributed communication
+        master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
+        trainer_args: dict[str, str]: Arguments for training
+        model_uri (Uri): URI Path to save the model to
+        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        sampling_workers_per_process (int): Number of sampling workers per training process
+        main_batch_size (int): Batch size for main dataloader with query and labeled nodes
+        random_batch_size (int): Batch size for random negative dataloader
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
+        process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
+            field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
+        use_automatic_mixed_precision (bool): Whether we should train with mixed precision
+        log_every_n_batch (int): The frequency we should log batch information when training and validating
+    """
     # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
     if not torch.cuda.is_available():
         raise NotImplementedError(
@@ -449,19 +471,34 @@ def _run_validation_loops(
     loss_cls: RetrievalLoss,
     device: torch.device,
     use_automatic_mixed_precision: bool,
-    log_every_n_batch: int = 10000,
+    log_every_n_batch: int,
     num_batches: Optional[int] = None,
 ) -> None:
     """
-    Shared test loop for both validation and test purposes.
-    When num_batches is set, the test loop will stop after processing num_batches batches,
-        which is useful for validation loops.
-    When num_batches is not set, the test loop will stop when the data loader is exhausted,
-        which is useful for test loops.
+    Runs validation using the provided models and dataloaders.This function is shared for both validation while training and testing after training has completed.
+    Args:
+        local_rank (int): Process number on the current machine
+        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
+        main_loader (collections.abc.Iterator): Dataloader for loading main batch data with query and labeled nodes
+        random_negative_loader (collections.abc.Iterator): Dataloader for loading random negative data
+        loss_cls (RetrievalLoss): Initialized class to use for loss calculation
+        device (torch.device): Device to use for training or testing
+        use_automatic_mixed_precision (bool): Whether we should train with mixed precision
+        log_every_n_batch (int): The frequency we should log batch information when training and validating
+        num_batches (Optional[int]): The number of batches to run the validation loop for. If this is not set, this function will loop until the data loaders are exhausted.
+            For validation, this field is required to be set, as the data loaders are wrapped with InfiniteIterator.
     """
     logger.info(
-        f"Running test loop on process_rank={local_rank}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
+        f"Running validation loop on process_rank={local_rank}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
     )
+    if num_batches is None:
+        if isinstance(main_loader, InfiniteIterator) or isinstance(
+            random_negative_loader, InfiniteIterator
+        ):
+            raise ValueError(
+                "Must set `num_batches` field when the provided data loaders are wrapped with InfiniteIterator"
+            )
+
     model.eval()
     batch_idx = 0
     batch_losses: List[float] = []
@@ -540,6 +577,30 @@ def _testing_process(
     use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
 ):
+    """
+    This function is spawned by each machine for running testing on a trained GNN model provided some loaded distributed dataset.
+    Args:
+        local_rank (int): Process number on the current machine
+        local_world_size (int): Number of training processes spawned by each machine
+        node_rank (int): Rank of the current machine
+        node_world_size (int): Total number of machines
+        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training
+        node_feature_dim (int): Input node feature dimension for the model
+        edge_feature_dim (int): Input edge feature dimension for the model
+        master_ip_address (str): IP Address of the master worker for distributed communication
+        master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
+        trainer_args: dict[str, str]: Arguments for training
+        model_uri (Uri): URI Path to save the model to
+        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        sampling_workers_per_process (int): Number of sampling workers per training process
+        main_batch_size (int): Batch size for main dataloader with query and labeled nodes
+        random_batch_size (int): Batch size for random negative dataloader
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
+        process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
+            field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
+        use_automatic_mixed_precision (bool): Whether we should train with mixed precision
+        log_every_n_batch (int): The frequency we should log batch information when training and validating
+    """
     # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
     if not torch.cuda.is_available():
         raise NotImplementedError(
@@ -669,6 +730,11 @@ def _testing_process(
 def _run_example_training(
     task_config_uri: str,
 ):
+    """
+    Runs an example training pipeline using GiGL Orchestration.
+    Args:
+        task_config_uri (str): Path to frozen GBMLConfigPbWrapper
+    """
     start_time = time.time()
     mp.set_start_method("spawn")
     logger.info(f"Starting sub process method: {mp.get_start_method()}")
@@ -721,14 +787,24 @@ def _run_example_training(
 
     fanout_per_hop = int(trainer_args.get("fanout_per_hop", "10"))
     subgraph_fanout: list[int] = [fanout_per_hop, fanout_per_hop]
+
+    # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
+    # pipeline. We default this value to `4` here for simplicity.
     sampling_workers_per_process: int = int(
         trainer_args.get("sampling_workers_per_process", "4")
     )
+
     main_batch_size = int(trainer_args.get("main_batch_size", 16))
     random_batch_size = int(trainer_args.get("random_batch_size", 16))
+
+    # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
+    # is the place to store pre-fetched data, so if it is too small then prefetching is limited. This parameter is a string
+    # with `{numeric_value}{storage_size}`, where storage size could be `MB`, `GB`, etc. We default this value to 4GB,
+    # but in production may need some tuning.
     sampling_worker_shared_channel_size: str = trainer_args.get(
         "sampling_worker_shared_channel_size", "4GB"
     )
+
     process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
     use_automatic_mixed_precision = bool(
         strtobool(trainer_args.get("use_automatic_mixed_precision", "False"))

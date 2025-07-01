@@ -77,7 +77,7 @@ def _inference_process(
 ):
     """
     This function is spawned by multiple processes per machine and is responsible for:
-        1. Intializing the dataLoader
+        1. Initializing the dataLoader
         2. Running the inference loop to get the embeddings for each anchor node
         3. Writing embeddings to GCS
 
