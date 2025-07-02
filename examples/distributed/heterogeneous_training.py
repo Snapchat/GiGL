@@ -31,7 +31,7 @@ from typing import Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_heterogeneous_dblp_model
+from examples.models import init_example_gigl_heterogeneous_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
@@ -398,7 +398,7 @@ def _training_process(
     )
 
     model = DistributedDataParallel(
-        init_example_gigl_heterogeneous_dblp_model(
+        init_example_gigl_heterogeneous_model(
             node_type_to_feature_dim=node_type_to_feature_dim,
             edge_type_to_feature_dim=edge_type_to_feature_dim,
             device=training_device,
@@ -745,7 +745,7 @@ def _testing_process(
     )
 
     model = DistributedDataParallel(
-        init_example_gigl_heterogeneous_dblp_model(
+        init_example_gigl_heterogeneous_model(
             node_type_to_feature_dim=node_type_to_feature_dim,
             edge_type_to_feature_dim=edge_type_to_feature_dim,
             device=test_device,

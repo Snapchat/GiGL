@@ -9,7 +9,7 @@ from gigl.src.common.models.pyg.link_prediction import LinkPredictionDecoder
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 
-def init_example_gigl_homogeneous_cora_model(
+def init_example_gigl_homogeneous_model(
     node_feature_dim: int,
     edge_feature_dim: int,
     hid_dim: int = 16,
@@ -66,7 +66,7 @@ def init_example_gigl_homogeneous_cora_model(
     return model
 
 
-def init_example_gigl_heterogeneous_dblp_model(
+def init_example_gigl_heterogeneous_model(
     node_type_to_feature_dim: dict[NodeType, int],
     edge_type_to_feature_dim: dict[EdgeType, int],
     hid_dim: int = 16,

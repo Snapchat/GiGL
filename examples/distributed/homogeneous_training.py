@@ -26,7 +26,7 @@ from typing import Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_homogeneous_cora_model
+from examples.models import init_example_gigl_homogeneous_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data
 
@@ -342,7 +342,7 @@ def _training_process(
     )
 
     model = DistributedDataParallel(
-        init_example_gigl_homogeneous_cora_model(
+        init_example_gigl_homogeneous_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
             device=training_device,
@@ -666,7 +666,7 @@ def _testing_process(
     )
 
     model = DistributedDataParallel(
-        init_example_gigl_homogeneous_cora_model(
+        init_example_gigl_homogeneous_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
             device=test_device,

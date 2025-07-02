@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_heterogeneous_dblp_model
+from examples.models import init_example_gigl_heterogeneous_model
 from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
@@ -162,7 +162,7 @@ def _inference_process(
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_state_dict_uri, device=device
     )
-    model: LinkPredictionGNN = init_example_gigl_heterogeneous_dblp_model(
+    model: LinkPredictionGNN = init_example_gigl_heterogeneous_model(
         node_type_to_feature_dim=node_type_to_feature_dim,
         edge_type_to_feature_dim=edge_type_to_feature_dim,
         device=device,

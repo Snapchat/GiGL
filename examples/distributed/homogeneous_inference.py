@@ -26,7 +26,7 @@ from typing import Dict, List
 
 import torch
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_homogeneous_cora_model
+from examples.models import init_example_gigl_homogeneous_model
 from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
@@ -162,7 +162,7 @@ def _inference_process(
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_state_dict_uri, device=device
     )
-    model: LinkPredictionGNN = init_example_gigl_homogeneous_cora_model(
+    model: LinkPredictionGNN = init_example_gigl_homogeneous_model(
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
         device=device,
