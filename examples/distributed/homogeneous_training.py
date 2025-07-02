@@ -242,6 +242,8 @@ def _training_process(
         shuffle=True,
     )
 
+    train_main_loader = InfiniteIterator(train_main_loader)
+
     logger.info("Finished setting up train main loader.")
 
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
@@ -260,10 +262,9 @@ def _training_process(
         shuffle=True,
     )
 
-    logger.info("Finished setting up train random negative loader")
-
-    train_main_loader = InfiniteIterator(train_main_loader)
     train_random_negative_loader = InfiniteIterator(train_random_negative_loader)
+
+    logger.info("Finished setting up train random negative loader")
 
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training data loaders initialized"
@@ -290,6 +291,8 @@ def _training_process(
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
+    val_main_loader = InfiniteIterator(val_main_loader)
+
     logger.info("Finished setting up val main loader.")
 
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
@@ -307,10 +310,9 @@ def _training_process(
         process_start_gap_seconds=0,
     )
 
-    logger.info("Finished setting up val random negative loader.")
-
-    val_main_loader = InfiniteIterator(val_main_loader)
     val_random_negative_loader = InfiniteIterator(val_random_negative_loader)
+
+    logger.info("Finished setting up val random negative loader.")
 
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} validation data loaders initialized"
@@ -612,6 +614,8 @@ def _testing_process(
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
+    test_main_loader = iter(test_main_loader)
+
     logger.info("Finished setting up test main loader.")
 
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
@@ -629,7 +633,6 @@ def _testing_process(
         process_start_gap_seconds=0,
     )
 
-    test_main_loader = iter(test_main_loader)
     test_random_negative_loader = iter(test_random_negative_loader)
 
     logger.info("Finished setting up test random negative loader.")

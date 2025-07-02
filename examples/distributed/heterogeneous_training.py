@@ -25,8 +25,7 @@ This will improved on in the future.
 import argparse
 import statistics
 import time
-from collections import abc
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Optional
 
 import torch
@@ -264,7 +263,7 @@ def _training_process(
 
     labeled_node_type = supervision_edge_type.dst_node_type
 
-    assert isinstance(dataset.train_node_ids, abc.Mapping)
+    assert isinstance(dataset.train_node_ids, Mapping)
 
     # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
     # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
@@ -284,12 +283,14 @@ def _training_process(
         shuffle=True,
     )
 
+    train_main_loader = InfiniteIterator(train_main_loader)
+
     logger.info("Finished setting up train main loader.")
 
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
     time.sleep(process_start_gap_seconds / 2)
 
-    assert isinstance(dataset.node_ids, abc.Mapping)
+    assert isinstance(dataset.node_ids, Mapping)
 
     # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
     # the labeled node in the link prediction task.
@@ -306,10 +307,9 @@ def _training_process(
         shuffle=True,
     )
 
-    logger.info("Finished setting up train random negative loader")
-
-    train_main_loader = InfiniteIterator(train_main_loader)
     train_random_negative_loader = InfiniteIterator(train_random_negative_loader)
+
+    logger.info("Finished setting up train random negative loader")
 
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training data loaders initialized"
@@ -323,7 +323,7 @@ def _training_process(
     # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
     # loaders at the same time can lead to OOM.
 
-    assert isinstance(dataset.val_node_ids, abc.Mapping)
+    assert isinstance(dataset.val_node_ids, Mapping)
 
     # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
     # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
@@ -342,12 +342,14 @@ def _training_process(
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
+    val_main_loader = InfiniteIterator(val_main_loader)
+
     logger.info("Finished setting up val main loader.")
 
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
     time.sleep(process_start_gap_seconds / 2)
 
-    assert isinstance(dataset.node_ids, abc.Mapping)
+    assert isinstance(dataset.node_ids, Mapping)
 
     # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
     # the labeled node in the link prediction task.
@@ -363,10 +365,9 @@ def _training_process(
         process_start_gap_seconds=0,
     )
 
-    logger.info("Finished setting up val random negative loader.")
-
-    val_main_loader = InfiniteIterator(val_main_loader)
     val_random_negative_loader = InfiniteIterator(val_random_negative_loader)
+
+    logger.info("Finished setting up val random negative loader.")
 
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} validation data loaders initialized"
@@ -668,7 +669,7 @@ def _testing_process(
 
     labeled_node_type = supervision_edge_type.dst_node_type
 
-    assert isinstance(dataset.test_node_ids, abc.Mapping)
+    assert isinstance(dataset.test_node_ids, Mapping)
 
     # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
     # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
@@ -687,12 +688,14 @@ def _testing_process(
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
+    test_main_loader = iter(test_main_loader)
+
     logger.info("Finished setting up test main loader.")
 
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
     time.sleep(process_start_gap_seconds / 2)
 
-    assert isinstance(dataset.node_ids, abc.Mapping)
+    assert isinstance(dataset.node_ids, Mapping)
 
     # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
     # the labeled node in the link prediction task.
@@ -708,7 +711,6 @@ def _testing_process(
         process_start_gap_seconds=0,
     )
 
-    test_main_loader = iter(test_main_loader)
     test_random_negative_loader = iter(test_random_negative_loader)
 
     logger.info("Finished setting up test random negative loader.")
@@ -840,6 +842,11 @@ def _run_example_training(
     # we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `subraph_fanout` with a `list[int]`.
 
     # TODO (mkolodner-sc): Make the heterogeneous example use a dict[EdgeType, list[int]] instead of list[int] for specifying fanout
+    # For example:
+    # subgraph_fanout: dict[EdgeType, list[int]] = {
+    #    EdgeType(NodeType("author"), Relation("to"), NodeType("paper")): [10, 10].
+    #    EdgeType(NodeType("term"), Relation("to"), NodeType("paper")): [10, 10].
+    # }
     subgraph_fanout: list[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
