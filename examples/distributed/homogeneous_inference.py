@@ -22,11 +22,11 @@ You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test
 import argparse
 import gc
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import torch
 import torch.multiprocessing as mp
-import torch.nn as nn
+from examples.models import init_example_gigl_homogeneous_cora_model
 from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
@@ -39,11 +39,7 @@ from gigl.distributed import (
     DistLinkPredictionDataset,
     build_dataset_from_task_config_uri,
 )
-from gigl.src.common.models.pyg.homogeneous import GraphSAGE
-from gigl.src.common.models.pyg.link_prediction import (
-    LinkPredictionDecoder,
-    LinkPredictionGNN,
-)
+from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -58,63 +54,6 @@ logger = Logger()
 # If there are GPUs attached to the machine, we automatically infer to setting
 # LOCAL_WORLD_SIZE == # of gpus on the machine.
 DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
-
-
-def _init_example_gigl_homogeneous_model(
-    state_dict: Dict[str, torch.Tensor],
-    node_feature_dim: int,
-    edge_feature_dim: int,
-    inferencer_args: Dict[str, str],
-    device: Optional[torch.device] = None,
-) -> LinkPredictionGNN:
-    """
-    Initializes a hard-coded homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
-    any `nn.Module` subclass can work with GiGL inference.
-    This model is trained based on the following CORA UDL E2E config:
-    `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
-
-    To train a different model, you can launch a pipeline for training on CORA using the above config with `make run_cora_nalp_e2e_kfp_test`.
-
-
-    Args:
-        state_dict (Dict[str, torch.Tensor]): State dictionary for pretrained model
-        node_feature_dim (int): Input node feature dimension for the model
-        edge_feature_dim (int): Input edge feature dimension for the model
-        inferencer_args (Dict[str, str]): Arguments for inferencer
-        device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
-    Returns:
-        LinkPredictionGNN: Link Prediction model for inference
-    """
-    # TODO (mkolodner-sc): Add asserts to ensure that model shape aligns with shape of state dict
-
-    # We use the GiGL GraphSAGE implementation since the model shape needs to conform to the
-    # state_dict that the trained model used, which was done with the GiGL GraphSAGE
-    encoder_model = GraphSAGE(
-        in_dim=node_feature_dim,
-        hid_dim=int(inferencer_args.get("hid_dim", 16)),
-        out_dim=int(inferencer_args.get("out_dim", 16)),
-        edge_dim=edge_feature_dim if edge_feature_dim > 0 else None,
-        num_layers=int(inferencer_args.get("num_layers", 2)),
-        conv_kwargs={},  # Use default conv args for this model type
-        should_l2_normalize_embedding_layer_output=True,
-    )
-
-    decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-
-    model: LinkPredictionGNN = LinkPredictionGNN(
-        encoder=encoder_model,
-        decoder=decoder_model,
-    )
-
-    # Push the model to the specified device.
-    if device is None:
-        device = torch.device("cpu")
-    model.to(device)
-
-    # Override the initiated model's parameters with the saved model's parameters.
-    model.load_state_dict(state_dict)
-
-    return model
 
 
 @torch.no_grad()
@@ -138,7 +77,7 @@ def _inference_process(
 ):
     """
     This function is spawned by multiple processes per machine and is responsible for:
-        1. Intializing the dataLoader
+        1. Initializing the dataLoader
         2. Running the inference loop to get the embeddings for each anchor node
         3. Writing embeddings to GCS
 
@@ -221,12 +160,12 @@ def _inference_process(
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_state_dict_uri, device=device
     )
-    model: nn.Module = _init_example_gigl_homogeneous_model(
-        state_dict=model_state_dict,
+    model: LinkPredictionGNN = init_example_gigl_homogeneous_cora_model(
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
-        inferencer_args=inferencer_args,
+        args=inferencer_args,
         device=device,
+        state_dict=model_state_dict,
     )
 
     # Set the model to evaluation mode for inference.
@@ -273,9 +212,7 @@ def _inference_process(
 
         # These arguments to forward are specific to the GiGL LinkPredictionGNN model.
         # If just using a nn.Module, you can just use output = model(data)
-        output = model(
-            data=data, output_node_types=[inference_node_type], device=device
-        )[inference_node_type]
+        output = model(data=data, device=device)
 
         # The anchor node IDs are contained inside of the .batch field of the data
         node_ids = data.batch.cpu()
@@ -342,11 +279,6 @@ def _run_example_inference(
         job_name (str): Name of current job
         task_config_uri (str): Path to frozen GBMLConfigPbWrapper
     """
-    # All machines run this logic to connect together, and return a distributed context with:
-    # - the (GCP) internal IP address of the rank 0 machine, which will be used for building RPC connections.
-    # - the current machine rank
-    # - the total number of machines (world size)
-
     program_start_time = time.time()
 
     # The main process per machine needs to be able to talk with each other to partition and synchronize the graph data.
