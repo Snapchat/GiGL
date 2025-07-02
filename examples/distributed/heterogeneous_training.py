@@ -376,6 +376,8 @@ def _training_process(
             device=training_device,
         ),
         device_ids=[training_device],
+        # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
+        find_unused_parameters=True,
     )
 
     optimizer = torch.optim.AdamW(
