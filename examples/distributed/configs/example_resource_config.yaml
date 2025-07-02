@@ -39,13 +39,13 @@ preprocessor_config:
     disk_size_gb: 300
 trainer_resource_config:
   vertex_ai_trainer_config:
-    machine_type: n2-standard-16
+    machine_type: n1-standard-16
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 2
     num_replicas: 2
 inferencer_resource_config:
   vertex_ai_inferencer_config:
-    machine_type: n2-standard-16
+    machine_type: n1-standard-16
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 2
     num_replicas: 2
