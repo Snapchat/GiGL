@@ -29,12 +29,12 @@ shared_resource_config:
 preprocessor_config:
   edge_preprocessor_config:
     num_workers: 1
-    max_num_workers: 128
+    max_num_workers: 4
     machine_type: "n2d-highmem-32"
     disk_size_gb: 300
   node_preprocessor_config:
     num_workers: 1
-    max_num_workers: 128
+    max_num_workers: 4
     machine_type: "n2d-highmem-64"
     disk_size_gb: 300
 trainer_resource_config:

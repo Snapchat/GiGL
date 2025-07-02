@@ -18,10 +18,6 @@ PATH_BASE_IMAGES_VARIABLE_FILE: Final[Path] = Path.joinpath(
     GIGL_ROOT_DIR, "dep_vars.env"
 ).absolute()
 
-PYTHON_ROOT_DIR: Final[Path] = (
-    Path(__file__).resolve().parent.parent.parent
-)  # common -> gigl -> python
-
 
 def parse_makefile_vars(makefile_path: Path) -> Dict[str, str]:
     """
