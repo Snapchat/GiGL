@@ -127,7 +127,7 @@ def _compute_loss(
         positive_node_embeddings = main_embeddings[labeled_node_type][positive_ids]
         hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_ids]
         random_negative_embeddings = random_negative_embeddings[labeled_node_type][
-            : random_negative_data.batch_size
+            random_negative_ids
         ]
 
         # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]

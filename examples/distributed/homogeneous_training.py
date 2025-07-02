@@ -103,9 +103,7 @@ def _compute_loss(
         repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
         positive_node_embeddings = main_embeddings[positive_ids]
         hard_negative_embeddings = main_embeddings[hard_negative_ids]
-        random_negative_embeddings = random_negative_embeddings[
-            : random_negative_data.batch_size
-        ]
+        random_negative_embeddings = random_negative_embeddings[random_negative_ids]
 
         # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
 
