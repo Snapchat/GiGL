@@ -229,7 +229,7 @@ def _training_process(
     )
 
     # We use one training device for each local process
-    training_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")
+    training_device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(training_device)
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process set device {training_device}"
@@ -263,6 +263,9 @@ def _training_process(
 
     assert isinstance(dataset.train_node_ids, abc.Mapping)
 
+    # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
+    # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
+    # that the dataloader knows how to fanout around the labeled edge types. A heterogeneous DistABLPLoader will return a HeteroData object.
     train_main_loader: Iterator[HeteroData] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -285,6 +288,8 @@ def _training_process(
 
     assert isinstance(dataset.node_ids, abc.Mapping)
 
+    # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
+    # the labeled node in the link prediction task.
     train_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -317,6 +322,9 @@ def _training_process(
 
     assert isinstance(dataset.val_node_ids, abc.Mapping)
 
+    # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
+    # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
+    # that the dataloader knows how to fanout around the labeled edge types. A heterogeneous DistABLPLoader will return a HeteroData object.
     val_main_loader: Iterator[HeteroData] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -338,6 +346,8 @@ def _training_process(
 
     assert isinstance(dataset.node_ids, abc.Mapping)
 
+    # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
+    # the labeled node in the link prediction task.
     val_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -495,8 +505,8 @@ def _run_validation_loops(
     Args:
         local_rank (int): Process number on the current machine
         model (DistributedDataParallel): DDP-wrapped torch model for training and testing
-        main_loader (Iterator): Dataloader for loading main batch data with query and labeled nodes
-        random_negative_loader (Iterator): Dataloader for loading random negative data
+        main_loader (Iterator[Data]): Dataloader for loading main batch data with query and labeled nodes
+        random_negative_loader (Iterator[Data]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
         device (torch.device): Device to use for training or testing
@@ -593,7 +603,7 @@ def _testing_process(
     log_every_n_batch: int,
 ):
     """
-    This function is spawned by each machine for running testing on a trained GNN model provided some loaded distributed dataset.
+    Each machine spawns process(es) running this function for training a GNN model given some loaded distributed dataset.
     Args:
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of training processes spawned by each machine
@@ -657,6 +667,9 @@ def _testing_process(
 
     assert isinstance(dataset.test_node_ids, abc.Mapping)
 
+    # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
+    # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
+    # that the dataloader knows how to fanout around the labeled edge types. A heterogeneous DistABLPLoader will return a HeteroData object.
     test_main_loader: Iterator[HeteroData] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
@@ -678,6 +691,8 @@ def _testing_process(
 
     assert isinstance(dataset.node_ids, abc.Mapping)
 
+    # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
+    # the labeled node in the link prediction task.
     test_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,

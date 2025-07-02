@@ -202,7 +202,7 @@ def _training_process(
     )
 
     # We use one training device for each local process
-    training_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")
+    training_device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(training_device)
     logger.info(
         f"---Machine {node_rank} local rank {local_rank} training process set device {training_device}"
@@ -449,8 +449,8 @@ def _run_validation_loops(
     Args:
         local_rank (int): Process number on the current machine
         model (DistributedDataParallel): DDP-wrapped torch model for training and testing
-        main_loader (Iterator): Dataloader for loading main batch data with query and labeled nodes
-        random_negative_loader (Iterator): Dataloader for loading random negative data
+        main_loader (Iterator[Data]): Dataloader for loading main batch data with query and labeled nodes
+        random_negative_loader (Iterator[Data]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         device (torch.device): Device to use for training or testing
         log_every_n_batch (int): The frequency we should log batch information when training and validating
@@ -544,7 +544,7 @@ def _testing_process(
     log_every_n_batch: int,
 ):
     """
-    This function is spawned by each machine for running testing on a trained GNN model provided some loaded distributed dataset.
+    Each machine spawns process(es) running this function for training a GNN model given some loaded distributed dataset.
     Args:
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of training processes spawned by each machine
