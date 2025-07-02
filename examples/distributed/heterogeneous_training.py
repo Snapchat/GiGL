@@ -420,7 +420,7 @@ def _training_process(
         f"Model initialized on machine {machine_rank} training device {training_device}\n{model.module}"
     )
 
-    # We add a barrier to wait for all processes to finish preparing the dataloader prior to the start of training
+    # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
     torch.distributed.barrier()
 
     # Entering the training loop
@@ -429,9 +429,7 @@ def _training_process(
     avg_train_loss = 0.0
     last_n_batch_avg_loss: list[float] = []
     last_n_batch_time: list[float] = []
-    num_max_train_batches_per_process = (
-        num_max_train_batches // world_size
-    )
+    num_max_train_batches_per_process = num_max_train_batches // world_size
     num_val_batches_per_process = num_val_batches // world_size
     logger.info(
         f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
@@ -671,7 +669,9 @@ def _testing_process(
     logger.info(
         f"---Machine {machine_rank} local rank {local_rank} test process group initialized"
     )
-    logger.info(f"---Machine {machine_rank} local rank {local_rank} test process started")
+    logger.info(
+        f"---Machine {machine_rank} local rank {local_rank} test process started"
+    )
 
     # We use one testing device for each local process
     test_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")

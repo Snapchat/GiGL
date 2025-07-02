@@ -243,7 +243,9 @@ def _inference_process(
 
         data_loading_start_time = time.time()
 
-    logger.info(f"--- Machine {machine_rank} local rank {local_rank} finished inference.")
+    logger.info(
+        f"--- Machine {machine_rank} local rank {local_rank} finished inference."
+    )
 
     write_embedding_start_time = time.time()
     # Flushes all remaining embeddings to GCS
