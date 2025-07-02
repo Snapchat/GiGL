@@ -5,7 +5,6 @@ on:
   # - building and releasing docker images
   # - building and releasing KFP pipeline
   workflow_dispatch:
-  push:
 
 permissions:
   contents: read
