@@ -33,6 +33,11 @@ def init_example_gigl_homogeneous_cora_model(
     Returns:
         LinkPredictionGNN: Link Prediction model for training or inference
     """
+
+    # We use the GiGL GraphSAGE encoder for this example instead of the base PyG GraphSAGE model since the base model doesn't
+    # have support for edge features or additional utilities like `should_l2_normalize_embedding_layer_output`,
+    # which normalizes the output embeddings from the encoder. However, a base GraphSAGE encoder would also work in this case,
+    # it would just have less modeling levers.
     encoder_model = GraphSAGE(
         in_dim=node_feature_dim,
         hid_dim=hid_dim,
@@ -87,6 +92,8 @@ def init_example_gigl_heterogeneous_dblp_model(
     Returns:
         LinkPredictionGNN: Link Prediction model for inference
     """
+
+    # We use the GiGL HGT encoder for this example, since PyG only has support for the HGTConv layer, but not an entire HGT encoder.
     encoder_model = HGT(
         node_type_to_feat_dim_map=node_type_to_feature_dim,
         edge_type_to_feat_dim_map=edge_type_to_feature_dim,

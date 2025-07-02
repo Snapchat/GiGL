@@ -38,7 +38,7 @@ from torch_geometric.data import HeteroData
 import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
-from gigl.common.utils.torch_training import sync_metric_across_processes
+from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed import (
     DistABLPLoader,
     DistLinkPredictionDataset,
@@ -52,6 +52,21 @@ from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dic
 from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
+
+
+def _sync_metric_across_processes(metric: torch.Tensor) -> float:
+    """
+    Takes the average of a training metric across multiple processes. Note that this function requires DDP to be initialized.
+    Args:
+        metric (torch.Tensor): The metric, expressed as a torch Tensor, which should be synced across multiple processes
+    Returns:
+        float: The average of the provided metric across all training processes
+    """
+    assert is_distributed_available_and_initialized(), "DDP is not initialized"
+    # Make a copy of the local loss tensor
+    loss_tensor = metric.detach().clone()
+    torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
+    return loss_tensor.item() / torch.distributed.get_world_size()
 
 
 def _compute_loss(
@@ -94,37 +109,36 @@ def _compute_loss(
         device=device,
     )
 
-    # Extracting local query, random negative, positive, hard_negative, and random_negative ids.
+    # Extracting local query, random negative, positive, hard_negative, and random_negative indices.
     # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
-    # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local id for global id `50`
-    query_node_ids: torch.Tensor = torch.arange(
+    # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local index for global id `50`. Note that each global id in data.node is unique.
+    query_node_idx: torch.Tensor = torch.arange(
         main_data[query_node_type].batch_size
     ).to(device)
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
-    # main_data.y_positive is a dict[query_node_local_id: int, labeled_node_local_ids: torch.Tensor], even in the heterogeneous setting.
-    positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
+    # main_data.y_positive is a dict[query_node_local_index: int, labeled_node_local_indices: torch.Tensor], even in the heterogeneous setting.
+    positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
         device
     )
-    # We also extract a repeated query node id tensor which upsamples each query node based on the number of positives it has
-    repeated_query_node_ids = query_node_ids.repeat_interleave(
+    # We also extract a repeated query node index tensor which upsamples each query node based on the number of positives it has
+    repeated_query_node_idx = query_node_idx.repeat_interleave(
         torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
     )
     if hasattr(main_data, "y_negative"):
-        hard_negative_ids: torch.Tensor = torch.cat(
+        hard_negative_idx: torch.Tensor = torch.cat(
             list(main_data.y_negative.values())
         ).to(device)
     else:
-        hard_negative_ids = torch.empty(0, dtype=torch.long).to(device)
+        hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
 
     # Use local IDs to get the corresponding embeddings in the tensors
 
     repeated_query_embeddings = main_embeddings[query_node_type][
-        repeated_query_node_ids
+        repeated_query_node_idx
     ]
-    hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_ids]
-    positive_node_embeddings = main_embeddings[labeled_node_type][positive_ids]
-    hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_ids]
+    positive_node_embeddings = main_embeddings[labeled_node_type][positive_idx]
+    hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_idx]
     random_negative_embeddings = random_negative_embeddings[labeled_node_type][
         :random_negative_batch_size
     ]
@@ -147,13 +161,13 @@ def _compute_loss(
 
     global_candidate_ids = torch.cat(
         (
-            main_data[labeled_node_type].node[positive_ids],
-            main_data[labeled_node_type].node[hard_negative_ids],
+            main_data[labeled_node_type].node[positive_idx],
+            main_data[labeled_node_type].node[hard_negative_idx],
             random_negative_data[labeled_node_type].node[:random_negative_batch_size],
         )
     )
 
-    global_repeated_query_ids = main_data[query_node_type].node[repeated_query_node_ids]
+    global_repeated_query_ids = main_data[query_node_type].node[repeated_query_node_idx]
 
     # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
 
@@ -170,8 +184,8 @@ def _compute_loss(
 def _training_process(
     local_rank: int,
     local_world_size: int,
-    node_rank: int,
-    node_world_size: int,
+    machine_rank: int,
+    machine_world_size: int,
     dataset: DistLinkPredictionDataset,
     supervision_edge_type: EdgeType,
     node_type_to_feature_dim: dict[NodeType, int],
@@ -197,8 +211,8 @@ def _training_process(
     Args:
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of training processes spawned by each machine
-        node_rank (int): Rank of the current machine
-        node_world_size (int): Total number of machines
+        machine_rank (int): Rank of the current machine
+        machine_world_size (int): Total number of machines
         dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training
         supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
         node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
@@ -227,31 +241,31 @@ def _training_process(
         )
 
     logger.info(
-        f"---Machine {node_rank} local rank {local_rank} training process started"
+        f"---Machine {machine_rank} local rank {local_rank} training process started"
     )
 
     # We use one training device for each local process
     training_device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(training_device)
     logger.info(
-        f"---Machine {node_rank} local rank {local_rank} training process set device {training_device}"
+        f"---Machine {machine_rank} local rank {local_rank} training process set device {training_device}"
     )
 
-    training_process_world_size = node_world_size * local_world_size
-    training_process_global_rank = node_rank * local_world_size + local_rank
+    world_size = machine_world_size * local_world_size
+    rank = machine_rank * local_world_size + local_rank
     logger.info(
-        f"---Current training process global rank: {training_process_global_rank}, training process world size: {training_process_world_size}"
+        f"---Current training process rank: {rank}, training process world size: {world_size}"
     )
 
     torch.distributed.init_process_group(
         backend="nccl",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
-        rank=training_process_global_rank,
-        world_size=training_process_world_size,
+        rank=rank,
+        world_size=world_size,
     )
 
     logger.info(
-        f"---Machine {node_rank} local rank {local_rank} training process group initialized"
+        f"---Machine {machine_rank} local rank {local_rank} training process group initialized"
     )
 
     # We initialize the train dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
@@ -279,6 +293,7 @@ def _training_process(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         # Each train_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
+        # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=True,
     )
@@ -287,7 +302,10 @@ def _training_process(
 
     logger.info("Finished setting up train main loader.")
 
-    # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
+    # We need to wait a bit before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM
+    # By setting the interval to `process_start_gap_seconds / 2`, we ensure that this will not overlap with initializing a
+    # dataloader for any other local process, since only this random_loader will initialize on
+    # the `local_process_rank * process_start_gap_seconds + process_start_gap_seconds / 2` interval.
     time.sleep(process_start_gap_seconds / 2)
 
     assert isinstance(dataset.node_ids, Mapping)
@@ -312,10 +330,12 @@ def _training_process(
     logger.info("Finished setting up train random negative loader")
 
     logger.info(
-        f"---Machine {node_rank} local rank {local_rank} training data loaders initialized"
+        f"---Machine {machine_rank} local rank {local_rank} training data loaders initialized"
     )
 
     # We add a barrier to wait for all the training loaders to finish initializing before we initialize the val loaders to reduce the peak memory usage.
+    # We use barrier instead of time.sleep() here so that all training dataloaders are finished initializing -- otherwise we may have a train loader and a val loader
+    # initializing at the same time on the machine across different local training processes, which could lead to a memory spike.
     torch.distributed.barrier()
 
     # We initialize the val dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
@@ -339,6 +359,7 @@ def _training_process(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         # Each val_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
+        # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
@@ -346,7 +367,10 @@ def _training_process(
 
     logger.info("Finished setting up val main loader.")
 
-    # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
+    # We need to wait a bit before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM
+    # By setting the interval to `process_start_gap_seconds / 2`, we ensure that this will not overlap with initializing a
+    # dataloader for any other local process, since only this random_loader will initialize on
+    # the `local_process_rank * process_start_gap_seconds + process_start_gap_seconds / 2` interval.
     time.sleep(process_start_gap_seconds / 2)
 
     assert isinstance(dataset.node_ids, Mapping)
@@ -370,7 +394,7 @@ def _training_process(
     logger.info("Finished setting up val random negative loader.")
 
     logger.info(
-        f"---Machine {node_rank} local rank {local_rank} validation data loaders initialized"
+        f"---Machine {machine_rank} local rank {local_rank} validation data loaders initialized"
     )
 
     model = DistributedDataParallel(
@@ -393,7 +417,7 @@ def _training_process(
         remove_accidental_hits=True,
     )
     logger.info(
-        f"Model initialized on machine {node_rank} training device {training_device}\n{model.module}"
+        f"Model initialized on machine {machine_rank} training device {training_device}\n{model.module}"
     )
 
     # We add a barrier to wait for all processes to finish preparing the dataloader prior to the start of training
@@ -406,9 +430,9 @@ def _training_process(
     last_n_batch_avg_loss: list[float] = []
     last_n_batch_time: list[float] = []
     num_max_train_batches_per_process = (
-        num_max_train_batches // training_process_world_size
+        num_max_train_batches // world_size
     )
-    num_val_batches_per_process = num_val_batches // training_process_world_size
+    num_val_batches_per_process = num_val_batches // world_size
     logger.info(
         f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
     )
@@ -418,17 +442,15 @@ def _training_process(
     # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
     batch_start = time.time()
     for main_data, random_data in zip(train_main_loader, train_random_negative_loader):
-        if (
-            num_max_train_batches_per_process
-            and batch_idx >= num_max_train_batches_per_process
-        ):
+        if batch_idx >= num_max_train_batches_per_process:
             logger.info(
                 f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
-                f"stopping training on machine {node_rank} local rank {local_rank}"
+                f"stopping training on machine {machine_rank} local rank {local_rank}"
             )
             break
         if batch_idx % val_every_n_batch == 0:
             logger.info(f"process_rank={local_rank}, batch={batch_idx}, validating...")
+            model.eval()
             _run_validation_loops(
                 local_rank=local_rank,
                 model=model,
@@ -440,6 +462,7 @@ def _training_process(
                 log_every_n_batch=log_every_n_batch,
                 num_batches=num_val_batches_per_process,
             )
+            model.train()
         loss = _compute_loss(
             model=model,
             main_data=main_data,
@@ -451,7 +474,7 @@ def _training_process(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        avg_train_loss = sync_metric_across_processes(metric=loss)
+        avg_train_loss = _sync_metric_across_processes(metric=loss)
         last_n_batch_avg_loss.append(avg_train_loss)
         last_n_batch_time.append(time.time() - batch_start)
         batch_start = time.time()
@@ -474,10 +497,10 @@ def _training_process(
 
     torch.distributed.barrier()
 
-    logger.info(f"---Machine {node_rank} local rank {local_rank} finished training")
+    logger.info(f"---Machine {machine_rank} local rank {local_rank} finished training")
 
     # We save the model on the process with the 0th node rank and 0th local rank.
-    if node_rank == 0 and local_rank == 0:
+    if machine_rank == 0 and local_rank == 0:
         logger.info(
             f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
         )
@@ -529,7 +552,6 @@ def _run_validation_loops(
                 "Must set `num_batches` field when the provided data loaders are wrapped with InfiniteIterator"
             )
 
-    model.eval()
     batch_idx = 0
     batch_losses: list[float] = []
     last_n_batch_time: list[float] = []
@@ -574,23 +596,21 @@ def _run_validation_loops(
     logger.info(
         f"process_rank={local_rank} finished validation loop, local loss: {local_avg_loss=:.6f}"
     )
-    global_avg_val_loss = sync_metric_across_processes(
+    global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
     )
     logger.info(
         f"process_rank={local_rank} got global validation loss {global_avg_val_loss=:.6f}"
     )
 
-    # Put the model back in train mode
-    model.train()
     return
 
 
 def _testing_process(
     local_rank: int,
     local_world_size: int,
-    node_rank: int,
-    node_world_size: int,
+    machine_rank: int,
+    machine_world_size: int,
     dataset: DistLinkPredictionDataset,
     supervision_edge_type: EdgeType,
     node_type_to_feature_dim: dict[NodeType, int],
@@ -611,8 +631,8 @@ def _testing_process(
     Args:
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of training processes spawned by each machine
-        node_rank (int): Rank of the current machine
-        node_world_size (int): Total number of machines
+        machine_rank (int): Rank of the current machine
+        machine_world_size (int): Total number of machines
         dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for testing
         supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
         node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
@@ -635,29 +655,29 @@ def _testing_process(
             "Currently, only GPU training is supported with this example training loop"
         )
 
-    test_process_world_size = node_world_size * local_world_size
-    test_process_global_rank = node_rank * local_world_size + local_rank
+    world_size = machine_world_size * local_world_size
+    rank = machine_rank * local_world_size + local_rank
     logger.info(
-        f"---Current test process global rank: {test_process_global_rank}, test process world size: {test_process_world_size}"
+        f"---Current test process rank: {rank}, test process world size: {world_size}"
     )
 
     # We initialize distributed process group to connect all GPUs across all machines so that the final metrics can be synchronized
     torch.distributed.init_process_group(
         backend="nccl",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
-        rank=test_process_global_rank,
-        world_size=test_process_world_size,
+        rank=rank,
+        world_size=world_size,
     )
     logger.info(
-        f"---Machine {node_rank} local rank {local_rank} test process group initialized"
+        f"---Machine {machine_rank} local rank {local_rank} test process group initialized"
     )
-    logger.info(f"---Machine {node_rank} local rank {local_rank} test process started")
+    logger.info(f"---Machine {machine_rank} local rank {local_rank} test process started")
 
     # We use one testing device for each local process
     test_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")
     torch.cuda.set_device(test_device)
     logger.info(
-        f"---Machine {node_rank} local rank {local_rank} test process set device {test_device}"
+        f"---Machine {machine_rank} local rank {local_rank} test process set device {test_device}"
     )
 
     # We initialize the test dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
@@ -685,6 +705,7 @@ def _testing_process(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         # Each test_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
+        # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
@@ -692,7 +713,10 @@ def _testing_process(
 
     logger.info("Finished setting up test main loader.")
 
-    # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
+    # We need to wait a bit before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM
+    # By setting the interval to `process_start_gap_seconds / 2`, we ensure that this will not overlap with initializing a
+    # dataloader for any other local process, since only this random_loader will initialize on
+    # the `local_process_rank * process_start_gap_seconds + process_start_gap_seconds / 2` interval.
     time.sleep(process_start_gap_seconds / 2)
 
     assert isinstance(dataset.node_ids, Mapping)
@@ -730,7 +754,7 @@ def _testing_process(
     )
 
     logger.info(
-        f"Model initialized on machine {node_rank} test device {test_device} with weights loaded from {model_uri.uri}\n{model}"
+        f"Model initialized on machine {machine_rank} test device {test_device} with weights loaded from {model_uri.uri}\n{model}"
     )
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -740,6 +764,8 @@ def _testing_process(
 
     # We add a barrier to wait for all processes to finish preparing the dataloader prior to the start of training
     torch.distributed.barrier()
+
+    model.eval()
 
     _run_validation_loops(
         local_rank=local_rank,
@@ -774,8 +800,8 @@ def _run_example_training(
     torch.distributed.init_process_group(backend="gloo")
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
-    node_rank = torch.distributed.get_rank()
-    node_world_size = torch.distributed.get_world_size()
+    machine_rank = torch.distributed.get_rank()
+    machine_world_size = torch.distributed.get_world_size()
     master_default_process_group_ports = (
         gigl.distributed.utils.get_free_ports_from_master_node(num_ports=2)
     )
@@ -900,8 +926,8 @@ def _run_example_training(
         _training_process,
         args=(  # Corresponding arguments in `_training_process` function
             local_world_size,  # local_world_size
-            node_rank,  # node_rank
-            node_world_size,  # node_world_size
+            machine_rank,  # machine_rank
+            machine_world_size,  # machine_world_size
             dataset,  # dataset
             supervision_edge_type,  # supervision_edge_type
             node_type_to_feature_dim,  # node_type_to_feature_dim
@@ -932,8 +958,8 @@ def _run_example_training(
         _testing_process,
         args=(  # Corresponding arguments in `_testing_process` function
             local_world_size,  # local_world_size
-            node_rank,  # node_rank
-            node_world_size,  # node_world_size
+            machine_rank,  # machine_rank
+            machine_world_size,  # machine_world_size
             dataset,  # dataset
             supervision_edge_type,  # supervision_edge_type
             node_type_to_feature_dim,  # node_type_to_feature_dim
