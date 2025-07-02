@@ -544,6 +544,13 @@ def build_dataset_from_task_config_uri(
         strtobool(args.get("should_load_tensors_in_parallel", "True"))
     )
 
+    ssl_positive_label_percentage: Optional[float]
+
+    if "ssl_positive_label_percentage" in args:
+        ssl_positive_label_percentage = float(args["ssl_positive_label_percentage"])
+    else:
+        ssl_positive_label_percentage = None
+
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."
     )
@@ -575,6 +582,7 @@ def build_dataset_from_task_config_uri(
         distributed_context=distributed_context,
         partitioner_class=partitioner_class,
         splitter=splitter,
+        _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
 
     return dataset

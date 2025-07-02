@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-import torch.nn as nn
+from examples.models import init_example_gigl_heterogeneous_dblp_model
 from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
@@ -40,11 +40,7 @@ from gigl.distributed import (
     DistLinkPredictionDataset,
     build_dataset_from_task_config_uri,
 )
-from gigl.src.common.models.pyg.heterogeneous import HGT
-from gigl.src.common.models.pyg.link_prediction import (
-    LinkPredictionDecoder,
-    LinkPredictionGNN,
-)
+from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -53,62 +49,6 @@ from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 
 logger = Logger()
-
-
-def _init_example_gigl_heterogeneous_model(
-    state_dict: Dict[str, torch.Tensor],
-    node_type_to_feature_dim: Dict[NodeType, int],
-    edge_type_to_feature_dim: Dict[EdgeType, int],
-    inferencer_args: Dict[str, str],
-    device: Optional[torch.device] = None,
-) -> LinkPredictionGNN:
-    """
-    Initializes a hard-coded GiGL heterogeneous LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
-    any `nn.Module` subclass can work with GiGL inference.
-    This model is trained based on the following DBLP E2E config:
-    `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`.
-
-    To train a different model, you can launch a pipeline for training on DBLP using the above config with `make run_dblp_nalp_e2e_kfp_test`.
-
-    Args:
-        state_dict (Dict[str, torch.Tensor]): State dictionary for pretrained model
-        node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
-        edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
-        inferencer_args (Dict[str, str]): Arguments for inferencer
-        device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
-    Returns:
-        LinkPredictionGNN: Link Prediction model for inference
-    """
-    # TODO (mkolodner-sc): Add asserts to ensure that model shape aligns with shape of state dict
-
-    # We use the GiGL HGT implementation since the model shape needs to conform to the
-    # state_dict that the trained model used, which was done with the GiGL HGT
-    encoder_model = HGT(
-        node_type_to_feat_dim_map=node_type_to_feature_dim,
-        edge_type_to_feat_dim_map=edge_type_to_feature_dim,
-        hid_dim=int(inferencer_args.get("hid_dim", 16)),
-        out_dim=int(inferencer_args.get("hid_dim", 16)),
-        num_layers=int(inferencer_args.get("num_layers", 2)),
-        num_heads=int(inferencer_args.get("num_heads", 2)),
-        should_l2_normalize_embedding_layer_output=True,
-    )
-
-    decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-
-    model: LinkPredictionGNN = LinkPredictionGNN(
-        encoder=encoder_model,
-        decoder=decoder_model,
-    )
-
-    # Push the model to the specified device.
-    if device is None:
-        device = torch.device("cpu")
-    model.to(device)
-
-    # Override the initiated model's parameters with the saved model's parameters.
-    model.load_state_dict(state_dict)
-
-    return model
 
 
 @torch.no_grad()
@@ -160,13 +100,15 @@ def _inference_process(
     num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
-    # production pipeline. We default this value to `4` here for simplicity.
+    # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
+    # sampling, which would slow down inference, while a value which is too large may slow down each sampling process due to competing resources, which would also
+    # then slow down inference.
     sampling_workers_per_inference_process: int = int(
         inferencer_args.get("sampling_workers_per_inference_process", "4")
     )
 
     # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
-    # is the place to store pre-fetched data, so if it is too small then prefetching is limited. This parameter is a string
+    # is the place to store pre-fetched data, so if it is too small then prefetching is limited, causing sampling slowdown. This parameter is a string
     # with `{numeric_value}{storage_size}`, where storage size could be `MB`, `GB`, etc. We default this value to 4GB,
     # but in production may need some tuning.
     sampling_worker_shared_channel_size: str = inferencer_args.get(
@@ -220,12 +162,11 @@ def _inference_process(
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_state_dict_uri, device=device
     )
-    model: nn.Module = _init_example_gigl_heterogeneous_model(
-        state_dict=model_state_dict,
+    model: LinkPredictionGNN = init_example_gigl_heterogeneous_dblp_model(
         node_type_to_feature_dim=node_type_to_feature_dim,
         edge_type_to_feature_dim=edge_type_to_feature_dim,
-        inferencer_args=inferencer_args,
         device=device,
+        state_dict=model_state_dict,
     )
 
     # Set the model to evaluation mode for inference.
@@ -270,7 +211,7 @@ def _inference_process(
 
         inference_start_time = time.time()
 
-        # These arguments to forward are specific to the GiGL LinkPredictionGNN model.
+        # These arguments to forward are specific to the GiGL heterogeneous LinkPredictionGNN model.
         # If just using a nn.Module, you can just use output = model(data)
         output = model(
             data=data, output_node_types=[inference_node_type], device=device
