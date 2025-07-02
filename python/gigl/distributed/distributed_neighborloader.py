@@ -246,6 +246,12 @@ class DistNeighborLoader(DistLoader):
                 node_type = None
         else:
             node_type, node_ids = input_nodes
+            assert isinstance(
+                dataset.node_ids, abc.Mapping
+            ), "Dataset must be heterogeneous if provided input nodes are a tuple."
+            num_neighbors = patch_fanout_for_sampling(
+                dataset.get_edge_types(), num_neighbors
+            )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
