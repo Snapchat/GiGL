@@ -17,7 +17,7 @@ You can run this example in a full pipeline with `make run_dblp_glt_kfp_test` fr
 TODO (mkolodner-sc): Add example of how to run locally once CPU support is enabled
 
 Note that the DBLP Dataset does not  have specified labeled edges so we use the `ssl_positive_label_percentage` field in the config to indicate what
-percentage of edges we should select as self-supervised labeled edges. Doing this randomly sets 5% as "labels". Note that the current GiGL implementation
+percentage of edges we should select as self-supervised labeled edges. Doing this randomly sets the specified percentage as "labels". Note that the current GiGL implementation
 does not remove these selected edges from the global set of edges, which may have a slight negative impact on training specifically with self-supervised learning.
 This will improved on in the future.
 """
