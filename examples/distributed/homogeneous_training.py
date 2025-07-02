@@ -744,7 +744,9 @@ def _run_example_training(
     subgraph_fanout: list[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
-    # pipeline. We default this value to `4` here for simplicity.
+    # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
+    # sampling, which would slow down training, while a value which is too large may slow down each sampling process due to competing resources, which would also
+    # then slow down training.
     sampling_workers_per_process: int = int(
         trainer_args.get("sampling_workers_per_process", "4")
     )
@@ -753,7 +755,7 @@ def _run_example_training(
     random_batch_size = int(trainer_args.get("random_batch_size", 16))
 
     # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
-    # is the place to store pre-fetched data, so if it is too small then prefetching is limited. This parameter is a string
+    # is the place to store pre-fetched data, so if it is too small then prefetching is limited, causing sampling slowdown. This parameter is a string
     # with `{numeric_value}{storage_size}`, where storage size could be `MB`, `GB`, etc. We default this value to 4GB,
     # but in production may need some tuning.
     sampling_worker_shared_channel_size: str = trainer_args.get(

@@ -95,13 +95,15 @@ def _inference_process(
     num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
-    # production pipeline. We default this value to `4` here for simplicity.
+    # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
+    # sampling, which would slow down inference, while a value which is too large may slow down each sampling process due to competing resources, which would also
+    # then slow down inference.
     sampling_workers_per_inference_process: int = int(
         inferencer_args.get("sampling_workers_per_inference_process", "4")
     )
 
     # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
-    # is the place to store pre-fetched data, so if it is too small then prefetching is limited. This parameter is a string
+    # is the place to store pre-fetched data, so if it is too small then prefetching is limited, causing sampling slowdown. This parameter is a string
     # with `{numeric_value}{storage_size}`, where storage size could be `MB`, `GB`, etc. We default this value to 4GB,
     # but in production may need some tuning.
     sampling_worker_shared_channel_size: str = inferencer_args.get(
