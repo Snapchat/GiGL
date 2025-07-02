@@ -20,6 +20,7 @@ TODO (mkolodner-sc): Add example of how to run locally once CPU support is enabl
 import argparse
 import statistics
 import time
+from collections import abc
 from collections.abc import Iterator
 from distutils.util import strtobool
 from typing import Optional
@@ -27,7 +28,7 @@ from typing import Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_homogeneous_cora_model
+from examples.models import init_example_gigl_heterogeneous_dblp_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
@@ -42,9 +43,9 @@ from gigl.distributed import (
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.module.loss import RetrievalLoss
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
-from gigl.types.graph import to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
@@ -55,6 +56,7 @@ def _compute_loss(
     main_data: HeteroData,
     random_negative_data: HeteroData,
     loss_fn: RetrievalLoss,
+    supervision_edge_type: EdgeType,
     use_automatic_mixed_precision: bool,
     device: torch.device,
 ) -> torch.Tensor:
@@ -65,27 +67,46 @@ def _compute_loss(
         main_data (HeteroData): The batch of data containing query nodes, positive nodes, and hard negative nodes
         random_negative_data (HeteroData): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
+        supervision_edge_type (EdgeType): The supervision edge type to use for training in format anchor_node -> relation -> labeled_node
         use_automatic_mixed_precision (bool): Whether we should use automatic mixed precision with training
         device (torch.device): Device for training or validation
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
     with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
+        # Extract relevant node types from the supervision edge
+        query_node_type = supervision_edge_type.src_node_type
+        labeled_node_type = supervision_edge_type.dst_node_type
+
+        if query_node_type == labeled_node_type:
+            inference_node_types = [query_node_type]
+        else:
+            inference_node_types = [query_node_type, labeled_node_type]
+
         # Forward pass through encoder
-        main_embeddings = model(data=main_data, device=device)
-        random_negative_embeddings = model(data=random_negative_data, device=device)
+
+        main_embeddings = model(
+            data=main_data, output_node_types=inference_node_types, device=device
+        )
+        random_negative_embeddings = model(
+            data=random_negative_data,
+            output_node_types=inference_node_types,
+            device=device,
+        )
 
         # Extracting local query, random negative, positive, hard_negative, and random_negative ids.
         # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
         # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local id for global id `50`
-        query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
-        random_negative_ids: torch.Tensor = torch.arange(
-            random_negative_data.batch_size
+        query_node_ids: torch.Tensor = torch.arange(
+            main_data[query_node_type].batch_size
         ).to(device)
+        random_negative_ids: torch.Tensor = torch.arange(
+            random_negative_data[labeled_node_type].batch_size
+        ).to(device)
+
         positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
             device
         )
-
         # We also extract a repeated query node id tensor which upsamples each query node based on the number of positives it has
         repeated_query_node_ids = query_node_ids.repeat_interleave(
             torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
@@ -99,11 +120,13 @@ def _compute_loss(
 
         # Use local IDs to get the corresponding embeddings in the tensors
 
-        hard_negative_embeddings = main_embeddings[hard_negative_ids]
-        repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
-        positive_node_embeddings = main_embeddings[positive_ids]
-        hard_negative_embeddings = main_embeddings[hard_negative_ids]
-        random_negative_embeddings = random_negative_embeddings[
+        repeated_query_embeddings = main_embeddings[query_node_type][
+            repeated_query_node_ids
+        ]
+        hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_ids]
+        positive_node_embeddings = main_embeddings[labeled_node_type][positive_ids]
+        hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_ids]
+        random_negative_embeddings = random_negative_embeddings[labeled_node_type][
             : random_negative_data.batch_size
         ]
 
@@ -125,13 +148,15 @@ def _compute_loss(
 
         global_candidate_ids = torch.cat(
             (
-                main_data.node[positive_ids],
-                main_data.node[hard_negative_ids],
-                random_negative_data.node[random_negative_ids],
+                main_data[labeled_node_type].node[positive_ids],
+                main_data[labeled_node_type].node[hard_negative_ids],
+                random_negative_data[labeled_node_type].node[random_negative_ids],
             )
         )
 
-        global_repeated_query_ids = main_data.node[repeated_query_node_ids]
+        global_repeated_query_ids = main_data[query_node_type].node[
+            repeated_query_node_ids
+        ]
 
         # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
 
@@ -151,8 +176,9 @@ def _training_process(
     node_rank: int,
     node_world_size: int,
     dataset: DistLinkPredictionDataset,
-    node_feature_dim: int,
-    edge_feature_dim: int,
+    supervision_edge_type: EdgeType,
+    node_type_to_feature_dim: dict[NodeType, int],
+    edge_type_to_feature_dim: dict[EdgeType, int],
     master_ip_address: str,
     master_default_process_group_port: int,
     trainer_args: dict[str, str],
@@ -179,8 +205,9 @@ def _training_process(
         node_rank (int): Rank of the current machine
         node_world_size (int): Total number of machines
         dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training
-        node_feature_dim (int): Input node feature dimension for the model
-        edge_feature_dim (int): Input edge feature dimension for the model
+        supervision_edge_type (EdgeType): The supervision edge type to use for training in format anchor_node -> relation -> labeled_node
+        node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
+        edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension for the model per edge type
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
         trainer_args: dict[str, str]: Arguments for training
@@ -239,10 +266,17 @@ def _training_process(
     # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
     # loaders at the same time can lead to OOM.
 
+    query_node_type = supervision_edge_type.src_node_type
+
+    labeled_node_type = supervision_edge_type.dst_node_type
+
+    assert isinstance(dataset.train_node_ids, abc.Mapping)
+
     train_main_loader: Iterator[HeteroData] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        input_nodes=to_homogeneous(dataset.train_node_ids),
+        input_nodes=(query_node_type, dataset.train_node_ids[query_node_type]),
+        supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
         pin_memory_device=training_device,
@@ -258,10 +292,12 @@ def _training_process(
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
     time.sleep(process_start_gap_seconds / 2)
 
+    assert isinstance(dataset.node_ids, abc.Mapping)
+
     train_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        input_nodes=to_homogeneous(dataset.node_ids),
+        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=training_device,
@@ -288,10 +324,13 @@ def _training_process(
     # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
     # loaders at the same time can lead to OOM.
 
+    assert isinstance(dataset.val_node_ids, abc.Mapping)
+
     val_main_loader: Iterator[HeteroData] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        input_nodes=to_homogeneous(dataset.val_node_ids),
+        input_nodes=(query_node_type, dataset.val_node_ids[query_node_type]),
+        supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
         pin_memory_device=training_device,
@@ -306,10 +345,12 @@ def _training_process(
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
     time.sleep(process_start_gap_seconds / 2)
 
+    assert isinstance(dataset.node_ids, abc.Mapping)
+
     val_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        input_nodes=to_homogeneous(dataset.node_ids),
+        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=training_device,
@@ -328,9 +369,9 @@ def _training_process(
     )
 
     model = DistributedDataParallel(
-        init_example_gigl_homogeneous_cora_model(
-            node_feature_dim=node_feature_dim,
-            edge_feature_dim=edge_feature_dim,
+        init_example_gigl_heterogeneous_dblp_model(
+            node_type_to_feature_dim=node_type_to_feature_dim,
+            edge_type_to_feature_dim=edge_type_to_feature_dim,
             args=trainer_args,
             device=training_device,
         ),
@@ -391,6 +432,7 @@ def _training_process(
                 main_loader=val_main_loader,
                 random_negative_loader=val_random_negative_loader,
                 loss_fn=loss_fn,
+                supervision_edge_type=supervision_edge_type,
                 device=training_device,
                 use_automatic_mixed_precision=use_automatic_mixed_precision,
                 log_every_n_batch=log_every_n_batch,
@@ -401,6 +443,7 @@ def _training_process(
             main_data=main_data,
             random_negative_data=random_data,
             loss_fn=loss_fn,
+            supervision_edge_type=supervision_edge_type,
             use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=training_device,
         )
@@ -459,6 +502,7 @@ def _run_validation_loops(
     main_loader: Iterator,
     random_negative_loader: Iterator,
     loss_fn: RetrievalLoss,
+    supervision_edge_type: EdgeType,
     device: torch.device,
     use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
@@ -473,6 +517,7 @@ def _run_validation_loops(
         main_loader (Iterator): Dataloader for loading main batch data with query and labeled nodes
         random_negative_loader (Iterator): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
+        supervision_edge_type (EdgeType): The supervision edge type to use for training in format anchor_node -> relation -> labeled_node
         device (torch.device): Device to use for training or testing
         use_automatic_mixed_precision (bool): Whether we should train with mixed precision
         log_every_n_batch (int): The frequency we should log batch information when training and validating
@@ -513,6 +558,7 @@ def _run_validation_loops(
             main_data=main_data,
             random_negative_data=random_data,
             loss_fn=loss_fn,
+            supervision_edge_type=supervision_edge_type,
             use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=device,
         )
@@ -553,8 +599,9 @@ def _testing_process(
     node_rank: int,
     node_world_size: int,
     dataset: DistLinkPredictionDataset,
-    node_feature_dim: int,
-    edge_feature_dim: int,
+    supervision_edge_type: EdgeType,
+    node_type_to_feature_dim: dict[NodeType, int],
+    edge_type_to_feature_dim: dict[EdgeType, int],
     master_ip_address: str,
     master_default_process_group_port: int,
     trainer_args: dict[str, str],
@@ -575,9 +622,10 @@ def _testing_process(
         local_world_size (int): Number of training processes spawned by each machine
         node_rank (int): Rank of the current machine
         node_world_size (int): Total number of machines
-        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training
-        node_feature_dim (int): Input node feature dimension for the model
-        edge_feature_dim (int): Input edge feature dimension for the model
+        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for testing
+        supervision_edge_type (EdgeType): The supervision edge type to use for training in format anchor_node -> relation -> labeled_node
+        node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
+        edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension for the model per edge type
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
         trainer_args: dict[str, str]: Arguments for training
@@ -628,10 +676,17 @@ def _testing_process(
     # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
     # loaders at the same time can lead to OOM.
 
+    query_node_type = supervision_edge_type.src_node_type
+
+    labeled_node_type = supervision_edge_type.dst_node_type
+
+    assert isinstance(dataset.test_node_ids, abc.Mapping)
+
     test_main_loader: Iterator[HeteroData] = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        input_nodes=to_homogeneous(dataset.test_node_ids),
+        input_nodes=(query_node_type, dataset.test_node_ids[query_node_type]),
+        supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
         pin_memory_device=test_device,
@@ -646,10 +701,12 @@ def _testing_process(
     # The random_negative_loader will wait for `process_start_gap_seconds / 2` seconds after initializing the main_loader so that it doesn't interfere with other processes.
     time.sleep(process_start_gap_seconds / 2)
 
+    assert isinstance(dataset.node_ids, abc.Mapping)
+
     test_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
-        input_nodes=to_homogeneous(dataset.node_ids),
+        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=test_device,
@@ -668,9 +725,9 @@ def _testing_process(
     )
 
     model = DistributedDataParallel(
-        init_example_gigl_homogeneous_cora_model(
-            node_feature_dim=node_feature_dim,
-            edge_feature_dim=edge_feature_dim,
+        init_example_gigl_heterogeneous_dblp_model(
+            node_type_to_feature_dim=node_type_to_feature_dim,
+            edge_type_to_feature_dim=edge_type_to_feature_dim,
             args=trainer_args,
             device=test_device,
             state_dict=model_state_dict,
@@ -696,6 +753,7 @@ def _testing_process(
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
         loss_fn=loss_fn,
+        supervision_edge_type=supervision_edge_type,
         device=test_device,
         use_automatic_mixed_precision=use_automatic_mixed_precision,
         log_every_n_batch=log_every_n_batch,
@@ -756,16 +814,32 @@ def _run_example_training(
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    node_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_node_type
-    ]
-    edge_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_edge_type
-    ]
+    node_type_to_feature_dim: dict[NodeType, int] = {
+        graph_metadata.condensed_node_type_to_node_type_map[
+            condensed_node_type
+        ]: node_feature_dim
+        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
+    }
+
+    edge_type_to_feature_dim: dict[EdgeType, int] = {
+        graph_metadata.condensed_edge_type_to_edge_type_map[
+            condensed_edge_type
+        ]: edge_feature_dim
+        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
+    }
 
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
+
+    supervision_edge_types = (
+        gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+    )
+    if len(supervision_edge_types) != 1:
+        raise NotImplementedError(
+            "GiGL Training currently only supports 1 supervision edge type."
+        )
+    supervision_edge_type = supervision_edge_types[0]
 
     # Training Hyperparameters shared among the training and test processes
 
@@ -827,8 +901,9 @@ def _run_example_training(
             node_rank,  # node_rank
             node_world_size,  # node_world_size
             dataset,  # dataset
-            node_feature_dim,  # node_feature_dim
-            edge_feature_dim,  # edge_feature_dim
+            supervision_edge_type,  # supervision_edge_type
+            node_type_to_feature_dim,  # node_type_to_feature_dim
+            edge_type_to_feature_dim,  # edge_type_to_feature_dim
             master_ip_address,  # master_ip_address
             master_process_group_port_for_training,  # master_default_process_group_port
             trainer_args,  # trainer_args
@@ -860,8 +935,9 @@ def _run_example_training(
             node_rank,  # node_rank
             node_world_size,  # node_world_size
             dataset,  # dataset
-            node_feature_dim,  # node_feature_dim
-            edge_feature_dim,  # edge_feature_dim
+            supervision_edge_type,  # supervision_edge_type
+            node_type_to_feature_dim,  # node_type_to_feature_dim
+            edge_type_to_feature_dim,  # edge_type_to_feature_dim
             master_ip_address,  # master_ip_address
             master_process_group_port_for_testing,  # master_default_process_group_port
             trainer_args,  # trainer_args
