@@ -101,9 +101,7 @@ def _compute_loss(
     query_node_ids: torch.Tensor = torch.arange(
         main_data[query_node_type].batch_size
     ).to(device)
-    random_negative_ids: torch.Tensor = torch.arange(
-        random_negative_data[labeled_node_type].batch_size
-    ).to(device)
+    random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
     # main_data.y_positive is a dict[query_node_local_id: int, labeled_node_local_ids: torch.Tensor], even in the heterogeneous setting.
     positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
@@ -129,7 +127,7 @@ def _compute_loss(
     positive_node_embeddings = main_embeddings[labeled_node_type][positive_ids]
     hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_ids]
     random_negative_embeddings = random_negative_embeddings[labeled_node_type][
-        random_negative_ids
+        :random_negative_batch_size
     ]
 
     # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
@@ -152,7 +150,7 @@ def _compute_loss(
         (
             main_data[labeled_node_type].node[positive_ids],
             main_data[labeled_node_type].node[hard_negative_ids],
-            random_negative_data[labeled_node_type].node[random_negative_ids],
+            random_negative_data[labeled_node_type].node[:random_negative_batch_size],
         )
     )
 
@@ -841,6 +839,7 @@ def _run_example_training(
     # dict[EdgeType, list[int]], indicating the fanout behavior for each edge type. Different edge types can have different fanout strategies. For simplicity,
     # we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `subraph_fanout` with a `list[int]`.
 
+    # TODO (mkolodner-sc): Make the heterogeneous example use a dict[EdgeType, list[int]] instead of list[int] for specifying fanout
     subgraph_fanout: list[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the

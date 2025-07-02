@@ -75,9 +75,7 @@ def _compute_loss(
     # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
     # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local id for global id `50`
     query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
-    random_negative_ids: torch.Tensor = torch.arange(
-        random_negative_data.batch_size
-    ).to(device)
+    random_negative_batch_size = random_negative_data.batch_size
 
     # main_data.y_positive is a dict[query_node_local_id: int, labeled_node_local_ids: torch.Tensor]
     positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
@@ -100,7 +98,7 @@ def _compute_loss(
     repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
     positive_node_embeddings = main_embeddings[positive_ids]
     hard_negative_embeddings = main_embeddings[hard_negative_ids]
-    random_negative_embeddings = random_negative_embeddings[random_negative_ids]
+    random_negative_embeddings = random_negative_embeddings[:random_negative_batch_size]
 
     # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
 
@@ -122,7 +120,7 @@ def _compute_loss(
         (
             main_data.node[positive_ids],
             main_data.node[hard_negative_ids],
-            random_negative_data.node[random_negative_ids],
+            random_negative_data.node[:random_negative_batch_size],
         )
     )
 
