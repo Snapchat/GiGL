@@ -94,7 +94,7 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
     assert isinstance(dataset.node_ids, abc.Mapping)
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=to_homogeneous(dataset.node_ids),
+        input_nodes=dataset.node_ids,
         num_neighbors=[2, 2],
         context=context,
         local_process_rank=0,
@@ -253,7 +253,7 @@ def _run_cora_supervised(
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        input_nodes=to_homogeneous(dataset.train_node_ids),
+        input_nodes=dataset.train_node_ids,
         pin_memory_device=torch.device("cpu"),
     )
     count = 0

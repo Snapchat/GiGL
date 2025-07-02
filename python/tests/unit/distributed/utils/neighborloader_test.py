@@ -8,10 +8,15 @@ from torch_geometric.typing import EdgeType
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    resolve_node_sampler_input_from_user_input,
     shard_nodes_by_process,
     strip_label_edges,
 )
-from gigl.types.graph import message_passing_to_positive_label
+from gigl.src.common.types.graph_data import NodeType
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    message_passing_to_positive_label,
+)
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 _U2I_EDGE_TYPE = ("user", "to", "item")
@@ -145,3 +150,114 @@ class LoaderUtilsTest(unittest.TestCase):
         self.assertFalse(_LABELED_EDGE_TYPE in stripped_data.num_sampled_edges)
         self.assertTrue(_U2I_EDGE_TYPE in stripped_data.num_sampled_edges)
         self.assertTrue(_I2U_EDGE_TYPE in stripped_data.num_sampled_edges)
+
+    @parameterized.expand(
+        [
+            param(
+                "homogeneous_tensor_input",
+                input_nodes=torch.tensor([1, 2, 3]),
+                dataset_nodes=torch.tensor([1, 2, 3, 4]),
+                expected_node_type=None,
+                expected_node_ids=torch.tensor([1, 2, 3]),
+                expected_is_labeled_homogeneous=False,
+            ),
+            param(
+                "labeled_homogeneous_tensor_input",
+                input_nodes=torch.tensor([1, 2, 3]),
+                dataset_nodes={
+                    DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.tensor([1, 2, 3, 4])
+                },
+                expected_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                expected_node_ids=torch.tensor([1, 2, 3]),
+                expected_is_labeled_homogeneous=True,
+            ),
+            param(
+                "heterogeneous_mapping_input",
+                input_nodes={"user": torch.tensor([1, 2])},
+                dataset_nodes={
+                    "user": torch.tensor([1, 2, 3]),
+                    "item": torch.tensor([4, 5]),
+                },
+                expected_node_type=NodeType("user"),
+                expected_node_ids=torch.tensor([1, 2]),
+                expected_is_labeled_homogeneous=False,
+            ),
+            param(
+                "tuple_input",
+                input_nodes=("user", torch.tensor([1, 2])),
+                dataset_nodes=None,
+                expected_node_type=NodeType("user"),
+                expected_node_ids=torch.tensor([1, 2]),
+                expected_is_labeled_homogeneous=False,
+            ),
+            param(
+                "none_input_homogeneous_dataset",
+                input_nodes=None,
+                dataset_nodes=torch.tensor([1, 2, 3]),
+                expected_node_type=None,
+                expected_node_ids=torch.tensor([1, 2, 3]),
+                expected_is_labeled_homogeneous=False,
+            ),
+        ]
+    )
+    def test_resolve_node_sampler_input_valid(
+        self,
+        _,
+        input_nodes,
+        dataset_nodes,
+        expected_node_type,
+        expected_node_ids,
+        expected_is_labeled_homogeneous,
+    ):
+        (
+            node_type,
+            node_ids,
+            is_labeled_homogeneous,
+        ) = resolve_node_sampler_input_from_user_input(input_nodes, dataset_nodes)
+        self.assertEqual(node_type, expected_node_type)
+        assert_tensor_equality(node_ids, expected_node_ids)
+        self.assertEqual(is_labeled_homogeneous, expected_is_labeled_homogeneous)
+
+    @parameterized.expand(
+        [
+            param(
+                "heterogeneous_tensor_input_raises",
+                input_nodes=torch.tensor([1, 2, 3]),
+                dataset_nodes={
+                    "user": torch.tensor([1, 2]),
+                    "item": torch.tensor([3, 4]),
+                },
+                expected_exception=ValueError,
+            ),
+            param(
+                "mapping_with_multiple_keys_raises",
+                input_nodes={"user": torch.tensor([1]), "item": torch.tensor([2])},
+                dataset_nodes={
+                    "user": torch.tensor([1, 2]),
+                    "item": torch.tensor([3, 4]),
+                },
+                expected_exception=ValueError,
+            ),
+            param(
+                "none_input_heterogeneous_dataset_raises",
+                input_nodes=None,
+                dataset_nodes={"user": torch.tensor([1, 2])},
+                expected_exception=ValueError,
+            ),
+            param(
+                "none_input_no_dataset_raises",
+                input_nodes=None,
+                dataset_nodes=None,
+                expected_exception=ValueError,
+            ),
+        ]
+    )
+    def test_resolve_node_sampler_input_invalid(
+        self, _, input_nodes, dataset_nodes, expected_exception
+    ):
+        with self.assertRaises(expected_exception):
+            resolve_node_sampler_input_from_user_input(input_nodes, dataset_nodes)
+
+
+if __name__ == "__main__":
+    unittest.main()

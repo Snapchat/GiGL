@@ -1,10 +1,11 @@
 from collections import Counter, abc
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
-from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+from graphlearn_torch.sampler import NodeSamplerInput as GLTNodeSamplerInput
+from graphlearn_torch.sampler import SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -14,18 +15,14 @@ from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.utils.neighborloader import (
+    NodeSamplerInput,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    resolve_node_sampler_input_from_user_input,
     shard_nodes_by_process,
     strip_label_edges,
 )
-from gigl.src.common.types.graph_data import (
-    NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
-)
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
-)
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
 logger = Logger()
 
@@ -38,9 +35,7 @@ class DistNeighborLoader(DistLoader):
         self,
         dataset: DistLinkPredictionDataset,
         num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
-        input_nodes: Optional[
-            Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
-        ] = None,
+        input_nodes: NodeSamplerInput = None,
         num_workers: int = 1,
         batch_size: int = 1,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
@@ -70,12 +65,9 @@ class DistNeighborLoader(DistLoader):
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
-            input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
-                indices of seed nodes to start sampling from.
-                It is of type `torch.LongTensor` for homogeneous graphs.
-                If set to `None` for homogeneous settings, all nodes will be considered.
-                In heterogeneous graphs, this flag must be passed in as a tuple that holds
-                the node type and node indices. (default: `None`)
+            input_nodes (NodeSamplerInput):
+                Indices of seed nodes to start sampling from.
+                See documentation for `gigl.distributed.utils.neighborloader.NodeSamplerInput` for more details.
             num_workers (int): How many workers to use (subprocesses to spwan) for
                     distributed neighbor sampling of the current process. (default: ``1``).
             batch_size (int, optional): how many samples per batch to load
@@ -222,38 +214,28 @@ class DistNeighborLoader(DistLoader):
                 )
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
-        self._is_labeled_heterogeneous = False
-        if isinstance(input_nodes, torch.Tensor):
-            node_ids = input_nodes
-
-            # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
-            # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
-            if isinstance(dataset.node_ids, abc.Mapping):
-                if (
-                    len(dataset.node_ids) == 1
-                    and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
-                ):
-                    node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-                    self._is_labeled_heterogeneous = True
-                    num_neighbors = patch_fanout_for_sampling(
-                        dataset.get_edge_types(), num_neighbors
-                    )
-                else:
-                    raise ValueError(
-                        f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
-                    )
-            else:
-                node_type = None
-        else:
-            node_type, node_ids = input_nodes
-
+        (
+            anchor_node_type,
+            anchor_node_ids,
+            self._is_labeled_homogeneous,
+        ) = resolve_node_sampler_input_from_user_input(
+            input_nodes=input_nodes,
+            dataset_nodes=dataset.node_ids,
+        )
+        if self._is_labeled_homogeneous:
+            # If the dataset is labeled homogeneous, we need to patch the fanout for sampling.
+            num_neighbors = patch_fanout_for_sampling(
+                dataset.get_edge_types(), num_neighbors
+            )
         curr_process_nodes = shard_nodes_by_process(
-            input_nodes=node_ids,
+            input_nodes=anchor_node_ids,
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
         )
 
-        input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
+        input_data = GLTNodeSamplerInput(
+            node=curr_process_nodes, input_type=anchor_node_type
+        )
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
@@ -343,6 +325,6 @@ class DistNeighborLoader(DistLoader):
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
 
-        if self._is_labeled_heterogeneous:
+        if self._is_labeled_homogeneous:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
         return data
