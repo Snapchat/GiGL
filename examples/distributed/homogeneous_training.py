@@ -21,7 +21,6 @@ import argparse
 import statistics
 import time
 from collections.abc import Iterator
-from distutils.util import strtobool
 from typing import Optional
 
 import torch
@@ -55,7 +54,6 @@ def _compute_loss(
     main_data: Data,
     random_negative_data: Data,
     loss_fn: RetrievalLoss,
-    use_automatic_mixed_precision: bool,
     device: torch.device,
 ) -> torch.Tensor:
     """
@@ -65,80 +63,79 @@ def _compute_loss(
         main_data (Data): The batch of data containing query nodes, positive nodes, and hard negative nodes
         random_negative_data (Data): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
-        use_automatic_mixed_precision (bool): Whether we should use automatic mixed precision with training
         device (torch.device): Device for training or validation
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
-    with torch.autocast("cuda", enabled=use_automatic_mixed_precision):
-        # Forward pass through encoder
-        main_embeddings = model(data=main_data, device=device)
-        random_negative_embeddings = model(data=random_negative_data, device=device)
+    # Forward pass through encoder
+    main_embeddings = model(data=main_data, device=device)
+    random_negative_embeddings = model(data=random_negative_data, device=device)
 
-        # Extracting local query, random negative, positive, hard_negative, and random_negative ids.
-        # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
-        # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local id for global id `50`
-        query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
-        random_negative_ids: torch.Tensor = torch.arange(
-            random_negative_data.batch_size
+    # Extracting local query, random negative, positive, hard_negative, and random_negative ids.
+    # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
+    # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local id for global id `50`
+    query_node_ids: torch.Tensor = torch.arange(main_data.batch_size).to(device)
+    random_negative_ids: torch.Tensor = torch.arange(
+        random_negative_data.batch_size
+    ).to(device)
+
+    # main_data.y_positive is a dict[query_node_local_id: int, labeled_node_local_ids: torch.Tensor]
+    positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
+        device
+    )
+    # We also extract a repeated query node id tensor which upsamples each query node based on the number of positives it has
+    repeated_query_node_ids = query_node_ids.repeat_interleave(
+        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
+    )
+    if hasattr(main_data, "y_negative"):
+        hard_negative_ids: torch.Tensor = torch.cat(
+            list(main_data.y_negative.values())
         ).to(device)
-        positive_ids: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-            device
+    else:
+        hard_negative_ids = torch.empty(0, dtype=torch.long).to(device)
+
+    # Use local IDs to get the corresponding embeddings in the tensors
+
+    hard_negative_embeddings = main_embeddings[hard_negative_ids]
+    repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
+    positive_node_embeddings = main_embeddings[positive_ids]
+    hard_negative_embeddings = main_embeddings[hard_negative_ids]
+    random_negative_embeddings = random_negative_embeddings[random_negative_ids]
+
+    # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
+
+    repeated_candidate_scores = model.module.decode(
+        query_embeddings=repeated_query_embeddings,
+        candidate_embeddings=torch.cat(
+            [
+                positive_node_embeddings,
+                hard_negative_embeddings,
+                random_negative_embeddings,
+            ],
+            dim=0,
+        ),
+    )
+
+    # Compute the global candidate ids and concatentate into a single tensor
+
+    global_candidate_ids = torch.cat(
+        (
+            main_data.node[positive_ids],
+            main_data.node[hard_negative_ids],
+            random_negative_data.node[random_negative_ids],
         )
+    )
 
-        # We also extract a repeated query node id tensor which upsamples each query node based on the number of positives it has
-        repeated_query_node_ids = query_node_ids.repeat_interleave(
-            torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-        )
-        if hasattr(main_data, "y_negative"):
-            hard_negative_ids: torch.Tensor = torch.cat(
-                list(main_data.y_negative.values())
-            ).to(device)
-        else:
-            hard_negative_ids = torch.empty(0, dtype=torch.long).to(device)
+    global_repeated_query_ids = main_data.node[repeated_query_node_ids]
 
-        # Use local IDs to get the corresponding embeddings in the tensors
+    # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
 
-        hard_negative_embeddings = main_embeddings[hard_negative_ids]
-        repeated_query_embeddings = main_embeddings[repeated_query_node_ids]
-        positive_node_embeddings = main_embeddings[positive_ids]
-        hard_negative_embeddings = main_embeddings[hard_negative_ids]
-        random_negative_embeddings = random_negative_embeddings[random_negative_ids]
-
-        # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
-
-        repeated_candidate_scores = model.module.decode(
-            query_embeddings=repeated_query_embeddings,
-            candidate_embeddings=torch.cat(
-                [
-                    positive_node_embeddings,
-                    hard_negative_embeddings,
-                    random_negative_embeddings,
-                ],
-                dim=0,
-            ),
-        )
-
-        # Compute the global candidate ids and concatentate into a single tensor
-
-        global_candidate_ids = torch.cat(
-            (
-                main_data.node[positive_ids],
-                main_data.node[hard_negative_ids],
-                random_negative_data.node[random_negative_ids],
-            )
-        )
-
-        global_repeated_query_ids = main_data.node[repeated_query_node_ids]
-
-        # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
-
-        loss = loss_fn(
-            repeated_candidate_scores=repeated_candidate_scores,
-            candidate_ids=global_candidate_ids,
-            repeated_query_ids=global_repeated_query_ids,
-            device=device,
-        )
+    loss = loss_fn(
+        repeated_candidate_scores=repeated_candidate_scores,
+        candidate_ids=global_candidate_ids,
+        repeated_query_ids=global_repeated_query_ids,
+        device=device,
+    )
 
     return loss
 
@@ -153,7 +150,6 @@ def _training_process(
     edge_feature_dim: int,
     master_ip_address: str,
     master_default_process_group_port: int,
-    trainer_args: dict[str, str],
     model_uri: Uri,
     subgraph_fanout: list[int],
     sampling_workers_per_process: int,
@@ -161,7 +157,6 @@ def _training_process(
     random_batch_size: int,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
-    use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
     learning_rate: float,
     weight_decay: float,
@@ -181,7 +176,6 @@ def _training_process(
         edge_feature_dim (int): Input edge feature dimension for the model
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
-        trainer_args: dict[str, str]: Arguments for training
         model_uri (Uri): URI Path to save the model to
         subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): Number of sampling workers per training process
@@ -190,7 +184,6 @@ def _training_process(
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
         process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
             field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
-        use_automatic_mixed_precision (bool): Whether we should train with mixed precision
         log_every_n_batch (int): The frequency we should log batch information when training
         learning_rate (float): Learning rate for training
         weight_decay (float): Weight decay for training
@@ -329,7 +322,6 @@ def _training_process(
         init_example_gigl_homogeneous_cora_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
-            args=trainer_args,
             device=training_device,
         ),
         device_ids=[training_device],
@@ -356,9 +348,6 @@ def _training_process(
     avg_train_loss = 0.0
     last_n_batch_avg_loss: list[float] = []
     last_n_batch_time: list[float] = []
-    scaler = torch.GradScaler(
-        "cuda", enabled=use_automatic_mixed_precision
-    )  # Used in mixed precision training to avoid gradients underflow due to float16 precision
     num_max_train_batches_per_process = (
         num_max_train_batches // training_process_world_size
     )
@@ -390,7 +379,6 @@ def _training_process(
                 random_negative_loader=val_random_negative_loader,
                 loss_fn=loss_fn,
                 device=training_device,
-                use_automatic_mixed_precision=use_automatic_mixed_precision,
                 log_every_n_batch=log_every_n_batch,
                 num_batches=num_val_batches_per_process,
             )
@@ -399,13 +387,11 @@ def _training_process(
             main_data=main_data,
             random_negative_data=random_data,
             loss_fn=loss_fn,
-            use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=training_device,
         )
         optimizer.zero_grad()
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        loss.backward()
+        optimizer.step()
         avg_train_loss = sync_metric_across_processes(metric=loss)
         last_n_batch_avg_loss.append(avg_train_loss)
         last_n_batch_time.append(time.time() - batch_start)
@@ -414,10 +400,6 @@ def _training_process(
         if batch_idx % log_every_n_batch == 0:
             logger.info(
                 f"process_rank={local_rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
-            )
-            # If mixed precision training is enabled, the scale factor will be adjusted during the training process, otherwise it will be 1.0
-            logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, {scaler.get_scale()}"
             )
             # Wait for GPU operations to finish
             torch.cuda.synchronize()
@@ -458,7 +440,6 @@ def _run_validation_loops(
     random_negative_loader: Iterator,
     loss_fn: RetrievalLoss,
     device: torch.device,
-    use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
     num_batches: Optional[int] = None,
 ) -> None:
@@ -472,7 +453,6 @@ def _run_validation_loops(
         random_negative_loader (Iterator): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         device (torch.device): Device to use for training or testing
-        use_automatic_mixed_precision (bool): Whether we should train with mixed precision
         log_every_n_batch (int): The frequency we should log batch information when training and validating
         num_batches (Optional[int]): The number of batches to run the validation loop for. If this is not set, this function will loop until the data loaders are exhausted.
             For validation, this field is required to be set, as the data loaders are wrapped with InfiniteIterator.
@@ -511,7 +491,6 @@ def _run_validation_loops(
             main_data=main_data,
             random_negative_data=random_data,
             loss_fn=loss_fn,
-            use_automatic_mixed_precision=use_automatic_mixed_precision,
             device=device,
         )
 
@@ -555,7 +534,6 @@ def _testing_process(
     edge_feature_dim: int,
     master_ip_address: str,
     master_default_process_group_port: int,
-    trainer_args: dict[str, str],
     model_uri: Uri,
     subgraph_fanout: list[int],
     sampling_workers_per_process: int,
@@ -563,7 +541,6 @@ def _testing_process(
     random_batch_size: int,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
-    use_automatic_mixed_precision: bool,
     log_every_n_batch: int,
 ):
     """
@@ -578,7 +555,6 @@ def _testing_process(
         edge_feature_dim (int): Input edge feature dimension for the model
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
-        trainer_args: dict[str, str]: Arguments for training
         model_uri (Uri): URI Path to save the model to
         subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): Number of sampling workers per training process
@@ -587,7 +563,6 @@ def _testing_process(
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
         process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
             field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
-        use_automatic_mixed_precision (bool): Whether we should train with mixed precision
         log_every_n_batch (int): The frequency we should log batch information when training and validating
     """
     # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
@@ -669,7 +644,6 @@ def _testing_process(
         init_example_gigl_homogeneous_cora_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
-            args=trainer_args,
             device=test_device,
             state_dict=model_state_dict,
         ),
@@ -695,7 +669,6 @@ def _testing_process(
         random_negative_loader=test_random_negative_loader,
         loss_fn=loss_fn,
         device=test_device,
-        use_automatic_mixed_precision=use_automatic_mixed_precision,
         log_every_n_batch=log_every_n_batch,
     )
 
@@ -788,9 +761,6 @@ def _run_example_training(
     )
 
     process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
-    use_automatic_mixed_precision = bool(
-        strtobool(trainer_args.get("use_automatic_mixed_precision", "False"))
-    )
     log_every_n_batch = int(trainer_args.get("log_every_n_batch", "25"))
 
     learning_rate = float(trainer_args.get("learning_rate", "0.0005"))
@@ -807,7 +777,6 @@ def _run_example_training(
         random_batch_size={random_batch_size}, \
         sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, \
         process_start_gap_seconds={process_start_gap_seconds}, \
-        use_automatic_mixed_precision={use_automatic_mixed_precision}, \
         log_every_n_batch={log_every_n_batch}, \
         learning_rate={learning_rate}, \
         weight_decay={weight_decay}, \
@@ -829,7 +798,6 @@ def _run_example_training(
             edge_feature_dim,  # edge_feature_dim
             master_ip_address,  # master_ip_address
             master_process_group_port_for_training,  # master_default_process_group_port
-            trainer_args,  # trainer_args
             model_uri,  # model_uri
             subgraph_fanout,  # subgraph_fanout
             sampling_workers_per_process,  # sampling_workers_per_process
@@ -837,7 +805,6 @@ def _run_example_training(
             random_batch_size,  # random_batch_size
             sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
             process_start_gap_seconds,  # process_start_gap_seconds
-            use_automatic_mixed_precision,  # use_automatic_mixed_precision
             log_every_n_batch,  # log_every_n_batch
             learning_rate,  # learning_rate
             weight_decay,  # weight_decay
@@ -862,7 +829,6 @@ def _run_example_training(
             edge_feature_dim,  # edge_feature_dim
             master_ip_address,  # master_ip_address
             master_process_group_port_for_testing,  # master_default_process_group_port
-            trainer_args,  # trainer_args
             model_uri,  # model_uri
             subgraph_fanout,  # subgraph_fanout
             sampling_workers_per_process,  # sampling_workers_per_process
@@ -870,7 +836,6 @@ def _run_example_training(
             random_batch_size,  # random_batch_size
             sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
             process_start_gap_seconds,  # process_start_gap_seconds
-            use_automatic_mixed_precision,  # use_automatic_mixed_precision
             log_every_n_batch,  # log_every_n_batch
         ),
         nprocs=local_world_size,

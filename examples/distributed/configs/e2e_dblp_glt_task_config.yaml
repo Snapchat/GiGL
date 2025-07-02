@@ -32,6 +32,8 @@ trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50"
+    # The DBLP Dataset does not have specified labeled edges, so we provide this field to indicate what percentage of edges we should
+    # select as self-supervised labeled edges.
     ssl_positive_label_percentage: "0.05"
   command: python -m examples.distributed.heterogeneous_training
 inferencerConfig:

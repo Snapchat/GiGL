@@ -148,7 +148,6 @@ def _inference_process(
     model: LinkPredictionGNN = init_example_gigl_heterogeneous_dblp_model(
         node_type_to_feature_dim=node_type_to_feature_dim,
         edge_type_to_feature_dim=edge_type_to_feature_dim,
-        args=inferencer_args,
         device=device,
         state_dict=model_state_dict,
     )

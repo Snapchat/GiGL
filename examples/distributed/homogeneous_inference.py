@@ -163,7 +163,6 @@ def _inference_process(
     model: LinkPredictionGNN = init_example_gigl_homogeneous_cora_model(
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
-        args=inferencer_args,
         device=device,
         state_dict=model_state_dict,
     )

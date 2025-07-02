@@ -12,7 +12,9 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 def init_example_gigl_homogeneous_cora_model(
     node_feature_dim: int,
     edge_feature_dim: int,
-    args: dict[str, str],
+    hid_dim: int = 16,
+    out_dim: int = 16,
+    num_layers: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
 ) -> LinkPredictionGNN:
@@ -23,7 +25,9 @@ def init_example_gigl_homogeneous_cora_model(
     Args:
         node_feature_dim (int): Input node feature dimension for the model
         edge_feature_dim (int): Input edge feature dimension for the model
-        args (dict[str, str]): Arguments for training or inference
+        hid_dim (int): Hidden dimension of model
+        out_dim (int): Output dimension of model
+        num_layers (int): Number of layers to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
     Returns:
@@ -31,10 +35,10 @@ def init_example_gigl_homogeneous_cora_model(
     """
     encoder_model = GraphSAGE(
         in_dim=node_feature_dim,
-        hid_dim=int(args.get("hid_dim", 16)),
-        out_dim=int(args.get("out_dim", 16)),
+        hid_dim=hid_dim,
+        out_dim=out_dim,
         edge_dim=edge_feature_dim if edge_feature_dim > 0 else None,
-        num_layers=int(args.get("num_layers", 2)),
+        num_layers=num_layers,
         conv_kwargs={},  # Use default conv args for this model type
         should_l2_normalize_embedding_layer_output=True,
     )
@@ -60,7 +64,10 @@ def init_example_gigl_homogeneous_cora_model(
 def init_example_gigl_heterogeneous_dblp_model(
     node_type_to_feature_dim: dict[NodeType, int],
     edge_type_to_feature_dim: dict[EdgeType, int],
-    args: dict[str, str],
+    hid_dim: int = 16,
+    out_dim: int = 16,
+    num_layers: int = 2,
+    num_heads: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
 ) -> LinkPredictionGNN:
@@ -71,7 +78,10 @@ def init_example_gigl_heterogeneous_dblp_model(
     Args:
         node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
         edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension for the model per edge type
-        args (dict[str, str]): Arguments for inferencer
+        hid_dim (int): Hidden dimension of model
+        out_dim (int): Output dimension of model
+        num_layers (int): Number of layers to include in model
+        num_heads (int): Number of attention heads to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
     Returns:
@@ -80,10 +90,10 @@ def init_example_gigl_heterogeneous_dblp_model(
     encoder_model = HGT(
         node_type_to_feat_dim_map=node_type_to_feature_dim,
         edge_type_to_feat_dim_map=edge_type_to_feature_dim,
-        hid_dim=int(args.get("hid_dim", 16)),
-        out_dim=int(args.get("hid_dim", 16)),
-        num_layers=int(args.get("num_layers", 2)),
-        num_heads=int(args.get("num_heads", 2)),
+        hid_dim=hid_dim,
+        out_dim=out_dim,
+        num_layers=num_layers,
+        num_heads=num_heads,
         should_l2_normalize_embedding_layer_output=True,
     )
 
