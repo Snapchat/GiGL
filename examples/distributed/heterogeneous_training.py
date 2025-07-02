@@ -446,21 +446,6 @@ def _training_process(
                 f"stopping training on machine {machine_rank} local rank {local_rank}"
             )
             break
-        if batch_idx % val_every_n_batch == 0:
-            logger.info(f"process_rank={local_rank}, batch={batch_idx}, validating...")
-            model.eval()
-            _run_validation_loops(
-                local_rank=local_rank,
-                model=model,
-                main_loader=val_main_loader,
-                random_negative_loader=val_random_negative_loader,
-                loss_fn=loss_fn,
-                supervision_edge_type=supervision_edge_type,
-                device=training_device,
-                log_every_n_batch=log_every_n_batch,
-                num_batches=num_val_batches_per_process,
-            )
-            model.train()
         loss = _compute_loss(
             model=model,
             main_data=main_data,
@@ -492,6 +477,22 @@ def _training_process(
                 f"process_rank={local_rank}, batch={batch_idx}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
             )
             last_n_batch_avg_loss.clear()
+
+        if batch_idx % val_every_n_batch == 0:
+            logger.info(f"process_rank={local_rank}, batch={batch_idx}, validating...")
+            model.eval()
+            _run_validation_loops(
+                local_rank=local_rank,
+                model=model,
+                main_loader=val_main_loader,
+                random_negative_loader=val_random_negative_loader,
+                loss_fn=loss_fn,
+                supervision_edge_type=supervision_edge_type,
+                device=training_device,
+                log_every_n_batch=log_every_n_batch,
+                num_batches=num_val_batches_per_process,
+            )
+            model.train()
 
     torch.distributed.barrier()
 
@@ -797,30 +798,11 @@ def _run_example_training(
     mp.set_start_method("spawn")
     logger.info(f"Starting sub process method: {mp.get_start_method()}")
 
-    torch.distributed.init_process_group(backend="gloo")
-
-    master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
-    machine_rank = torch.distributed.get_rank()
-    machine_world_size = torch.distributed.get_world_size()
-    master_default_process_group_ports = (
-        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=2)
-    )
-    master_process_group_port_for_training = master_default_process_group_ports[0]
-    master_process_group_port_for_testing = master_default_process_group_ports[1]
-    # Destroying the process group as one will be re-initialized in the training process using above information
-    torch.distributed.destroy_process_group()
-
-    logger.info(f"--- Launching data loading process ---")
-    dataset = build_dataset_from_task_config_uri(
-        task_config_uri=task_config_uri,
-        is_inference=False,
-    )
-    logger.info(
-        f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"
-    )
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
+
+    # Training Hyperparameters for the training and test processes
 
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
@@ -831,36 +813,6 @@ def _run_example_training(
                 f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
             )
 
-    graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
-
-    node_type_to_feature_dim: dict[NodeType, int] = {
-        graph_metadata.condensed_node_type_to_node_type_map[
-            condensed_node_type
-        ]: node_feature_dim
-        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
-    }
-
-    edge_type_to_feature_dim: dict[EdgeType, int] = {
-        graph_metadata.condensed_edge_type_to_edge_type_map[
-            condensed_edge_type
-        ]: edge_feature_dim
-        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
-    }
-
-    model_uri = UriFactory.create_uri(
-        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
-    )
-
-    supervision_edge_types = (
-        gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
-    )
-    if len(supervision_edge_types) != 1:
-        raise NotImplementedError(
-            "GiGL Training currently only supports 1 supervision edge type."
-        )
-    supervision_edge_type = supervision_edge_types[0]
-
-    # Training Hyperparameters shared among the training and test processes
     fanout_per_hop = int(trainer_args.get("fanout_per_hop", "10"))
 
     # If `subgraph_fanout` is provided as a list, it will use that fanout for each edge type. Otherwise, subgraph fanout should be provided as a
@@ -919,6 +871,59 @@ def _run_example_training(
         num_val_batches={num_val_batches}, \
         val_every_n_batch={val_every_n_batch}"
     )
+
+    # This `init_process_group` is only called to get the master_ip_address, master port, and rank/world_size fields which help with partitioning, sampling,
+    # and distributed training/testing. We can use `gloo` here since these fields we are extracting don't require GPU capabilities provided by `nccl`.
+    torch.distributed.init_process_group(backend="gloo")
+
+    master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
+    machine_rank = torch.distributed.get_rank()
+    machine_world_size = torch.distributed.get_world_size()
+    master_default_process_group_ports = (
+        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=2)
+    )
+    master_process_group_port_for_training = master_default_process_group_ports[0]
+    master_process_group_port_for_testing = master_default_process_group_ports[1]
+    # Destroying the process group as one will be re-initialized in the training process using above information
+    torch.distributed.destroy_process_group()
+
+    logger.info(f"--- Launching data loading process ---")
+    dataset = build_dataset_from_task_config_uri(
+        task_config_uri=task_config_uri,
+        is_inference=False,
+    )
+    logger.info(
+        f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"
+    )
+
+    graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
+
+    node_type_to_feature_dim: dict[NodeType, int] = {
+        graph_metadata.condensed_node_type_to_node_type_map[
+            condensed_node_type
+        ]: node_feature_dim
+        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
+    }
+
+    edge_type_to_feature_dim: dict[EdgeType, int] = {
+        graph_metadata.condensed_edge_type_to_edge_type_map[
+            condensed_edge_type
+        ]: edge_feature_dim
+        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
+    }
+
+    model_uri = UriFactory.create_uri(
+        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
+    )
+
+    supervision_edge_types = (
+        gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+    )
+    if len(supervision_edge_types) != 1:
+        raise NotImplementedError(
+            "GiGL Training currently only supports 1 supervision edge type."
+        )
+    supervision_edge_type = supervision_edge_types[0]
 
     logger.info("--- Launching training processes ...\n")
     start_time = time.time()
