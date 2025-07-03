@@ -382,8 +382,8 @@ run_all_e2e_tests: task_config_uris_str:=\
 		"gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml" \
-		"examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml" \
-		"examples/distributed/configs/e2e_dblp_glt_task_config.yaml"
+		"examples/link_prediction/configs/e2e_cora_udl_glt_task_config.yaml" \
+		"examples/link_prediction/configs/e2e_dblp_glt_task_config.yaml"
 run_all_e2e_tests: resource_config_uris_str:=\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
