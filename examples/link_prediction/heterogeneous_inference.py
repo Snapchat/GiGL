@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_heterogeneous_model
+from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
