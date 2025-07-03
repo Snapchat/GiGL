@@ -345,17 +345,6 @@ def _training_process(
             "Currently, only GPU training is supported with this example training loop"
         )
 
-    logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} training process started"
-    )
-
-    # We use one training device for each local process
-    device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(device)
-    logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} training process set device {device}"
-    )
-
     world_size = machine_world_size * local_world_size
     rank = machine_rank * local_world_size + local_rank
     logger.info(
@@ -370,7 +359,14 @@ def _training_process(
     )
 
     logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} training process group initialized"
+        f"---Rank {torch.distributed.get_rank()} training process group initialized"
+    )
+
+    # We use one training device for each local process
+    device = torch.device(f"cuda:{local_rank}")
+    torch.cuda.set_device(device)
+    logger.info(
+        f"---Rank {torch.distributed.get_rank()} training process set device {device}"
     )
 
     train_main_loader, train_random_negative_loader = _setup_dataloaders(
@@ -466,25 +462,26 @@ def _training_process(
         batch_idx += 1
         if batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
+                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, latest local train_loss={loss:.6f}"
             )
             # Wait for GPU operations to finish
             torch.cuda.synchronize()
             logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
             last_n_batch_time.clear()
             # log the global average training loss
             logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+                f"rank={torch.distributed.get_rank()}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
             )
             last_n_batch_avg_loss.clear()
 
         if batch_idx % val_every_n_batch == 0:
-            logger.info(f"process_rank={local_rank}, batch={batch_idx}, validating...")
+            logger.info(
+                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, validating..."
+            )
             model.eval()
             _run_validation_loops(
-                local_rank=local_rank,
                 model=model,
                 main_loader=val_main_loader,
                 random_negative_loader=val_random_negative_loader,
@@ -498,7 +495,7 @@ def _training_process(
 
     torch.distributed.barrier()
 
-    logger.info(f"---Machine {machine_rank} local rank {local_rank} finished training")
+    logger.info(f"---Rank {torch.distributed.get_rank()} finished training")
 
     # We save the model on the process with the 0th node rank and 0th local rank.
     if machine_rank == 0 and local_rank == 0:
@@ -517,7 +514,6 @@ def _training_process(
 
 @torch.inference_mode()
 def _run_validation_loops(
-    local_rank: int,
     model: DistributedDataParallel,
     main_loader: Iterator,
     random_negative_loader: Iterator,
@@ -531,7 +527,6 @@ def _run_validation_loops(
     Runs validation using the provided models and dataloaders.
     This function is shared for both validation while training and testing after training has completed.
     Args:
-        local_rank (int): Process number on the current machine
         model (DistributedDataParallel): DDP-wrapped torch model for training and testing
         main_loader (Iterator[Data]): Dataloader for loading main batch data with query and labeled nodes
         random_negative_loader (Iterator[Data]): Dataloader for loading random negative data
@@ -543,7 +538,7 @@ def _run_validation_loops(
             For validation, this field is required to be set, as the data loaders are wrapped with InfiniteIterator.
     """
     logger.info(
-        f"Running validation loop on process_rank={local_rank}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
+        f"Running validation loop on rank={torch.distributed.get_rank()}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
     )
     if num_batches is None:
         if isinstance(main_loader, InfiniteIterator) or isinstance(
@@ -585,23 +580,23 @@ def _run_validation_loops(
         batch_idx += 1
         if batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, latest test_loss={loss:.6f}"
+                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, latest test_loss={loss:.6f}"
             )
             # Wait for GPU operations to finish
             torch.cuda.synchronize()
             logger.info(
-                f"process_rank={local_rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
             last_n_batch_time.clear()
     local_avg_loss = statistics.mean(batch_losses)
     logger.info(
-        f"process_rank={local_rank} finished validation loop, local loss: {local_avg_loss=:.6f}"
+        f"rank={torch.distributed.get_rank()} finished validation loop, local loss: {local_avg_loss=:.6f}"
     )
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
     )
     logger.info(
-        f"process_rank={local_rank} got global validation loss {global_avg_val_loss=:.6f}"
+        f"rank={torch.distributed.get_rank()} got global validation loss {global_avg_val_loss=:.6f}"
     )
 
     return
@@ -670,17 +665,15 @@ def _testing_process(
         world_size=world_size,
     )
     logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} test process group initialized"
+        f"---Rank {torch.distributed.get_rank()} test process group initialized"
     )
-    logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} test process started"
-    )
+    logger.info(f"---Rank {torch.distributed.get_rank()} test process started")
 
     # We use one testing device for each local process
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
     logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} test process set device {device}"
+        f"---Rank {torch.distributed.get_rank()} test process set device {device}"
     )
 
     test_main_loader, test_random_negative_loader = _setup_dataloaders(
@@ -709,7 +702,7 @@ def _testing_process(
     )
 
     logger.info(
-        f"Model initialized on machine {machine_rank} test device {device} with weights loaded from {model_uri.uri}\n{model}"
+        f"Model initialized on rank {torch.distributed.get_rank()} test device {device} with weights loaded from {model_uri.uri}\n{model}"
     )
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -723,7 +716,6 @@ def _testing_process(
     model.eval()
 
     _run_validation_loops(
-        local_rank=local_rank,
         model=model,
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
