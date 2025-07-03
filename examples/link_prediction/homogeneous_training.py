@@ -74,9 +74,23 @@ def _setup_dataloaders(
     device: torch.device,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
-) -> tuple[Iterator, Iterator]:
+) -> tuple[Iterator[Data], Iterator[Data]]:
     """
-    Sets up main and random dataloaders for training and testing purpsoes
+    Sets up main and random dataloaders for training and testing purposes
+    Args:
+        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training and testing
+        split (Literal["train", "val", "test"]): The current split which we are loading data for
+        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        sampling_workers_per_process (int): sampling_workers_per_process (int): Number of sampling workers per training/testing process
+        main_batch_size (int): Batch size for main dataloader with query and labeled nodes
+        random_batch_size (int): Batch size for random negative dataloader
+        device (torch.device): Device to put loaded subgraphs on
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
+        process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
+            field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
+    Returns:
+        Iterator[Data]: Dataloader for loading main batch data with query and labeled nodes
+        Iterator[Data]: Dataloader for loading random negative data
     """
 
     if split == "train":
