@@ -12,11 +12,11 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.distributed.homogeneous_inference
+  command: python -m examples.link_prediction.homogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 
-You can run this example in a full pipeline with `make run_cora_glt_udl_kfp_test` from GiGL root.
+You can run this example in a full pipeline with `make run_hom_cora_sup_test` from GiGL root.
 """
 
 import argparse
@@ -26,7 +26,7 @@ from typing import Dict, List
 
 import torch
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_homogeneous_cora_model
+from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
@@ -62,8 +62,8 @@ def _inference_process(
     # from [0, num_processes).
     local_rank: int,
     local_world_size: int,
-    node_rank: int,
-    node_world_size: int,
+    machine_rank: int,
+    machine_world_size: int,
     master_ip_address: str,
     master_default_process_group_port: int,
     embedding_gcs_path: GcsUri,
@@ -130,10 +130,10 @@ def _inference_process(
             f"Using GPU {device} with index {device.index} on local rank: {local_rank} for inference"
         )
         torch.cuda.set_device(device)
-    rank = node_rank * local_world_size + local_rank
-    world_size = node_world_size * local_world_size
+    rank = machine_rank * local_world_size + local_rank
+    world_size = machine_world_size * local_world_size
     logger.info(
-        f"Local rank {local_rank} in machine {node_rank} has rank {rank}/{world_size} and using device {device} for inference"
+        f"Local rank {local_rank} in machine {machine_rank} has rank {rank}/{world_size} and using device {device} for inference"
     )
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
@@ -162,7 +162,7 @@ def _inference_process(
     model_state_dict = load_state_dict_from_uri(
         load_from_uri=model_state_dict_uri, device=device
     )
-    model: LinkPredictionGNN = init_example_gigl_homogeneous_cora_model(
+    model: LinkPredictionGNN = init_example_gigl_homogeneous_model(
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
         device=device,
@@ -174,7 +174,7 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = f"machine_{node_rank}_local_process_{local_rank}"
+    embedding_filename = f"machine_{machine_rank}_local_process_{local_rank}"
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -232,7 +232,7 @@ def _inference_process(
 
         if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"Local rank {local_rank} processed {batch_idx} batches. "
+                f"rank {rank} processed {batch_idx} batches. "
                 f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds. "
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
@@ -243,14 +243,14 @@ def _inference_process(
 
         data_loading_start_time = time.time()
 
-    logger.info(f"--- Machine {node_rank} local rank {local_rank} finished inference.")
+    logger.info(f"--- Rank {rank} finished inference.")
 
     write_embedding_start_time = time.time()
     # Flushes all remaining embeddings to GCS
     exporter.flush_embeddings()
 
     logger.info(
-        f"--- Machine {node_rank} local rank {local_rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Rank {rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
@@ -355,8 +355,8 @@ def _run_example_inference(
     ## Inference Start
     # Setup variables we can use to spin up training/inference processes and their respective process groups later.
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
-    node_rank = torch.distributed.get_rank()
-    node_world_size = torch.distributed.get_world_size()
+    machine_rank = torch.distributed.get_rank()
+    machine_world_size = torch.distributed.get_world_size()
     master_default_process_group_port = (
         gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
     )
@@ -370,8 +370,8 @@ def _run_example_inference(
         fn=_inference_process,
         args=(
             local_world_size,
-            node_rank,
-            node_world_size,
+            machine_rank,
+            machine_world_size,
             master_ip_address,
             master_default_process_group_port,
             embedding_output_gcs_folder,
@@ -388,11 +388,11 @@ def _run_example_inference(
     )
 
     logger.info(
-        f"--- Inference finished on rank {node_rank}, which took {time.time()-inference_start_time:.2f} seconds"
+        f"--- Inference finished on rank {machine_rank}, which took {time.time()-inference_start_time:.2f} seconds"
     )
 
     # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-    if node_rank == 0:
+    if machine_rank == 0:
         logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
 
         # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
