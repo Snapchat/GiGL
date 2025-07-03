@@ -217,6 +217,7 @@ def _compute_loss(
     # Extracting local query, random negative, positive, hard_negative, and random_negative indices.
     # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
     # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local index for global id `50`. Note that each global id in data.node is unique.
+    # TODO (mkolodner-sc): If GLT migrates towards using PyG's `.n_id` field instead of `.node`, update this code.
     query_node_idx: torch.Tensor = torch.arange(
         main_data[query_node_type].batch_size
     ).to(device)
