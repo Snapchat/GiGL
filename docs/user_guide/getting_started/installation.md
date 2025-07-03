@@ -136,8 +136,16 @@ interact with Python repositories stored in Artifact Registry.
 pip install keyrings.google-artifactregistry-auth
 ```
 
+Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
 ```bash
-pip install gigl==0.0.2 \
+pip install "gigl[torch25-cuda-121,transform]==0.0.2" \
+  --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
+  --extra-index-url=https://pypi.org/simple
+```
+
+Install GiGL + necessary tooling for Torch 2.5 + CPU
+```bash
+pip install "gigl[torch25-cpu,transform]==0.0.2" \
   --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
   --extra-index-url=https://pypi.org/simple
 ```
