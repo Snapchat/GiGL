@@ -95,10 +95,13 @@ def _setup_dataloaders(
 
     if split == "train":
         main_input_nodes = to_homogeneous(dataset.train_node_ids)
+        shuffle = True
     elif split == "val":
         main_input_nodes = to_homogeneous(dataset.val_node_ids)
+        shuffle = False
     else:
         main_input_nodes = to_homogeneous(dataset.test_node_ids)
+        shuffle = False
 
     main_loader: Iterator[Data] = DistABLPLoader(
         dataset=dataset,
@@ -112,7 +115,7 @@ def _setup_dataloaders(
         # Each main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
-        shuffle=True,
+        shuffle=shuffle,
     )
 
     if split == "test":
@@ -137,7 +140,7 @@ def _setup_dataloaders(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
-        shuffle=True,
+        shuffle=shuffle,
     )
 
     # If we are doing testing, we only want to go through the data once.
