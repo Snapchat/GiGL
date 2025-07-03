@@ -355,7 +355,7 @@ run_dblp_nalp_e2e_kfp_test: should_compile_then_run_str:="false"
 run_dblp_nalp_e2e_kfp_test: _run_e2e_kfp_test
 
 run_cora_glt_udl_kfp_test: job_name_prefixes_str:="cora_glt_udl_test_on"
-run_cora_glt_udl_kfp_test: task_config_uris_str:="examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml"
+run_cora_glt_udl_kfp_test: task_config_uris_str:="examples/distributed/configs/e2e_hom_cora_sup_task_config.yaml"
 run_cora_glt_udl_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
 run_cora_glt_udl_kfp_test: should_compile_then_run_str:="false"
 run_cora_glt_udl_kfp_test: _run_e2e_kfp_test
