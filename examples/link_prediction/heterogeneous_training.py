@@ -99,6 +99,7 @@ def _setup_dataloaders(
         Iterator[HeteroData]: Dataloader for loading main batch data with query and labeled nodes
         Iterator[HeteroData]: Dataloader for loading random negative data
     """
+    rank = torch.distributed.get_rank()
 
     if split == "train":
         main_input_nodes = dataset.train_node_ids
@@ -136,9 +137,7 @@ def _setup_dataloaders(
     else:
         main_loader = InfiniteIterator(main_loader)
 
-    logger.info(
-        f"---Rank {torch.distributed.get_rank()} finished setting up main loader"
-    )
+    logger.info(f"---Rank {rank} finished setting up main loader")
 
     # We need to wait for all processes to finish initializing the main_loader before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM.
     torch.distributed.barrier()
@@ -165,9 +164,7 @@ def _setup_dataloaders(
     else:
         random_negative_loader = InfiniteIterator(random_negative_loader)
 
-    logger.info(
-        f"--Rank {torch.distributed.get_rank()} finished setting up random negative loader"
-    )
+    logger.info(f"--Rank {rank} finished setting up random negative loader")
 
     # Wait for all processes to finish initializing the random_loader
     torch.distributed.barrier()
@@ -362,15 +359,30 @@ def _training_process(
         world_size=world_size,
     )
 
-    logger.info(
-        f"---Rank {torch.distributed.get_rank()} training process group initialized"
-    )
+    logger.info(f"---Rank {rank} training process group initialized")
 
     # We use one training device for each local process
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
-    logger.info(
-        f"---Rank {torch.distributed.get_rank()} training process set device {device}"
+    logger.info(f"---Rank {rank} training process set device {device}")
+    loss_fn = RetrievalLoss(
+        loss=torch.nn.CrossEntropyLoss(reduction="mean"),
+        temperature=0.07,
+        remove_accidental_hits=True,
+    )
+
+    # TODO (mkolodner-sc): Investigate moving the initialization of test loaders to the end of the training loop once training has been finished
+    test_main_loader, test_random_negative_loader = _setup_dataloaders(
+        dataset=dataset,
+        split="test",
+        supervision_edge_type=supervision_edge_type,
+        subgraph_fanout=subgraph_fanout,
+        sampling_workers_per_process=sampling_workers_per_process,
+        main_batch_size=main_batch_size,
+        random_batch_size=random_batch_size,
+        device=device,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+        process_start_gap_seconds=process_start_gap_seconds,
     )
 
     if not should_skip_training:
@@ -414,13 +426,8 @@ def _training_process(
         optimizer = torch.optim.AdamW(
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
-        loss_fn = RetrievalLoss(
-            loss=torch.nn.CrossEntropyLoss(reduction="mean"),
-            temperature=0.07,
-            remove_accidental_hits=True,
-        )
         logger.info(
-            f"Model initialized on rank {torch.distributed.get_rank()} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model.module}"
         )
 
         # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
@@ -469,24 +476,22 @@ def _training_process(
             batch_idx += 1
             if batch_idx % log_every_n_batch == 0:
                 logger.info(
-                    f"rank={torch.distributed.get_rank()}, batch={batch_idx}, latest local train_loss={loss:.6f}"
+                    f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
                 # Wait for GPU operations to finish
                 torch.cuda.synchronize()
                 logger.info(
-                    f"rank={torch.distributed.get_rank()}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                    f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
                 )
                 last_n_batch_time.clear()
                 # log the global average training loss
                 logger.info(
-                    f"rank={torch.distributed.get_rank()}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
                 )
                 last_n_batch_avg_loss.clear()
 
             if batch_idx % val_every_n_batch == 0:
-                logger.info(
-                    f"rank={torch.distributed.get_rank()}, batch={batch_idx}, validating..."
-                )
+                logger.info(f"rank={rank}, batch={batch_idx}, validating...")
                 model.eval()
                 _run_validation_loops(
                     model=model,
@@ -502,7 +507,7 @@ def _training_process(
 
         torch.distributed.barrier()
 
-        logger.info(f"---Rank {torch.distributed.get_rank()} finished training")
+        logger.info(f"---Rank {rank} finished training")
 
         # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
         # observed that not all memory may be cleaned up, leading to OOM.
@@ -525,23 +530,10 @@ def _training_process(
             find_unused_parameters=True,
         )
         logger.info(
-            f"Model initialized on rank {torch.distributed.get_rank()} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model.module}"
         )
 
-    logger.info(f"---Rank {torch.distributed.get_rank()} started testing")
-
-    test_main_loader, test_random_negative_loader = _setup_dataloaders(
-        dataset=dataset,
-        split="test",
-        supervision_edge_type=supervision_edge_type,
-        subgraph_fanout=subgraph_fanout,
-        sampling_workers_per_process=sampling_workers_per_process,
-        main_batch_size=main_batch_size,
-        random_batch_size=random_batch_size,
-        device=device,
-        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds,
-    )
+    logger.info(f"---Rank {rank} started testing")
 
     model.eval()
 
@@ -555,7 +547,7 @@ def _training_process(
         log_every_n_batch=log_every_n_batch,
     )
 
-    logger.info(f"---Rank {torch.distributed.get_rank()} finished testing")
+    logger.info(f"---Rank {rank} finished testing")
 
     torch.distributed.barrier()
 
@@ -598,8 +590,11 @@ def _run_validation_loops(
         num_batches (Optional[int]): The number of batches to run the validation loop for. If this is not set, this function will loop until the data loaders are exhausted.
             For validation, this field is required to be set, as the data loaders are wrapped with InfiniteIterator.
     """
+
+    rank = torch.distributed.get_rank()
+
     logger.info(
-        f"Running validation loop on rank={torch.distributed.get_rank()}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
+        f"Running validation loop on rank={rank}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
     )
     if num_batches is None:
         if isinstance(main_loader, InfiniteIterator) or isinstance(
@@ -640,25 +635,21 @@ def _run_validation_loops(
         batch_start = time.time()
         batch_idx += 1
         if batch_idx % log_every_n_batch == 0:
-            logger.info(
-                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, latest test_loss={loss:.6f}"
-            )
+            logger.info(f"rank={rank}, batch={batch_idx}, latest test_loss={loss:.6f}")
             # Wait for GPU operations to finish
             torch.cuda.synchronize()
             logger.info(
-                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
             last_n_batch_time.clear()
     local_avg_loss = statistics.mean(batch_losses)
     logger.info(
-        f"rank={torch.distributed.get_rank()} finished validation loop, local loss: {local_avg_loss=:.6f}"
+        f"rank={rank} finished validation loop, local loss: {local_avg_loss=:.6f}"
     )
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
     )
-    logger.info(
-        f"rank={torch.distributed.get_rank()} got global validation loss {global_avg_val_loss=:.6f}"
-    )
+    logger.info(f"rank={rank} got global validation loss {global_avg_val_loss=:.6f}")
 
     return
 
@@ -751,6 +742,9 @@ def _run_example_training(
 
     # This `init_process_group` is only called to get the master_ip_address, master port, and rank/world_size fields which help with partitioning, sampling,
     # and distributed training/testing. We can use `gloo` here since these fields we are extracting don't require GPU capabilities provided by `nccl`.
+    # Note that this init_process_group uses env:// to setup the connection.
+    # In VAI we create one process per node thus these variables are exposed through env i.e. MASTER_PORT , MASTER_ADDR , WORLD_SIZE , RANK that VAI sets up for us.
+    # If running locally, these env variables will need to be setup by the user manually.
     torch.distributed.init_process_group(backend="gloo")
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()

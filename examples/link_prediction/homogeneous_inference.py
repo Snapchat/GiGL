@@ -232,7 +232,7 @@ def _inference_process(
 
         if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
             logger.info(
-                f"rank {torch.distributed.get_rank()} processed {batch_idx} batches. "
+                f"rank {rank} processed {batch_idx} batches. "
                 f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds. "
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
@@ -243,14 +243,14 @@ def _inference_process(
 
         data_loading_start_time = time.time()
 
-    logger.info(f"--- Rank {torch.distributed.get_rank()} finished inference.")
+    logger.info(f"--- Rank {rank} finished inference.")
 
     write_embedding_start_time = time.time()
     # Flushes all remaining embeddings to GCS
     exporter.flush_embeddings()
 
     logger.info(
-        f"--- Rank {torch.distributed.get_rank()} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Rank {rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
