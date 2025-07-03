@@ -1,4 +1,4 @@
-# Examples for Training and Inference using live subgraph sampling
+# Examples for Training and Inference on Link Prediction GNN models.
 
 ## Homogeneous (CORA)
 
