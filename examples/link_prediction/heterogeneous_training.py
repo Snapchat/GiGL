@@ -23,6 +23,7 @@ This will improved on in the future.
 """
 
 import argparse
+import gc
 import statistics
 import time
 from collections.abc import Iterator, Mapping
@@ -311,6 +312,7 @@ def _training_process(
     num_max_train_batches: int,
     num_val_batches: int,
     val_every_n_batch: int,
+    should_skip_training: bool,
 ) -> None:
     """
     This function is spawned by each machine for training a GNN model given some loaded distributed dataset.
@@ -339,6 +341,7 @@ def _training_process(
         num_max_train_batches (int): The maximum number of batches to train for across all training processes
         num_val_batches (int): The number of batches to do validation for across all training processes
         val_every_n_batch: (int): The frequency we should log batch information when validating
+        should_skip_training (bool): Whether training should be skipped and we should only run testing. Assumes model has been uploaded to the model_uri.
     """
     # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
     if not torch.cuda.is_available():
@@ -370,133 +373,195 @@ def _training_process(
         f"---Rank {torch.distributed.get_rank()} training process set device {device}"
     )
 
-    train_main_loader, train_random_negative_loader = _setup_dataloaders(
-        dataset=dataset,
-        split="train",
-        supervision_edge_type=supervision_edge_type,
-        subgraph_fanout=subgraph_fanout,
-        sampling_workers_per_process=sampling_workers_per_process,
-        main_batch_size=main_batch_size,
-        random_batch_size=random_batch_size,
-        device=device,
-        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds,
-    )
-
-    val_main_loader, val_random_negative_loader = _setup_dataloaders(
-        dataset=dataset,
-        split="val",
-        supervision_edge_type=supervision_edge_type,
-        subgraph_fanout=subgraph_fanout,
-        sampling_workers_per_process=sampling_workers_per_process,
-        main_batch_size=main_batch_size,
-        random_batch_size=random_batch_size,
-        device=device,
-        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds,
-    )
-
-    model = DistributedDataParallel(
-        init_example_gigl_heterogeneous_model(
-            node_type_to_feature_dim=node_type_to_feature_dim,
-            edge_type_to_feature_dim=edge_type_to_feature_dim,
-            device=device,
-        ),
-        device_ids=[device],
-        # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
-        find_unused_parameters=True,
-    )
-
-    optimizer = torch.optim.AdamW(
-        params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
-    )
-    loss_fn = RetrievalLoss(
-        loss=torch.nn.CrossEntropyLoss(reduction="mean"),
-        temperature=0.07,
-        remove_accidental_hits=True,
-    )
-    logger.info(
-        f"Model initialized on machine {machine_rank} training device {device}\n{model.module}"
-    )
-
-    # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
-    torch.distributed.barrier()
-
-    # Entering the training loop
-    training_start_time = time.time()
-    batch_idx = 0
-    avg_train_loss = 0.0
-    last_n_batch_avg_loss: list[float] = []
-    last_n_batch_time: list[float] = []
-    num_max_train_batches_per_process = num_max_train_batches // world_size
-    num_val_batches_per_process = num_val_batches // world_size
-    logger.info(
-        f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
-    )
-
-    model.train()
-
-    # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
-    batch_start = time.time()
-    for main_data, random_data in zip(train_main_loader, train_random_negative_loader):
-        if batch_idx >= num_max_train_batches_per_process:
-            logger.info(
-                f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
-                f"stopping training on machine {machine_rank} local rank {local_rank}"
-            )
-            break
-        loss = _compute_loss(
-            model=model,
-            main_data=main_data,
-            random_negative_data=random_data,
-            loss_fn=loss_fn,
+    if not should_skip_training:
+        train_main_loader, train_random_negative_loader = _setup_dataloaders(
+            dataset=dataset,
+            split="train",
             supervision_edge_type=supervision_edge_type,
+            subgraph_fanout=subgraph_fanout,
+            sampling_workers_per_process=sampling_workers_per_process,
+            main_batch_size=main_batch_size,
+            random_batch_size=random_batch_size,
             device=device,
+            sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+            process_start_gap_seconds=process_start_gap_seconds,
         )
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        avg_train_loss = _sync_metric_across_processes(metric=loss)
-        last_n_batch_avg_loss.append(avg_train_loss)
-        last_n_batch_time.append(time.time() - batch_start)
-        batch_start = time.time()
-        batch_idx += 1
-        if batch_idx % log_every_n_batch == 0:
-            logger.info(
-                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, latest local train_loss={loss:.6f}"
-            )
-            # Wait for GPU operations to finish
-            torch.cuda.synchronize()
-            logger.info(
-                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
-            )
-            last_n_batch_time.clear()
-            # log the global average training loss
-            logger.info(
-                f"rank={torch.distributed.get_rank()}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
-            )
-            last_n_batch_avg_loss.clear()
 
-        if batch_idx % val_every_n_batch == 0:
-            logger.info(
-                f"rank={torch.distributed.get_rank()}, batch={batch_idx}, validating..."
-            )
-            model.eval()
-            _run_validation_loops(
+        val_main_loader, val_random_negative_loader = _setup_dataloaders(
+            dataset=dataset,
+            split="val",
+            supervision_edge_type=supervision_edge_type,
+            subgraph_fanout=subgraph_fanout,
+            sampling_workers_per_process=sampling_workers_per_process,
+            main_batch_size=main_batch_size,
+            random_batch_size=random_batch_size,
+            device=device,
+            sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+            process_start_gap_seconds=process_start_gap_seconds,
+        )
+
+        model = DistributedDataParallel(
+            init_example_gigl_heterogeneous_model(
+                node_type_to_feature_dim=node_type_to_feature_dim,
+                edge_type_to_feature_dim=edge_type_to_feature_dim,
+                device=device,
+            ),
+            device_ids=[device],
+            # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
+            find_unused_parameters=True,
+        )
+
+        optimizer = torch.optim.AdamW(
+            params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
+        )
+        loss_fn = RetrievalLoss(
+            loss=torch.nn.CrossEntropyLoss(reduction="mean"),
+            temperature=0.07,
+            remove_accidental_hits=True,
+        )
+        logger.info(
+            f"Model initialized on rank {torch.distributed.get_rank()} training device {device}\n{model.module}"
+        )
+
+        # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
+        torch.distributed.barrier()
+
+        # Entering the training loop
+        training_start_time = time.time()
+        batch_idx = 0
+        avg_train_loss = 0.0
+        last_n_batch_avg_loss: list[float] = []
+        last_n_batch_time: list[float] = []
+        num_max_train_batches_per_process = num_max_train_batches // world_size
+        num_val_batches_per_process = num_val_batches // world_size
+        logger.info(
+            f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
+        )
+
+        model.train()
+
+        # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
+        batch_start = time.time()
+        for main_data, random_data in zip(
+            train_main_loader, train_random_negative_loader
+        ):
+            if batch_idx >= num_max_train_batches_per_process:
+                logger.info(
+                    f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
+                    f"stopping training on machine {machine_rank} local rank {local_rank}"
+                )
+                break
+            loss = _compute_loss(
                 model=model,
-                main_loader=val_main_loader,
-                random_negative_loader=val_random_negative_loader,
+                main_data=main_data,
+                random_negative_data=random_data,
                 loss_fn=loss_fn,
                 supervision_edge_type=supervision_edge_type,
                 device=device,
-                log_every_n_batch=log_every_n_batch,
-                num_batches=num_val_batches_per_process,
             )
-            model.train()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            avg_train_loss = _sync_metric_across_processes(metric=loss)
+            last_n_batch_avg_loss.append(avg_train_loss)
+            last_n_batch_time.append(time.time() - batch_start)
+            batch_start = time.time()
+            batch_idx += 1
+            if batch_idx % log_every_n_batch == 0:
+                logger.info(
+                    f"rank={torch.distributed.get_rank()}, batch={batch_idx}, latest local train_loss={loss:.6f}"
+                )
+                # Wait for GPU operations to finish
+                torch.cuda.synchronize()
+                logger.info(
+                    f"rank={torch.distributed.get_rank()}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                )
+                last_n_batch_time.clear()
+                # log the global average training loss
+                logger.info(
+                    f"rank={torch.distributed.get_rank()}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+                )
+                last_n_batch_avg_loss.clear()
+
+            if batch_idx % val_every_n_batch == 0:
+                logger.info(
+                    f"rank={torch.distributed.get_rank()}, batch={batch_idx}, validating..."
+                )
+                model.eval()
+                _run_validation_loops(
+                    model=model,
+                    main_loader=val_main_loader,
+                    random_negative_loader=val_random_negative_loader,
+                    loss_fn=loss_fn,
+                    supervision_edge_type=supervision_edge_type,
+                    device=device,
+                    log_every_n_batch=log_every_n_batch,
+                    num_batches=num_val_batches_per_process,
+                )
+                model.train()
+
+        torch.distributed.barrier()
+
+        logger.info(f"---Rank {torch.distributed.get_rank()} finished training")
+
+        # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
+        # observed that not all memory may be cleaned up, leading to OOM.
+        del train_main_loader, train_random_negative_loader
+        del val_main_loader, val_random_negative_loader
+
+        gc.collect()
+
+    else:
+        state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
+        model = DistributedDataParallel(
+            init_example_gigl_heterogeneous_model(
+                node_type_to_feature_dim=node_type_to_feature_dim,
+                edge_type_to_feature_dim=edge_type_to_feature_dim,
+                device=device,
+                state_dict=state_dict,
+            ),
+            device_ids=[device],
+            # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
+            find_unused_parameters=True,
+        )
+        logger.info(
+            f"Model initialized on rank {torch.distributed.get_rank()} training device {device}\n{model.module}"
+        )
+
+    logger.info(f"---Rank {torch.distributed.get_rank()} started testing")
+
+    test_main_loader, test_random_negative_loader = _setup_dataloaders(
+        dataset=dataset,
+        split="test",
+        supervision_edge_type=supervision_edge_type,
+        subgraph_fanout=subgraph_fanout,
+        sampling_workers_per_process=sampling_workers_per_process,
+        main_batch_size=main_batch_size,
+        random_batch_size=random_batch_size,
+        device=device,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+        process_start_gap_seconds=process_start_gap_seconds,
+    )
+
+    model.eval()
+
+    _run_validation_loops(
+        model=model,
+        main_loader=test_main_loader,
+        random_negative_loader=test_random_negative_loader,
+        loss_fn=loss_fn,
+        supervision_edge_type=supervision_edge_type,
+        device=device,
+        log_every_n_batch=log_every_n_batch,
+    )
+
+    logger.info(f"---Rank {torch.distributed.get_rank()} finished testing")
 
     torch.distributed.barrier()
 
-    logger.info(f"---Rank {torch.distributed.get_rank()} finished training")
+    # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
+    # observed that not all memory may be cleaned up, leading to OOM.
+    del test_main_loader, test_random_negative_loader
 
     # We save the model on the process with the 0th node rank and 0th local rank.
     if machine_rank == 0 and local_rank == 0:
@@ -506,11 +571,6 @@ def _training_process(
         save_state_dict(model=model, save_to_path_uri=model_uri)
 
     torch.distributed.destroy_process_group()
-
-    # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
-    # observed that not all memory may be cleaned up, leading to OOM.
-    del train_main_loader, train_random_negative_loader
-    del val_main_loader, val_random_negative_loader
 
 
 @torch.inference_mode()
@@ -601,136 +661,6 @@ def _run_validation_loops(
     )
 
     return
-
-
-def _testing_process(
-    local_rank: int,
-    local_world_size: int,
-    machine_rank: int,
-    machine_world_size: int,
-    dataset: DistLinkPredictionDataset,
-    supervision_edge_type: EdgeType,
-    node_type_to_feature_dim: dict[NodeType, int],
-    edge_type_to_feature_dim: dict[EdgeType, int],
-    master_ip_address: str,
-    master_default_process_group_port: int,
-    model_uri: Uri,
-    subgraph_fanout: list[int],
-    sampling_workers_per_process: int,
-    main_batch_size: int,
-    random_batch_size: int,
-    sampling_worker_shared_channel_size: str,
-    process_start_gap_seconds: int,
-    log_every_n_batch: int,
-):
-    """
-    Each machine spawns process(es) running this function for training a GNN model given some loaded distributed dataset.
-    Args:
-        local_rank (int): Process number on the current machine
-        local_world_size (int): Number of training processes spawned by each machine
-        machine_rank (int): Rank of the current machine
-        machine_world_size (int): Total number of machines
-        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for testing
-        supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
-        node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
-        edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension for the model per edge type
-        master_ip_address (str): IP Address of the master worker for distributed communication
-        master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
-        model_uri (Uri): URI Path to save the model to
-        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
-        sampling_workers_per_process (int): Number of sampling workers per training process
-        main_batch_size (int): Batch size for main dataloader with query and labeled nodes
-        random_batch_size (int): Batch size for random negative dataloader
-        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
-        process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
-            field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
-        log_every_n_batch (int): The frequency we should log batch information when training and validating
-    """
-    # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
-    if not torch.cuda.is_available():
-        raise NotImplementedError(
-            "Currently, only GPU training is supported with this example training loop"
-        )
-
-    world_size = machine_world_size * local_world_size
-    rank = machine_rank * local_world_size + local_rank
-    logger.info(
-        f"---Current test process rank: {rank}, test process world size: {world_size}"
-    )
-
-    # We initialize distributed process group to connect all GPUs across all machines so that the final metrics can be synchronized
-    torch.distributed.init_process_group(
-        backend="nccl",
-        init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
-        rank=rank,
-        world_size=world_size,
-    )
-    logger.info(
-        f"---Rank {torch.distributed.get_rank()} test process group initialized"
-    )
-    logger.info(f"---Rank {torch.distributed.get_rank()} test process started")
-
-    # We use one testing device for each local process
-    device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(device)
-    logger.info(
-        f"---Rank {torch.distributed.get_rank()} test process set device {device}"
-    )
-
-    test_main_loader, test_random_negative_loader = _setup_dataloaders(
-        dataset=dataset,
-        split="test",
-        supervision_edge_type=supervision_edge_type,
-        subgraph_fanout=subgraph_fanout,
-        sampling_workers_per_process=sampling_workers_per_process,
-        main_batch_size=main_batch_size,
-        random_batch_size=random_batch_size,
-        device=device,
-        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds,
-    )
-
-    model_state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
-
-    model = DistributedDataParallel(
-        init_example_gigl_heterogeneous_model(
-            node_type_to_feature_dim=node_type_to_feature_dim,
-            edge_type_to_feature_dim=edge_type_to_feature_dim,
-            device=device,
-            state_dict=model_state_dict,
-        ),
-        device_ids=[device],
-    )
-
-    logger.info(
-        f"Model initialized on rank {torch.distributed.get_rank()} test device {device} with weights loaded from {model_uri.uri}\n{model}"
-    )
-    loss_fn = RetrievalLoss(
-        loss=torch.nn.CrossEntropyLoss(reduction="mean"),
-        temperature=0.07,
-        remove_accidental_hits=True,
-    )
-
-    # We add a barrier to wait for all processes to finish preparing the dataloader prior to the start of training
-    torch.distributed.barrier()
-
-    model.eval()
-
-    _run_validation_loops(
-        model=model,
-        main_loader=test_main_loader,
-        random_negative_loader=test_random_negative_loader,
-        loss_fn=loss_fn,
-        supervision_edge_type=supervision_edge_type,
-        device=device,
-        log_every_n_batch=log_every_n_batch,
-    )
-
-    torch.distributed.destroy_process_group()
-
-    # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
-    # observed that not all memory may be cleaned up, leading to OOM.
-    del test_main_loader, test_random_negative_loader
 
 
 def _run_example_training(
@@ -863,6 +793,8 @@ def _run_example_training(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
+    should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
+
     supervision_edge_types = (
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
     )
@@ -899,39 +831,12 @@ def _run_example_training(
             num_max_train_batches,  # num_max_train_batches
             num_val_batches,  # num_val_batches
             val_every_n_batch,  # val_every_n_batch
+            should_skip_training,  # should_skip_training
         ),
         nprocs=local_world_size,
         join=True,
     )
     logger.info(f"--- Training finished, took {time.time() - start_time} seconds")
-    logger.info("--- Launching test processes ...\n")
-    start_time = time.time()
-    torch.multiprocessing.spawn(
-        _testing_process,
-        args=(  # Corresponding arguments in `_testing_process` function
-            local_world_size,  # local_world_size
-            machine_rank,  # machine_rank
-            machine_world_size,  # machine_world_size
-            dataset,  # dataset
-            supervision_edge_type,  # supervision_edge_type
-            node_type_to_feature_dim,  # node_type_to_feature_dim
-            edge_type_to_feature_dim,  # edge_type_to_feature_dim
-            master_ip_address,  # master_ip_address
-            master_process_group_port_for_testing,  # master_default_process_group_port
-            model_uri,  # model_uri
-            subgraph_fanout,  # subgraph_fanout
-            sampling_workers_per_process,  # sampling_workers_per_process
-            main_batch_size,  # main_batch_size
-            random_batch_size,  # random_batch_size
-            sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
-            process_start_gap_seconds,  # process_start_gap_seconds
-            log_every_n_batch,  # log_every_n_batch
-        ),
-        nprocs=local_world_size,
-        join=True,
-    )
-    logger.info(f"--- Testing finished, took {time.time() - start_time} seconds")
-    logger.info("--- All steps finished, exiting main ---")
 
 
 if __name__ == "__main__":
