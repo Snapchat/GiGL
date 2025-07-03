@@ -23,10 +23,8 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-    # autodoc analyses the code and docstrings by introspection after importing the modules.
-    # For importing to work, we have to make sure that your modules can be found by Sphinx and
-    # that dependencies can be resolved.
-    - name: Setup Machine for releasing documentation
+
+    - name: Setup Python deps and gcloud
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
           install_dev_deps: "true"
@@ -34,7 +32,10 @@ jobs:
           gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-    # We also make gigl available w/ editable install `-e` so that autodoc can find it.
+    # We need build and twine to build the whl and upload it to Google Artifact Registry.
+    # keyrings.google-artifactregistry-auth is needed to authenticate with Google Artifact Registry.
+    # See: https://cloud.google.com/artifact-registry/docs/python/store-python
+    # And: https://cloud.google.com/artifact-registry/docs/python/authentication
     - name: Setup environment for publishing Python package
       run: |
         python -m pip install --upgrade build twine keyrings.google-artifactregistry-auth
@@ -47,8 +48,6 @@ jobs:
         PYPIRC_CONTENTS: ${{ secrets.PYPIRC_CONTENTS }}
         PIP_CONF_CONTENTS: ${{ secrets.PIP_CONF_CONTENTS }}
       # We upload the build whls to Google Artifact Registry.
-      # See: https://cloud.google.com/artifact-registry/docs/python/store-python
-      # And: https://cloud.google.com/artifact-registry/docs/python/authentication
       run: |
         echo "$PYPIRC_CONTENTS" > ~/.pypirc
         mkdir -p ~/.pip
@@ -60,6 +59,7 @@ jobs:
 
     - name: Post Publish Package
       if: always()
+      # Clean up files created during Publish Package step.
       run: |
         rm -rf ~/.pypirc
         rm -rf ~/.pip/pip.conf
