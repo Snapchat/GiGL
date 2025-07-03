@@ -9,7 +9,7 @@ trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50"
-  command: python -m examples.distributed.homogeneous_training
+  command: python -m examples.link_prediction.homogeneous_training
 featureFlags:
   should_run_glt_backend: 'True'
 

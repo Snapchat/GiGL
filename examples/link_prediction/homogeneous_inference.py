@@ -12,7 +12,7 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.distributed.homogeneous_inference
+  command: python -m examples.link_prediction.homogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 

@@ -15,13 +15,13 @@ trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50"
-  command: python -m examples.distributed.homogeneous_training
+  command: python -m examples.link_prediction.homogeneous_training
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.distributed.homogeneous_inference
+  command: python -m examples.link_prediction.homogeneous_inference
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false

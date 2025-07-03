@@ -9,7 +9,7 @@ trainerConfig:
   trainerArgs:
     log_every_n_batch: "50"
     ssl_positive_label_percentage: "0.05"
-  command: python -m examples.distributed.heterogeneous_training
+  command: python -m examples.link_prediction.heterogeneous_training
 featureFlags:
   should_run_glt_backend: 'True'
 
