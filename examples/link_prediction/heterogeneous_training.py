@@ -26,7 +26,7 @@ import argparse
 import statistics
 import time
 from collections.abc import Iterator, Mapping
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 import torch.distributed
@@ -67,6 +67,106 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
     loss_tensor = metric.detach().clone()
     torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
     return loss_tensor.item() / torch.distributed.get_world_size()
+
+
+def _setup_dataloaders(
+    dataset: DistLinkPredictionDataset,
+    split: Literal["train", "val", "test"],
+    supervision_edge_type: EdgeType,
+    subgraph_fanout: list[int],
+    sampling_workers_per_process: int,
+    main_batch_size: int,
+    random_batch_size: int,
+    device: torch.device,
+    sampling_worker_shared_channel_size: str,
+    process_start_gap_seconds: int,
+) -> tuple[Iterator[HeteroData], Iterator[HeteroData]]:
+    """
+    Sets up main and random dataloaders for training and testing purposes
+    Args:
+        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training and testing
+        split (Literal["train", "val", "test"]): The current split which we are loading data for
+        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        sampling_workers_per_process (int): sampling_workers_per_process (int): Number of sampling workers per training/testing process
+        main_batch_size (int): Batch size for main dataloader with query and labeled nodes
+        random_batch_size (int): Batch size for random negative dataloader
+        device (torch.device): Device to put loaded subgraphs on
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
+        process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
+            field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
+    Returns:
+        Iterator[HeteroData]: Dataloader for loading main batch data with query and labeled nodes
+        Iterator[HeteroData]: Dataloader for loading random negative data
+    """
+
+    if split == "train":
+        main_input_nodes = dataset.train_node_ids
+    elif split == "val":
+        main_input_nodes = dataset.val_node_ids
+    else:
+        main_input_nodes = dataset.test_node_ids
+
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
+
+    assert isinstance(main_input_nodes, Mapping)
+
+    main_loader: Iterator[HeteroData] = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=subgraph_fanout,
+        input_nodes=(query_node_type, main_input_nodes[query_node_type]),
+        supervision_edge_type=supervision_edge_type,
+        num_workers=sampling_workers_per_process,
+        batch_size=main_batch_size,
+        pin_memory_device=device,
+        worker_concurrency=sampling_workers_per_process,
+        channel_size=sampling_worker_shared_channel_size,
+        # Each train_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
+        # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
+        process_start_gap_seconds=process_start_gap_seconds,
+    )
+
+    if split == "test":
+        main_loader = iter(main_loader)
+    else:
+        main_loader = InfiniteIterator(main_loader)
+
+    logger.info(
+        f"---Rank {torch.distributed.get_rank()} finished setting up main loader"
+    )
+
+    # We need to wait for all processes to finish initializing the main_loader before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM.
+    torch.distributed.barrier()
+
+    assert isinstance(dataset.node_ids, Mapping)
+
+    random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=subgraph_fanout,
+        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
+        num_workers=sampling_workers_per_process,
+        batch_size=random_batch_size,
+        pin_memory_device=device,
+        worker_concurrency=sampling_workers_per_process,
+        channel_size=sampling_worker_shared_channel_size,
+        process_start_gap_seconds=process_start_gap_seconds,
+    )
+
+    # If we are doing testing, we only want to go through the data once.
+    if split == "test":
+        random_negative_loader = iter(random_negative_loader)
+    # Otherwise, we will want to continue looping and should use an InfiniteIterator
+    else:
+        random_negative_loader = InfiniteIterator(random_negative_loader)
+
+    logger.info(
+        f"--Rank {torch.distributed.get_rank()} finished setting up random negative loader"
+    )
+
+    # Wait for all processes to finish initializing the random_loader
+    torch.distributed.barrier()
+
+    return main_loader, random_negative_loader
 
 
 def _compute_loss(
@@ -268,133 +368,30 @@ def _training_process(
         f"---Machine {machine_rank} local rank {local_rank} training process group initialized"
     )
 
-    # We initialize the train dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
-    # where the number indicates the local process rank. There is a `process_start_gap_seconds / 2` time.sleep() call in between each of
-    # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
-    # loaders at the same time can lead to OOM.
-
-    query_node_type = supervision_edge_type.src_node_type
-
-    labeled_node_type = supervision_edge_type.dst_node_type
-
-    assert isinstance(dataset.train_node_ids, Mapping)
-
-    # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
-    # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
-    # that the dataloader knows how to fanout around the labeled edge types. A heterogeneous DistABLPLoader will return a HeteroData object.
-    train_main_loader: Iterator[HeteroData] = DistABLPLoader(
+    train_main_loader, train_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
-        input_nodes=(query_node_type, dataset.train_node_ids[query_node_type]),
+        split="train",
         supervision_edge_type=supervision_edge_type,
-        num_workers=sampling_workers_per_process,
-        batch_size=main_batch_size,
-        pin_memory_device=device,
-        worker_concurrency=sampling_workers_per_process,
-        channel_size=sampling_worker_shared_channel_size,
-        # Each train_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
-        # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
-        process_start_gap_seconds=process_start_gap_seconds,
-        shuffle=True,
-    )
-
-    train_main_loader = InfiniteIterator(train_main_loader)
-
-    logger.info("Finished setting up train main loader.")
-
-    # We need to wait a bit before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM
-    # By setting the interval to `process_start_gap_seconds / 2`, we ensure that this will not overlap with initializing a
-    # dataloader for any other local process, since only this random_loader will initialize on
-    # the `local_process_rank * process_start_gap_seconds + process_start_gap_seconds / 2` interval.
-    time.sleep(process_start_gap_seconds / 2)
-
-    assert isinstance(dataset.node_ids, Mapping)
-
-    # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
-    # the labeled node in the link prediction task.
-    train_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
-        dataset=dataset,
-        num_neighbors=subgraph_fanout,
-        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
-        num_workers=sampling_workers_per_process,
-        batch_size=random_batch_size,
-        pin_memory_device=device,
-        worker_concurrency=sampling_workers_per_process,
-        channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=0,
-        shuffle=True,
-    )
-
-    train_random_negative_loader = InfiniteIterator(train_random_negative_loader)
-
-    logger.info("Finished setting up train random negative loader")
-
-    logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} training data loaders initialized"
-    )
-
-    # We add a barrier to wait for all the training loaders to finish initializing before we initialize the val loaders to reduce the peak memory usage.
-    # We use barrier instead of time.sleep() here so that all training dataloaders are finished initializing -- otherwise we may have a train loader and a val loader
-    # initializing at the same time on the machine across different local training processes, which could lead to a memory spike.
-    torch.distributed.barrier()
-
-    # We initialize the val dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
-    # where the number indicates the local process rank. There is a `process_start_gap_seconds / 2` time.sleep() call in between each of
-    # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
-    # loaders at the same time can lead to OOM.
-
-    assert isinstance(dataset.val_node_ids, Mapping)
-
-    # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
-    # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
-    # that the dataloader knows how to fanout around the labeled edge types. A heterogeneous DistABLPLoader will return a HeteroData object.
-    val_main_loader: Iterator[HeteroData] = DistABLPLoader(
-        dataset=dataset,
-        num_neighbors=subgraph_fanout,
-        input_nodes=(query_node_type, dataset.val_node_ids[query_node_type]),
-        supervision_edge_type=supervision_edge_type,
-        num_workers=sampling_workers_per_process,
-        batch_size=main_batch_size,
-        pin_memory_device=device,
-        worker_concurrency=sampling_workers_per_process,
-        channel_size=sampling_worker_shared_channel_size,
-        # Each val_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
-        # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
+        subgraph_fanout=subgraph_fanout,
+        sampling_workers_per_process=sampling_workers_per_process,
+        main_batch_size=main_batch_size,
+        random_batch_size=random_batch_size,
+        device=device,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
-    val_main_loader = InfiniteIterator(val_main_loader)
-
-    logger.info("Finished setting up val main loader.")
-
-    # We need to wait a bit before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM
-    # By setting the interval to `process_start_gap_seconds / 2`, we ensure that this will not overlap with initializing a
-    # dataloader for any other local process, since only this random_loader will initialize on
-    # the `local_process_rank * process_start_gap_seconds + process_start_gap_seconds / 2` interval.
-    time.sleep(process_start_gap_seconds / 2)
-
-    assert isinstance(dataset.node_ids, Mapping)
-
-    # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
-    # the labeled node in the link prediction task.
-    val_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
+    val_main_loader, val_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
-        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
-        num_workers=sampling_workers_per_process,
-        batch_size=random_batch_size,
-        pin_memory_device=device,
-        worker_concurrency=sampling_workers_per_process,
-        channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=0,
-    )
-
-    val_random_negative_loader = InfiniteIterator(val_random_negative_loader)
-
-    logger.info("Finished setting up val random negative loader.")
-
-    logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} validation data loaders initialized"
+        split="val",
+        supervision_edge_type=supervision_edge_type,
+        subgraph_fanout=subgraph_fanout,
+        sampling_workers_per_process=sampling_workers_per_process,
+        main_batch_size=main_batch_size,
+        random_batch_size=random_batch_size,
+        device=device,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+        process_start_gap_seconds=process_start_gap_seconds,
     )
 
     model = DistributedDataParallel(
@@ -681,64 +678,18 @@ def _testing_process(
         f"---Machine {machine_rank} local rank {local_rank} test process set device {device}"
     )
 
-    # We initialize the test dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
-    # where the number indicates the local process rank. There is a `process_start_gap_seconds / 2` time.sleep() call in between each of
-    # these initializations. We do this since initializing these NeighborLoaders creates a spike in memory usage, and initializing multiple
-    # loaders at the same time can lead to OOM.
-
-    query_node_type = supervision_edge_type.src_node_type
-
-    labeled_node_type = supervision_edge_type.dst_node_type
-
-    assert isinstance(dataset.test_node_ids, Mapping)
-
-    # When initializing a DistABLPLoader for heterogeneous use cases, it is important that `input_nodes` be a Tuple(NodeType, torch.Tensor) to indicate that we should
-    # be loading heterogeneous data. The NodeType in this case should be the query node type. Additionally, it is important that `supervision_edge_type` be provided so
-    # that the dataloader knows how to fanout around the labeled edge types. A heterogeneous DistABLPLoader will return a HeteroData object.
-    test_main_loader: Iterator[HeteroData] = DistABLPLoader(
+    test_main_loader, test_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
-        input_nodes=(query_node_type, dataset.test_node_ids[query_node_type]),
+        split="test",
         supervision_edge_type=supervision_edge_type,
-        num_workers=sampling_workers_per_process,
-        batch_size=main_batch_size,
-        pin_memory_device=device,
-        worker_concurrency=sampling_workers_per_process,
-        channel_size=sampling_worker_shared_channel_size,
-        # Each test_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
-        # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
+        subgraph_fanout=subgraph_fanout,
+        sampling_workers_per_process=sampling_workers_per_process,
+        main_batch_size=main_batch_size,
+        random_batch_size=random_batch_size,
+        device=device,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
     )
-
-    test_main_loader = iter(test_main_loader)
-
-    logger.info("Finished setting up test main loader.")
-
-    # We need to wait a bit before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM
-    # By setting the interval to `process_start_gap_seconds / 2`, we ensure that this will not overlap with initializing a
-    # dataloader for any other local process, since only this random_loader will initialize on
-    # the `local_process_rank * process_start_gap_seconds + process_start_gap_seconds / 2` interval.
-    time.sleep(process_start_gap_seconds / 2)
-
-    assert isinstance(dataset.node_ids, Mapping)
-
-    # Similarly, the heterogeneous DistNeighborLoader should be provided as a Tuple[NodeType, torch.Tensor], where the NodeType is the node type of
-    # the labeled node in the link prediction task.
-    test_random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
-        dataset=dataset,
-        num_neighbors=subgraph_fanout,
-        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
-        num_workers=sampling_workers_per_process,
-        batch_size=random_batch_size,
-        pin_memory_device=device,
-        worker_concurrency=sampling_workers_per_process,
-        channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=0,
-    )
-
-    test_random_negative_loader = iter(test_random_negative_loader)
-
-    logger.info("Finished setting up test random negative loader.")
 
     model_state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
 
