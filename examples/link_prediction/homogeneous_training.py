@@ -214,10 +214,10 @@ def _training_process(
     )
 
     # We use one training device for each local process
-    training_device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(training_device)
+    device = torch.device(f"cuda:{local_rank}")
+    torch.cuda.set_device(device)
     logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} training process set device {training_device}"
+        f"---Machine {machine_rank} local rank {local_rank} training process set device {device}"
     )
 
     world_size = machine_world_size * local_world_size
@@ -248,7 +248,7 @@ def _training_process(
         input_nodes=to_homogeneous(dataset.train_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
-        pin_memory_device=training_device,
+        pin_memory_device=device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         # Each train_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
@@ -273,7 +273,7 @@ def _training_process(
         input_nodes=to_homogeneous(dataset.node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
-        pin_memory_device=training_device,
+        pin_memory_device=device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=0,
@@ -303,7 +303,7 @@ def _training_process(
         input_nodes=to_homogeneous(dataset.val_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
-        pin_memory_device=training_device,
+        pin_memory_device=device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         # Each val_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
@@ -327,7 +327,7 @@ def _training_process(
         input_nodes=to_homogeneous(dataset.node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
-        pin_memory_device=training_device,
+        pin_memory_device=device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=0,
@@ -345,9 +345,9 @@ def _training_process(
         init_example_gigl_homogeneous_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
-            device=training_device,
+            device=device,
         ),
-        device_ids=[training_device],
+        device_ids=[device],
     )
 
     optimizer = torch.optim.AdamW(
@@ -359,7 +359,7 @@ def _training_process(
         remove_accidental_hits=True,
     )
     logger.info(
-        f"Model initialized on machine {machine_rank} training device {training_device}\n{model.module}"
+        f"Model initialized on machine {machine_rank} training device {device}\n{model.module}"
     )
 
     # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
@@ -393,7 +393,7 @@ def _training_process(
             main_data=main_data,
             random_negative_data=random_data,
             loss_fn=loss_fn,
-            device=training_device,
+            device=device,
         )
         optimizer.zero_grad()
         loss.backward()
@@ -428,7 +428,7 @@ def _training_process(
                 main_loader=val_main_loader,
                 random_negative_loader=val_random_negative_loader,
                 loss_fn=loss_fn,
-                device=training_device,
+                device=device,
                 log_every_n_batch=log_every_n_batch,
                 num_batches=num_val_batches_per_process,
             )
@@ -610,10 +610,10 @@ def _testing_process(
     )
 
     # We use one testing device for each local process
-    test_device = torch.device(f"cuda:{local_rank % torch.cuda.device_count()}")
-    torch.cuda.set_device(test_device)
+    device = torch.device(f"cuda:{local_rank}")
+    torch.cuda.set_device(device)
     logger.info(
-        f"---Machine {machine_rank} local rank {local_rank} test process set device {test_device}"
+        f"---Machine {machine_rank} local rank {local_rank} test process set device {device}"
     )
 
     # We initialize the test dataloaders in order: main_loader_0, random_loader_0, main_loader_1, random_loader_1, ...
@@ -627,7 +627,7 @@ def _testing_process(
         input_nodes=to_homogeneous(dataset.test_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
-        pin_memory_device=test_device,
+        pin_memory_device=device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         # Each test_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
@@ -651,7 +651,7 @@ def _testing_process(
         input_nodes=to_homogeneous(dataset.node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
-        pin_memory_device=test_device,
+        pin_memory_device=device,
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=0,
@@ -661,22 +661,20 @@ def _testing_process(
 
     logger.info("Finished setting up test random negative loader.")
 
-    model_state_dict = load_state_dict_from_uri(
-        load_from_uri=model_uri, device=test_device
-    )
+    model_state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
 
     model = DistributedDataParallel(
         init_example_gigl_homogeneous_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
-            device=test_device,
+            device=device,
             state_dict=model_state_dict,
         ),
-        device_ids=[test_device],
+        device_ids=[device],
     )
 
     logger.info(
-        f"Model initialized on machine {machine_rank} test device {test_device} with weights loaded from {model_uri.uri}\n{model}"
+        f"Model initialized on machine {machine_rank} test device {device} with weights loaded from {model_uri.uri}\n{model}"
     )
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -695,7 +693,7 @@ def _testing_process(
         main_loader=test_main_loader,
         random_negative_loader=test_random_negative_loader,
         loss_fn=loss_fn,
-        device=test_device,
+        device=device,
         log_every_n_batch=log_every_n_batch,
     )
 
