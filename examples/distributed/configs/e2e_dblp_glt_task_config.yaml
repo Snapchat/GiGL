@@ -28,6 +28,16 @@ datasetConfig:
     dataPreprocessorArgs:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'dblp_node_anchor_edge_features_lp'
+trainerConfig:
+  trainerArgs:
+    # Example argument to trainer
+    log_every_n_batch: "50"
+    # The DBLP Dataset does not have specified labeled edges so we provide this field to indicate what
+    # percentage of edges we should select as self-supervised labeled edges. Doing this randomly sets 5% as "labels".
+    # Note that the current GiGL implementation does not remove these selected edges from the global set of edges, which may
+    # have a slight negative impact on training specifically with self-supervised learning. This will improved on in the future.
+    ssl_positive_label_percentage: "0.05"
+  command: python -m examples.distributed.heterogeneous_training
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
@@ -37,12 +47,7 @@ inferencerConfig:
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false
-  shouldSkipTraining: true  # Live subgraph sampling pipelines do not have a training phase that is being tested right now
+  # Model Evaluation is only applicable for offline SGS pipelines -- we do not need it for live SGS pipelines
   shouldSkipModelEvaluation: true
-  trainedModelMetadata:
-    # This is an example model trained on the DBLP dataset. To train a custom DBLP model, please refer to the
-    # `gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml` config template.
-    # You can run a pipeline for training on DBLP using `make run_dblp_nalp_e2e_kfp_test`.
-    trainedModelUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_lp/trainer/models/model.pt
 featureFlags:
   should_run_glt_backend: 'True'
