@@ -26,7 +26,7 @@ from typing import Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.models import init_example_gigl_homogeneous_model
+from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data
 
