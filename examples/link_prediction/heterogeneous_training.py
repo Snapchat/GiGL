@@ -101,10 +101,13 @@ def _setup_dataloaders(
 
     if split == "train":
         main_input_nodes = dataset.train_node_ids
+        shuffle = True
     elif split == "val":
         main_input_nodes = dataset.val_node_ids
+        shuffle = False
     else:
         main_input_nodes = dataset.test_node_ids
+        shuffle = False
 
     query_node_type = supervision_edge_type.src_node_type
     labeled_node_type = supervision_edge_type.dst_node_type
@@ -124,6 +127,7 @@ def _setup_dataloaders(
         # Each train_main_loader will wait for `process_start_gap_seconds` * `local_process_rank` seconds before initializing to reduce peak memory usage.
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
+        shuffle=shuffle,
     )
 
     if split == "test":
@@ -150,6 +154,7 @@ def _setup_dataloaders(
         worker_concurrency=sampling_workers_per_process,
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
+        shuffle=shuffle,
     )
 
     # If we are doing testing, we only want to go through the data once.
