@@ -1,3 +1,4 @@
+# This config is used to run homogeneous CORA supervised training and inference using in memory GiGL SGS. This can be run with `make run_hom_cora_sup_test`.
 graphMetadata:
   edgeTypes:
   - dstNodeType: paper

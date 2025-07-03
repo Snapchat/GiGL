@@ -1,3 +1,4 @@
+# This config is used to run heterogeneous DBLP self-supervised training and inference using in memory GiGL SGS. This can be run with `make run_het_dblp_sup_test`.
 graphMetadata:
   # We have 3 nodes types in the DBLP Dataset: author, paper, and term. We also have 3
   # edge types: author -> paper, paper -> author, and term -> paper
