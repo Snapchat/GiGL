@@ -47,7 +47,7 @@ inferencerConfig:
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false
-  # Model Evaluation is currently only supported for offline SGS priplines. This will soon be added for live SGS pipelines using GLT.
+  # Model Evaluation is currently only supported for offline SGS pipelines. This will soon be added for live SGS pipelines using GLT.
   shouldSkipModelEvaluation: true
 featureFlags:
   should_run_glt_backend: 'True'
