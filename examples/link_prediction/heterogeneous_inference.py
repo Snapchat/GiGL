@@ -16,7 +16,7 @@ inferencerConfig:
 featureFlags:
   should_run_glt_backend: 'True'
 
-You can run this example in a full pipeline with `make run_dblp_glt_kfp_test` from GiGL root.
+You can run this example in a full pipeline with `make run_het_dblp_sup_test` from GiGL root.
 """
 
 import argparse

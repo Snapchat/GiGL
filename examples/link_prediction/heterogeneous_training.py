@@ -13,7 +13,7 @@ trainerConfig:
 featureFlags:
   should_run_glt_backend: 'True'
 
-You can run this example in a full pipeline with `make run_dblp_glt_kfp_test` from GiGL root.
+You can run this example in a full pipeline with `make run_het_dblp_sup_test` from GiGL root.
 TODO (mkolodner-sc): Add example of how to run locally once CPU support is enabled
 
 Note that the DBLP Dataset does not  have specified labeled edges so we use the `ssl_positive_label_percentage` field in the config to indicate what
