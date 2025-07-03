@@ -680,7 +680,7 @@ def _run_example_training(
     # and distributed training/testing. We can use `gloo` here since these fields we are extracting don't require GPU capabilities provided by `nccl`.
     # Note that this init_process_group uses env:// to setup the connection.
     # In VAI we create one process per node thus these variables are exposed through env i.e. MASTER_PORT , MASTER_ADDR , WORLD_SIZE , RANK that VAI sets up for us.
-    # If running locally, these env variables will need to be setup by the user manually..
+    # If running locally, these env variables will need to be setup by the user manually.
     torch.distributed.init_process_group(backend="gloo")
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
