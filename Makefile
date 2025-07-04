@@ -490,9 +490,6 @@ stop_toaster:
 	docker system prune -a --volumes
 	docker buildx prune
 
-release_gigl:
-	@echo "This needs to be implemented"
-
 build_docs:
 	sphinx-build -M clean . gh_pages_build
 	sphinx-build -M html . gh_pages_build
