@@ -6,7 +6,6 @@ from typing import Dict, List, Sequence, Tuple
 
 import google.cloud.bigquery as bigquery
 
-from gigl.common.env_config import get_available_cpus
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants import bq as bq_constants
@@ -247,7 +246,7 @@ class Enumerator:
     ) -> List[EnumeratorNodeTypeMetadata]:
         results: List[EnumeratorNodeTypeMetadata] = []
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=get_available_cpus()
+            max_workers=len(node_data_references)
         ) as executor:
             futures: List[concurrent.futures.Future] = list()
             for node_data_ref in node_data_references:
@@ -270,7 +269,7 @@ class Enumerator:
     ) -> List[EnumeratorEdgeTypeMetadata]:
         results: List[EnumeratorEdgeTypeMetadata] = []
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=get_available_cpus()
+            max_workers=len(edge_data_references)
         ) as executor:
             futures: List[concurrent.futures.Future] = list()
             for edge_data_ref in edge_data_references:
