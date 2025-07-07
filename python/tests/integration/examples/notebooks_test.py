@@ -14,15 +14,15 @@ class TestExampleNotebooks(unittest.TestCase):
         {
             # "TASK_CONFIG_URI": str(
             #     GIGL_ROOT_DIR
-            #     / "examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml"
+            #     / "examples/link_prediction/configs/e2e_cora_udl_glt_task_config.yaml"
             # ),
-            "RESOURCE_CONFIG_URI": str(
+            "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": str(
                 GIGL_ROOT_DIR / "deployment/configs/e2e_glt_resource_config.yaml"
             ),
         },
     )
     def test_cora_notebook(self):
-        cora_notebook = str(GIGL_ROOT_DIR / "examples/distributed/cora.ipynb")
+        cora_notebook = str(GIGL_ROOT_DIR / "examples/link_prediction/cora.ipynb")
         with open(cora_notebook) as f:
             nb = nbformat.read(f, as_version=4)
         ep = ExecutePreprocessor(
@@ -31,7 +31,7 @@ class TestExampleNotebooks(unittest.TestCase):
         ep.preprocess(
             nb,
             resources={
-                "metadata": {"path": str(GIGL_ROOT_DIR / "examples/distributed/")}
+                "metadata": {"path": str(GIGL_ROOT_DIR / "examples/link_prediction/")}
             },
         )
 

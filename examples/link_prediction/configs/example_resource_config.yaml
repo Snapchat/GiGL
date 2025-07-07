@@ -29,23 +29,23 @@ shared_resource_config:
 preprocessor_config:
   edge_preprocessor_config:
     num_workers: 1
-    max_num_workers: 128
-    machine_type: "n2d-highmem-32"
+    max_num_workers: 4
+    machine_type: "n2-standard-16"
     disk_size_gb: 300
   node_preprocessor_config:
     num_workers: 1
-    max_num_workers: 128
-    machine_type: "n2d-highmem-64"
+    max_num_workers: 4
+    machine_type: "n2-standard-16"
     disk_size_gb: 300
 trainer_resource_config:
   vertex_ai_trainer_config:
-    machine_type: n1-highmem-32
+    machine_type: n1-standard-16
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 2
     num_replicas: 2
 inferencer_resource_config:
   vertex_ai_inferencer_config:
-    machine_type: n1-highmem-32
+    machine_type: n1-standard-16
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 2
     num_replicas: 2
