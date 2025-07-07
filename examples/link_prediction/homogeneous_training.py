@@ -18,7 +18,6 @@ TODO (mkolodner-sc): Add example of how to run locally once CPU support is enabl
 """
 
 import argparse
-import gc
 import statistics
 import time
 from collections.abc import Iterator
@@ -451,13 +450,6 @@ def _training_process(
         torch.distributed.barrier()
 
         logger.info(f"---Rank {rank} finished training")
-
-        # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
-        # observed that not all memory may be cleaned up, leading to OOM.
-        del train_main_loader, train_random_negative_loader
-        del val_main_loader, val_random_negative_loader
-        gc.collect()
-        torch.distributed.barrier()
 
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
