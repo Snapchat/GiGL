@@ -457,6 +457,9 @@ def _training_process(
         del train_main_loader, train_random_negative_loader
         del val_main_loader, val_random_negative_loader
         gc.collect()
+
+        # If we don't include this line, we may observe errors when trying to initialize the test dataloader such as
+        # CUDA failure /tmp/graphlearn-for-pytorch/graphlearn_torch/csrc/shm_queue.cc:245: 'part or all of the requested memory range is already mapped'
         torch.cuda.empty_cache()
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
@@ -505,6 +508,9 @@ def _training_process(
     # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
     # observed that not all memory may be cleaned up, leading to OOM.
     del test_main_loader, test_random_negative_loader
+    gc.collect()
+
+    torch.cuda.empty_cache()
 
     # We save the model on the process with the 0th node rank and 0th local rank.
     if machine_rank == 0 and local_rank == 0:
