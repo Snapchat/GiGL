@@ -354,17 +354,17 @@ run_dblp_nalp_e2e_kfp_test: resource_config_uris_str:="deployment/configs/e2e_ci
 run_dblp_nalp_e2e_kfp_test: should_compile_then_run_str:="false"
 run_dblp_nalp_e2e_kfp_test: _run_e2e_kfp_test
 
-run_cora_glt_udl_kfp_test: job_name_prefixes_str:="cora_glt_udl_test_on"
-run_cora_glt_udl_kfp_test: task_config_uris_str:="examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml"
-run_cora_glt_udl_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
-run_cora_glt_udl_kfp_test: should_compile_then_run_str:="false"
-run_cora_glt_udl_kfp_test: _run_e2e_kfp_test
+run_hom_cora_sup_test: job_name_prefixes_str:="cora_glt_udl_test_on"
+run_hom_cora_sup_test: task_config_uris_str:="examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml"
+run_hom_cora_sup_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
+run_hom_cora_sup_test: should_compile_then_run_str:="false"
+run_hom_cora_sup_test: _run_e2e_kfp_test
 
-run_dblp_glt_kfp_test: job_name_prefixes_str:="dblp_glt_test_on"
-run_dblp_glt_kfp_test: task_config_uris_str:="examples/distributed/configs/e2e_dblp_glt_task_config.yaml"
-run_dblp_glt_kfp_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
-run_dblp_glt_kfp_test: should_compile_then_run_str:="false"
-run_dblp_glt_kfp_test: _run_e2e_kfp_test
+run_het_dblp_sup_test: job_name_prefixes_str:="dblp_glt_test_on"
+run_het_dblp_sup_test: task_config_uris_str:="examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml"
+run_het_dblp_sup_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
+run_het_dblp_sup_test: should_compile_then_run_str:="false"
+run_het_dblp_sup_test: _run_e2e_kfp_test
 
 # Spawns a background job for each e2e test defined by job_name_prefix, task_config_uri, and resource_config_uri
 # Waits for all jobs to finish since should_wait_for_job_to_finish:=true
@@ -382,8 +382,8 @@ run_all_e2e_tests: task_config_uris_str:=\
 		"gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml" \
 		"gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml" \
-		"examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml" \
-		"examples/distributed/configs/e2e_dblp_glt_task_config.yaml"
+		"examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml" \
+		"examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml"
 run_all_e2e_tests: resource_config_uris_str:=\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
 		"deployment/configs/e2e_cicd_resource_config.yaml"\
@@ -489,9 +489,6 @@ stop_toaster:
 	# Deletes everything associated with all stopped containers including dangling resources
 	docker system prune -a --volumes
 	docker buildx prune
-
-release_gigl:
-	@echo "This needs to be implemented"
 
 build_docs:
 	sphinx-build -M clean . gh_pages_build
