@@ -371,20 +371,6 @@ def _training_process(
         remove_accidental_hits=True,
     )
 
-    # TODO (mkolodner-sc): Investigate moving the initialization of test loaders to the end of the training loop once training has been finished
-    test_main_loader, test_random_negative_loader = _setup_dataloaders(
-        dataset=dataset,
-        split="test",
-        supervision_edge_type=supervision_edge_type,
-        subgraph_fanout=subgraph_fanout,
-        sampling_workers_per_process=sampling_workers_per_process,
-        main_batch_size=main_batch_size,
-        random_batch_size=random_batch_size,
-        device=device,
-        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds,
-    )
-
     if not should_skip_training:
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
@@ -515,6 +501,7 @@ def _training_process(
         del val_main_loader, val_random_negative_loader
 
         gc.collect()
+        torch.distributed.barrier()
 
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
@@ -536,6 +523,19 @@ def _training_process(
     logger.info(f"---Rank {rank} started testing")
 
     model.eval()
+
+    test_main_loader, test_random_negative_loader = _setup_dataloaders(
+        dataset=dataset,
+        split="test",
+        supervision_edge_type=supervision_edge_type,
+        subgraph_fanout=subgraph_fanout,
+        sampling_workers_per_process=sampling_workers_per_process,
+        main_batch_size=main_batch_size,
+        random_batch_size=random_batch_size,
+        device=device,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+        process_start_gap_seconds=process_start_gap_seconds,
+    )
 
     _run_validation_loops(
         model=model,
