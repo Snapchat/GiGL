@@ -457,7 +457,7 @@ def _training_process(
         del train_main_loader, train_random_negative_loader
         del val_main_loader, val_random_negative_loader
         gc.collect()
-        time.sleep(120)
+        torch.cuda.empty_cache()
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
         model = DistributedDataParallel(
