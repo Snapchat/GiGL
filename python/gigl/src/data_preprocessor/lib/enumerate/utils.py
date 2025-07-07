@@ -245,6 +245,10 @@ class Enumerator:
         node_data_references: Sequence[NodeDataReference],
     ) -> List[EnumeratorNodeTypeMetadata]:
         results: List[EnumeratorNodeTypeMetadata] = []
+
+        logger.info(
+            f"Launch {len(node_data_references)} node enumeration jobs in parallel."
+        )
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=len(node_data_references)
         ) as executor:
@@ -268,6 +272,10 @@ class Enumerator:
         map_enumerator_node_type_metadata: Dict[NodeType, EnumeratorNodeTypeMetadata],
     ) -> List[EnumeratorEdgeTypeMetadata]:
         results: List[EnumeratorEdgeTypeMetadata] = []
+
+        logger.info(
+            f"Launch {len(edge_data_references)} edge enumeration jobs in parallel."
+        )
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=len(edge_data_references)
         ) as executor:
