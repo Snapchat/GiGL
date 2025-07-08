@@ -1,4 +1,3 @@
-import gc
 from collections.abc import Iterable, Iterator
 from typing import TypeVar
 
@@ -33,7 +32,5 @@ class InfiniteIterator(Iterator[_T]):
 
     def shutdown(self):
         if isinstance(self._iterable, DistLoader):
+            logger.info("Shutting down dataloader ...")
             self._iterable.shutdown()
-        del self._iter
-        del self._iterable
-        gc.collect()

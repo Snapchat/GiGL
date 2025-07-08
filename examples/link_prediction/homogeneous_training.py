@@ -18,7 +18,6 @@ TODO (mkolodner-sc): Add example of how to run locally once CPU support is enabl
 """
 
 import argparse
-import gc
 import statistics
 import time
 from collections.abc import Iterator
@@ -458,16 +457,12 @@ def _training_process(
         torch.cuda.synchronize()
         torch.distributed.barrier()
 
-        # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
+        # We explicitly shutdown all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
         # observed that not all memory may be cleaned up, leading to OOM.
         train_main_loader.shutdown()
         train_random_negative_loader.shutdown()
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
-
-        del train_main_loader, train_random_negative_loader
-        del val_main_loader, val_random_negative_loader
-        gc.collect()
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
         model = DistributedDataParallel(
@@ -513,11 +508,6 @@ def _training_process(
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
     torch.distributed.barrier()
-
-    # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
-    # observed that not all memory may be cleaned up, leading to OOM.
-    del test_main_loader, test_random_negative_loader
-    gc.collect()
 
     # We save the model on the process with the 0th node rank and 0th local rank.
     if machine_rank == 0 and local_rank == 0:
