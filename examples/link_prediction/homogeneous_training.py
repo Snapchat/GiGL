@@ -358,6 +358,10 @@ def _training_process(
             sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
             process_start_gap_seconds=process_start_gap_seconds,
         )
+        assert isinstance(train_main_loader, InfiniteIterator)
+        assert isinstance(train_random_negative_loader, InfiniteIterator)
+        assert isinstance(val_main_loader, InfiniteIterator)
+        assert isinstance(val_random_negative_loader, InfiniteIterator)
 
         model = DistributedDataParallel(
             init_example_gigl_homogeneous_model(
@@ -456,6 +460,11 @@ def _training_process(
 
         # We explicitly delete all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
         # observed that not all memory may be cleaned up, leading to OOM.
+        train_main_loader.shutdown()
+        train_random_negative_loader.shutdown()
+        val_main_loader.shutdown()
+        val_random_negative_loader.shutdown()
+
         del train_main_loader, train_random_negative_loader
         del val_main_loader, val_random_negative_loader
         gc.collect()

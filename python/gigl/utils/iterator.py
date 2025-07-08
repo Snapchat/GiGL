@@ -1,5 +1,8 @@
+import gc
 from collections.abc import Iterable, Iterator
 from typing import TypeVar
+
+from graphlearn_torch.distributed import DistLoader
 
 from gigl.common.logger import Logger
 
@@ -27,3 +30,10 @@ class InfiniteIterator(Iterator[_T]):
             logger.info("InfiniteIterator restarting the internal iterator")
             self._iter = iter(self._iterable)
             return next(self._iter)
+
+    def shutdown(self):
+        if isinstance(self._iterable, DistLoader):
+            self._iterable.shutdown()
+        del self._iter
+        del self._iterable
+        gc.collect()
