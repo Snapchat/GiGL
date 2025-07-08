@@ -497,9 +497,10 @@ def _training_process(
 
         logger.info(f"---Rank {rank} finished training")
 
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
+        # Memory cleanup and waiting for all processes to finish
+        torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
+        torch.cuda.synchronize()  # Ensures all CUDA operations have finished
+        torch.distributed.barrier()  # Waits for all processes to reach the current point
 
         # We explicitly shutdown all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
         # observed that not all memory may be cleaned up, leading to OOM.
@@ -554,9 +555,10 @@ def _training_process(
 
     logger.info(f"---Rank {rank} finished testing")
 
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
-    torch.distributed.barrier()
+    # Memory cleanup and waiting for all processes to finish
+    torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
+    torch.cuda.synchronize()  # Ensures all CUDA operations have finished
+    torch.distributed.barrier()  # Waits for all processes to reach the current point
 
     # We save the model on the process with the 0th node rank and 0th local rank.
     if machine_rank == 0 and local_rank == 0:
