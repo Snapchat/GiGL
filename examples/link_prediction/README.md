@@ -17,7 +17,7 @@ We use use the DBLP dataset as an example for sampling against a heterogeneous d
 
 [heterogeneous_inference.py](./heterogeneous_inference.py) and [heterogeneous_training.py](./heterogeneous_training.py) are example inference and training loops for the DBLP dataset. The DBLP dataset is avaialble at the `PyG` `DBLP` [dataset](https://pytorch-geometric.readthedocs.io/en/2.5.2/generated/torch_geometric.datasets.DBLP.html#torch_geometric.datasets.DBLP).
 
-You can follow along with [dblp.ipynb](./dblp.ipynb) to run an e2e GiGL pipeline on the cora dataset.
+You can follow along with [dblp.ipynb](./dblp.ipynb) to run an e2e GiGL pipeline on the DBLP dataset.
 It will guide you
 through running each component: `config_populator` -> `data_preprocessor` -> `trainer` -> `inferencer`
 
