@@ -80,7 +80,7 @@ def _setup_dataloaders(
     device: torch.device,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
-) -> tuple[Iterator[HeteroData], Iterator[HeteroData]]:
+) -> tuple[DistABLPLoader, DistNeighborLoader]:
     """
     Sets up main and random dataloaders for training and testing purposes
     Args:
@@ -95,8 +95,8 @@ def _setup_dataloaders(
         process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
             field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
     Returns:
-        Iterator[HeteroData]: Dataloader for loading main batch data with query and labeled nodes
-        Iterator[HeteroData]: Dataloader for loading random negative data
+        DistABLPLoader: Dataloader for loading main batch data with query and labeled nodes
+        DistNeighborLoader: Dataloader for loading random negative data
     """
     rank = torch.distributed.get_rank()
 
@@ -115,7 +115,7 @@ def _setup_dataloaders(
 
     assert isinstance(main_input_nodes, Mapping)
 
-    main_loader: Iterator[HeteroData] = DistABLPLoader(
+    main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         input_nodes=(query_node_type, main_input_nodes[query_node_type]),
@@ -131,11 +131,6 @@ def _setup_dataloaders(
         shuffle=shuffle,
     )
 
-    if split == "test":
-        main_loader = iter(main_loader)
-    else:
-        main_loader = InfiniteIterator(main_loader)
-
     logger.info(f"---Rank {rank} finished setting up main loader")
 
     # We need to wait for all processes to finish initializing the main_loader before creating the random_negative_loader so that its initialization doesn't compete for memory with the main_loader, causing potential OOM.
@@ -143,7 +138,7 @@ def _setup_dataloaders(
 
     assert isinstance(dataset.node_ids, Mapping)
 
-    random_negative_loader: Iterator[HeteroData] = DistNeighborLoader(
+    random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=subgraph_fanout,
         input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
@@ -155,13 +150,6 @@ def _setup_dataloaders(
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
     )
-
-    # If we are doing testing, we only want to go through the data once.
-    if split == "test":
-        random_negative_loader = iter(random_negative_loader)
-    # Otherwise, we will want to continue looping and should use an InfiniteIterator
-    else:
-        random_negative_loader = InfiniteIterator(random_negative_loader)
 
     logger.info(f"--Rank {rank} finished setting up random negative loader")
 
@@ -371,6 +359,11 @@ def _training_process(
     )
 
     if not should_skip_training:
+        train_main_loader: Iterator[HeteroData]
+        train_random_negative_loader: Iterator[HeteroData]
+        val_main_loader: Iterator[HeteroData]
+        val_random_negative_loader: Iterator[HeteroData]
+
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
             split="train",
@@ -383,6 +376,9 @@ def _training_process(
             sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
             process_start_gap_seconds=process_start_gap_seconds,
         )
+
+        train_main_loader = InfiniteIterator(train_main_loader)
+        train_random_negative_loader = InfiniteIterator(train_random_negative_loader)
 
         val_main_loader, val_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
@@ -397,10 +393,8 @@ def _training_process(
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
-        assert isinstance(train_main_loader, InfiniteIterator)
-        assert isinstance(train_random_negative_loader, InfiniteIterator)
-        assert isinstance(val_main_loader, InfiniteIterator)
-        assert isinstance(val_random_negative_loader, InfiniteIterator)
+        val_main_loader = InfiniteIterator(val_main_loader)
+        val_random_negative_loader = InfiniteIterator(val_random_negative_loader)
 
         model = DistributedDataParallel(
             init_example_gigl_heterogeneous_model(
@@ -530,6 +524,9 @@ def _training_process(
 
     model.eval()
 
+    test_main_loader: Iterator[HeteroData]
+    test_random_negative_loader: Iterator[HeteroData]
+
     test_main_loader, test_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
         split="test",
@@ -542,6 +539,9 @@ def _training_process(
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
     )
+
+    test_main_loader = InfiniteIterator(test_main_loader)
+    test_random_negative_loader = InfiniteIterator(test_random_negative_loader)
 
     _run_validation_loops(
         model=model,
@@ -573,8 +573,8 @@ def _training_process(
 @torch.inference_mode()
 def _run_validation_loops(
     model: DistributedDataParallel,
-    main_loader: Iterator,
-    random_negative_loader: Iterator,
+    main_loader: Iterator[HeteroData],
+    random_negative_loader: Iterator[HeteroData],
     loss_fn: RetrievalLoss,
     supervision_edge_type: EdgeType,
     device: torch.device,
@@ -586,8 +586,8 @@ def _run_validation_loops(
     This function is shared for both validation while training and testing after training has completed.
     Args:
         model (DistributedDataParallel): DDP-wrapped torch model for training and testing
-        main_loader (Iterator[Data]): Dataloader for loading main batch data with query and labeled nodes
-        random_negative_loader (Iterator[Data]): Dataloader for loading random negative data
+        main_loader (Iterator[HeteroData]): Dataloader for loading main batch data with query and labeled nodes
+        random_negative_loader (Iterator[HeteroData]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
         device (torch.device): Device to use for training or testing
