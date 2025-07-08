@@ -38,26 +38,27 @@ class TestExampleNotebooks(unittest.TestCase):
             "GIGL_TEST_DEFAULT_RESOURCE_CONFIG",
             str(GIGL_ROOT_DIR / "deployment/configs/e2e_glt_resource_config.yaml"),
         )
+        print(f"Using resource config URI: {resource_config_uri}")
         self._notebooks = [
-            # _NoteBookTestConfig(
-            #     name="cora",
-            #     notebook_path=str(
-            #         GIGL_ROOT_DIR / "examples/link_prediction/cora.ipynb"
-            #     ),
-            #     env_overrides={
-            #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": resource_config_uri,
-            #     },
-            # ),
             _NoteBookTestConfig(
-                name="toy_example",
+                name="cora",
                 notebook_path=str(
-                    GIGL_ROOT_DIR
-                    / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
+                    GIGL_ROOT_DIR / "examples/link_prediction/cora.ipynb"
                 ),
                 env_overrides={
                     "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": resource_config_uri,
                 },
             ),
+            # _NoteBookTestConfig(
+            #     name="toy_example",
+            #     notebook_path=str(
+            #         GIGL_ROOT_DIR
+            #         / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
+            #     ),
+            #     env_overrides={
+            #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": resource_config_uri,
+            #     },
+            # ),
         ]
 
     def test_notebooks(self):
