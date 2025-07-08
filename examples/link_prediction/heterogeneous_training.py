@@ -540,8 +540,9 @@ def _training_process(
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
-    test_main_loader = InfiniteIterator(test_main_loader)
-    test_random_negative_loader = InfiniteIterator(test_random_negative_loader)
+    # Since we are doing testing, we only want to go through the data once.
+    test_main_loader = iter(test_main_loader)
+    test_random_negative_loader = iter(test_random_negative_loader)
 
     _run_validation_loops(
         model=model,
