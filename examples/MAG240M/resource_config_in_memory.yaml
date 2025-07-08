@@ -36,14 +36,14 @@ preprocessor_config:
     max_num_workers: 128
     machine_type: "n2d-highmem-64"
     disk_size_gb: 300
-trainer_config:
+trainer_resource_config:
   vertex_ai_trainer_config:
     machine_type: "n1-highmem-8"
     gpu_type: "nvidia-tesla-v100"
     gpu_limit: 1
     num_replicas: 16
-inferencer_config:
-  vertex_ai_trainer_config:
+inferencer_resource_config:
+  vertex_ai_inferencer_config:
     machine_type: "n1-highmem-8"
     gpu_type: "nvidia-tesla-v100"
     gpu_limit: 1
