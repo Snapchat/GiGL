@@ -17,14 +17,6 @@ class IteratorTest(unittest.TestCase):
             count += 1
         self.assertEqual(actual_list, expected_list)
 
-    def test_infinite_iterator_shutdown(self):
-        iterable_list: list[int] = [3, 4, 5, 6]
-        infinite_iterator = InfiniteIterator(iterable=iterable_list)
-        next(infinite_iterator)
-        infinite_iterator.shutdown()
-        with self.assertRaises(ValueError):
-            next(infinite_iterator)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -452,10 +452,10 @@ def _training_process(
 
         # We explicitly shutdown all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
         # observed that not all memory may be cleaned up, leading to OOM.
-        train_main_loader_iter.shutdown()
-        train_random_negative_loader_iter.shutdown()
-        val_main_loader_iter.shutdown()
-        val_random_negative_loader_iter.shutdown()
+        train_main_loader.shutdown()
+        train_random_negative_loader.shutdown()
+        val_main_loader.shutdown()
+        val_random_negative_loader.shutdown()
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
         model = DistributedDataParallel(
