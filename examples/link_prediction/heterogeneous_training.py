@@ -359,11 +359,6 @@ def _training_process(
     )
 
     if not should_skip_training:
-        train_main_loader: Iterator[HeteroData]
-        train_random_negative_loader: Iterator[HeteroData]
-        val_main_loader: Iterator[HeteroData]
-        val_random_negative_loader: Iterator[HeteroData]
-
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
             split="train",
@@ -377,8 +372,10 @@ def _training_process(
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
-        train_main_loader = InfiniteIterator(train_main_loader)
-        train_random_negative_loader = InfiniteIterator(train_random_negative_loader)
+        train_main_loader_iter = InfiniteIterator(train_main_loader)
+        train_random_negative_loader_iter = InfiniteIterator(
+            train_random_negative_loader
+        )
 
         val_main_loader, val_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
@@ -393,8 +390,8 @@ def _training_process(
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
-        val_main_loader = InfiniteIterator(val_main_loader)
-        val_random_negative_loader = InfiniteIterator(val_random_negative_loader)
+        val_main_loader_iter = InfiniteIterator(val_main_loader)
+        val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
 
         model = DistributedDataParallel(
             init_example_gigl_heterogeneous_model(
@@ -434,7 +431,7 @@ def _training_process(
         # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
         batch_start = time.time()
         for main_data, random_data in zip(
-            train_main_loader, train_random_negative_loader
+            train_main_loader_iter, train_random_negative_loader_iter
         ):
             if batch_idx >= num_max_train_batches_per_process:
                 logger.info(
@@ -479,8 +476,8 @@ def _training_process(
                 model.eval()
                 _run_validation_loops(
                     model=model,
-                    main_loader=val_main_loader,
-                    random_negative_loader=val_random_negative_loader,
+                    main_loader=val_main_loader_iter,
+                    random_negative_loader=val_random_negative_loader_iter,
                     loss_fn=loss_fn,
                     supervision_edge_type=supervision_edge_type,
                     device=device,
@@ -498,10 +495,10 @@ def _training_process(
 
         # We explicitly shutdown all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
         # observed that not all memory may be cleaned up, leading to OOM.
-        train_main_loader.shutdown()
-        train_random_negative_loader.shutdown()
-        val_main_loader.shutdown()
-        val_random_negative_loader.shutdown()
+        train_main_loader_iter.shutdown()
+        train_random_negative_loader_iter.shutdown()
+        val_main_loader_iter.shutdown()
+        val_random_negative_loader_iter.shutdown()
 
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
@@ -524,9 +521,6 @@ def _training_process(
 
     model.eval()
 
-    test_main_loader: Iterator[HeteroData]
-    test_random_negative_loader: Iterator[HeteroData]
-
     test_main_loader, test_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
         split="test",
@@ -541,18 +535,21 @@ def _training_process(
     )
 
     # Since we are doing testing, we only want to go through the data once.
-    test_main_loader = iter(test_main_loader)
-    test_random_negative_loader = iter(test_random_negative_loader)
+    test_main_loader_iter = iter(test_main_loader)
+    test_random_negative_loader_iter = iter(test_random_negative_loader)
 
     _run_validation_loops(
         model=model,
-        main_loader=test_main_loader,
-        random_negative_loader=test_random_negative_loader,
+        main_loader=test_main_loader_iter,
+        random_negative_loader=test_random_negative_loader_iter,
         loss_fn=loss_fn,
         supervision_edge_type=supervision_edge_type,
         device=device,
         log_every_n_batch=log_every_n_batch,
     )
+
+    test_main_loader.shutdown()
+    test_random_negative_loader.shutdown()
 
     logger.info(f"---Rank {rank} finished testing")
 
