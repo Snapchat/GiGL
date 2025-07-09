@@ -10,6 +10,7 @@ from nbconvert.preprocessors import ExecutePreprocessor
 
 from gigl.common.constants import GIGL_ROOT_DIR
 from gigl.common.logger import Logger
+from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
@@ -46,10 +47,12 @@ class TestExampleNotebooks(unittest.TestCase):
             str(GIGL_ROOT_DIR / "deployment/configs/e2e_glt_resource_config.yaml"),
         )
         logger.info(f"Using resource config URI: {resource_config_uri}")
-        gcs_uri = (
-            get_resource_config().temp_assets_regional_bucket_path
-            / uuid4().hex
-            / "resource_config.yaml"
+        gcs_uri = GcsUri.join(
+            get_resource_config().temp_assets_regional_bucket_path,
+            "testing",
+            "notebooks",
+            str(uuid4().hex),
+            "resource_config.yaml",
         )
         logger.info(f"Using GCS URI: {gcs_uri}")
         fileloader = FileLoader()
