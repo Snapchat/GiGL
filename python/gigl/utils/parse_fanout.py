@@ -1,6 +1,7 @@
 import json
 import re
 
+from typing import Union
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 
@@ -24,29 +25,42 @@ def _parse_edge_type(edge_type_str: str) -> EdgeType:
         dst_node_type=NodeType(result[2]),
     )
 
+
 def _validate_parsed_fanout(parsed_fanout: list[int]) -> None:
     if not isinstance(parsed_fanout, list):
-        raise ValueError(f"Parsed fanout expected to be a list, got {parsed_fanout} of type {type(parsed_fanout)}")
+        raise ValueError(
+            f"Parsed fanout expected to be a list, got {parsed_fanout} of type {type(parsed_fanout)}"
+        )
     for item in parsed_fanout:
         if not isinstance(item, int):
-            raise ValueError(f"Fanout must contain integers, got {item} of type {type(item)}")
+            raise ValueError(
+                f"Fanout must contain integers, got {item} of type {type(item)}"
+            )
 
-def parse_fanout(fanout_str: str) -> dict[str, list[int]]:
+
+def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]:
     try:
-        parsed_fanout: dict[str, list[int]] = json.loads(fanout_str)
+        loaded_fanout: dict[str, list[int]] = json.loads(fanout_str)
     except json.decoder.JSONDecodeError:
-        raise ValueError(f"Failed to parse provided fanout string: {fanout_str}. Please ensure the provided string is well-formed as a json.")
-    fanout = {}
-    for edge_type_str, parsed_fanout in parsed_fanout.items():
+        raise ValueError(
+            f"Failed to parse provided fanout string: {fanout_str}. Please ensure the provided string is well-formed as a json."
+        )
+    fanout: dict[EdgeType, list[int]] = {}
+    for edge_type_str, parsed_fanout in loaded_fanout.items():
         _validate_parsed_fanout(parsed_fanout=parsed_fanout)
         edge_type = _parse_edge_type(edge_type_str)
         fanout[edge_type] = parsed_fanout
-    fanout_len = next(iter(fanout.values()))
-    for
+    fanout_len = len(next(iter(fanout.values())))
+    for edge_type, fanout_list in fanout.items():
+        if len(fanout_list) != fanout_len:
+            raise ValueError(
+                f"Found a fanout length {fanout_list} for edge type {edge_type} which is different from earlier fanout length {fanout_len}. \
+                Please ensure all fanouts have the same number of hops."
+            )
     logger.info(f"Parsed fanout from args: {fanout}")
     return fanout
 
 
 if __name__ == "__main__":
-    fanout_str = '{"c-to-d": [10, 20, 30], "a-to-b": [10, 11, 12], "e-to-f": [5, 5, 5]}'
+    fanout_str = '{"c-to-d": [10, 15, 20], "a-to-b": [10, 11, 12], "e-to-f": [5, 5, 5]}'
     fanout = parse_fanout(fanout_str=fanout_str)
