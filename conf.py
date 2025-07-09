@@ -120,6 +120,12 @@ html_theme_options = {
     # Allow user to directly edit the documentation
     # https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/source-buttons.html#add-an-edit-button
     "use_edit_page_button": True,
+    # Configure secondary sidebar - remove right sidebar from example pages
+    "secondary_sidebar_items": {
+        "**": ["page-toc", "edit-this-page", "sourcelink"],  # Default for all pages
+        "examples/**": [],  # Remove right sidebar from examples as they mostly contain notebooks
+        "docs/api/**": [],  # Remove right sidebar from all pages under docs/api to provide more screen real estate
+    },
 }
 
 # Allow user to directly edit the documentation
