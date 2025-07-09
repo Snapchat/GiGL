@@ -372,6 +372,8 @@ def _training_process(
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
+        # We keep track of both the dataloader and the iterator for it
+        # so we can clean up resources from the dataloader later.
         train_main_loader_iter = InfiniteIterator(train_main_loader)
         train_random_negative_loader_iter = InfiniteIterator(
             train_random_negative_loader
@@ -390,6 +392,8 @@ def _training_process(
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
+        # We keep track of both the dataloader and the iterator for it
+        # so we can clean up resources from the dataloader later.
         val_main_loader_iter = InfiniteIterator(val_main_loader)
         val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
 
@@ -534,7 +538,9 @@ def _training_process(
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
-    # Since we are doing testing, we only want to go through the data once.
+    # We keep track of both the dataloader and the iterator for it
+    # so we can clean up resources from the dataloader later.
+    # Since we are doing testing, we only want to go through the data once, so we use iter instead of InfiniteIterator.
     test_main_loader_iter = iter(test_main_loader)
     test_random_negative_loader_iter = iter(test_random_negative_loader)
 
