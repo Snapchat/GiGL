@@ -4,6 +4,7 @@ from typing import Optional
 
 import psutil
 import torch
+from graphlearn_torch.distributed import get_context, init_worker_group
 
 from gigl.common.logger import Logger
 
@@ -141,4 +142,16 @@ def init_neighbor_loader_worker(
         torch.cuda.empty_cache()
         logger.info(
             f"Machine {rank} local rank {local_process_rank} uses device {torch.cuda.current_device()} by default"
+        )
+
+    # Only initial the worker group if it is not already initialized
+    if get_context() is None:
+        group_name = get_process_group_name(local_process_rank)
+        logger.info(
+            f"Init worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
+        )
+        init_worker_group(
+            world_size=world_size,
+            rank=rank,
+            group_name=group_name,
         )
