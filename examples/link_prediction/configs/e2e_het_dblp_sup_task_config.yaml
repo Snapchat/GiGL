@@ -40,7 +40,7 @@ trainerConfig:
     ssl_positive_label_percentage: "0.05"
     # Example of a JSON dictionary fanout which has different fanout-per-hop for each edge type.
     # Note that edge types must be provided in format SRC-RELATION-DST, as demonstrated below
-    fanout: "{'term-to-paper': [10, 10], 'paper-to-author': [15, 15], 'author-to-paper': [20, 20]}"
+    fanout: '{"term-to-paper": [10, 10], "paper-to-author": [15, 15], "author-to-paper": [20, 20]}'
   command: python -m examples.link_prediction.heterogeneous_training
 inferencerConfig:
   inferencerArgs:
