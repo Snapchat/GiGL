@@ -16,7 +16,7 @@ def run(pattern: str = "*_test.py") -> bool:
             local_fs_constants.get_python_project_root_path(), "tests", "integration"
         ),
         pattern=pattern,
-        use_sequential_execution=True,
+        use_sequential_execution=False,
     )
 
 
