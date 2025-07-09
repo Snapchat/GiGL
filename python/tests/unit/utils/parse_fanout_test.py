@@ -51,23 +51,23 @@ class ParseFanoutTest(unittest.TestCase):
                 input_fanout='{"user-to-user": [10, 10], "user-to-item"; [20, 20]}',
             ),
             param(
-                "Fails when not list or dict is provided from parsed json",
+                "Fails when neither list nor dict is provided from parsed json",
                 input_fanout="5",
             ),
             param(
-                "Fails when not list contains non-integers",
+                "Fails when list contains non-integers",
                 input_fanout='["10", 15, 20]',
             ),
             param(
-                "Fails when not dict fanout contains non-integers",
+                "Fails when dict fanout contains non-integers",
                 input_fanout='{"user-to-user": ["10", 10], "user-to-item": [20, 20]}',
             ),
             param(
-                "Fails when not edge type is not correctly provided",
+                "Fails when edge type is not correctly provided",
                 input_fanout='{"user_to_user": [10, 10], "user-to-item": [20, 20]}',
             ),
             param(
-                "Fails when not edge types contain different number of hops",
+                "Fails when edge types contain different number of hops",
                 input_fanout='{"user_to_user": [10, 10], "user-to-item": [20, 20, 30]}',
             ),
         ]
