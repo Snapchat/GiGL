@@ -58,6 +58,7 @@ SPARK_31_TFRECORD_JAR_GCS_PATH: Final[str] = _make_file_vars[
     "SPARK_31_TFRECORD_JAR_GCS_PATH"
 ]
 
+
 # Ensure that the local path is a fully resolved local path
 SPARK_35_TFRECORD_JAR_LOCAL_PATH: Final[str] = str(
     Path.joinpath(GIGL_ROOT_DIR, _make_file_vars["SPARK_35_TFRECORD_JAR_LOCAL_PATH"])
@@ -65,3 +66,16 @@ SPARK_35_TFRECORD_JAR_LOCAL_PATH: Final[str] = str(
 SPARK_31_TFRECORD_JAR_LOCAL_PATH: Final[str] = str(
     Path.joinpath(GIGL_ROOT_DIR, _make_file_vars["SPARK_31_TFRECORD_JAR_LOCAL_PATH"])
 )
+
+
+# === The src Docker image paths that were released as part of releasing this version of GiGL ===
+DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA: Final[str] = _make_file_vars[
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA"
+]
+DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU: Final[str] = _make_file_vars[
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU"
+]
+DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU: Final[str] = _make_file_vars[
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU"
+]
+# ===============================================================================================
