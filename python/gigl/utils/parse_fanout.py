@@ -63,7 +63,7 @@ def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]
         [10, 15, 20]
 
     To parse a dict[EdgeType, list[int]], one could provide a fanout_str such as
-        {"user-to-item": [10, 10], "item-to-user": [20, 20]}
+        {"user-to-user": [10, 10], "user-to-item": [20, 20]}
 
     Args:
         fanout_str (str): Json string to be parsed into fanout
