@@ -4,7 +4,6 @@ from typing import Optional
 
 import psutil
 import torch
-from graphlearn_torch.distributed import init_rpc, init_worker_group
 
 from gigl.common.logger import Logger
 
@@ -143,44 +142,3 @@ def init_neighbor_loader_worker(
         logger.info(
             f"Machine {rank} local rank {local_process_rank} uses device {torch.cuda.current_device()} by default"
         )
-
-    # Group of workers. Each process is a worker. Each
-    # worker will initiate one model and at least one data loader. Each data loader
-    # will spawn several sampling processes (a.k.a. sampling workers).
-    # Instead of combining all workers into one group, we define N groups where
-    # N is the number of processes on each machine. Specifically, we have
-    # Group 0: (Machine 0, process 0), (Machine 1, process 0),..., (Machine M, process 0)
-    # Group 1: (Machine 0, process 1), (Machine 1, process 1),..., (Machine M, process 1)
-    # ...
-    # Group N-1: (Machine 0, process N-1), (Machine 1, process N-1),..., (Machine M, process N-1)
-    # We do this as we want to start different groups in different times to smooth
-    # the spike of memory usage as mentioned above.
-
-    group_name = get_process_group_name(local_process_rank)
-    logger.info(
-        f"Init worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
-    )
-    init_worker_group(
-        world_size=world_size,
-        rank=rank,
-        group_name=group_name,
-    )
-
-    # Initialize the communication channel across all workers in one group, so
-    # that we could add barrier and wait all workers to finish before quitting.
-    # Note that all sampling workers across all processeses in one group need to
-    # be connected for graph sampling. Thus, a worker needs to wait others even
-    # if it finishes, as quiting process will shutdown the correpsonding sampling
-    # workers, and break the connection with other sampling workers.
-    # Note that different process groups are independent of each other. Therefore,
-    # they have to use different master ports.
-    logger.info(
-        f"Initing worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
-    )
-    init_rpc(
-        master_addr=master_ip_address,
-        master_port=master_worker_port,
-        rpc_timeout=600,
-    )
-
-    logger.info(f"Group {group_name} with rpc is initiated")

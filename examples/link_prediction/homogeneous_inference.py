@@ -27,7 +27,7 @@ from typing import Dict, List
 import torch
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from graphlearn_torch.distributed import barrier, shutdown_rpc
+from graphlearn_torch.distributed import barrier
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -267,7 +267,6 @@ def _inference_process(
     )
 
     # Clean up for a graceful exit
-    shutdown_rpc()
 
 
 def _run_example_inference(
