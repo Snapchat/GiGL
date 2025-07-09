@@ -140,7 +140,7 @@ def init_neighbor_loader_worker(
             f"Machine {machine_rank} local rank {local_process_rank} uses device {torch.cuda.current_device()} by default"
         )
 
-    # Only initial the worker group if it is not already initialized
+    # Only initialize the worker group if it is not already set up
     if get_context() is None:
         # Group of workers. Each process is a worker. Each
         # worker will initiate one model and at least one data loader. Each data loader
