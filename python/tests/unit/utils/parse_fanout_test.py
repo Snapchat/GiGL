@@ -3,12 +3,8 @@ from typing import Union
 
 from parameterized import param, parameterized
 
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.utils.parse_fanout import parse_fanout
-from tests.test_assets.distributed.constants import (
-    USER_TO_ITEM_EDGE_TYPE,
-    USER_TO_USER_EDGE_TYPE,
-)
 
 
 class ParseFanoutTest(unittest.TestCase):
@@ -23,8 +19,14 @@ class ParseFanoutTest(unittest.TestCase):
                 "Correctly parses a dictionary fanout",
                 input_fanout='{"user-to-user": [10, 10], "user-to-item": [20, 20]}',
                 expected_fanout={
-                    USER_TO_USER_EDGE_TYPE: [10, 10],
-                    USER_TO_ITEM_EDGE_TYPE: [20, 20],
+                    EdgeType(NodeType("user"), Relation("to"), NodeType("user")): [
+                        10,
+                        10,
+                    ],
+                    EdgeType(NodeType("user"), Relation("to"), NodeType("item")): [
+                        20,
+                        20,
+                    ],
                 },
             ),
         ]
