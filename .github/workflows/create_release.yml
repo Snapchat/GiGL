@@ -46,7 +46,7 @@ jobs:
     - name: Get current version
       id: get_version
       run: |
-        CURRENT_VERSION=$(python scripts/versioning_and_release.py --get_current_version)
+        CURRENT_VERSION=$(python -m scripts.versioning_and_release --get_current_version)
         echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         echo "Current version: $CURRENT_VERSION"
 
@@ -61,14 +61,14 @@ jobs:
 
     - name: Run versioning and release
       run: |
-        python scripts/versioning_and_release.py \
+        python -m scripts.versioning_and_release \
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
           --project ${{ secrets.GCP_PROJECT_ID }}
 
     - name: Get new version
       id: get_new_version
       run: |
-        NEW_VERSION=$(python scripts/versioning_and_release.py --get_current_version)
+        NEW_VERSION=$(python -m scripts.versioning_and_release --get_current_version)
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "New version: $NEW_VERSION"
 
