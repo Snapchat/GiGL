@@ -19,10 +19,9 @@
 ### What is Pre-commit
 
 See https://pre-commit.com. We use `pre-commit` hooks to facilitate development. These are scripts that run before each
-commit to perform checks and validations, helping maintain code quality and consistency. Hooks are
-configured in the `.pre-commit-config.yaml` file. Whenever you attempt to commit changes, these pre-commit hooks will
-automatically run. If any of the hooks fail, the commit will be aborted, allowing you to fix the issues before
-proceeding.
+commit to perform checks and validations, helping maintain code quality and consistency. Hooks are configured in the
+`.pre-commit-config.yaml` file. Whenever you attempt to commit changes, these pre-commit hooks will automatically run.
+If any of the hooks fail, the commit will be aborted, allowing you to fix the issues before proceeding.
 
 #### Skip pre-commit hooks
 
@@ -39,9 +38,12 @@ Follow the [Adding a new Package as a Dependency](./adding_new_package.md) guide
 
 (When building docker images.)
 
-1. Allocate more resources to docker i.e. <img width="550" alt="" src="../../assets/images/docker-allocate-more.png">
+- Run `make stop_toaster` to clean up old images
 
-2. Run `make stop_toaster` to clean up old images
+- Secondly, if you are using Docker Desktop, allocate more resources to docker - the default values are usually too
+  small. Under settings/resources:
+
+<img width="550" alt="" src="../../assets/images/docker-allocate-more.png">
 
 ### Error: scalafix.sbt.ScalafixFailed: NoFilesError
 
