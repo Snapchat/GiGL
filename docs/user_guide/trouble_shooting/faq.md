@@ -19,9 +19,7 @@
 ### What is Pre-commit
 
 See https://pre-commit.com. We use `pre-commit` hooks to facilitate development. These are scripts that run before each
-commit to perform checks and validations, helping maintain code quality and consistency. For example, a hook is
-currently used to create markdown files from `.ipynb` files for easy code reviews. `pre-commit` should be installed as
-part of the `bagl` conda environment as part of [development setup](#development-environment-setup). Hooks are
+commit to perform checks and validations, helping maintain code quality and consistency. Hooks are
 configured in the `.pre-commit-config.yaml` file. Whenever you attempt to commit changes, these pre-commit hooks will
 automatically run. If any of the hooks fail, the commit will be aborted, allowing you to fix the issues before
 proceeding.
