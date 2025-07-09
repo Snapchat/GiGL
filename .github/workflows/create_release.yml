@@ -38,6 +38,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
+        install_dev_deps: "true"
         gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
