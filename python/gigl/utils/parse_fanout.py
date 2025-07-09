@@ -37,7 +37,7 @@ def _parse_edge_type(edge_type_str: str) -> EdgeType:
 
 def _validate_parsed_fanout(parsed_fanout: Any) -> None:
     """
-    Validates that the parsed fanout from the json is correctly specified as a list of integers.
+    Validates that the parsed fanout from the JSON is correctly specified as a list of integers.
 
     Args:
         parsed_fanout (Any): Fanout which is expected to be a list of integers
@@ -55,7 +55,7 @@ def _validate_parsed_fanout(parsed_fanout: Any) -> None:
 
 def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]:
     """
-    Parses fanout from a json string. The fanout string provided must be a well-formed and must be provided as a list[int] or as a
+    Parses fanout from a JSON string. The fanout string provided must be a well-formed and must be provided as a list[int] or as a
     dict[str, list[int]]. In the case of the dictionary specification, the keys must be of form 'SRC-RELATION-DST',
     where SRC is the source node type string, RELATION is the relation string, and DST is the destination node type string.
 
@@ -74,7 +74,7 @@ def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]
         loaded_fanout = json.loads(fanout_str)
     except json.decoder.JSONDecodeError:
         raise ValueError(
-            f"Failed to parse provided fanout string: {fanout_str}. Please ensure the provided string is well-formed as a json."
+            f"Failed to parse provided fanout string: {fanout_str}. Please ensure the provided string is well-formed as a JSON."
         )
     if isinstance(loaded_fanout, list):
         _validate_parsed_fanout(parsed_fanout=loaded_fanout)
