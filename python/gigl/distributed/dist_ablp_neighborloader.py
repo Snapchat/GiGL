@@ -159,8 +159,8 @@ class DistABLPLoader(DistLoader):
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
 
-        node_world_size: int
-        node_rank: int
+        machine_world_size: int
+        machine_rank: int
         rank: int
         world_size: int
         local_rank: int
@@ -178,13 +178,13 @@ class DistABLPLoader(DistLoader):
             ), "context: DistributedContext provided, so local_process_rank must be provided."
 
             master_ip_address = context.main_worker_ip_address
-            node_world_size = context.global_world_size
-            node_rank = context.global_rank
+            machine_world_size = context.global_world_size
+            machine_rank = context.global_rank
             local_world_size = local_process_world_size
             local_rank = local_process_rank
 
-            rank = node_rank * local_world_size + local_rank
-            world_size = node_world_size * local_world_size
+            rank = machine_rank * local_world_size + local_rank
+            world_size = machine_world_size * local_world_size
 
             if not torch.distributed.is_initialized():
                 logger.info(
@@ -220,9 +220,9 @@ class DistABLPLoader(DistLoader):
                         + f"count_ranks_per_ip_address = {count_ranks_per_ip_address}"
                     )
 
-            node_world_size = len(count_ranks_per_ip_address)
+            machine_world_size = len(count_ranks_per_ip_address)
             local_rank = rank % local_world_size
-            node_rank = rank // local_world_size
+            machine_rank = rank // local_world_size
 
         del (
             context,
@@ -332,14 +332,10 @@ class DistABLPLoader(DistLoader):
             local_process_world_size=local_world_size,
         )
 
-        # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
+        # Sets up processes for initializing the dataloader, setting up worker groups to minimize
         # the memory overhead and CPU contention.
-        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
         logger.info(
-            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {self.to_device} on port {neighbor_loader_port_for_current_rank}."
+            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {self.to_device}"
         )
         should_use_cpu_workers = self.to_device.type == "cpu"
         if should_use_cpu_workers and num_cpu_threads is None:
@@ -350,12 +346,10 @@ class DistABLPLoader(DistLoader):
             num_cpu_threads = DEFAULT_NUM_CPU_THREADS
 
         gigl.distributed.utils.init_neighbor_loader_worker(
-            master_ip_address=master_ip_address,
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
-            rank=node_rank,
-            world_size=node_world_size,
-            master_worker_port=neighbor_loader_port_for_current_rank,
+            machine_rank=machine_rank,
+            machine_world_size=machine_world_size,
             device=self.to_device,
             should_use_cpu_workers=should_use_cpu_workers,
             # Lever to explore tuning for CPU based inference
