@@ -190,7 +190,7 @@ integration_test:
 	python -m tests.integration.main \
 	--env=test \
 	--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
-	--test_file_pattern=${PY_TEST_FILES} \
+	--test_file_pattern=$(PY_TEST_FILES) \
 	)
 
 mock_assets:
