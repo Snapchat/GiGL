@@ -35,6 +35,7 @@ def _run_notebook(config: _NoteBookTestConfig) -> None:
         ep = ExecutePreprocessor(timeout=config.timeout, kernel_name="python")
         ep.preprocess(
             nb,
+            # Pretend like we're running in the same directory as the notebook.
             resources={"metadata": {"path": os.path.dirname(config.notebook_path)}},
         )
 
@@ -42,11 +43,16 @@ def _run_notebook(config: _NoteBookTestConfig) -> None:
 class TestExampleNotebooks(unittest.TestCase):
     def setUp(self):
         super().setUp()
+        # Respect the environment variable for resource config URI
+        # if not, set it to some default value.
         resource_config_uri = os.environ.get(
             "GIGL_TEST_DEFAULT_RESOURCE_CONFIG",
             str(GIGL_ROOT_DIR / "deployment/configs/e2e_glt_resource_config.yaml"),
         )
         logger.info(f"Using resource config URI: {resource_config_uri}")
+        # Copy over resource config to GCS so all machines can access it.
+        # If we don't do this, then since different machines run this test case,
+        # And run some of the buisness logic, they will not have access to the resource config.
         gcs_uri = GcsUri.join(
             get_resource_config().temp_assets_regional_bucket_path,
             "testing",
@@ -67,6 +73,7 @@ class TestExampleNotebooks(unittest.TestCase):
                     "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": str(gcs_uri),
                 },
             ),
+            # TODO(kmonte): Fix the toy example notebook and enable tests for it.
             # _NoteBookTestConfig(
             #     name="toy_example",
             #     notebook_path=str(
@@ -81,6 +88,8 @@ class TestExampleNotebooks(unittest.TestCase):
 
     def test_notebooks(self):
         futures: dict[str, Future[None]] = {}
+        # We use a ThreadPoolExecutor to run notebooks in parallel.
+        # If we don't do this then the tests will be much slower.
         with ThreadPoolExecutor() as executor:
             for notebook in self._notebooks:
                 futures[notebook.name] = executor.submit(_run_notebook, notebook)
@@ -91,31 +100,6 @@ class TestExampleNotebooks(unittest.TestCase):
                     future.result()
                 except Exception as e:
                     self.fail(f"Notebook {name} failed with exception: {e}")
-
-    # @mock.patch.dict(
-    #     os.environ,
-    #     {
-    #         # "TASK_CONFIG_URI": str(
-    #         #     GIGL_ROOT_DIR
-    #         #     / "examples/link_prediction/configs/e2e_cora_udl_glt_task_config.yaml"
-    #         # ),
-    #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": os.environ.get(
-    #             "GIGL_TEST_DEFAULT_RESOURCE_CONFIG",
-    #             str(GIGL_ROOT_DIR / "deployment/configs/e2e_glt_resource_config.yaml"),
-    #         ),
-    #     },
-    # )
-    # def test_cora_notebook(self):
-    #     cora_notebook = str(GIGL_ROOT_DIR / "examples/link_prediction/cora.ipynb")
-    #     with open(cora_notebook) as f:
-    #         nb = nbformat.read(f, as_version=4)
-    #     ep = ExecutePreprocessor(timeout=600, kernel_name="python")
-    #     ep.preprocess(
-    #         nb,
-    #         resources={
-    #             "metadata": {"path": str(GIGL_ROOT_DIR / "examples/link_prediction/")}
-    #         },
-    #     )
 
 
 if __name__ == "__main__":
