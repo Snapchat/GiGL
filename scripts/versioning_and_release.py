@@ -1,3 +1,19 @@
+"""
+This script can be used to:
+- Get the current version of GiGL
+- Bump the version of GiGL, and subsequently release the src images and KFP pipeline
+
+Example Usage:
+Bump patch version and release resources:
+python scripts/versioning_and_release.py --bump_type patch --project gigl-public-ci
+
+Bump the nightly version and release resources:
+python scripts/versioning_and_release.py --bump_type nightly --project gigl-public-ci
+
+Get current version:
+python scripts/versioning_and_release.py --get_current_version
+"""
+
 import argparse
 import datetime
 import re
