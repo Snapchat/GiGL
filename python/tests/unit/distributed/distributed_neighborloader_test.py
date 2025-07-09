@@ -299,6 +299,9 @@ def _run_multiple_neighbor_loader(
     # https://paperswithcode.com/dataset/cora
     assert count == expected_data_count
 
+    loader_one.shutdown()
+    loader_two.shutdown()
+
     loader_three = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
