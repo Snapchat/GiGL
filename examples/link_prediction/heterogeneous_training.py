@@ -50,6 +50,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.utils.iterator import InfiniteIterator
+from gigl.utils.parse_fanout import parse_fanout
 
 logger = Logger()
 
@@ -690,19 +691,14 @@ def _run_example_training(
                 f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
             )
 
-    fanout_per_hop = int(trainer_args.get("fanout_per_hop", "10"))
+    # Parses the fanout as a JSON string. For the heterogeneous case, the fanouts can be specified as a JSON string of a list of integers, such as "[10, 10]", which will
+    # apply this fanout to each edge type in the graph, or as JSON string of format dict[str, list[int]] which will specify fanouts per edge type. In the case of the latter,
+    # the string keys should be specified with format "SRC-RELATION-DST", where SRC is the source node type string, RELATION is the relation string, and DST is the destination node type string.
+    # For the default, we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`. To see an example of
+    # a 'fanout' with different behaviors per edge type, refer to `examples.link_prediction.configs.e2e_het_dblp_sup_task_config.yaml`.
 
-    # If `subgraph_fanout` is provided as a list, it will use that fanout for each edge type. Otherwise, subgraph fanout should be provided as a
-    # dict[EdgeType, list[int]], indicating the fanout behavior for each edge type. Different edge types can have different fanout strategies. For simplicity,
-    # we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `subraph_fanout` with a `list[int]`.
-
-    # TODO (mkolodner-sc): Make the heterogeneous example use a dict[EdgeType, list[int]] instead of list[int] for specifying fanout
-    # For example:
-    # subgraph_fanout: dict[EdgeType, list[int]] = {
-    #    EdgeType(NodeType("author"), Relation("to"), NodeType("paper")): [10, 10].
-    #    EdgeType(NodeType("term"), Relation("to"), NodeType("paper")): [10, 10].
-    # }
-    subgraph_fanout: list[int] = [fanout_per_hop, fanout_per_hop]
+    fanout = trainer_args.get("fanout", "[10, 10]")
+    subgraph_fanout = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -735,7 +731,7 @@ def _run_example_training(
 
     logger.info(
         f"Got training args local_world_size={local_world_size}, \
-        fanout_per_hop={fanout_per_hop}, \
+        subgraph_fanout={subgraph_fanout}, \
         sampling_workers_per_process={sampling_workers_per_process}, \
         main_batch_size={main_batch_size}, \
         random_batch_size={random_batch_size}, \
