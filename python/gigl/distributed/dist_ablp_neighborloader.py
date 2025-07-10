@@ -311,20 +311,20 @@ class DistABLPLoader(DistLoader):
             )
         )
 
-        # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
-        num_neighbors = patch_fanout_for_sampling(
-            dataset.get_edge_types(), num_neighbors
-        )
-
-        if num_neighbors.keys() != dataset.graph.keys():
-            raise ValueError(
-                f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset.graph.keys()}"
+        if dataset.get_edge_types() is not None:
+            num_neighbors = patch_fanout_for_sampling(
+                dataset.get_edge_types(), num_neighbors
             )
-        hops = len(next(iter(num_neighbors.values())))
-        if not all(len(fanout) == hops for fanout in num_neighbors.values()):
-            raise ValueError(
-                f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
-            )
+            hops = len(next(iter(num_neighbors.values())))
+            if not all(len(fanout) == hops for fanout in num_neighbors.values()):
+                raise ValueError(
+                    f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
+                )
+        else:
+            if isinstance(num_neighbors, abc.Mapping):
+                raise ValueError(
+                    "When dataset is homogeneous, the num_neighbors field cannot be a dictionary."
+                )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=anchor_node_ids,
