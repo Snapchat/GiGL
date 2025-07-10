@@ -1,6 +1,8 @@
+from typing import Callable, Final
+
 from torch.nn import functional as F
 
-ACT_MAP = {
+ACT_MAP: Final[dict[str, Callable]] = {
     "relu": F.relu,
     "elu": F.elu,
     "leakyrelu": F.leaky_relu,
@@ -9,4 +11,5 @@ ACT_MAP = {
     "gelu": F.gelu,
     "silu": F.silu,
 }
-DEFAULT_NUM_GNN_HOPS = 2
+
+DEFAULT_NUM_GNN_HOPS: Final[int] = 2
