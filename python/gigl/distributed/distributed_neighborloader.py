@@ -228,20 +228,9 @@ class DistNeighborLoader(DistLoader):
                 dataset.node_ids, abc.Mapping
             ), "Dataset must be heterogeneous if provided input nodes are a tuple."
 
-        if dataset.get_edge_types() is not None:
-            num_neighbors = patch_fanout_for_sampling(
-                dataset.get_edge_types(), num_neighbors
-            )
-            hops = len(next(iter(num_neighbors.values())))
-            if not all(len(fanout) == hops for fanout in num_neighbors.values()):
-                raise ValueError(
-                    f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
-                )
-        else:
-            if isinstance(num_neighbors, abc.Mapping):
-                raise ValueError(
-                    "When dataset is homogeneous, the num_neighbors field cannot be a dictionary."
-                )
+        num_neighbors = patch_fanout_for_sampling(
+            dataset.get_edge_types(), num_neighbors
+        )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,

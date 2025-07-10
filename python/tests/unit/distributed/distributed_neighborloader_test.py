@@ -759,8 +759,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 fanout=[2, 2],
             ),
             param(
-                "Range-based partitioning, list fanout",
-                partitioner_class=DistPartitioner,
+                "Range-based partitioning, dict fanout",
+                partitioner_class=DistRangePartitioner,
                 fanout={
                     EdgeType(NodeType("user"), Relation("to"), NodeType("story")): [
                         2,
