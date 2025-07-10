@@ -202,6 +202,10 @@ class DistNeighborLoader(DistLoader):
                 )
             input_nodes = dataset.node_ids
 
+        num_neighbors = patch_fanout_for_sampling(
+            dataset.get_edge_types(), num_neighbors
+        )
+
         if isinstance(num_neighbors, abc.Mapping):
             # TODO(kmonte): We should enable this. We have two blockers:
             # 1. We need to treat `EdgeType` as a proper tuple, not the GiGL`EdgeType`.
@@ -235,9 +239,6 @@ class DistNeighborLoader(DistLoader):
                 ):
                     node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
                     self._is_labeled_heterogeneous = True
-                    num_neighbors = patch_fanout_for_sampling(
-                        dataset.get_edge_types(), num_neighbors
-                    )
                 else:
                     raise ValueError(
                         f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
@@ -249,9 +250,6 @@ class DistNeighborLoader(DistLoader):
             assert isinstance(
                 dataset.node_ids, abc.Mapping
             ), "Dataset must be heterogeneous if provided input nodes are a tuple."
-            num_neighbors = patch_fanout_for_sampling(
-                dataset.get_edge_types(), num_neighbors
-            )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
