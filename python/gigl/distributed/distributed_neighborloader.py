@@ -202,9 +202,10 @@ class DistNeighborLoader(DistLoader):
                 )
             input_nodes = dataset.node_ids
 
-        num_neighbors = patch_fanout_for_sampling(
-            dataset.get_edge_types(), num_neighbors
-        )
+        if dataset.get_edge_types() is not None:
+            num_neighbors = patch_fanout_for_sampling(
+                dataset.get_edge_types(), num_neighbors
+            )
 
         if isinstance(num_neighbors, abc.Mapping):
             # TODO(kmonte): We should enable this. We have two blockers:
