@@ -23,6 +23,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Machine for fossa-analyze
+        uses: snapchat/gigl/.github/actions/setup-python-tools@main
+        with:
+            install_dev_deps: "true"
+            # setup_gcloud: "true"
+            # gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+            # workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+            # gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
       - name: Install Fossa
         run: |
             SHA256=0c59fed2b76ddd6a9dbd0b2a937796a162b8ccc730c63a3a33528b30291dc5cb
