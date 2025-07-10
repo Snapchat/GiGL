@@ -134,7 +134,7 @@ def get_new_version(
         patch += 1
     new_version = f"{major}.{minor}.{patch}"
     if bump_type == "nightly":
-        new_version += f"-nightly.{datetime.datetime.now().strftime('%Y%m%d')}"
+        new_version += f"-nightly.{datetime.datetime.now().strftime('%Y%m%d.%H%M%S')}"
     return new_version
 
 
