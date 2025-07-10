@@ -572,9 +572,9 @@ def build_dataset_from_task_config_uri(
     )
 
     if should_use_range_partitioning:
-        partitioner_class = DistPartitioner
-    else:
         partitioner_class = DistRangePartitioner
+    else:
+        partitioner_class = DistPartitioner
 
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
