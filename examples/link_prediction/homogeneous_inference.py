@@ -265,8 +265,6 @@ def _inference_process(
         f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )
 
-    # Clean up for a graceful exit
-
 
 def _run_example_inference(
     job_name: str,
