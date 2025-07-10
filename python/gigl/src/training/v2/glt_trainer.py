@@ -4,9 +4,12 @@ from typing import Optional
 from google.cloud.aiplatform_v1.types import accelerator_type
 
 from gigl.common import Uri, UriFactory
+from gigl.common.constants import (
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+)
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
-from gigl.env.dep_constants import GIGL_SRC_IMAGE_CPU, GIGL_SRC_IMAGE_CUDA
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -81,8 +84,8 @@ class GLTTrainer:
         is_cpu_training = _determine_if_cpu_training(
             trainer_resource_config=trainer_resource_config
         )
-        cpu_docker_uri = cpu_docker_uri or GIGL_SRC_IMAGE_CPU
-        cuda_docker_uri = cuda_docker_uri or GIGL_SRC_IMAGE_CUDA
+        cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
+        cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
         container_uri = cpu_docker_uri if is_cpu_training else cuda_docker_uri
 
         job_args = (
