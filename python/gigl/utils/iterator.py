@@ -1,10 +1,6 @@
 from collections.abc import Iterable, Iterator
 from typing import TypeVar
 
-from gigl.common.logger import Logger
-
-logger = Logger()
-
 _T = TypeVar("_T")
 
 
@@ -24,6 +20,5 @@ class InfiniteIterator(Iterator[_T]):
         try:
             return next(self._iter)
         except StopIteration:
-            logger.info("InfiniteIterator restarting the internal iterator")
             self._iter = iter(self._iterable)
             return next(self._iter)
