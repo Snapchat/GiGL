@@ -52,4 +52,9 @@ jobs:
         env:
           FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
         run: |
-          ./fossa analyze
+          # Suppress stdout, capture stderr
+          stderr=$(./fossa analyze 1>/dev/null 2>&1)
+          if [ $? -ne 0 ]; then
+            echo "$stderr"
+            exit 1
+          fi
