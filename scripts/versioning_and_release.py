@@ -133,10 +133,6 @@ def get_new_version(
         patch = 0
     elif bump_type == "patch":
         patch += 1
-    elif bump_type == "nightly":
-        patch += 1
-    else:
-        raise ValueError(f"Invalid bump type: {bump_type}")
     new_version = f"{major}.{minor}.{patch}"
     if bump_type == "nightly":
         new_version += f"-nightly.{datetime.datetime.now().strftime('%Y%m%d')}"
@@ -222,11 +218,8 @@ if __name__ == "__main__":
         print(get_current_version(filename=str(PATH_GIGL_PKG_INIT_FILE)))
         exit(0)
 
-    try:
-        bump_version_and_release_resources(
-            bump_type=args.bump_type,
-            project=args.project,
-            version_override=args.version_override,
-        )
-    except RuntimeError as e:
-        print(f"Error: {e}")
+    bump_version_and_release_resources(
+        bump_type=args.bump_type,
+        project=args.project,
+        version_override=args.version_override,
+    )
