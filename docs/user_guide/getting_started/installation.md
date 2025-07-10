@@ -112,10 +112,51 @@ tooling useful for contributions:
 make install_dev_deps
 ```
 
-### Install Wheel (In Development)
+### Install from PyPI (Recommended)
+
+1. Create a python environment
+
+```bash
+conda create -y -c conda-forge --name gigl python=3.9
+conda activate gigl
+```
+
+2. Install GiGL
+
+Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
+
+```bash
+pip install "gigl[torch25-cuda-121,transform]"
+```
+
+Install GiGL + necessary tooling for Torch 2.5 + CPU
+
+```bash
+pip install "gigl[torch25-cpu,transform]"
+```
+
+```{note}
+The `pip install` command will automatically install additional dependencies that cannot be installed via pip alone, including:
+- Platform-specific dependencies based on your system (Mac/Linux, CPU/CUDA)
+- GraphLearn-Torch built from source
+- System dependencies like ninja-build
+- Conda packages like gperftools/tcmalloc
+
+**System Requirements:** The installation requires bash, git, and conda to be available on your system.
+```
 
 ```{caution}
-The instructions below are in development and are not recommended. We are working on making our whls publicly accessible, for the time being you will need to [install from source](#install-from-source).
+The automatic installation process may take several minutes as it builds some packages from source (particularly GraphLearn-Torch). If the automatic installation fails, you can run the installation script manually:
+
+```bash
+curl -s https://raw.githubusercontent.com/Snapchat/GiGL/main/requirements/install_py_deps.sh | bash
+```
+```
+
+### Install Wheel (Development Mode)
+
+```{caution}
+The instructions below are for development purposes. For production use, please use the [PyPI installation](#install-from-pypi-recommended) method above.
 ```
 
 1. Create a python environment
@@ -142,6 +183,7 @@ Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
 pip install "gigl[torch25-cuda-121,transform]==0.0.2" \
   --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
   --extra-index-url=https://pypi.org/simple
+gigl-post-install
 ```
 
 Install GiGL + necessary tooling for Torch 2.5 + CPU
@@ -150,4 +192,16 @@ Install GiGL + necessary tooling for Torch 2.5 + CPU
 pip install "gigl[torch25-cpu,transform]==0.0.2" \
   --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
   --extra-index-url=https://pypi.org/simple
+gigl-post-install
+```
+
+```{note}
+`gigl-post-install` is needed to install GLT from source.
+Currently, building/using wheels for GLT is errorprone, thus we opt to install from source every time.
+```
+
+3. Install Additional Dependencies
+
+```bash
+gigl-install-deps
 ```
