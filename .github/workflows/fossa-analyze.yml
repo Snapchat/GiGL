@@ -1,5 +1,10 @@
 name: Fossa Analyze
-# Workflow used for analyzing GiGL dependencies with Fossa:
+# Workflow used for analyzing GiGL dependencies with Fossa for license compliance
+# and security vulnerability scanning.
+#
+# Fossa is a dependency analysis tool that helps track open source licenses
+# and security vulnerabilities in project dependencies across GiGL's python,
+# and scala codebase.
 # https://fossa.com/
 
 on:
@@ -11,12 +16,15 @@ permissions:
   contents: read
   id-token: write
 
+# Concurrency configuration to prevent multiple Fossa analyses from running simultaneously
+# This ensures only one analysis runs at a time to avoid conflicts
 concurrency:
   group: "fossa"
   cancel-in-progress: false
 
 jobs:
   fossa-analyze:
+    # Uses the 'fossa' environment which contains the required information to run fossa
     environment:
       name: fossa
     runs-on: ubuntu-latest
