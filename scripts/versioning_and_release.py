@@ -32,23 +32,22 @@ from gigl.orchestration.kubeflow.runner import KfpOrchestrator
 from .build_and_push_docker_image import build_and_push_image
 
 
-def get_current_version(filename: str) -> Optional[str]:
-    with open(filename, "r") as f:
+def get_current_version() -> Optional[str]:
+    with open(PATH_GIGL_PKG_INIT_FILE, "r") as f:
         content = f.read()
-        match = re.search(r'__version__ = "([\d\.]+)"', content)
+        match = re.search(r'__version__ = "(.*?)"', content)
         if match:
             return match.group(1)
     return None
 
 
 def update_version(version: str) -> None:
-    filename = PATH_GIGL_PKG_INIT_FILE
-    with open(filename, "r") as f:
+    with open(PATH_GIGL_PKG_INIT_FILE, "r") as f:
         content = f.read()
     updated_content = re.sub(
-        r'__version__ = "([\d\.]+)"', f'__version__ = "{version}"', content
+        r'__version__ = "(.*?)"', f'__version__ = "{version}"', content
     )
-    with open(filename, "w") as f:
+    with open(PATH_GIGL_PKG_INIT_FILE, "w") as f:
         f.write(updated_content)
 
 
@@ -144,7 +143,7 @@ def bump_version_and_release_resources(
     project: str,
     version_override: Optional[str] = None,
 ) -> None:
-    version: Optional[str] = get_current_version(filename=str(PATH_GIGL_PKG_INIT_FILE))
+    version: Optional[str] = get_current_version()
     if version is None:
         raise ValueError("Current version not found")
 
@@ -215,7 +214,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.get_current_version:
-        print(get_current_version(filename=str(PATH_GIGL_PKG_INIT_FILE)))
+        print(get_current_version())
         exit(0)
 
     bump_version_and_release_resources(
