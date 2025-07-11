@@ -24,7 +24,7 @@ def patch_fanout_for_sampling(
     - For all label edge types, sets the fanout to be zero.
     - For all other edge types, if the fanout is not specified, uses the original fanout.
 
-    Note that if fanout is provided as a dict, all edges must be present.
+    Note that if fanout is provided as a dict, the keys (edges) in the fanout must be in `edge_types`.
 
     We add this because the existing sampling logic (below) makes strict assumptions that we need to conform to.
     https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
