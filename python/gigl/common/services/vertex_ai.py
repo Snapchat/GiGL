@@ -67,9 +67,9 @@ from typing import Dict, Final, List, Optional
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
+    DiskSpec,
     MachineSpec,
     WorkerPoolSpec,
-    DiskSpec,
     env_var,
 )
 
@@ -195,7 +195,7 @@ class VertexAIService:
             machine_spec=machine_spec,
             container_spec=container_spec,
             disk_spec=disk_spec,
-            replica_count=1
+            replica_count=1,
         )
 
         worker_pool_specs: List[WorkerPoolSpec] = [leader_worker_spec]
