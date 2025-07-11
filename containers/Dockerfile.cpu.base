@@ -4,6 +4,8 @@ FROM continuumio/miniconda3:4.12.0
 
 SHELL ["/bin/bash", "-c"]
 
+# We install some basic dependencies and gcsfuse for GCS access.
+# We can use gcsfuse to mount GCS buckets in the container.
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
 RUN apt-get update && apt-get install -y \

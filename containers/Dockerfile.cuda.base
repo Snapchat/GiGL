@@ -5,7 +5,8 @@ FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
 SHELL ["/bin/bash", "-c"]
 
-# Install basic dependencies
+# We install some basic dependencies and gcsfuse for GCS access.
+# We can use gcsfuse to mount GCS buckets in the container.
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y \
