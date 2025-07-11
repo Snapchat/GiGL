@@ -72,7 +72,6 @@ class TFDatasetOptions:
     use_interleave: bool = True
     num_parallel_file_reads: int = 64
     ram_budget_multiplier: float = 0.5
-    log_every_n_batch: int = 1000
 
 
 def _concatenate_features_by_names(
