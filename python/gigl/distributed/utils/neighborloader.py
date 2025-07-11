@@ -18,11 +18,13 @@ def patch_fanout_for_sampling(
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
 ) -> Union[list[int], dict[EdgeType, list[int]]]:
     """
-    Setups an approprirate fanout for sampling.
+    Sets up an approprirate fanout for sampling.
 
     Does the following:
     - For all label edge types, sets the fanout to be zero.
     - For all other edge types, if the fanout is not specified, uses the original fanout.
+
+    Note that if fanout is provided as a dict, all edges must be present.
 
     We add this because the existing sampling logic (below) makes strict assumptions that we need to conform to.
     https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
@@ -45,11 +47,11 @@ def patch_fanout_for_sampling(
         should_broadcast_fanout = True
         num_neighbors = {}
     else:
-        for edge_type in num_neighbors.keys():
-            if edge_type not in edge_types:
-                raise ValueError(
-                    f"Found edge type {edge_type} in fanout which is not in dataset edge types {edge_types}."
-                )
+        missing_edge_types = set(num_neighbors.keys()) - set(edge_types)
+        if missing_edge_types:
+            raise ValueError(
+                f"Found extra edge types {missing_edge_types} in fanout which is not in dataset edge types {edge_types}."
+            )
         original_fanout = next(iter(num_neighbors.values()))
         should_broadcast_fanout = False
         num_neighbors = deepcopy(num_neighbors)
@@ -57,13 +59,15 @@ def patch_fanout_for_sampling(
     num_hop = len(original_fanout)
     zero_samples = [0 for _ in range(num_hop)]
     for edge_type in edge_types:
+        # TODO(kmonte): stop setting fanout for positive/negative edges once GLT sampling correctly ignores those edges during fanout.
         if is_label_edge_type(edge_type):
             num_neighbors[edge_type] = zero_samples
         elif should_broadcast_fanout and edge_type not in num_neighbors:
             num_neighbors[edge_type] = original_fanout
         elif not should_broadcast_fanout and edge_type not in num_neighbors:
             raise ValueError(
-                f"Found non-labeled edge type in dataset {edge_type} which is not in the provided fanout {num_neighbors.keys()}"
+                f"Found non-labeled edge type in dataset {edge_type} which is not in the provided fanout {num_neighbors.keys()}. \
+                If fanout is provided as a dict, all edges must be present."
             )
 
     hops = len(next(iter(num_neighbors.values())))
