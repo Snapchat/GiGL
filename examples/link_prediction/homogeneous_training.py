@@ -758,6 +758,10 @@ def _run_example_training(
     logger.info(f"--- Training finished, took {time.time() - start_time} seconds")
 
 
+"""
+Given a frozen task config with some already populated data preprocessor output, the following training script can be run locally with CPU training using:
+WORLD_SIZE=1 RANK=0 MASTER_ADDR="localhost" MASTER_PORT=20000 python -m examples.link_prediction.homogeneous_training --task_config_uri=<task_config>
+"""
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Arguments for distributed model training on VertexAI"
