@@ -171,9 +171,15 @@ experimental = [
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"
 
+[project.scripts]
+gigl-post-install = "gigl.scripts.post_install:main"
+
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages (["."] by default)
 include = ["gigl*", "snapchat*"]  # Include only packages that match the gigl* pattern
+
+[tool.setuptools.package-data]
+"gigl.scripts" = ["*.sh"]
 
 # https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html#setuptools-specific-configuration
 [tool.setuptools] # Disabled until refactored where to have gigl as top level dir
