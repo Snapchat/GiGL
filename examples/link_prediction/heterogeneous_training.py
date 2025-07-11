@@ -405,8 +405,6 @@ def _training_process(
                 train_main_loader_iter
             ),  # We need to pass a dummy data for DDP initialization
         )
-        model.encoder.find_unused_parameters = True
-        model.decoder.find_unused_parameters = True
         optimizer = torch.optim.AdamW(
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )

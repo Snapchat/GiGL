@@ -33,6 +33,10 @@ def init_example_gigl_homogeneous_model(
         num_layers (int): Number of layers to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
+        for_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
+            If True, the model will be wrapped in `DistributedDataParallel` and will require a dummy data input for initialization.
+        dummy_data (Optional[Union[Data, HeteroData]]): Dummy data to initialize the encoder.
+            Required if `for_ddp` is True, otherwise can be None.
     Returns:
         LinkPredictionGNN: Link Prediction model for training or inference
     """
@@ -58,7 +62,6 @@ def init_example_gigl_homogeneous_model(
             decoder=decoder_model,
             device=device,
             dummy_data=dummy_data,
-            find_unused_parameters=True,
         )
     else:
         # Initialize the model without DDP.
@@ -103,6 +106,10 @@ def init_example_gigl_heterogeneous_model(
         num_heads (int): Number of attention heads to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
+        init_for_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
+            If True, the model will be wrapped in `DistributedDataParallel` and will require a dummy data input for initialization.
+        dummy_data (Optional[Union[Data, HeteroData]]): Dummy data to initialize the encoder.
+            Required if `init_for_ddp` is True, otherwise can be None.
     Returns:
         LinkPredictionGNN: Link Prediction model for inference
     """
@@ -120,6 +127,10 @@ def init_example_gigl_heterogeneous_model(
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
     if init_for_ddp:
         # Initialize the model for DDP training.
+        # Since the HGT encoder has params for *all* node and edge types [1]
+        # We need to allow DDP to find unused parameters.
+        # As not all node types may be present in the training task.
+        # 1. https://github.com/Snapchat/GiGL/blob/766fae5dc313e1224998ed5618cf70cf0fb4da30/python/gigl/src/common/models/pyg/heterogeneous.py#L47-L51
         model: LinkPredictionGNN = LinkPredictionGNN.for_ddp(
             encoder=encoder_model,
             decoder=decoder_model,
