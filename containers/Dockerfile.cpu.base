@@ -12,8 +12,26 @@ RUN apt-get update && apt-get install -y \
     wget \
     cmake \
     iputils-ping \
+    lsb-release \
+    curl \
+    fuse \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt/gcsfuse-$(lsb_release -c -s) main" | tee /etc/apt/sources.list.d/gcsfuse.list \
+    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | tee /usr/share/keyrings/cloud.google.asc \
+    && apt-get update \
+    && apt-get install -y gcsfuse \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# # Install gcsfuse for GCS access
+# # We use gcsfuse to mount GCS buckets in the container.
+# RUN apt-get update && apt-get install -y lsb-release \
+#     && GCSFUSE_REPO=gcsfuse-$(lsb_release -c -s) \
+#     && echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt ${GCSFUSE_REPO} main" >> /etc/apt/sources.list.d/gcsfuse.list \
+#     && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | tee /usr/share/keyrings/cloud.google.asc \
+#     && apt-get update \
+#     && apt-get install -y gcsfuse fuse \
+#     && apt-get clean \
+#     && rm -rf /var/lib/apt/lists/*
 
 # Create the environment:
 # TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
