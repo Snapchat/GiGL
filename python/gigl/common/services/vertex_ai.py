@@ -99,7 +99,7 @@ class VertexAiJobConfig:
     accelerator_count: int = 0
     replica_count: int = 1
     boot_disk_type: str = "pd-ssd"  # Persistent Disk SSD
-    boot_disk_size_gb: int = 500  # Default disk size in GB
+    boot_disk_size_gb: int = 100  # Default disk size in GB
     labels: Optional[Dict[str, str]] = None
     timeout_s: Optional[
         int
