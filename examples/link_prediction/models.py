@@ -1,6 +1,7 @@
-from typing import Optional
+from typing import Optional, Union
 
 import torch
+from torch_geometric.data import Data, HeteroData
 
 from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.models.pyg.heterogeneous import HGT
@@ -17,6 +18,8 @@ def init_example_gigl_homogeneous_model(
     num_layers: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
+    for_ddp: bool = False,
+    dummy_data: Optional[Union[Data, HeteroData]] = None,
 ) -> LinkPredictionGNN:
     """
     Initializes a homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -33,7 +36,6 @@ def init_example_gigl_homogeneous_model(
     Returns:
         LinkPredictionGNN: Link Prediction model for training or inference
     """
-
     # We use the GiGL GraphSAGE encoder for this example instead of the base PyG GraphSAGE model since the base model doesn't
     # have support for edge features or additional utilities like `should_l2_normalize_embedding_layer_output`,
     # which normalizes the output embeddings from the encoder. However, a base GraphSAGE encoder would also work in this case,
@@ -49,16 +51,25 @@ def init_example_gigl_homogeneous_model(
     )
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-
-    model: LinkPredictionGNN = LinkPredictionGNN(
-        encoder=encoder_model,
-        decoder=decoder_model,
-    )
-
-    # Push the model to the specified device.
-    if device is None:
-        device = torch.device("cpu")
-    model.to(device)
+    if for_ddp:
+        # Initialize the model for DDP training.
+        model: LinkPredictionGNN = LinkPredictionGNN.for_ddp(
+            encoder=encoder_model,
+            decoder=decoder_model,
+            device=device,
+            dummy_data=dummy_data,
+        )
+    else:
+        # Initialize the model without DDP.
+        # This is useful for inference or single-GPU training.
+        model: LinkPredictionGNN = LinkPredictionGNN(
+            encoder=encoder_model,
+            decoder=decoder_model,
+        )
+        # Push the model to the specified device.
+        if device is None:
+            device = torch.device("cpu")
+        model.to(device)
 
     if state_dict is not None:
         model.load_state_dict(state_dict)
@@ -75,6 +86,8 @@ def init_example_gigl_heterogeneous_model(
     num_heads: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
+    init_for_ddp: bool = False,
+    dummy_data: Optional[Union[Data, HeteroData]] = None,
 ) -> LinkPredictionGNN:
     """
     Initializes a heterogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -92,7 +105,6 @@ def init_example_gigl_heterogeneous_model(
     Returns:
         LinkPredictionGNN: Link Prediction model for inference
     """
-
     # We use the GiGL HGT encoder for this example, since PyG only has support for the HGTConv layer, but not an entire HGT encoder.
     encoder_model = HGT(
         node_type_to_feat_dim_map=node_type_to_feature_dim,
@@ -105,16 +117,26 @@ def init_example_gigl_heterogeneous_model(
     )
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
+    if init_for_ddp:
+        # Initialize the model for DDP training.
+        model: LinkPredictionGNN = LinkPredictionGNN.for_ddp(
+            encoder=encoder_model,
+            decoder=decoder_model,
+            device=device,
+            dummy_data=dummy_data,
+        )
+    else:
+        # Initialize the model without DDP.
+        # This is useful for inference or single-GPU training.
+        model: LinkPredictionGNN = LinkPredictionGNN(
+            encoder=encoder_model,
+            decoder=decoder_model,
+        )
 
-    model: LinkPredictionGNN = LinkPredictionGNN(
-        encoder=encoder_model,
-        decoder=decoder_model,
-    )
-
-    # Push the model to the specified device.
-    if device is None:
-        device = torch.device("cpu")
-    model.to(device)
+        # Push the model to the specified device.
+        if device is None:
+            device = torch.device("cpu")
+        model.to(device)
 
     if state_dict is not None:
         model.load_state_dict(state_dict)

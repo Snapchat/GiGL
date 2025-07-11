@@ -236,7 +236,7 @@ def _compute_loss(
 
     # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
 
-    repeated_candidate_scores = model.module.decode(
+    repeated_candidate_scores = model.decode(
         query_embeddings=repeated_query_embeddings,
         candidate_embeddings=torch.cat(
             [
@@ -396,23 +396,22 @@ def _training_process(
         # so we can clean up resources from the dataloader later.
         val_main_loader_iter = InfiniteIterator(val_main_loader)
         val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
-
-        model = DistributedDataParallel(
-            init_example_gigl_heterogeneous_model(
-                node_type_to_feature_dim=node_type_to_feature_dim,
-                edge_type_to_feature_dim=edge_type_to_feature_dim,
-                device=device,
-            ),
-            device_ids=[device],
-            # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
-            find_unused_parameters=True,
+        model = init_example_gigl_heterogeneous_model(
+            node_type_to_feature_dim=node_type_to_feature_dim,
+            edge_type_to_feature_dim=edge_type_to_feature_dim,
+            device=device,
+            init_for_ddp=True,
+            dummy_data=next(
+                train_main_loader_iter
+            ),  # We need to pass a dummy data for DDP initialization
         )
-
+        model.encoder.find_unused_parameters = True
+        model.decoder.find_unused_parameters = True
         optimizer = torch.optim.AdamW(
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
         # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
@@ -506,19 +505,15 @@ def _training_process(
 
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
-        model = DistributedDataParallel(
-            init_example_gigl_heterogeneous_model(
-                node_type_to_feature_dim=node_type_to_feature_dim,
-                edge_type_to_feature_dim=edge_type_to_feature_dim,
-                device=device,
-                state_dict=state_dict,
-            ),
-            device_ids=[device],
-            # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
-            find_unused_parameters=True,
+        model = init_example_gigl_heterogeneous_model(
+            node_type_to_feature_dim=node_type_to_feature_dim,
+            edge_type_to_feature_dim=edge_type_to_feature_dim,
+            device=device,
+            init_for_ddp=True,
+            state_dict=state_dict,  # We load the model state dict for testing
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
     logger.info(f"---Rank {rank} started testing")

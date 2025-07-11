@@ -198,7 +198,7 @@ def _compute_loss(
 
     # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
 
-    repeated_candidate_scores = model.module.decode(
+    repeated_candidate_scores = model.decode(
         query_embeddings=repeated_query_embeddings,
         candidate_embeddings=torch.cat(
             [
@@ -358,20 +358,21 @@ def _training_process(
         val_main_loader_iter = InfiniteIterator(val_main_loader)
         val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
 
-        model = DistributedDataParallel(
-            init_example_gigl_homogeneous_model(
-                node_feature_dim=node_feature_dim,
-                edge_feature_dim=edge_feature_dim,
-                device=device,
-            ),
-            device_ids=[device],
+        model = init_example_gigl_homogeneous_model(
+            node_feature_dim=node_feature_dim,
+            edge_feature_dim=edge_feature_dim,
+            device=device,
+            init_for_ddp=True,  # We initialize the model for DDP
+            dummy_data=next(
+                train_main_loader_iter
+            ),  # We need a dummy data to initialize the model
         )
 
         optimizer = torch.optim.AdamW(
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
         # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
@@ -462,17 +463,15 @@ def _training_process(
         val_random_negative_loader.shutdown()
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
-        model = DistributedDataParallel(
-            init_example_gigl_homogeneous_model(
-                node_feature_dim=node_feature_dim,
-                edge_feature_dim=edge_feature_dim,
-                device=device,
-                state_dict=state_dict,
-            ),
-            device_ids=[device],
+        model = init_example_gigl_homogeneous_model(
+            node_feature_dim=node_feature_dim,
+            edge_feature_dim=edge_feature_dim,
+            device=device,
+            init_for_ddp=True,  # We initialize the model for DDP
+            state_dict=state_dict,  # We load the model state dict for testing
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
     logger.info(f"---Rank {rank} started testing")
