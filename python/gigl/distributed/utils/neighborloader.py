@@ -47,10 +47,10 @@ def patch_fanout_for_sampling(
         should_broadcast_fanout = True
         num_neighbors = {}
     else:
-        missing_edge_types = set(num_neighbors.keys()) - set(edge_types)
-        if missing_edge_types:
+        extra_edge_types = set(num_neighbors.keys()) - set(edge_types)
+        if extra_edge_types:
             raise ValueError(
-                f"Found extra edge types {missing_edge_types} in fanout which is not in dataset edge types {edge_types}."
+                f"Found extra edge types {extra_edge_types} in fanout which is not in dataset edge types {edge_types}."
             )
         original_fanout = next(iter(num_neighbors.values()))
         should_broadcast_fanout = False
