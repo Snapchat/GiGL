@@ -704,6 +704,8 @@ class DistPartitioner:
             self._num_nodes is not None
         ), "Must have registered nodes prior to partitioning them"
 
+        start_time = time.time()
+
         num_nodes = self._num_nodes[node_type]
 
         per_node_num = num_nodes // self._world_size
@@ -742,6 +744,10 @@ class DistPartitioner:
             f"Got node tensor-based partition book for node type {node_type} on rank {self._rank} of shape {node_partition_book.shape}"
         )
 
+        logger.info(
+            f"Node Partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
+        )
+
         return node_partition_book
 
     def _partition_node_features(
@@ -759,6 +765,8 @@ class DistPartitioner:
         Returns:
             FeaturePartitionData: Ids and Features of input nodes
         """
+
+        start_time = time.time()
 
         assert (
             self._node_feat is not None
@@ -822,6 +830,10 @@ class DistPartitioner:
 
         gc.collect()
 
+        logger.info(
+            f"Node Feature Partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
+        )
+
         return feature_partition_data
 
     def _partition_edge_index_and_edge_features(
@@ -843,6 +855,8 @@ class DistPartitioner:
             Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
             Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
+
+        start_time = time.time()
 
         assert (
             self._edge_index is not None
@@ -977,6 +991,9 @@ class DistPartitioner:
             logger.info(
                 f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
             )
+            logger.info(
+                f"Edge Index and Feature Partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
+            )
 
         return current_graph_part, current_feat_part, edge_partition_book
 
@@ -997,6 +1014,8 @@ class DistPartitioner:
         Returns:
             torch.Tensor: Edge index tensor of positive or negative labels, depending on is_positive flag
         """
+        start_time = time.time()
+
         if edge_type.src_node_type not in node_partition_book:
             raise ValueError(
                 f"Edge type {edge_type} source node type {edge_type.src_node_type} not found in the node partition book node keys: {node_partition_book.keys()}"
@@ -1072,6 +1091,10 @@ class DistPartitioner:
         partitioned_chunks.clear()
 
         gc.collect()
+
+        logger.info(
+            f"Edge label partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
+        )
 
         return partitioned_label_edge_index
 

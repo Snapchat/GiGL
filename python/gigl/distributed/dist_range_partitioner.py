@@ -102,6 +102,8 @@ class DistRangePartitioner(DistPartitioner):
             PartitionBook: The partition book of graph nodes.
         """
 
+        start_time = time.time()
+
         assert (
             self._num_nodes is not None
         ), "Must have registered nodes prior to partitioning them"
@@ -129,6 +131,10 @@ class DistRangePartitioner(DistPartitioner):
 
         logger.info(
             f"Got node range-based partition book for node type {node_type} on rank {self._rank} with partition bounds: {node_partition_book.partition_bounds}"
+        )
+
+        logger.info(
+            f"Node Partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
         )
 
         return node_partition_book
@@ -186,6 +192,8 @@ class DistRangePartitioner(DistPartitioner):
             Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
             Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
+
+        start_time = time.time()
 
         assert (
             self._edge_index is not None
@@ -298,6 +306,10 @@ class DistRangePartitioner(DistPartitioner):
                 edge_ids=None,
             )
             edge_partition_book = None
+
+        logger.info(
+            f"Edge Index and Feature Partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
+        )
 
         return current_graph_part, current_feat_part, edge_partition_book
 
