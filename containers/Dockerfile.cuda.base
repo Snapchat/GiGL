@@ -17,7 +17,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     lsb-release \
     curl \
     fuse \
-    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt/gcsfuse-$(lsb_release -c -s) main" | tee /etc/apt/sources.list.d/gcsfuse.list \
+    && GCSFUSE_REPO=gcsfuse-`lsb_release -c -s` \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt $GCSFUSE_REPO main" | tee /etc/apt/sources.list.d/gcsfuse.list \
     && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | tee /usr/share/keyrings/cloud.google.asc \
     && apt-get update \
     && apt-get install -y gcsfuse \
