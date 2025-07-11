@@ -45,6 +45,7 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.utils import get_available_device
 from gigl.module.loss import RetrievalLoss
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -327,11 +328,6 @@ def _training_process(
         val_every_n_batch: (int): The frequency we should log batch information when validating
         should_skip_training (bool): Whether training should be skipped and we should only run testing. Assumes model has been uploaded to the model_uri.
     """
-    # TODO (mkolodner-sc): Investigate work needed + add support for CPU training
-    if not torch.cuda.is_available():
-        raise NotImplementedError(
-            "Currently, only GPU training is supported with this example training loop"
-        )
 
     world_size = machine_world_size * local_world_size
     rank = machine_rank * local_world_size + local_rank
@@ -340,7 +336,7 @@ def _training_process(
     )
 
     torch.distributed.init_process_group(
-        backend="nccl",
+        backend="nccl" if torch.cuda.is_available() else "gloo",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
         rank=rank,
         world_size=world_size,
@@ -349,8 +345,8 @@ def _training_process(
     logger.info(f"---Rank {rank} training process group initialized")
 
     # We use one training device for each local process
-    device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(device)
+    device = get_available_device(local_process_rank=local_rank)
+
     logger.info(f"---Rank {rank} training process set device {device}")
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -403,7 +399,7 @@ def _training_process(
                 edge_type_to_feature_dim=edge_type_to_feature_dim,
                 device=device,
             ),
-            device_ids=[device],
+            device_ids=[device] if torch.cuda.is_available() else None,
             # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
             find_unused_parameters=True,
         )
@@ -463,8 +459,9 @@ def _training_process(
                 logger.info(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
-                # Wait for GPU operations to finish
-                torch.cuda.synchronize()
+                if torch.cuda.is_available():
+                    # Wait for GPU operations to finish
+                    torch.cuda.synchronize()
                 logger.info(
                     f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
                 )
@@ -493,8 +490,9 @@ def _training_process(
         logger.info(f"---Rank {rank} finished training")
 
         # Memory cleanup and waiting for all processes to finish
-        torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
-        torch.cuda.synchronize()  # Ensures all CUDA operations have finished
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
+            torch.cuda.synchronize()  # Ensures all CUDA operations have finished
         torch.distributed.barrier()  # Waits for all processes to reach the current point
 
         # We explicitly shutdown all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
@@ -560,8 +558,9 @@ def _training_process(
     logger.info(f"---Rank {rank} finished testing")
 
     # Memory cleanup and waiting for all processes to finish
-    torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
-    torch.cuda.synchronize()  # Ensures all CUDA operations have finished
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
+        torch.cuda.synchronize()  # Ensures all CUDA operations have finished
     torch.distributed.barrier()  # Waits for all processes to reach the current point
 
     # We save the model on the process with the 0th node rank and 0th local rank.
@@ -645,8 +644,9 @@ def _run_validation_loops(
         batch_idx += 1
         if batch_idx % log_every_n_batch == 0:
             logger.info(f"rank={rank}, batch={batch_idx}, latest test_loss={loss:.6f}")
-            # Wait for GPU operations to finish
-            torch.cuda.synchronize()
+            if torch.cuda.is_available():
+                # Wait for GPU operations to finish
+                torch.cuda.synchronize()
             logger.info(
                 f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
