@@ -59,6 +59,35 @@ class DistRangePartitioner(DistPartitioner):
 
         self._edge_index = convert_to_tensor(input_edge_index, dtype=torch.int64)
 
+        # Logging information about number of edges across the machines
+
+        edge_type_to_num_edges: Dict[EdgeType, int] = {
+            edge_type: input_edge_index[edge_type].size(1)
+            for edge_type in sorted(input_edge_index.keys())
+        }
+
+        # The tuple here represents a (rank, num_edges_on_rank) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`
+        # num_edges_on_rank is a Dict[EdgeType, int].
+        # Gathered_num_edges is then used to identify the number of edges on each rank, allowing us to access the total number of edges across all ranks
+        gathered_edge_info: Dict[str, tuple[int, Dict[EdgeType, int]]]
+
+        # Gathering to compute the number of edges on each rank for each edge type
+        gathered_edge_info = all_gather((self._rank, edge_type_to_num_edges))
+
+        # Looping through registered edge types in graph
+        for edge_type in self._edge_types:
+            # Populating num_edges_all_ranks list, where num_edges_all_ranks[i] = num_edges means that rank `i`` has `num_edges` edges
+            num_edges_all_ranks = [0] * self._world_size
+            for (
+                rank,
+                gathered_edge_type_to_num_edges,
+            ) in gathered_edge_info.values():
+                num_edges_all_ranks[rank] = gathered_edge_type_to_num_edges[edge_type]
+
+            logger.info(
+                f"Partitioning {sum(num_edges_all_ranks)} edges for edge type {edge_type}"
+            )
+
     def _partition_node(self, node_type: NodeType) -> PartitionBook:
         """
         Partition graph nodes of a specific node type. For range-based partitioning, we partition all

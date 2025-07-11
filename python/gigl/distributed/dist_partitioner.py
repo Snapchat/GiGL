@@ -394,6 +394,10 @@ class DistPartitioner:
             ) in gathered_node_info.values():
                 self._num_nodes[node_type] += gathered_node_type_to_num_nodes[node_type]
 
+            logger.info(
+                f"Partitioning {self._num_nodes[node_type]} nodes for node type {node_type}"
+            )
+
     def register_edge_index(
         self, edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
     ) -> None:
@@ -458,6 +462,10 @@ class DistPartitioner:
 
             # Setting all the edge ids on the current rank
             edge_ids[edge_type] = (start, end)
+
+            logger.info(
+                f"Partitioning {self._num_edges[edge_type]} edges for edge type {edge_type}"
+            )
 
         self._edge_ids = edge_ids
 
