@@ -58,6 +58,7 @@ def init_example_gigl_homogeneous_model(
             decoder=decoder_model,
             device=device,
             dummy_data=dummy_data,
+            find_unused_parameters=True,
         )
     else:
         # Initialize the model without DDP.
@@ -124,6 +125,8 @@ def init_example_gigl_heterogeneous_model(
             decoder=decoder_model,
             device=device,
             dummy_data=dummy_data,
+            output_node_types=list(node_type_to_feature_dim.keys()),
+            find_unused_parameters=True,
         )
     else:
         # Initialize the model without DDP.

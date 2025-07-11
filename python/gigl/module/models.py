@@ -69,6 +69,7 @@ class LinkPredictionGNN(nn.Module):
         device: torch.device,
         dummy_data: Union[Data, HeteroData],
         output_node_types: Optional[list[NodeType]] = None,
+        find_unused_parameters: bool = False,
     ) -> "LinkPredictionGNN":
         """
         Created for DistributedDataParallel (DDP) training.
@@ -85,23 +86,32 @@ class LinkPredictionGNN(nn.Module):
 
         # Dummy forward pass to initialize the encoder
         # This is necessary to ensure that the model is properly set up for DDP
-        if output_node_types is None:
-            output_node_types = []
         was_train = encoder.training
+        encoder.to(device)
         encoder.eval()
-        encoder(dummy_data, device, output_node_types)
+        encoder(dummy_data, output_node_types, device)
         if was_train:
             encoder.train()
+
         ddp_encoder = DistributedDataParallel(
-            encoder.to(device),
+            encoder,
             device_ids=[device] if device.type != "cpu" else None,
             output_device=device if device.type != "cpu" else None,
+            find_unused_parameters=find_unused_parameters,
         )
-        ddp_decoder = DistributedDataParallel(
-            decoder.to(device),
-            device_ids=[device] if device.type != "cpu" else None,
-            output_device=device if device.type != "cpu" else None,
-        )
+        if any(p.requires_grad for p in decoder.parameters()):
+            # Only wrap the decoder in DDP if it has parameters that require gradients
+            # This is to avoid unnecessary overhead for decoders without trainable parameters
+            ddp_decoder = DistributedDataParallel(
+                decoder.to(device),
+                device_ids=[device] if device.type != "cpu" else None,
+                output_device=device if device.type != "cpu" else None,
+                find_unused_parameters=find_unused_parameters,
+            )
+        else:
+            # If the decoder has no trainable parameters, we can just use it as is
+            ddp_decoder = decoder.to(device)
+
         return cls(
             encoder=ddp_encoder,
             decoder=ddp_decoder,
