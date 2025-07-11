@@ -61,7 +61,7 @@ jobs:
         cmd: "make integration_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
-  
+
   ci-integration-e2e-test:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
@@ -77,7 +77,7 @@ jobs:
     - name: Run E2E Tests
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
-        cmd: "make run_all_e2e_tests"
+        cmd: "make -j2 run_all_e2e_tests notebooks_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
@@ -99,4 +99,3 @@ jobs:
         source ~/.profile
         make check_format
         make assert_yaml_configs_parse
-  

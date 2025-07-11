@@ -22,7 +22,7 @@ DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAM
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 
-PYTHON_DIRS:=examples python shared scripts
+PYTHON_DIRS:=e2e_tests examples python shared scripts
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -192,6 +192,9 @@ integration_test:
 	--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 	--test_file_pattern=$(PY_TEST_FILES) \
 	)
+
+notebooks_test:
+	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m e2e_tests.notebooks_test
 
 mock_assets:
 	( cd python ; python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test)

@@ -73,7 +73,7 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
-          make run_all_e2e_tests
+          make -j2 run_all_e2e_tests notebooks_test
 
   lint-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
