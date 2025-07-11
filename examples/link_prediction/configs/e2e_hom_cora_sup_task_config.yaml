@@ -16,11 +16,13 @@ trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50"
+    fanout: "[10, 10]"
   command: python -m examples.link_prediction.homogeneous_training
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
-    log_every_n_batch: "50"
+    log_every_n_batch: "50" # Frequency in which we log batch information
+    fanout: "[10, 10]" # Fanout per hop, specified as a list represented as a JSON string for the homogeneous use case
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.homogeneous_inference
 sharedConfig:
