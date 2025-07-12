@@ -7,6 +7,8 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 import psutil
 import tensorflow as tf
 import torch
+import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
@@ -375,21 +377,22 @@ class TFRecordDataLoader:
         num_entities_processed = 0
         id_tensors = []
         feature_tensors = []
-        for idx, batch in enumerate(dataset):
-            id_tensors.append(proccess_id_tensor(batch))
-            if feature_keys:
-                feature_tensors.append(
-                    _concatenate_features_by_names(batch, feature_keys)
+        with logging_redirect_tqdm():
+            for idx, batch in tqdm.tqdm(enumerate(dataset)):
+                id_tensors.append(proccess_id_tensor(batch))
+                if feature_keys:
+                    feature_tensors.append(
+                        _concatenate_features_by_names(batch, feature_keys)
+                    )
+                num_entities_processed += (
+                    id_tensors[-1].shape[0]
+                    if entity_type == FeatureTypes.NODE
+                    else id_tensors[-1].shape[1]
                 )
-            num_entities_processed += (
-                id_tensors[-1].shape[0]
-                if entity_type == FeatureTypes.NODE
-                else id_tensors[-1].shape[1]
-            )
-            if idx % log_every_n_batch == 0:
-                logger.info(
-                    f"Processed {idx + 1:,} batches with {num_entities_processed:,} {entity_type.name}"
-                )
+                if (idx + 1) % log_every_n_batch == 0:
+                    logger.info(
+                        f"Processed {idx + 1:,} batches with {num_entities_processed:,} {entity_type.name}"
+                    )
         end = time.perf_counter()
         logger.info(
             f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"
