@@ -74,6 +74,8 @@ class DistRangePartitioner(DistPartitioner):
         # Gathering to compute the number of edges on each rank for each edge type
         gathered_edge_info = all_gather((self._rank, edge_type_to_num_edges))
 
+        self._num_edges = {}
+
         # Looping through registered edge types in graph
         for edge_type in self._edge_types:
             # Populating num_edges_all_ranks list, where num_edges_all_ranks[i] = num_edges means that rank `i`` has `num_edges` edges
@@ -84,9 +86,7 @@ class DistRangePartitioner(DistPartitioner):
             ) in gathered_edge_info.values():
                 num_edges_all_ranks[rank] = gathered_edge_type_to_num_edges[edge_type]
 
-            logger.info(
-                f"Partitioning {sum(num_edges_all_ranks)} edges for edge type {edge_type}"
-            )
+            self._num_edges[edge_type] = sum(num_edges_all_ranks)
 
     def _partition_node(self, node_type: NodeType) -> PartitionBook:
         """
@@ -343,7 +343,7 @@ class DistRangePartitioner(DistPartitioner):
         self._assert_and_get_rpc_setup()
 
         assert (
-            self._edge_index is not None
+            self._edge_index is not None and self._num_edges is not None
         ), "Must have registered edges prior to partitioning them"
 
         logger.info("Partitioning Edges ...")
@@ -391,6 +391,11 @@ class DistRangePartitioner(DistPartitioner):
 
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
+
+        for edge_type in self._num_edges:
+            logger.info(
+                f"Partitioned {self._num_edges[edge_type]} edges for edge type {edge_type}"
+            )
 
         if self._is_input_homogeneous:
             return (
