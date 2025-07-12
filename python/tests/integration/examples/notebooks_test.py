@@ -73,17 +73,25 @@ class TestExampleNotebooks(unittest.TestCase):
                     "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": str(gcs_uri),
                 },
             ),
-            # TODO(kmonte): Fix the toy example notebook and enable tests for it.
-            # _NoteBookTestConfig(
-            #     name="toy_example",
-            #     notebook_path=str(
-            #         GIGL_ROOT_DIR
-            #         / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
-            #     ),
-            #     env_overrides={
-            #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": resource_config_uri,
-            #     },
-            # ),
+            _NoteBookTestConfig(
+                name="dblp",
+                notebook_path=str(
+                    GIGL_ROOT_DIR / "examples/link_prediction/dblp.ipynb"
+                ),
+                env_overrides={
+                    "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": str(gcs_uri),
+                },
+            ),
+            _NoteBookTestConfig(
+                name="toy_example",
+                notebook_path=str(
+                    GIGL_ROOT_DIR
+                    / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
+                ),
+                env_overrides={
+                    "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": resource_config_uri,
+                },
+            ),
         ]
 
     def test_notebooks(self):
