@@ -8,6 +8,7 @@ import psutil
 import tensorflow as tf
 import torch
 import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
@@ -64,7 +65,7 @@ class TFDatasetOptions:
         deterministic (bool): Whether to use deterministic processing, if False then the order of elements can be non-deterministic.
         use_interleave (bool): Whether to use tf.data.Dataset.interleave to read files in parallel, if not set then `num_parallel_file_reads` will be used.
         num_parallel_file_reads (int): The number of files to read in parallel if `use_interleave` is False.
-        ram_budget_multiplier (float): The multiplier of the total system memory to set as the tf.data RAM budget..
+        ram_budget_multiplier (float): The multiplier of the total system memory to set as the tf.data RAM budget.
     """
 
     batch_size: int = 10_000
@@ -286,6 +287,7 @@ class TFRecordDataLoader:
         self,
         serialized_tf_record_info: SerializedTFRecordInfo,
         tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+        log_every_n_batch: int = 1000,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Loads torch tensors from a set of TFRecord files.
@@ -293,6 +295,7 @@ class TFRecordDataLoader:
         Args:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
+            log_every_n_batch (int): Frequency we should log information when looping through dataset
 
         Returns:
             Tuple[torch.Tensor, Optional[torch.Tensor]]: The (id_tensor, feature_tensor) for the loaded entities.
@@ -374,17 +377,22 @@ class TFRecordDataLoader:
         num_entities_processed = 0
         id_tensors = []
         feature_tensors = []
-        for batch in tqdm.tqdm(dataset):
-            id_tensors.append(proccess_id_tensor(batch))
-            if feature_keys:
-                feature_tensors.append(
-                    _concatenate_features_by_names(batch, feature_keys)
+        with logging_redirect_tqdm():
+            for idx, batch in tqdm.tqdm(enumerate(dataset)):
+                id_tensors.append(proccess_id_tensor(batch))
+                if feature_keys:
+                    feature_tensors.append(
+                        _concatenate_features_by_names(batch, feature_keys)
+                    )
+                num_entities_processed += (
+                    id_tensors[-1].shape[0]
+                    if entity_type == FeatureTypes.NODE
+                    else id_tensors[-1].shape[1]
                 )
-            num_entities_processed += (
-                id_tensors[-1].shape[0]
-                if entity_type == FeatureTypes.NODE
-                else id_tensors[-1].shape[1]
-            )
+                if (idx + 1) % log_every_n_batch == 0:
+                    logger.info(
+                        f"Processed {idx + 1:,} batches with {num_entities_processed:,} {entity_type.name}"
+                    )
         end = time.perf_counter()
         logger.info(
             f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"
