@@ -12,7 +12,7 @@ import torch
 import gigl.common.utils.local_fs as local_fs_utils
 import gigl.src.common.constants.gcs as gcs_consts
 import gigl.src.common.constants.local_fs as local_fs_constants
-from gigl.common import GcsUri, LocalUri, Uri
+from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
@@ -594,7 +594,23 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
         )
         def __run_data_preprocessor_pipeline_w_timeout() -> Uri:
             # Run data preprocessor
-            data_preprocessor = DataPreprocessor()
+            gbml_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=task_config_uri
+            )
+            data_preprocessor = DataPreprocessor(
+                data_preprocessor_cls_path=gbml_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path,
+                data_preprocessor_args=gbml_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_args,
+                preprocessed_metadata_uri=UriFactory.create_uri(
+                    gbml_pb_wrapper.shared_config.preprocessed_metadata_uri
+                ),
+                data_preprocessor_shards=int(
+                    gbml_pb_wrapper.gbml_config_pb.feature_flags.get(
+                        "data_preprocoessor_num_shards", 0
+                    )
+                ),
+                node_type_to_condensed_node_type=gbml_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map,
+                edge_type_to_condesnsed_edge_type=gbml_pb_wrapper.graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map,
+            )
             preprocessed_metadata_output_uri = data_preprocessor.run(
                 applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
