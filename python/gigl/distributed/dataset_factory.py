@@ -78,7 +78,6 @@ def _load_and_build_partitioned_dataset(
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
-
     Returns:
         DistLinkPredictionDataset: Initialized dataset with partitioned graph information
 
