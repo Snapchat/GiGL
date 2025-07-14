@@ -68,7 +68,7 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
 def _setup_dataloaders(
     dataset: DistLinkPredictionDataset,
     split: Literal["train", "val", "test"],
-    subgraph_fanout: list[int],
+    num_neighbors: list[int],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -81,7 +81,7 @@ def _setup_dataloaders(
     Args:
         dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training and testing
         split (Literal["train", "val", "test"]): The current split which we are loading data for
-        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): sampling_workers_per_process (int): Number of sampling workers per training/testing process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
@@ -108,7 +108,7 @@ def _setup_dataloaders(
 
     main_loader = DistABLPLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         input_nodes=main_input_nodes,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
@@ -128,7 +128,7 @@ def _setup_dataloaders(
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         input_nodes=to_homogeneous(dataset.node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
@@ -246,7 +246,7 @@ def _training_process(
     master_ip_address: str,
     master_default_process_group_port: int,
     model_uri: Uri,
-    subgraph_fanout: list[int],
+    num_neighbors: list[int],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -273,7 +273,7 @@ def _training_process(
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
         model_uri (Uri): URI Path to save the model to
-        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): Number of sampling workers per training process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
@@ -326,7 +326,7 @@ def _training_process(
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
             split="train",
-            subgraph_fanout=subgraph_fanout,
+            num_neighbors=num_neighbors,
             sampling_workers_per_process=sampling_workers_per_process,
             main_batch_size=main_batch_size,
             random_batch_size=random_batch_size,
@@ -345,7 +345,7 @@ def _training_process(
         val_main_loader, val_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
             split="val",
-            subgraph_fanout=subgraph_fanout,
+            num_neighbors=num_neighbors,
             sampling_workers_per_process=sampling_workers_per_process,
             main_batch_size=main_batch_size,
             random_batch_size=random_batch_size,
@@ -483,7 +483,7 @@ def _training_process(
     test_main_loader, test_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
         split="test",
-        subgraph_fanout=subgraph_fanout,
+        num_neighbors=num_neighbors,
         sampling_workers_per_process=sampling_workers_per_process,
         main_batch_size=main_batch_size,
         random_batch_size=random_batch_size,
@@ -640,8 +640,8 @@ def _run_example_training(
             )
 
     # Parses the fanout as a JSON string. For the homogeneous case, the fanouts should be specified as a JSON string of a list of integers, such as "[10, 10]".
-    fanout = trainer_args.get("fanout", "[10, 10]")
-    subgraph_fanout = parse_fanout(fanout)
+    fanout = trainer_args.get("num_neighbors", "[10, 10]")
+    num_neighbors = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -673,7 +673,7 @@ def _run_example_training(
 
     logger.info(
         f"Got training args local_world_size={local_world_size}, \
-        subgraph_fanout={subgraph_fanout}, \
+        num_neighbors={num_neighbors}, \
         sampling_workers_per_process={sampling_workers_per_process}, \
         main_batch_size={main_batch_size}, \
         random_batch_size={random_batch_size}, \
@@ -741,7 +741,7 @@ def _run_example_training(
             master_ip_address,  # master_ip_address
             master_default_process_group_port,  # master_default_process_group_port
             model_uri,  # model_uri
-            subgraph_fanout,  # subgraph_fanout
+            num_neighbors,  # num_neighbors
             sampling_workers_per_process,  # sampling_workers_per_process
             main_batch_size,  # main_batch_size
             random_batch_size,  # random_batch_size

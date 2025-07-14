@@ -74,7 +74,7 @@ def _setup_dataloaders(
     dataset: DistLinkPredictionDataset,
     split: Literal["train", "val", "test"],
     supervision_edge_type: EdgeType,
-    subgraph_fanout: list[int],
+    num_neighbors: list[int],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -87,7 +87,7 @@ def _setup_dataloaders(
     Args:
         dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training and testing
         split (Literal["train", "val", "test"]): The current split which we are loading data for
-        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): sampling_workers_per_process (int): Number of sampling workers per training/testing process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
@@ -118,7 +118,7 @@ def _setup_dataloaders(
 
     main_loader = DistABLPLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         input_nodes=(query_node_type, main_input_nodes[query_node_type]),
         supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
@@ -141,7 +141,7 @@ def _setup_dataloaders(
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
@@ -285,7 +285,7 @@ def _training_process(
     master_ip_address: str,
     master_default_process_group_port: int,
     model_uri: Uri,
-    subgraph_fanout: list[int],
+    num_neighbors: list[int],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -313,7 +313,7 @@ def _training_process(
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
         model_uri (Uri): URI Path to save the model to
-        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): Number of sampling workers per training process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
@@ -364,7 +364,7 @@ def _training_process(
             dataset=dataset,
             split="train",
             supervision_edge_type=supervision_edge_type,
-            subgraph_fanout=subgraph_fanout,
+            num_neighbors=num_neighbors,
             sampling_workers_per_process=sampling_workers_per_process,
             main_batch_size=main_batch_size,
             random_batch_size=random_batch_size,
@@ -384,7 +384,7 @@ def _training_process(
             dataset=dataset,
             split="val",
             supervision_edge_type=supervision_edge_type,
-            subgraph_fanout=subgraph_fanout,
+            num_neighbors=num_neighbors,
             sampling_workers_per_process=sampling_workers_per_process,
             main_batch_size=main_batch_size,
             random_batch_size=random_batch_size,
@@ -530,7 +530,7 @@ def _training_process(
         dataset=dataset,
         split="test",
         supervision_edge_type=supervision_edge_type,
-        subgraph_fanout=subgraph_fanout,
+        num_neighbors=num_neighbors,
         sampling_workers_per_process=sampling_workers_per_process,
         main_batch_size=main_batch_size,
         random_batch_size=random_batch_size,
@@ -697,8 +697,8 @@ def _run_example_training(
     # For the default, we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`. To see an example of
     # a 'fanout' with different behaviors per edge type, refer to `examples.link_prediction.configs.e2e_het_dblp_sup_task_config.yaml`.
 
-    fanout = trainer_args.get("fanout", "[10, 10]")
-    subgraph_fanout = parse_fanout(fanout)
+    fanout = trainer_args.get("num_neighbors", "[10, 10]")
+    num_neighbors = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -731,7 +731,7 @@ def _run_example_training(
 
     logger.info(
         f"Got training args local_world_size={local_world_size}, \
-        subgraph_fanout={subgraph_fanout}, \
+        num_neighbors={num_neighbors}, \
         sampling_workers_per_process={sampling_workers_per_process}, \
         main_batch_size={main_batch_size}, \
         random_batch_size={random_batch_size}, \
@@ -816,7 +816,7 @@ def _run_example_training(
             master_ip_address,  # master_ip_address
             master_default_process_group_port,  # master_default_process_group_port
             model_uri,  # model_uri
-            subgraph_fanout,  # subgraph_fanout
+            num_neighbors,  # num_neighbors
             sampling_workers_per_process,  # sampling_workers_per_process
             main_batch_size,  # main_batch_size
             random_batch_size,  # random_batch_size
