@@ -261,6 +261,8 @@ def _inference_process(
     del data_loader
     gc.collect()
 
+    torch.distributed.destroy_process_group()
+
     logger.info(
         f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )

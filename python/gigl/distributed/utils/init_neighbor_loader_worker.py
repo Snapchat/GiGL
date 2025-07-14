@@ -2,9 +2,9 @@ import time
 from functools import lru_cache
 from typing import Optional
 
+import graphlearn_torch as glt
 import psutil
 import torch
-from graphlearn_torch.distributed import get_context, init_worker_group
 
 from gigl.common.logger import Logger
 
@@ -45,8 +45,8 @@ def init_neighbor_loader_worker(
     Args:
         local_process_rank (int): Process number on the current machine
         local_process_world_size (int): Total number of processes on the current machine
-        rank (int): Rank of current machine
-        world_size (int): Total number of machines
+        machine_rank (int): Rank of current machine
+        machine_world_size (int): Total number of machines
         device (torch.device): The device where you want to load the data onto - i.e. where is your model?
         should_use_cpu_workers (bool): Whether we should do CPU training or inference.
         num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training or inference.
@@ -141,7 +141,7 @@ def init_neighbor_loader_worker(
         )
 
     # Only initialize the worker group if it is not already set up
-    if get_context() is None:
+    if glt.distributed.get_context() is None:
         # Group of workers. Each process is a worker. Each
         # worker will initiate one model and at least one data loader. Each data loader
         # will spawn several sampling processes (a.k.a. sampling workers).
@@ -157,7 +157,7 @@ def init_neighbor_loader_worker(
         logger.info(
             f"Init worker group with: world_size={machine_world_size}, rank={machine_rank}, group_name={group_name}, "
         )
-        init_worker_group(
+        glt.distributed.init_worker_group(
             world_size=machine_world_size,
             rank=machine_rank,
             group_name=group_name,
