@@ -47,7 +47,9 @@ inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
     log_every_n_batch: "50"
-    # Example of a JSON dictionary fanout which has different fanout-per-hop for each edge type.
+    # Example of a JSON dictionary fanout which has different fanout-per-hop for each edge type. Currently, we assume that all anchor node types
+    # use the same fanout. If you want different anchor node types to have different fanouts, we encourage adding additional arguemnts here to parse
+    # fanouts for each anchor node type.
     # Note that edge types must be provided in format SRC-RELATION-DST, as demonstrated below.
     # Also note that JSON parsing requires string keys of dictionaries to be parsed with double quotes
     fanout: '{"term-to-paper": [10, 10], "paper-to-author": [15, 15], "author-to-paper": [20, 20]}'
