@@ -1118,17 +1118,18 @@ class DistPartitioner:
         elapsed_time = time.time() - start_time
         logger.info(f"Node Partitioning finished, took {elapsed_time:.3f}s")
 
-        if self._is_input_homogeneous:
-            logger.info(
-                f"Partitioned {to_homogeneous(self._num_nodes)} nodes for homogeneous dataset"
-            )
-        else:
-            logger.info(f"Partitioned {self._num_nodes} nodes per node type")
+        formatted_num_nodes = {
+            node_type: f"{num_nodes:,}"
+            for node_type, num_nodes in self._num_nodes.items()
+        }
 
         if self._is_input_homogeneous:
-            # Converting heterogeneous input back to homogeneous
-            return node_partition_book[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+            logger.info(
+                f"Partitioned {to_homogeneous(formatted_num_nodes)} nodes for homogeneous dataset"
+            )
+            return to_homogeneous(node_partition_book)
         else:
+            logger.info(f"Partitioned {formatted_num_nodes} nodes per node type")
             return node_partition_book
 
     def partition_node_features(
@@ -1274,14 +1275,15 @@ class DistPartitioner:
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
 
-        if self._is_input_homogeneous:
-            logger.info(
-                f"Partitioned {to_homogeneous(self._num_edges)} edges for homogeneous dataset"
-            )
-        else:
-            logger.info(f"Partitioned {self._num_edges} edges per edge type")
+        formatted_num_edges = {
+            edge_type: f"{num_edges:,}"
+            for edge_type, num_edges in self._num_edges.items()
+        }
 
         if self._is_input_homogeneous:
+            logger.info(
+                f"Partitioned {to_homogeneous(formatted_num_edges)} edges for homogeneous dataset"
+            )
             return (
                 to_homogeneous(partitioned_edge_index),
                 to_homogeneous(partitioned_edge_features)
@@ -1292,6 +1294,7 @@ class DistPartitioner:
                 else None,
             )
         else:
+            logger.info(f"Partitioned {self._num_edges} edges per edge type")
             return (
                 partitioned_edge_index,
                 partitioned_edge_features,

@@ -66,7 +66,7 @@ class TFDatasetOptions:
         use_interleave (bool): Whether to use tf.data.Dataset.interleave to read files in parallel, if not set then `num_parallel_file_reads` will be used.
         num_parallel_file_reads (int): The number of files to read in parallel if `use_interleave` is False.
         ram_budget_multiplier (float): The multiplier of the total system memory to set as the tf.data RAM budget.
-        log_every_n_batch (int): Frequency we should log information when looping through dataset
+        log_every_n_batch (int): Frequency that we should log information while looping through the dataset
     """
 
     batch_size: int = 10_000
