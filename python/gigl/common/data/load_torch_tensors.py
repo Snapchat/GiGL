@@ -71,7 +71,6 @@ def _data_loading_process(
     ],
     rank: int,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    log_every_n_batch: int = 1000,
 ) -> None:
     """
     Spawned multiprocessing.Process which loads homogeneous or heterogeneous information for a specific entity type [node, edge, positive_label, negative_label]
@@ -89,7 +88,6 @@ def _data_loading_process(
             Serialized information for current entity
         rank (int): Rank of the current machine
         tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
-        log_every_n_batch (int): Frequency we should log information when looping through dataset
     """
     # We add a try - except clause here to ensure that exceptions are properly circulated back to the parent process
     try:
@@ -127,7 +125,6 @@ def _data_loading_process(
             ) = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
                 tf_dataset_options=tf_dataset_options,
-                log_every_n_batch=log_every_n_batch,
             )
             ids[graph_type] = entity_ids
             logger.info(
@@ -179,7 +176,6 @@ def load_torch_tensors_from_tf_record(
     rank: int = 0,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    log_every_n_batch: int = 1000,
 ) -> LoadedGraphTensors:
     """
     Loads all torch tensors from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
@@ -195,7 +191,6 @@ def load_torch_tensors_from_tf_record(
         rank (int): Rank on current machine
         node_tf_dataset_options (TFDatasetOptions): The options to use for nodes when building the dataset.
         edge_tf_dataset_options (TFDatasetOptions): The options to use for edges when building the dataset.
-        log_every_n_batch (int): Frequency we should log information when looping through dataset
     Returns:
         loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors
     """
@@ -230,7 +225,6 @@ def load_torch_tensors_from_tf_record(
             "serialized_tf_record_info": serialized_graph_metadata.node_entity_info,
             "rank": rank,
             "tf_dataset_options": node_tf_dataset_options,
-            "log_every_n_batch": log_every_n_batch,
         },
     )
 
@@ -244,7 +238,6 @@ def load_torch_tensors_from_tf_record(
             "serialized_tf_record_info": serialized_graph_metadata.edge_entity_info,
             "rank": rank,
             "tf_dataset_options": edge_tf_dataset_options,
-            "log_every_n_batch": log_every_n_batch,
         },
     )
 
@@ -258,7 +251,6 @@ def load_torch_tensors_from_tf_record(
                 "entity_type": _POSITIVE_LABEL_KEY,
                 "serialized_tf_record_info": serialized_graph_metadata.positive_label_entity_info,
                 "rank": rank,
-                "log_every_n_batch": log_every_n_batch,
             },
         )
     else:
@@ -274,7 +266,6 @@ def load_torch_tensors_from_tf_record(
                 "entity_type": _NEGATIVE_LABEL_KEY,
                 "serialized_tf_record_info": serialized_graph_metadata.negative_label_entity_info,
                 "rank": rank,
-                "log_every_n_batch": log_every_n_batch,
             },
         )
     else:
