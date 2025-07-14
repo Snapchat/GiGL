@@ -38,23 +38,31 @@ trainerConfig:
     # Note that the current GiGL implementation does not remove these selected edges from the global set of edges, which may
     # have a slight negative impact on training specifically with self-supervised learning. This will improved on in the future.
     ssl_positive_label_percentage: "0.05"
-    # Example of a JSON dictionary fanout which has different fanout-per-hop for each edge type. Currently, we assume that all anchor node types
+    # Example of a dictionary fanout which has different fanout-per-hop for each edge type. Currently, we assume that all anchor node types
     # use the same fanout. If you want different anchor node types to have different fanouts, we encourage adding additional arguemnts here to parse
     # fanouts for each anchor node type.
-    # Note that edge types must be provided in format SRC-RELATION-DST, as demonstrated below.
-    # Also note that JSON parsing requires string keys of dictionaries to be parsed with double quotes
-    num_neighbors: '{"term-to-paper": [10, 10], "paper-to-author": [15, 15], "author-to-paper": [20, 20]}'
+    # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
+    num_neighbors: >-
+      {
+        ("term", "to", "paper"): [10, 10],
+        ("paper", "to", "author"): [15, 15],
+        ("author", "to", "paper"): [20, 20]
+      }
   command: python -m examples.link_prediction.heterogeneous_training
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
     log_every_n_batch: "50"
-    # Example of a JSON dictionary fanout which has different fanout-per-hop for each edge type. Currently, we assume that all anchor node types
+    # Example of a dictionary fanout which has different fanout-per-hop for each edge type. Currently, we assume that all anchor node types
     # use the same fanout. If you want different anchor node types to have different fanouts, we encourage adding additional arguemnts here to parse
     # fanouts for each anchor node type.
-    # Note that edge types must be provided in format SRC-RELATION-DST, as demonstrated below.
-    # Also note that JSON parsing requires string keys of dictionaries to be parsed with double quotes
-    num_neighbors: '{"term-to-paper": [10, 10], "paper-to-author": [15, 15], "author-to-paper": [20, 20]}'
+    # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
+    num_neighbors: >-
+      {
+        ("term", "to", "paper"): [10, 10],
+        ("paper", "to", "author"): [15, 15],
+        ("author", "to", "paper"): [20, 20]
+      }
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.heterogeneous_inference
 sharedConfig:

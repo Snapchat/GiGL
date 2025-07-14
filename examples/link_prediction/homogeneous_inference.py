@@ -97,7 +97,7 @@ def _inference_process(
         edge_feature_dim (int): Input edge feature dimension for the model
     """
 
-    # Parses the fanout as a JSON string. For the homogeneous case, the fanouts should be specified as a JSON string of a list of integers, such as "[10, 10]".
+    # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified as a string of a list of integers, such as "[10, 10]".
     fanout = inferencer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
 

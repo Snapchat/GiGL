@@ -639,7 +639,7 @@ def _run_example_training(
                 f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
             )
 
-    # Parses the fanout as a JSON string. For the homogeneous case, the fanouts should be specified as a JSON string of a list of integers, such as "[10, 10]".
+    # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified as a string of a list of integers, such as "[10, 10]".
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
 

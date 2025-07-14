@@ -691,9 +691,9 @@ def _run_example_training(
                 f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
             )
 
-    # Parses the fanout as a JSON string. For the heterogeneous case, the fanouts can be specified as a JSON string of a list of integers, such as "[10, 10]", which will
-    # apply this fanout to each edge type in the graph, or as JSON string of format dict[str, list[int]] which will specify fanouts per edge type. In the case of the latter,
-    # the string keys should be specified with format "SRC-RELATION-DST", where SRC is the source node type string, RELATION is the relation string, and DST is the destination node type string.
+    # Parses the fanout as a string. For the heterogeneous case, the fanouts can be specified as a string of a list of integers, such as "[10, 10]", which will
+    # apply this fanout to each edge type in the graph, or as string of format dict[(tuple[str, str, str])), list[int]] which will specify fanouts per edge type.
+    # In the case of the latter, the keys should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE).
     # For the default, we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`. To see an example of
     # a 'fanout' with different behaviors per edge type, refer to `examples.link_prediction.configs.e2e_het_dblp_sup_task_config.yaml`.
 

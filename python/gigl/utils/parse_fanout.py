@@ -1,99 +1,86 @@
-import json
-import re
+import ast
 from typing import Any, Union
 
 from gigl.common.logger import Logger
-from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.src.common.types.graph_data import EdgeType
 
 logger = Logger()
 
-_EDGE_TYPE_REGEX_PATTERN = r"([^-]+)-([^-]+)-([^-]+)"
 
-
-def _parse_edge_type(edge_type_str: str) -> EdgeType:
+def _validate_parsed_edge_type(parsed_edge_type: Any) -> None:
     """
-    Parses the edge type from a provided edge type string. The edge type must be must be of form 'SRC-RELATION-DST',
-    where SRC is the source node type string, RELATION is the relation string, and DST is the destination node type string.
-
+    Validates that the parsed edge type is correctly a tuple[str, str, str], denoting an edge type.
     Args:
-        edge_type_str (str): The edge type string to be parsed as an EdgeType
-    Returns:
-        EdgeType: The parsed edge type
+        parsed_edge_type (Any): Edge type which is expected to be a tuple[str, str, str], corresponding to the source node type, relation, and destination node type, respectively.
+    Raises:
+        ValueError: if not a tuple
+        ValueError: if not all elements of the tuple are strings
     """
-    match = re.match(_EDGE_TYPE_REGEX_PATTERN, edge_type_str)
-    if match:
-        result = match.groups()
-    else:
+    if not isinstance(parsed_edge_type, tuple):
         raise ValueError(
-            f"Failed to parse edge type: {edge_type_str}. Please ensure edge types are provided in format such as 'SRC-RELATION-DST', \
-            where SRC is the source node type string, RELATION is the relation string, and DST is the destination node type string."
+            f"Parsed edge type expected to be a tuple[str, str, str], got {parsed_edge_type} of type {type(parsed_edge_type)}"
         )
-    return EdgeType(
-        src_node_type=NodeType(result[0]),
-        relation=Relation(result[1]),
-        dst_node_type=NodeType(result[2]),
-    )
+    for item in parsed_edge_type:
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Parsed edge type field expected to be a str, got {item} of type {type(item)}"
+            )
 
 
-def _validate_parsed_fanout(parsed_fanout: Any) -> None:
+def _validate_parsed_hops(parsed_fanout: Any) -> None:
     """
-    Validates that the parsed fanout from the JSON is correctly specified as a list of integers.
+    Validates that the parsed fanout is correctly specified as a list of integers.
 
     Args:
         parsed_fanout (Any): Fanout which is expected to be a list of integers
+    Raises:
+        ValueError: if not a list
+        ValueError: if not all elements of the list are ints
     """
     if not isinstance(parsed_fanout, list):
         raise ValueError(
             f"Parsed fanout expected to be a list, got {parsed_fanout} of type {type(parsed_fanout)}"
         )
     for item in parsed_fanout:
-        if not isinstance(item, int):
+        if not isinstance(item, int) or item < 0:
             raise ValueError(
-                f"Fanout must contain integers, got {item} of type {type(item)}"
+                f"Fanout must contain non-negative integers, got {item} of type {type(item)}"
             )
 
 
 def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]:
     """
-    Parses fanout from a JSON string. The fanout string provided must be a well-formed and must be provided as a list[int] or as a
-    dict[str, list[int]]. In the case of the dictionary specification, the keys must be of form 'SRC-RELATION-DST',
-    where SRC is the source node type string, RELATION is the relation string, and DST is the destination node type string.
+    Parses fanout from a string. The fanout string provided must be a well-formed and must be provided as a list[int] or as a
+    dict[tuple[str, str, str], list[int]], where each item in the tuple corresponds to the source node type, relation, and destination node type, respectively.
 
     For example, to parse a list[int], one could provide a fanout_str such as
         [10, 15, 20]
 
     To parse a dict[EdgeType, list[int]], one could provide a fanout_str such as
-        {"user-to-user": [10, 10], "user-to-item": [20, 20]}
+        {("user", "to", "user"): [10, 10], ("user", "to", "item"): [20, 20]}
 
     Args:
-        fanout_str (str): Json string to be parsed into fanout
+        fanout_str (str): Provided string to be parsed into fanout
     Returns:
         Union[list[int], dict[EdgeType, list[int]]]: Either a list of fanout per hop of a dictionary of edge types to their respective fanouts per hop
     """
-    try:
-        loaded_fanout = json.loads(fanout_str)
-    except json.decoder.JSONDecodeError:
-        raise ValueError(
-            f"Failed to parse provided fanout string: {fanout_str}. Please ensure the provided string is well-formed as a JSON."
-        )
+
+    loaded_fanout = ast.literal_eval(fanout_str)
     if isinstance(loaded_fanout, list):
-        _validate_parsed_fanout(parsed_fanout=loaded_fanout)
+        _validate_parsed_hops(parsed_fanout=loaded_fanout)
         logger.info(f"Parsed list fanout from args: {loaded_fanout}")
         return loaded_fanout
     elif isinstance(loaded_fanout, dict):
         fanout: dict[EdgeType, list[int]] = {}
-        for edge_type_str, parsed_fanout in loaded_fanout.items():
-            _validate_parsed_fanout(parsed_fanout=parsed_fanout)
-            edge_type = _parse_edge_type(edge_type_str)
+        for parsed_edge_type, parsed_fanout in loaded_fanout.items():
+            _validate_parsed_edge_type(parsed_edge_type=parsed_edge_type)
+            _validate_parsed_hops(parsed_fanout=parsed_fanout)
+            edge_type = EdgeType(
+                src_node_type=parsed_edge_type[0],
+                relation=parsed_edge_type[1],
+                dst_node_type=parsed_edge_type[2],
+            )
             fanout[edge_type] = parsed_fanout
-        fanout_len = len(next(iter(fanout.values())))
-        for edge_type, fanout_list in fanout.items():
-            if len(fanout_list) != fanout_len:
-                raise ValueError(
-                    f"Found a fanout length {fanout_list} for edge type {edge_type} which is different from earlier fanout length {fanout_len}. \
-                    Please ensure all fanouts have the same number of hops."
-                )
-        logger.info(f"Parsed dictionary fanout from args: {fanout}")
         return fanout
     else:
         raise ValueError(
