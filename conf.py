@@ -123,8 +123,7 @@ html_theme_options = {
     # Configure secondary sidebar - remove right sidebar from example pages
     "secondary_sidebar_items": {
         "**": ["page-toc", "edit-this-page", "sourcelink"],  # Default for all pages
-        "examples/**": [],  # Remove right sidebar from examples as they mostly contain notebooks
-        "docs/api/**": [],  # Remove right sidebar from all pages under docs/api to provide more screen real estate
+        "docs/api/**": ["page-toc", "sourcelink"],  # Remove edit-this-page button from api pages, as they are auto-generated
     },
 }
 
