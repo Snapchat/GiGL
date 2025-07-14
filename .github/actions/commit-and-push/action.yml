@@ -26,6 +26,7 @@ runs:
         if [ "$TO_NEW_BRANCH_NAMED" != "false" ]; then
           echo "Creating a new branch, named $TO_NEW_BRANCH_NAMED, and pushing the changes to it"
           git checkout -b $TO_NEW_BRANCH_NAMED
+          git push --set-upstream origin $TO_NEW_BRANCH_NAMED
         fi
 
         git add .
