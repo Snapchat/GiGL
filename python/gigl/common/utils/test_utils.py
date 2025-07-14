@@ -49,6 +49,8 @@ def parse_args() -> TestArgs:
 
 
 def _run_individual_test(test: unittest.TestCase) -> Tuple[bool, int]:
+    # If we don't have any test cases, we skip running the test.
+    # This reduces some noise in the logs.
     if test.countTestCases() == 0:
         logger.warning(
             f"Test {test} has no test cases to run. Skipping execution of this test."
