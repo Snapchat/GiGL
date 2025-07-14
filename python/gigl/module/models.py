@@ -69,7 +69,7 @@ class LinkPredictionGNN(nn.Module):
         device: torch.device,
         dummy_data: Union[Data, HeteroData],
         output_node_types: Optional[list[NodeType]] = None,
-        find_unused_parameters: bool = False,
+        find_unused_encoder_parameters: bool = False,
     ) -> "LinkPredictionGNN":
         """
         Created for DistributedDataParallel (DDP) training.
@@ -80,7 +80,7 @@ class LinkPredictionGNN(nn.Module):
             device (torch.device): The device to which the model should be moved.
             dummy_data (Union[Data, HeteroData]): Dummy data to initialize the encoder.
             output_node_types (Optional[list[NodeType]]): Node types for the output, required for heterogeneous data.
-            find_unused_parameters (bool): Whether to find unused parameters in the model.
+            find_unused_encoder_parameters (bool): Whether to find unused parameters in the model.
                 This should be set to True if the model has parameters that are not used in the forward pass.
                 E.g. if the model has been initialized with all edge types in the graph,
                 but not all of them are present in the training task.
@@ -101,7 +101,7 @@ class LinkPredictionGNN(nn.Module):
             encoder,
             device_ids=[device] if device.type != "cpu" else None,
             output_device=device if device.type != "cpu" else None,
-            find_unused_parameters=find_unused_parameters,
+            find_unused_parameters=find_unused_encoder_parameters,
         )
         if any(p.requires_grad for p in decoder.parameters()):
             # Only wrap the decoder in DDP if it has parameters that require gradients
@@ -110,7 +110,6 @@ class LinkPredictionGNN(nn.Module):
                 decoder.to(device),
                 device_ids=[device] if device.type != "cpu" else None,
                 output_device=device if device.type != "cpu" else None,
-                find_unused_parameters=find_unused_parameters,
             )
         else:
             # If the decoder has no trainable parameters, we can just use it as is

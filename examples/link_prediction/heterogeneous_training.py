@@ -562,7 +562,9 @@ def _training_process(
         logger.info(
             f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
         )
-        save_state_dict(model=model, save_to_path_uri=model_uri)
+        # We unwrap the model from DDP to save it
+        # We do this so we can use the model without DDP later, e.g. for inference.
+        save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
 
     torch.distributed.destroy_process_group()
 
