@@ -103,7 +103,11 @@ class LinkPredictionGNN(nn.Module):
             output_device=device if device.type != "cpu" else None,
             find_unused_parameters=find_unused_encoder_parameters,
         )
-        if any(p.requires_grad for p in decoder.parameters()):
+        # Do this "backwards" so the we can define "ddp_decoder" as a nn.Module first...
+        if not any(p.requires_grad for p in decoder.parameters()):
+            # If the decoder has no trainable parameters, we can just use it as is
+            ddp_decoder = decoder.to(device)
+        else:
             # Only wrap the decoder in DDP if it has parameters that require gradients
             # Otherwise DDP will complain about no parameters to train.
             ddp_decoder = DistributedDataParallel(
@@ -111,9 +115,6 @@ class LinkPredictionGNN(nn.Module):
                 device_ids=[device] if device.type != "cpu" else None,
                 output_device=device if device.type != "cpu" else None,
             )
-        else:
-            # If the decoder has no trainable parameters, we can just use it as is
-            ddp_decoder = decoder.to(device)
 
         return cls(
             encoder=ddp_encoder,

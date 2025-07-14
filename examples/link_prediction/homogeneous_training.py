@@ -27,7 +27,6 @@ import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data
 
 import gigl.distributed.utils
@@ -41,6 +40,7 @@ from gigl.distributed import (
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.module.loss import RetrievalLoss
+from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.types.graph import to_homogeneous
@@ -147,7 +147,7 @@ def _setup_dataloaders(
 
 
 def _compute_loss(
-    model: DistributedDataParallel,
+    model: LinkPredictionGNN,
     main_data: Data,
     random_negative_data: Data,
     loss_fn: RetrievalLoss,
@@ -156,7 +156,7 @@ def _compute_loss(
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
-        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
+        model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
         main_data (Data): The batch of data containing query nodes, positive nodes, and hard negative nodes
         random_negative_data (Data): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
@@ -365,7 +365,7 @@ def _training_process(
             init_for_ddp=True,  # We initialize the model for DDP
             dummy_data=next(
                 train_main_loader_iter
-            ),  # We need a dummy data to initialize the model
+            ),  # We need a dummy data to initialize the model for DDP
         )
 
         optimizer = torch.optim.AdamW(
@@ -529,7 +529,7 @@ def _training_process(
 
 @torch.inference_mode()
 def _run_validation_loops(
-    model: DistributedDataParallel,
+    model: LinkPredictionGNN,
     main_loader: Iterator[Data],
     random_negative_loader: Iterator[Data],
     loss_fn: RetrievalLoss,
@@ -541,7 +541,7 @@ def _run_validation_loops(
     Runs validation using the provided models and dataloaders.
     This function is shared for both validation while training and testing after training has completed.
     Args:
-        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
+        model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
         main_loader (Iterator[Data]): Dataloader for loading main batch data with query and labeled nodes
         random_negative_loader (Iterator[Data]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation

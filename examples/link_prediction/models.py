@@ -18,7 +18,7 @@ def init_example_gigl_homogeneous_model(
     num_layers: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
-    for_ddp: bool = False,
+    init_for_ddp: bool = False,
     dummy_data: Optional[Union[Data, HeteroData]] = None,
 ) -> LinkPredictionGNN:
     """
@@ -55,9 +55,18 @@ def init_example_gigl_homogeneous_model(
     )
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-    if for_ddp:
+    if init_for_ddp:
+        if device is None:
+            raise ValueError(
+                "Device must be specified when initializing for DDP training"
+            )
+        if dummy_data is None:
+            raise ValueError(
+                "Dummy data must be provided when initializing for DDP training"
+            )
+
         # Initialize the model for DDP training.
-        model: LinkPredictionGNN = LinkPredictionGNN.for_ddp(
+        model = LinkPredictionGNN.for_ddp(
             encoder=encoder_model,
             decoder=decoder_model,
             device=device,
@@ -66,7 +75,7 @@ def init_example_gigl_homogeneous_model(
     else:
         # Initialize the model without DDP.
         # This is useful for inference or single-GPU training.
-        model: LinkPredictionGNN = LinkPredictionGNN(
+        model = LinkPredictionGNN(
             encoder=encoder_model,
             decoder=decoder_model,
         )
@@ -126,12 +135,20 @@ def init_example_gigl_heterogeneous_model(
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
     if init_for_ddp:
+        if device is None:
+            raise ValueError(
+                "Device must be specified when initializing for DDP training"
+            )
+        if dummy_data is None:
+            raise ValueError(
+                "Dummy data must be provided when initializing for DDP training"
+            )
         # Initialize the model for DDP training.
         # Since the HGT encoder has params for *all* node and edge types [1]
         # We need to allow DDP to find unused parameters.
         # As not all node types may be present in the training task.
         # 1. https://github.com/Snapchat/GiGL/blob/766fae5dc313e1224998ed5618cf70cf0fb4da30/python/gigl/src/common/models/pyg/heterogeneous.py#L47-L51
-        model: LinkPredictionGNN = LinkPredictionGNN.for_ddp(
+        model = LinkPredictionGNN.for_ddp(
             encoder=encoder_model,
             decoder=decoder_model,
             device=device,
@@ -142,7 +159,7 @@ def init_example_gigl_heterogeneous_model(
     else:
         # Initialize the model without DDP.
         # This is useful for inference or single-GPU training.
-        model: LinkPredictionGNN = LinkPredictionGNN(
+        model = LinkPredictionGNN(
             encoder=encoder_model,
             decoder=decoder_model,
         )
