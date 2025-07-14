@@ -1,7 +1,6 @@
-from typing import Optional, Union
+from typing import Optional
 
 import torch
-from torch_geometric.data import Data, HeteroData
 
 from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.models.pyg.heterogeneous import HGT
