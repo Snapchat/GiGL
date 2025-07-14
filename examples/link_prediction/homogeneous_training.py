@@ -362,7 +362,10 @@ def _training_process(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
             device=device,
-            init_for_ddp=True,  # We initialize the model for DDP
+            wrap_with_ddp=True,  # We initialize the model for DDP
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
         )
 
         optimizer = torch.optim.AdamW(
@@ -464,7 +467,10 @@ def _training_process(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
             device=device,
-            init_for_ddp=True,  # We initialize the model for DDP
+            wrap_with_ddp=True,  # We initialize the model for DDP
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
             state_dict=state_dict,  # We load the model state dict for testing
         )
         logger.info(

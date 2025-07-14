@@ -17,7 +17,8 @@ def init_example_gigl_homogeneous_model(
     num_layers: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
-    init_for_ddp: bool = False,
+    wrap_with_ddp: bool = False,
+    find_unused_encoder_parameters: bool = False,
 ) -> LinkPredictionGNN:
     """
     Initializes a homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -31,8 +32,13 @@ def init_example_gigl_homogeneous_model(
         num_layers (int): Number of layers to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
-        for_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
-            If True, the model will be wrapped in `DistributedDataParallel` and will require a dummy data input for initialization.
+        wrap_with_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
+            If True, the model will be setup for `DistributedDataParallel`.
+        find_unused_encoder_parameters (bool): If when `find_unused_parameters` should be passed in when initializing the encoder for DDP training.
+            See the docs at https://docs.pytorch.org/docs/stable/notes/ddp.html for more details.
+            At a high level - this should only be True if the model has parameters that are not used in the forward pass,
+            e.g. when the model has been initialized with all edge types in the graph, but the training task only uses a subset of them.
+
     Returns:
         LinkPredictionGNN: Link Prediction model for training or inference
     """
@@ -51,25 +57,22 @@ def init_example_gigl_homogeneous_model(
     )
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-    if init_for_ddp:
+    model = LinkPredictionGNN(
+        encoder=encoder_model,
+        decoder=decoder_model,
+    )
+    if wrap_with_ddp:
         if device is None:
             raise ValueError(
                 "Device must be specified when initializing for DDP training"
             )
 
         # Initialize the model for DDP training.
-        model = LinkPredictionGNN.for_ddp(
-            encoder=encoder_model,
-            decoder=decoder_model,
+        model = model.to_ddp(
             device=device,
+            find_unused_encoder_parameters=find_unused_encoder_parameters,
         )
     else:
-        # Initialize the model without DDP.
-        # This is useful for inference or single-GPU training.
-        model = LinkPredictionGNN(
-            encoder=encoder_model,
-            decoder=decoder_model,
-        )
         # Push the model to the specified device.
         if device is None:
             device = torch.device("cpu")
@@ -90,7 +93,8 @@ def init_example_gigl_heterogeneous_model(
     num_heads: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
-    init_for_ddp: bool = False,
+    wrap_with_ddp: bool = False,
+    find_unused_encoder_parameters: bool = False,
 ) -> LinkPredictionGNN:
     """
     Initializes a heterogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -105,8 +109,12 @@ def init_example_gigl_heterogeneous_model(
         num_heads (int): Number of attention heads to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
-        init_for_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
-            If True, the model will be wrapped in `DistributedDataParallel` and will require a dummy data input for initialization.
+        wrap_with_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
+            If True, the model will be setup for `DistributedDataParallel`.
+        find_unused_encoder_parameters (bool): If when `find_unused_parameters` should be passed in when initializing the encoder for DDP training.
+            See the docs at https://docs.pytorch.org/docs/stable/notes/ddp.html for more details.
+            At a high level - this should only be True if the model has parameters that are not used in the forward pass,
+            e.g. when the model has been initialized with all edge types in the graph, but the training task only uses a subset of them.
     Returns:
         LinkPredictionGNN: Link Prediction model for inference
     """
@@ -122,7 +130,11 @@ def init_example_gigl_heterogeneous_model(
     )
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-    if init_for_ddp:
+    model = LinkPredictionGNN(
+        encoder=encoder_model,
+        decoder=decoder_model,
+    )
+    if wrap_with_ddp:
         if device is None:
             raise ValueError(
                 "Device must be specified when initializing for DDP training"
@@ -133,20 +145,11 @@ def init_example_gigl_heterogeneous_model(
         # We need to allow DDP to find unused parameters.
         # As not all node types may be present in the training task.
         # 1. https://github.com/Snapchat/GiGL/blob/766fae5dc313e1224998ed5618cf70cf0fb4da30/python/gigl/src/common/models/pyg/heterogeneous.py#L47-L51
-        model = LinkPredictionGNN.for_ddp(
-            encoder=encoder_model,
-            decoder=decoder_model,
+        model.to_ddp(
             device=device,
-            find_unused_encoder_parameters=True,
+            find_unused_encoder_parameters=find_unused_encoder_parameters,
         )
     else:
-        # Initialize the model without DDP.
-        # This is useful for inference or single-GPU training.
-        model = LinkPredictionGNN(
-            encoder=encoder_model,
-            decoder=decoder_model,
-        )
-
         # Push the model to the specified device.
         if device is None:
             device = torch.device("cpu")

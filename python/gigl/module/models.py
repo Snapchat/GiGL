@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
+from typing_extensions import Self
 
 from gigl.src.common.types.graph_data import NodeType
 
@@ -61,51 +62,40 @@ class LinkPredictionGNN(nn.Module):
     def decoder(self) -> nn.Module:
         return self._decoder
 
-    @classmethod
-    def for_ddp(
-        cls,
-        encoder: nn.Module,
-        decoder: nn.Module,
-        device: torch.device,
-        find_unused_encoder_parameters: bool = False,
-    ) -> "LinkPredictionGNN":
+    def to_ddp(
+        self, device: torch.device, find_unused_encoder_parameters: bool = False
+    ) -> Self:
         """
-        Created for DistributedDataParallel (DDP) training.
-        This method wraps the encoder and decoder in DDP.
+        Converts the model to DistributedDataParallel (DDP) mode.
         Args:
-            encoder (nn.Module): The GNN encoder to be wrapped.
-            decoder (nn.Module): The decoder for link prediction.
             device (torch.device): The device to which the model should be moved.
             find_unused_encoder_parameters (bool): Whether to find unused parameters in the model.
                 This should be set to True if the model has parameters that are not used in the forward pass.
-                E.g. if the model has been initialized with all edge types in the graph,
-                but not all of them are present in the training task.
         Returns:
             LinkPredictionGNN: A new instance of LinkPredictionGNN for use with DDP.
         """
+
         ddp_encoder = DistributedDataParallel(
-            encoder,
+            self._encoder,
             device_ids=[device] if device.type != "cpu" else None,
             output_device=device if device.type != "cpu" else None,
             find_unused_parameters=find_unused_encoder_parameters,
         )
         # Do this "backwards" so the we can define "ddp_decoder" as a nn.Module first...
-        if not any(p.requires_grad for p in decoder.parameters()):
+        if not any(p.requires_grad for p in self._decoder.parameters()):
             # If the decoder has no trainable parameters, we can just use it as is
-            ddp_decoder = decoder.to(device)
+            ddp_decoder = self._decoder.to(device)
         else:
             # Only wrap the decoder in DDP if it has parameters that require gradients
             # Otherwise DDP will complain about no parameters to train.
             ddp_decoder = DistributedDataParallel(
-                decoder.to(device),
+                self._decoder.to(device),
                 device_ids=[device] if device.type != "cpu" else None,
                 output_device=device if device.type != "cpu" else None,
             )
-
-        return cls(
-            encoder=ddp_encoder,
-            decoder=ddp_decoder,
-        )
+        self._encoder = ddp_encoder
+        self._decoder = ddp_decoder
+        return self
 
     def unwrap_from_ddp(self) -> "LinkPredictionGNN":
         """
