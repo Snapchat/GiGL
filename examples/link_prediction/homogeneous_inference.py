@@ -27,7 +27,6 @@ from typing import Dict, List
 import torch
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -195,7 +194,7 @@ def _inference_process(
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
 
-    barrier()
+    torch.distributed.barrier()
 
     t = time.time()
     data_loading_start_time = time.time()
@@ -257,17 +256,16 @@ def _inference_process(
     # machine + process -- otherwise we may fail on processes which are still doing on-the-fly subgraph sampling. We then call `gc.collect()` to cleanup the memory
     # used by the data_loader on the current machine.
 
-    barrier()
+    torch.distributed.barrier()
 
     del data_loader
     gc.collect()
 
+    torch.distributed.destroy_process_group()
+
     logger.info(
         f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )
-
-    # Clean up for a graceful exit
-    shutdown_rpc()
 
 
 def _run_example_inference(
