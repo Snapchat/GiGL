@@ -388,7 +388,7 @@ class TFRecordDataLoader:
             )
             if (idx + 1) % tf_dataset_options.log_every_n_batch == 0:
                 logger.info(
-                    f"Processed {idx + 1:,} batches with {num_entities_processed:,} {entity_type.name}"
+                    f"Processed {idx + 1:,} total batches with {num_entities_processed:,} {entity_type.name}"
                 )
         end = time.perf_counter()
         logger.info(
