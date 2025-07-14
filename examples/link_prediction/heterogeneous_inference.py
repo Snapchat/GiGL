@@ -101,8 +101,8 @@ def _inference_process(
     # For the default, we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`. To see an example of
     # a 'fanout' with different behaviors per edge type, refer to `examples.link_prediction.configs.e2e_het_dblp_sup_task_config.yaml`.
 
-    fanout = inferencer_args.get("fanout", "[10, 10]")
-    subgraph_fanout = parse_fanout(fanout)
+    fanout = inferencer_args.get("num_neighbors", "[10, 10]")
+    num_neighbors = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -150,7 +150,7 @@ def _inference_process(
 
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         # We must pass in a tuple of (node_type, node_ids_on_current_process) for heterogeneous input
         input_nodes=(inference_node_type, input_node_ids),
         num_workers=sampling_workers_per_inference_process,

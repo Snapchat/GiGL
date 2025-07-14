@@ -98,8 +98,8 @@ def _inference_process(
     """
 
     # Parses the fanout as a JSON string. For the homogeneous case, the fanouts should be specified as a JSON string of a list of integers, such as "[10, 10]".
-    fanout = inferencer_args.get("fanout", "[10, 10]")
-    subgraph_fanout = parse_fanout(fanout)
+    fanout = inferencer_args.get("num_neighbors", "[10, 10]")
+    num_neighbors = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -142,7 +142,7 @@ def _inference_process(
 
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
         input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
