@@ -67,8 +67,6 @@ class LinkPredictionGNN(nn.Module):
         encoder: nn.Module,
         decoder: nn.Module,
         device: torch.device,
-        dummy_data: Union[Data, HeteroData],
-        output_node_types: Optional[list[NodeType]] = None,
         find_unused_encoder_parameters: bool = False,
     ) -> "LinkPredictionGNN":
         """
@@ -78,8 +76,6 @@ class LinkPredictionGNN(nn.Module):
             encoder (nn.Module): The GNN encoder to be wrapped.
             decoder (nn.Module): The decoder for link prediction.
             device (torch.device): The device to which the model should be moved.
-            dummy_data (Union[Data, HeteroData]): Dummy data to initialize the encoder.
-            output_node_types (Optional[list[NodeType]]): Node types for the output, required for heterogeneous data.
             find_unused_encoder_parameters (bool): Whether to find unused parameters in the model.
                 This should be set to True if the model has parameters that are not used in the forward pass.
                 E.g. if the model has been initialized with all edge types in the graph,
@@ -87,16 +83,6 @@ class LinkPredictionGNN(nn.Module):
         Returns:
             LinkPredictionGNN: A new instance of LinkPredictionGNN for use with DDP.
         """
-
-        # Dummy forward pass to initialize the encoder
-        # This is necessary to ensure that the model is properly set up for DDP
-        was_train = encoder.training
-        encoder.to(device)
-        encoder.eval()
-        encoder(dummy_data, output_node_types, device)
-        if was_train:
-            encoder.train()
-
         ddp_encoder = DistributedDataParallel(
             encoder,
             device_ids=[device] if device.type != "cpu" else None,

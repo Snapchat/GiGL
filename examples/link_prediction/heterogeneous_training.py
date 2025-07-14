@@ -401,9 +401,6 @@ def _training_process(
             edge_type_to_feature_dim=edge_type_to_feature_dim,
             device=device,
             init_for_ddp=True,
-            dummy_data=next(
-                train_main_loader_iter
-            ),  # We need to pass a dummy data for DDP initialization
         )
         optimizer = torch.optim.AdamW(
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
@@ -764,6 +761,7 @@ def _run_example_training(
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
         is_inference=False,
+        _tfrecord_uri_pattern=".*.tfrecord",
     )
     logger.info(
         f"--- Data loading process finished, took {time.time() - start_time:.3f} seconds"

@@ -19,7 +19,6 @@ def init_example_gigl_homogeneous_model(
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
     init_for_ddp: bool = False,
-    dummy_data: Optional[Union[Data, HeteroData]] = None,
 ) -> LinkPredictionGNN:
     """
     Initializes a homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -35,8 +34,6 @@ def init_example_gigl_homogeneous_model(
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
         for_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
             If True, the model will be wrapped in `DistributedDataParallel` and will require a dummy data input for initialization.
-        dummy_data (Optional[Union[Data, HeteroData]]): Dummy data to initialize the encoder.
-            Required if `for_ddp` is True, otherwise can be None.
     Returns:
         LinkPredictionGNN: Link Prediction model for training or inference
     """
@@ -60,17 +57,12 @@ def init_example_gigl_homogeneous_model(
             raise ValueError(
                 "Device must be specified when initializing for DDP training"
             )
-        if dummy_data is None:
-            raise ValueError(
-                "Dummy data must be provided when initializing for DDP training"
-            )
 
         # Initialize the model for DDP training.
         model = LinkPredictionGNN.for_ddp(
             encoder=encoder_model,
             decoder=decoder_model,
             device=device,
-            dummy_data=dummy_data,
         )
     else:
         # Initialize the model without DDP.
@@ -100,7 +92,6 @@ def init_example_gigl_heterogeneous_model(
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
     init_for_ddp: bool = False,
-    dummy_data: Optional[Union[Data, HeteroData]] = None,
 ) -> LinkPredictionGNN:
     """
     Initializes a heterogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -117,8 +108,6 @@ def init_example_gigl_heterogeneous_model(
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
         init_for_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
             If True, the model will be wrapped in `DistributedDataParallel` and will require a dummy data input for initialization.
-        dummy_data (Optional[Union[Data, HeteroData]]): Dummy data to initialize the encoder.
-            Required if `init_for_ddp` is True, otherwise can be None.
     Returns:
         LinkPredictionGNN: Link Prediction model for inference
     """
@@ -139,10 +128,7 @@ def init_example_gigl_heterogeneous_model(
             raise ValueError(
                 "Device must be specified when initializing for DDP training"
             )
-        if dummy_data is None:
-            raise ValueError(
-                "Dummy data must be provided when initializing for DDP training"
-            )
+
         # Initialize the model for DDP training.
         # Since the HGT encoder has params for *all* node and edge types [1]
         # We need to allow DDP to find unused parameters.
@@ -152,8 +138,6 @@ def init_example_gigl_heterogeneous_model(
             encoder=encoder_model,
             decoder=decoder_model,
             device=device,
-            dummy_data=dummy_data,
-            output_node_types=list(node_type_to_feature_dim.keys()),
             find_unused_encoder_parameters=True,
         )
     else:

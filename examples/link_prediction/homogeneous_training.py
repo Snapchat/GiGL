@@ -363,9 +363,6 @@ def _training_process(
             edge_feature_dim=edge_feature_dim,
             device=device,
             init_for_ddp=True,  # We initialize the model for DDP
-            dummy_data=next(
-                train_main_loader_iter
-            ),  # We need a dummy data to initialize the model for DDP
         )
 
         optimizer = torch.optim.AdamW(
