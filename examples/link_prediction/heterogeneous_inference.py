@@ -47,7 +47,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
-from gigl.utils.parse_fanout import parse_fanout
+from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 

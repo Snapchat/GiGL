@@ -45,7 +45,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.types.graph import to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
-from gigl.utils.parse_fanout import parse_fanout
+from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 

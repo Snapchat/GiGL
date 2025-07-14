@@ -14,17 +14,17 @@ def _validate_parsed_edge_type(parsed_edge_type: Any) -> None:
         parsed_edge_type (Any): Edge type which is expected to be a tuple[str, str, str], corresponding to the source node type, relation, and destination node type, respectively.
     Raises:
         ValueError: if not a tuple
+        ValueError: if tuple has a length which is not equal to 3
         ValueError: if not all elements of the tuple are strings
     """
-    if not isinstance(parsed_edge_type, tuple):
+    if not isinstance(parsed_edge_type, tuple) or len(parsed_edge_type) != 3:
         raise ValueError(
-            f"Parsed edge type expected to be a tuple[str, str, str], got {parsed_edge_type} of type {type(parsed_edge_type)}"
+            f"Parsed edge type expected to be a tuple[str, str, str], got {parsed_edge_type}"
         )
-    for item in parsed_edge_type:
-        if not isinstance(item, str):
-            raise ValueError(
-                f"Parsed edge type field expected to be a str, got {item} of type {type(item)}"
-            )
+    if not all([isinstance(edge_type, str) for edge_type in parsed_edge_type]):
+        raise ValueError(
+            f"Edge type must a tuple[str, str, str] integers, got {parsed_edge_type}"
+        )
 
 
 def _validate_parsed_hops(parsed_fanout: Any) -> None:
@@ -41,11 +41,8 @@ def _validate_parsed_hops(parsed_fanout: Any) -> None:
         raise ValueError(
             f"Parsed fanout expected to be a list, got {parsed_fanout} of type {type(parsed_fanout)}"
         )
-    for item in parsed_fanout:
-        if not isinstance(item, int) or item < 0:
-            raise ValueError(
-                f"Fanout must contain non-negative integers, got {item} of type {type(item)}"
-            )
+    if not all([isinstance(hop, int) for hop in parsed_fanout]):
+        raise ValueError(f"Fanout must contain integers, got {parsed_fanout}")
 
 
 def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]:

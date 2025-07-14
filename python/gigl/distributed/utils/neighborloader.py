@@ -41,6 +41,8 @@ def patch_fanout_for_sampling(
             raise ValueError(
                 "When dataset is homogeneous, the num_neighbors field cannot be a dictionary."
             )
+        if not all([hop > 0 for hop in num_neighbors]):
+            raise ValueError(f"Hops provided must be non-negative, got {num_neighbors}")
         return num_neighbors
     if isinstance(num_neighbors, list):
         original_fanout = num_neighbors
@@ -75,6 +77,11 @@ def patch_fanout_for_sampling(
         raise ValueError(
             f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
         )
+    if not all(
+        [hop > 0 for edge_type in num_neighbors for hop in num_neighbors[edge_type]]
+    ):
+        raise ValueError(f"Hops provided must be non-negative, got {num_neighbors}")
+
     logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
     return num_neighbors
 

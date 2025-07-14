@@ -4,7 +4,7 @@ from typing import Union
 from parameterized import param, parameterized
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
-from gigl.utils.parse_fanout import parse_fanout
+from gigl.utils.sampling import parse_fanout
 
 
 class ParseFanoutTest(unittest.TestCase):
@@ -70,6 +70,11 @@ class ParseFanoutTest(unittest.TestCase):
             param(
                 "Fails when edge type is not a tuple",
                 input_fanout='{"123": [10, 10], "456": [20, 20]}',
+                expected_error_type=ValueError,
+            ),
+            param(
+                "Fails when edge type is not a tuple of length 3",
+                input_fanout='{("user"): [10, 10], ("item"): [20, 20]}',
                 expected_error_type=ValueError,
             ),
             param(
