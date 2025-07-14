@@ -1,0 +1,134 @@
+name: Create Release
+
+# This workflow can be triggered in two ways:
+# 1. Manual dispatch: Choose bump type and project
+# 2. Push to main/release branches: Automatically uses nightly build
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Type of version bump'
+        required: true
+        default: 'nightly'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+          - nightly
+  push:
+    # branches:
+    #   - main
+    #   - 'release/*'
+
+jobs:
+  create_release:
+    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Machine for release
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      with:
+        setup_gcloud: "true"
+        install_dev_deps: "true"
+        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+    - name: Setup Docker Buildx
+      run: |
+        docker buildx create --driver=docker-container --use
+        sudo apt-get install qemu-user-static
+        docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+        gcloud auth configure-docker us-central1-docker.pkg.dev
+
+    - name: Get current version
+      id: get_version
+      run: |
+        CURRENT_VERSION=$(python -m scripts.versioning_and_release --get_current_version)
+        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
+
+    - name: Set workflow variables
+      id: set_vars
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "bump_type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+        else
+          echo "bump_type=nightly" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Run versioning and release
+      run: |
+        python -m scripts.versioning_and_release \
+          --bump_type ${{ steps.set_vars.outputs.bump_type }} \
+          --project ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: Get new version
+      id: get_new_version
+      run: |
+        NEW_VERSION=$(python -m scripts.versioning_and_release --get_current_version)
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "New version: $NEW_VERSION"
+
+    - name: Commit and Push Dep Vars
+      uses: ./.github/actions/commit-and-push
+      with:
+        commit_message: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        to_new_branch_named: "release/v${{ steps.get_new_version.outputs.new_version }}"
+
+
+    - name: Create a new PR
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh pr create --title "Release v${{ steps.get_new_version.outputs.new_version }}" \
+        --body "## Release v${{ steps.get_new_version.outputs.new_version }}
+
+        This PR contains the version bump from \`${{ steps.get_version.outputs.current_version }}\` to \`${{ steps.get_new_version.outputs.new_version }}\`.
+
+        **Bump Type:** ${{ steps.set_vars.outputs.bump_type }}
+        **GCP Project:** ${{ secrets.GCP_PROJECT_ID }}
+        **Trigger:** ${{ github.event_name }}
+
+        ### Changes Made:
+        - Updated version in \`python/gigl/__init__.py\`
+        - Updated version in \`python/pyproject.toml\`
+        - Updated Docker image references in \`dep_vars.env\`
+        - Built and pushed new Docker images for CUDA, CPU, and Dataflow
+        - Compiled and uploaded KFP pipeline to GCS
+
+        ### What's Next:
+        Please create a new release from this branch in the [GitHub Releases](https://github.com/snapchat/gigl/releases) page.
+
+        ---
+        *This PR was automatically created by the Create Release workflow.*" \
+        --base main --head release/v${{ steps.get_new_version.outputs.new_version }}
+
+        PR_URL=$(gh pr view release/v${{ steps.get_new_version.outputs.new_version }} --json url --jq '.url')
+        echo "::notice title=PR URL::$PR_URL"
+
+
+    - name: Create version tag
+      run: |
+        git tag "v${{ steps.get_new_version.outputs.new_version }}"
+        git push origin "v${{ steps.get_new_version.outputs.new_version }}"
+
+
+    - name: Output release information
+      run: |
+        echo "::notice title=Release PR Created::Release branch created: release/v${{ steps.get_new_version.outputs.new_version }}"
+        echo "::notice title=New Version::v${{ steps.get_new_version.outputs.new_version }}"
+        echo "::notice title=Version Tag::v${{ steps.get_new_version.outputs.new_version }}"
+        echo "::notice title=Bump Type::${{ steps.set_vars.outputs.bump_type }}"
+        echo "::notice title=Trigger::${{ github.event_name }}"

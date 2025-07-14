@@ -6,14 +6,6 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.src.common.constants.components import GiGLComponents
 
-# TODO: (Open Source) Make these publicly accesible
-# We will first need to release new images to PUBLIC GCR - these are temp holds
-# Note, nothing breaks as long as images are provided by user; in the default case where user does
-# not provide images we will fail here.
-GIGL_SRC_IMAGE_CUDA = "TODO - make this public"
-GIGL_SRC_IMAGE_CPU = "TODO - make this public"
-GIGL_DATAFLOW_IMAGE = "TODO - make this public"
-
 _SPARK_35_DIR_NAME = "scala_spark35"
 _SPARK_DIR_NAME = "scala"
 

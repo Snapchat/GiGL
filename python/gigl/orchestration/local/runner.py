@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from gigl.common import Uri
+from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU
 from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
-from gigl.env.dep_constants import GIGL_DATAFLOW_IMAGE
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.metrics_service_provider import initialize_metrics
@@ -43,7 +43,7 @@ class PipelineConfig:
     resource_config_uri: Uri
     custom_cuda_docker_uri: Optional[str] = None
     custom_cpu_docker_uri: Optional[str] = None
-    dataflow_docker_uri: Optional[str] = GIGL_DATAFLOW_IMAGE
+    dataflow_docker_uri: Optional[str] = DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU
 
 
 class Runner:
