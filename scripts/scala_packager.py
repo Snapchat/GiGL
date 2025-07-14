@@ -3,7 +3,6 @@ import os
 import pathlib
 import shutil
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import gigl.env.dep_constants as dep_constants
@@ -160,19 +159,14 @@ class ScalaPackager:
         ]
         for directory in dirs_to_delete:
             shutil.rmtree(directory, ignore_errors=True)
-        with ThreadPoolExecutor() as executor:
-            sgs_path_ft = executor.submit(self.package_subgraph_sampler)
-            sgs_path_spark35_ft = executor.submit(
-                self.package_subgraph_sampler, use_spark35=True
-            )
-            split_gen_path_spark35_ft = executor.submit(
-                self.package_split_generator, use_spark35=True
-            )
+        sgs_path = self.package_subgraph_sampler(use_spark35=False)
+        sgs_spark35_path = self.package_subgraph_sampler(use_spark35=True)
+        split_gen_path = self.package_split_generator(use_spark35=True)
 
         return (
-            sgs_path_ft.result(),
-            sgs_path_spark35_ft.result(),
-            split_gen_path_spark35_ft.result(),
+            sgs_path,
+            sgs_spark35_path,
+            split_gen_path,
         )
 
 
