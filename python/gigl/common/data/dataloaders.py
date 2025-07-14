@@ -51,7 +51,7 @@ class SerializedTFRecordInfo:
 @dataclass(frozen=True)
 class TFDatasetOptions:
     """
-    Options for tuning a tf.data.Dataset.
+    Options for tuning the loading of a tf.data.Dataset. Note that this dataclass is tied to TFRecord loading specifically for the `load_as_torch_tensors` function.
 
     Choosing between interleave or not is not straightforward.
     We've found that interleave is faster for large numbers (>100) of small (<20M) files.
@@ -66,6 +66,7 @@ class TFDatasetOptions:
         use_interleave (bool): Whether to use tf.data.Dataset.interleave to read files in parallel, if not set then `num_parallel_file_reads` will be used.
         num_parallel_file_reads (int): The number of files to read in parallel if `use_interleave` is False.
         ram_budget_multiplier (float): The multiplier of the total system memory to set as the tf.data RAM budget.
+        log_every_n_batch (int): Frequency we should log information when looping through dataset
     """
 
     batch_size: int = 10_000
@@ -74,6 +75,7 @@ class TFDatasetOptions:
     use_interleave: bool = True
     num_parallel_file_reads: int = 64
     ram_budget_multiplier: float = 0.5
+    log_every_n_batch: int = 1000
 
 
 def _concatenate_features_by_names(
@@ -287,7 +289,6 @@ class TFRecordDataLoader:
         self,
         serialized_tf_record_info: SerializedTFRecordInfo,
         tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-        log_every_n_batch: int = 1000,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Loads torch tensors from a set of TFRecord files.
@@ -295,7 +296,6 @@ class TFRecordDataLoader:
         Args:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
-            log_every_n_batch (int): Frequency we should log information when looping through dataset
 
         Returns:
             Tuple[torch.Tensor, Optional[torch.Tensor]]: The (id_tensor, feature_tensor) for the loaded entities.
@@ -389,7 +389,7 @@ class TFRecordDataLoader:
                     if entity_type == FeatureTypes.NODE
                     else id_tensors[-1].shape[1]
                 )
-                if (idx + 1) % log_every_n_batch == 0:
+                if (idx + 1) % tf_dataset_options.log_every_n_batch == 0:
                     logger.info(
                         f"Processed {idx + 1:,} batches with {num_entities_processed:,} {entity_type.name}"
                     )

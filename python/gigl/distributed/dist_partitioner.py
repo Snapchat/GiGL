@@ -1118,10 +1118,12 @@ class DistPartitioner:
         elapsed_time = time.time() - start_time
         logger.info(f"Node Partitioning finished, took {elapsed_time:.3f}s")
 
-        for node_type in self._num_nodes:
+        if self._is_input_homogeneous:
             logger.info(
-                f"Partitioned {self._num_nodes[node_type]} nodes for node type {node_type}"
+                f"Partitioned {to_homogeneous(self._num_nodes)} nodes for homogeneous dataset"
             )
+        else:
+            logger.info(f"Partitioned {self._num_nodes} nodes per node type")
 
         if self._is_input_homogeneous:
             # Converting heterogeneous input back to homogeneous
@@ -1272,10 +1274,12 @@ class DistPartitioner:
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
 
-        for edge_type in self._num_edges:
+        if self._is_input_homogeneous:
             logger.info(
-                f"Partitioned {self._num_edges[edge_type]} edges for edge type {edge_type}"
+                f"Partitioned {to_homogeneous(self._num_edges)} edges for homogeneous dataset"
             )
+        else:
+            logger.info(f"Partitioned {self._num_edges} edges per edge type")
 
         if self._is_input_homogeneous:
             return (

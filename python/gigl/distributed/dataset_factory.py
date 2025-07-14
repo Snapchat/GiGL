@@ -61,7 +61,6 @@ def _load_and_build_partitioned_dataset(
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
-    log_every_n_batch: int = 1000,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
     """
@@ -77,7 +76,6 @@ def _load_and_build_partitioned_dataset(
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
-        log_every_n_batch (int): Frequency we should log information when looping through dataset
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
 
@@ -103,7 +101,6 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
-        log_every_n_batch=log_every_n_batch,
     )
 
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
@@ -225,7 +222,6 @@ def _build_dataset_process(
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[NodeAnchorLinkSplitter] = None,
-    log_every_n_batch: int = 1000,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
     """
@@ -261,7 +257,6 @@ def _build_dataset_process(
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
-        log_every_n_batch (int): Frequency we should log information when looping through dataset
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
     """
@@ -303,7 +298,6 @@ def _build_dataset_process(
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
         splitter=splitter,
-        log_every_n_batch=log_every_n_batch,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
     )
 
@@ -326,7 +320,6 @@ def build_dataset(
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     splitter: Optional[NodeAnchorLinkSplitter] = None,
-    log_every_n_batch: int = 1000,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: Optional[
         int
@@ -359,7 +352,6 @@ def build_dataset(
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets.
             If not provided (None), no splitting will be performed.
-        log_every_n_batch (int): Frequency we should log information when looping through dataset
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
         _dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
@@ -456,7 +448,6 @@ def build_dataset(
             node_tf_dataset_options,
             edge_tf_dataset_options,
             splitter,
-            log_every_n_batch,
             _ssl_positive_label_percentage,
         ),
     )
