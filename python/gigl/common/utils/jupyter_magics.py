@@ -12,6 +12,7 @@ from IPython.display import HTML, display
 from torch_geometric.data import HeteroData
 
 from gigl.common import Uri
+from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
 
 gigl_root_dir = pathlib.Path(__file__).parent.parent.parent.parent.parent
@@ -249,9 +250,6 @@ def show_colored_unified_diff(f1_lines, f2_lines, f1_name, f2_name):
             f'<pre style="margin:0; color:{color}; background-color:white;">{line.rstrip()}</pre>'
         )
     display(HTML("".join(html_lines)))
-
-
-from gigl.src.common.utils.file_loader import FileLoader
 
 
 def show_task_config_colored_unified_diff(

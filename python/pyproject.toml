@@ -28,6 +28,27 @@ classifiers     = [
 
 dependencies = [
     "argo-workflows",
+    "chardet",
+    "google-cloud-aiplatform~=1.44.0",
+    "google-cloud-dataproc",
+    "google-cloud-logging",
+    "google-cloud-storage",
+    # ipython and ipykernel are required for us to run jupyter notebooks as a part of our test suite.
+    # See https://stackoverflow.com/questions/69759351/error-jupyter-client-kernelspec-nosuchkernel-no-such-kernel-named-python3-occu
+    "ipykernel==6.29.5",
+    "ipython==8.18.1",
+    "kfp~=2.5.0",
+    "mmh3",
+    "msgpack",
+    "mypy-extensions",
+    "nbconvert==7.16.6",
+    "nbformat==5.10.4",
+    "numpy==1.24.3",
+    "pandas",
+    "protobuf",
+    "python-dotenv==1.0.0",
+    "pyyaml",
+    "scikit-learn",
     # When updating to a new tensorflow version, please ensure that the version changes align with
     # transform deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
     # must move in lockstep, with guidance on compatible versions listed here:
@@ -35,23 +56,8 @@ dependencies = [
     "tensorflow==2.15.1",
     # https://developer.apple.com/metal/tensorflow-plugin/
     "tensorflow-metal ; platform_system=='Darwin' and platform_machine=='arm64'",
-    "numpy==1.24.3",
-    "pandas",
-    "scikit-learn",
-    "protobuf",
-    "msgpack",
-    "google-cloud-logging",
-    "google-cloud-storage",
-    "google-cloud-dataproc",
-    "pyyaml",
-    "mmh3",
-    "mypy-extensions",
-    "chardet",
-    "google-cloud-aiplatform~=1.44.0",
-    "kfp~=2.5.0",
-    "python-dotenv==1.0.0",
     "torch-geometric==2.5.3",
-    "torchmetrics==1.0.3"
+    "torchmetrics==1.0.3",
 ]
 
 [project.optional-dependencies]
