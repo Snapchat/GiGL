@@ -1,5 +1,5 @@
 """
-Dead simple training loop on the toy example dataset.
+Dead simple heterogenous training loop.
 Run with:
     python examples/tutorial/KDD_2025/heterogeneous_training.py
 """
@@ -165,7 +165,7 @@ def train(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run a simple training loop on the toy example dataset."
+        description="Run a simple training loop on a heterogenous dataset."
     )
     parser.add_argument(
         "--task_config_uri",
