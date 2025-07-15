@@ -36,6 +36,9 @@ runs:
           git push --set-upstream origin $TO_NEW_BRANCH_NAMED
         fi
 
+        # Stages changes (modifications and deletions) to tracked files, but ignores new untracked files.
+        # This is to ensure that workflows are not staging any files that might have been created
+        # temporarily and have not been cleaned up.
         git add --update
 
         # If no changes, exit gracefully. If not done, git commit will fail.
