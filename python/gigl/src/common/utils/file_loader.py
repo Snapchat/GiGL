@@ -219,6 +219,8 @@ class FileLoader:
             exists = self.__gcs_utils.does_gcs_file_exist(gcs_path=_uri)  # type: ignore
         elif LocalUri.is_valid(uri=_uri, raise_exception=False):
             exists = does_path_exist(cast(LocalUri, _uri))
+        elif HttpUri.is_valid(uri=_uri, raise_exception=False):
+            exists = HttpUtils.does_http_path_resolve(http_path=cast(HttpUri, _uri))
         else:
             raise NotImplementedError(f"{self.__unsupported_uri_message} : {_uri}")
         return exists

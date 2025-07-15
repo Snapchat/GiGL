@@ -7,6 +7,15 @@ from gigl.common import HttpUri, LocalUri
 
 
 class HttpUtils:
+
+    @staticmethod
+    def does_http_path_resolve(http_path: HttpUri) -> bool:
+        """
+        Checks if an HTTP(S) URL resolves to a valid file.
+        """
+        response = requests.head(http_path.uri)
+        return response.status_code == 200
+
     @staticmethod
     def download_file_from_http(http_path: HttpUri, dest_file_path: LocalUri):
         """

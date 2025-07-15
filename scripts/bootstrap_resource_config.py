@@ -11,15 +11,16 @@ from typing import Dict, Optional
 
 import yaml
 
-from gigl.common import UriFactory
+from gigl.common import HttpUri, LocalUri, UriFactory
 from gigl.src.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
-LOCAL_DEV_TEMPLATE_RES_CONF = (
+LOCAL_DEV_TEMPLATE_RES_CONF = LocalUri(
     GIGL_ROOT_DIR / "deployment" / "configs" / "unittest_resource_config.yaml"
 )
-FALLBACK_TEMPLATE_RES_CONF_HTTP_PATH = "https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/deployment/configs/unittest_resource_config.yaml"
-
+FALLBACK_TEMPLATE_RES_CONF = HttpUri(
+    uri="https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/deployment/configs/unittest_resource_config.yaml"
+)
 
 @dataclass
 class Param:
@@ -192,21 +193,20 @@ if __name__ == "__main__":
     )
     print("======================================================")
 
-    resource_config_path: pathlib.Path
-    if LOCAL_DEV_TEMPLATE_RES_CONF.exists() and LOCAL_DEV_TEMPLATE_RES_CONF.is_file():
+    resource_config_path: str
+    file_loader = FileLoader()
+    if file_loader.does_uri_exist(uri=LOCAL_DEV_TEMPLATE_RES_CONF):
         print(
             f"Using local development template resource config: {LOCAL_DEV_TEMPLATE_RES_CONF}"
         )
-        resource_config_path = LOCAL_DEV_TEMPLATE_RES_CONF
+        resource_config_path = LOCAL_DEV_TEMPLATE_RES_CONF.uri
     else:
-        # Download the file to a temporary directory
         print(
-            f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF_HTTP_PATH}"
+            f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF}"
         )
-        tmp_file = tempfile.NamedTemporaryFile(delete=False)
-        urllib.request.urlretrieve(FALLBACK_TEMPLATE_RES_CONF_HTTP_PATH, tmp_file.name)
-        resource_config_path = pathlib.Path(tmp_file.name)
-        print(f"Downloaded fallback template resource config to {resource_config_path}")
+        tmp_file = file_loader.load_to_temp_file(file_uri_src=FALLBACK_TEMPLATE_RES_CONF)
+        print(f"Downloaded fallback template resource config to {tmp_file.name}")
+        resource_config_path = tmp_file.name
 
     supported_params = SupportedParams()
     parser = argparse.ArgumentParser(
