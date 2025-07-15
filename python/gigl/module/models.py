@@ -63,7 +63,9 @@ class LinkPredictionGNN(nn.Module):
         return self._decoder
 
     def to_ddp(
-        self, device: torch.device, find_unused_encoder_parameters: bool = False
+        self,
+        device: Optional[torch.device],
+        find_unused_encoder_parameters: bool = False,
     ) -> Self:
         """
         Converts the model to DistributedDataParallel (DDP) mode.
@@ -76,17 +78,19 @@ class LinkPredictionGNN(nn.Module):
         Calling this function makes it safe to do: `LinkPredictionGNN.decoder(data, device)`
 
         Args:
-            device (torch.device): The device to which the model should be moved.
+            device (Optional[torch.device]): The device to which the model should be moved.
+                If None, will default to CPU.
             find_unused_encoder_parameters (bool): Whether to find unused parameters in the model.
                 This should be set to True if the model has parameters that are not used in the forward pass.
         Returns:
             LinkPredictionGNN: A new instance of LinkPredictionGNN for use with DDP.
         """
 
+        if device is None:
+            device = torch.device("cpu")
         ddp_encoder = DistributedDataParallel(
-            self._encoder,
+            self._encoder.to(device),
             device_ids=[device] if device.type != "cpu" else None,
-            output_device=device if device.type != "cpu" else None,
             find_unused_parameters=find_unused_encoder_parameters,
         )
         # Do this "backwards" so the we can define "ddp_decoder" as a nn.Module first...
@@ -99,7 +103,6 @@ class LinkPredictionGNN(nn.Module):
             ddp_decoder = DistributedDataParallel(
                 self._decoder.to(device),
                 device_ids=[device] if device.type != "cpu" else None,
-                output_device=device if device.type != "cpu" else None,
             )
         self._encoder = ddp_encoder
         self._decoder = ddp_decoder

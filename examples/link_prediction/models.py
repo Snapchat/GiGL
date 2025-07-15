@@ -62,21 +62,14 @@ def init_example_gigl_homogeneous_model(
         decoder=decoder_model,
     )
     if wrap_with_ddp:
-        if device is None:
-            raise ValueError(
-                "Device must be specified when initializing for DDP training"
-            )
-
         # Initialize the model for DDP training.
         model = model.to_ddp(
             device=device,
             find_unused_encoder_parameters=find_unused_encoder_parameters,
         )
-    else:
-        # Push the model to the specified device.
-        if device is None:
-            device = torch.device("cpu")
-        model.to(device)
+    if device is None:
+        device = torch.device("cpu")
+    model.to(device)
 
     if state_dict is not None:
         model.load_state_dict(state_dict)
@@ -135,11 +128,6 @@ def init_example_gigl_heterogeneous_model(
         decoder=decoder_model,
     )
     if wrap_with_ddp:
-        if device is None:
-            raise ValueError(
-                "Device must be specified when initializing for DDP training"
-            )
-
         # Initialize the model for DDP training.
         # Since the HGT encoder has params for *all* node and edge types [1]
         # We need to allow DDP to find unused parameters.
@@ -149,11 +137,10 @@ def init_example_gigl_heterogeneous_model(
             device=device,
             find_unused_encoder_parameters=find_unused_encoder_parameters,
         )
-    else:
-        # Push the model to the specified device.
-        if device is None:
-            device = torch.device("cpu")
-        model.to(device)
+    # Push the model to the specified device.
+    if device is None:
+        device = torch.device("cpu")
+    model.to(device)
 
     if state_dict is not None:
         model.load_state_dict(state_dict)
