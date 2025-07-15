@@ -5,6 +5,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import urllib.request
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -14,9 +15,10 @@ from gigl.common import UriFactory
 from gigl.src.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
-TEMPLATE_SOURCE_RESOURCE_CONFIG = (
+LOCAL_DEV_TEMPLATE_RES_CONF = (
     GIGL_ROOT_DIR / "deployment" / "configs" / "unittest_resource_config.yaml"
 )
+FALLBACK_TEMPLATE_RES_CONF_HTTP_PATH = "https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/deployment/configs/unittest_resource_config.yaml"
 
 
 @dataclass
@@ -28,8 +30,6 @@ class Param:
 
 
 class SupportedParams:
-    defaults: Dict[str, Param]
-
     def __init__(self):
         try:
             project = subprocess.check_output(
@@ -192,9 +192,21 @@ if __name__ == "__main__":
     )
     print("======================================================")
 
-    print(
-        f"We will use `{TEMPLATE_SOURCE_RESOURCE_CONFIG}` as the template for your resource config YAML file."
-    )
+    resource_config_path: pathlib.Path
+    if LOCAL_DEV_TEMPLATE_RES_CONF.exists() and LOCAL_DEV_TEMPLATE_RES_CONF.is_file():
+        print(
+            f"Using local development template resource config: {LOCAL_DEV_TEMPLATE_RES_CONF}"
+        )
+        resource_config_path = LOCAL_DEV_TEMPLATE_RES_CONF
+    else:
+        # Download the file to a temporary directory
+        print(
+            f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF_HTTP_PATH}"
+        )
+        tmp_file = tempfile.NamedTemporaryFile(delete=False)
+        urllib.request.urlretrieve(FALLBACK_TEMPLATE_RES_CONF_HTTP_PATH, tmp_file.name)
+        resource_config_path = pathlib.Path(tmp_file.name)
+        print(f"Downloaded fallback template resource config to {resource_config_path}")
 
     supported_params = SupportedParams()
     parser = argparse.ArgumentParser(
@@ -279,7 +291,7 @@ if __name__ == "__main__":
     for key, value in update_fields_dict.items():
         print(f"  {key}: {value}")
 
-    with open(TEMPLATE_SOURCE_RESOURCE_CONFIG, "r") as file:
+    with open(resource_config_path, "r") as file:
         config = yaml.safe_load(file)
 
     # Update the YAML content

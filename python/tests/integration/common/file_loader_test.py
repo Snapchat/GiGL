@@ -4,7 +4,7 @@ import uuid
 from typing import Dict, List
 
 import gigl.common.utils.local_fs as local_fs
-from gigl.common import GcsUri, LocalUri, Uri
+from gigl.common import GcsUri, HttpUri, LocalUri, Uri
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
@@ -120,6 +120,18 @@ class FileLoaderTest(unittest.TestCase):
         self.file_loader.load_files(source_to_dest_file_uri_map=file_uri_map)
         self.assertTrue(self.gcs_utils.does_gcs_file_exist(gcs_path=gcs_file_path_dst))
         self.gcs_utils.delete_gcs_file_if_exist(gcs_path=gcs_file_path_dst)
+
+    def test_http_to_local_file(self):
+        http_file_path_src: HttpUri = HttpUri(
+            "https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/LICENSE"
+        )
+        local_file_path_dst: LocalUri = LocalUri.join(
+            self.test_asset_directory, "test_http_to_local.txt"
+        )
+        local_fs.remove_file_if_exist(local_path=local_file_path_dst)
+        file_uri_map: Dict[Uri, Uri] = {http_file_path_src: local_file_path_dst}
+        self.file_loader.load_files(source_to_dest_file_uri_map=file_uri_map)
+        self.assertTrue(local_fs.does_path_exist(local_file_path_dst))
 
     def test_gcs_to_local_file(self):
         local_file_path_src: LocalUri = LocalUri.join(
