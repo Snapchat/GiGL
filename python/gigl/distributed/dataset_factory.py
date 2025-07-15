@@ -515,7 +515,7 @@ def build_dataset_from_task_config_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
 
-    ssl_positive_label_percentage: Optional[float]
+    ssl_positive_label_percentage: Optional[float] = None
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
@@ -543,8 +543,6 @@ def build_dataset_from_task_config_uri(
         )
         if "ssl_positive_label_percentage" in args:
             ssl_positive_label_percentage = float(args["ssl_positive_label_percentage"])
-        else:
-            ssl_positive_label_percentage = None
 
     assert sample_edge_direction in (
         "in",
