@@ -67,14 +67,14 @@ class LinkPredictionGNN(nn.Module):
     ) -> Self:
         """
         Converts the model to DistributedDataParallel (DDP) mode.
-        We expose this function so that both the encoder and decoder can be safely used in a distributed manner.
+
+        We do this because DDP does *not* expect the forward method of the modules it wraps to be called directly.
+        See how DistributedDataParallel.forward calls _pre_forward:
+        https://github.com/pytorch/pytorch/blob/26807dcf277feb2d99ab88d7b6da526488baea93/torch/nn/parallel/distributed.py#L1657
         If we do not do this, then calling forward() on the individual modules may not work correctly.
-        e.g. this makes it safe to do: `LinkPredictionGNN.encoder(data, device)`
-        Without this method, DDP may not correctly handle the forward pass as it only wraps the model as a whole.
-        See:
-            https://discuss.pytorch.org/t/using-model-functions-in-distributeddataparallel/160214
-            and DistributedDataParallel.forward calling _pre_forward:
-            https://github.com/pytorch/pytorch/blob/26807dcf277feb2d99ab88d7b6da526488baea93/torch/nn/parallel/distributed.py#L1657
+
+        Calling this function makes it safe to do: `LinkPredictionGNN.decoder(data, device)`
+
         Args:
             device (torch.device): The device to which the model should be moved.
             find_unused_encoder_parameters (bool): Whether to find unused parameters in the model.
