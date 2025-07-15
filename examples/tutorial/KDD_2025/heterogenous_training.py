@@ -1,14 +1,15 @@
 """
-Dead simple heterogenous training loop.
-This training loop only supports CPU training.
-It does support multi process/multi node training.
+Dead simple heterogenous training loop for CPU training with DistributedDataParallel.
+
+Supports multi process/multi node training.
+Does not support GPU training.
 
 Run with:
     python examples/tutorial/KDD_2025/heterogeneous_training.py
 
 This example is meant to be run on the "toy graph" dataset,
-which is a small heterogeneous graph with two node types (user and story)
-and one edge type (user to story).
+which is a small heterogeneous graph with two node types (user) and (story)
+and two edge types (user to story) and (story to user).
 
 The dataset it reads from may be configured in the `task_config_uri` argument,
 if using a different dataset, also update the following fields:
