@@ -1,0 +1,79 @@
+# Based on gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/frozen_gbml_config.yaml
+graphMetadata:
+  condensedEdgeTypeMap:
+    '0':
+      dstNodeType: paper
+      relation: to
+      srcNodeType: author
+    '1':
+      dstNodeType: author
+      relation: to
+      srcNodeType: paper
+    '2':
+      dstNodeType: paper
+      relation: to
+      srcNodeType: term
+  condensedNodeTypeMap:
+    '0': author
+    '1': paper
+    '2': term
+  edgeTypes:
+  - dstNodeType: paper
+    relation: to
+    srcNodeType: author
+  - dstNodeType: author
+    relation: to
+    srcNodeType: paper
+  - dstNodeType: paper
+    relation: to
+    srcNodeType: term
+  nodeTypes:
+  - author
+  - paper
+  - term
+inferencerConfig:
+  # unused
+  inferencerArgs: {}
+  inferencerClsPath: unused
+sharedConfig:
+  datasetMetadata:
+    nodeAnchorBasedLinkPredictionDataset:
+      testMainDataUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/split_generator/test/main_samples/samples/
+      testNodeTypeToRandomNegativeDataUri:
+        author: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/split_generator/test/random_negatives/author/neighborhoods/
+      trainMainDataUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/split_generator/train/main_samples/samples/
+      trainNodeTypeToRandomNegativeDataUri:
+        author: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/split_generator/train/random_negatives/author/neighborhoods/
+      valMainDataUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/split_generator/val/main_samples/samples/
+      valNodeTypeToRandomNegativeDataUri:
+        author: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/split_generator/val/random_negatives/author/neighborhoods/
+  flattenedGraphMetadata:
+    nodeAnchorBasedLinkPredictionOutput:
+      nodeTypeToRandomNegativeTfrecordUriPrefix:
+        author: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/subgraph_sampler/node_anchor_based_link_prediction/random_negative_rooted_neighborhood_samples/author/samples/
+        paper: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/subgraph_sampler/node_anchor_based_link_prediction/random_negative_rooted_neighborhood_samples/paper/samples/
+      tfrecordUriPrefix: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/subgraph_sampler/node_anchor_based_link_prediction/node_anchor_based_link_prediction_samples/samples/
+  inferenceMetadata:
+    nodeTypeToInferencerOutputInfoMap:
+      author:
+        embeddingsPath: external-snap-ci-github-gigl.public_gigl.embeddings_author_dblp_node_anchor_edge_features_user_defined_labels_2024-08-01--17-11-27-UTC
+      paper:
+        embeddingsPath: external-snap-ci-github-gigl.public_gigl.embeddings_paper_dblp_node_anchor_edge_features_user_defined_labels_2024-08-01--17-11-27-UTC
+  postprocessedMetadata:
+    postProcessorLogMetricsUri: gs://public-gigl/dblp_node_anchor_edge_features_user_defined_labels/post_processor/post_processor_metrics.json
+  preprocessedMetadataUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/data_preprocess/preprocessed_metadata.yaml
+  trainedModelMetadata:
+    evalMetricsUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/trainer/models/trainer_eval_metrics.json
+    scriptedModelUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/trainer/models/scripted_model.pt
+    tensorboardLogsUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/trainer/tensorboard_logs/
+    trainedModelUri: gs://public-gigl/mocked_assets/2024-08-01--17-11-27-UTC/dblp_node_anchor_edge_features_user_defined_labels/trainer/models/model.pt
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+    - dstNodeType: author
+      relation: to
+      srcNodeType: paper
+trainerConfig:
+    # Unused
+  trainerArgs: {}
+  trainerClsPath: unused
