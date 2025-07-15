@@ -1,5 +1,12 @@
 name: "Commit and Push Changes"
-description: "Commits and pushes changes to the current or specified branch with a customizable commit message, including changes the workflow has made"
+description: |
+  Commits and pushes changes to the current or specified branch with a customizable commit message.
+  Includes changes the workflow has made.
+  Only commits changes to files that have been modified or deleted, without adding new files.
+  If a new branch is specified, the action will create a new branch and push the changes to it.
+  If no new branch is specified, the action will push the changes to the current branch.
+
+
 inputs:
   commit_message:
     description: "Commit message for the changes"
@@ -29,7 +36,7 @@ runs:
           git push --set-upstream origin $TO_NEW_BRANCH_NAMED
         fi
 
-        git add --all
+        git add --update
 
         # If no changes, exit gracefully. If not done, git commit will fail.
         if git diff --cached --exit-code; then
