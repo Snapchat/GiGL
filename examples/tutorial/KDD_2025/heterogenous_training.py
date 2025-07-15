@@ -14,8 +14,8 @@ from typing import Literal
 
 import torch
 import torch.multiprocessing.spawn
-import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
+from torch_geometric import typing as pyg_typing
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import HGTConv
 
@@ -27,24 +27,51 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.utils import get_free_port
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.utils.model import save_state_dict
 from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
 
+QUERY_NODE_TYPE = NodeType("user")
+TARGET_NODE_TYPE = NodeType("story")
+
+SUPERVISION_EDGE_TYPE = EdgeType(QUERY_NODE_TYPE, Relation("to"), TARGET_NODE_TYPE)
+
+# Arbitrary fanout for the example, can be adjusted based on dataset and model.
+FANOUT = [10, 10]
+
+
+def init_model(
+    out_channels: int = 16,
+    metadata: pyg_typing.Metadata = (
+        ["user", "story"],
+        [
+            ("user", "to", "story"),
+            ("story", "to", "user"),
+        ],
+    ),
+) -> HGTConv:
+    return HGTConv(
+        in_channels=-1,  # Input channels will be set dynamically based on the dataset.
+        out_channels=out_channels,
+        metadata=metadata,
+    )
+
 
 def compute_loss(model: torch.nn.Module, data: HeteroData) -> torch.Tensor:
     main_out: dict[str, torch.Tensor] = model(data.x_dict, data.edge_index_dict)
-    anchor_nodes = torch.arange(data["paper"].batch_size).repeat_interleave(
+    anchor_nodes = torch.arange(data[QUERY_NODE_TYPE].batch_size).repeat_interleave(
         torch.tensor([len(v) for v in data.y_positive.values()])
     )
     target_nodes = torch.cat([v for v in data.y_positive.values()])
-
-    loss = F.cosine_embedding_loss(
-        input1=main_out["paper"][anchor_nodes],
-        input2=main_out["author"][target_nodes],
-        target=torch.ones_like(anchor_nodes, dtype=torch.float32),
+    loss_fn = torch.nn.MarginRankingLoss()
+    query_embeddings = main_out[QUERY_NODE_TYPE][anchor_nodes]
+    target_embeddings = main_out[TARGET_NODE_TYPE][target_nodes]
+    loss = loss_fn(
+        input1=query_embeddings,
+        input2=target_embeddings,
+        target=torch.ones_like(query_embeddings, dtype=torch.float32),
     )
     return loss
 
@@ -77,7 +104,7 @@ def get_data_loader(
     dataset: DistLinkPredictionDataset,
     batch_size: int,
 ) -> Iterable[HeteroData]:
-    node_type = NodeType("paper")
+    node_type = QUERY_NODE_TYPE
     if split == "train":
         assert isinstance(dataset.train_node_ids, Mapping)
         input_nodes = (node_type, dataset.train_node_ids[node_type])
@@ -89,16 +116,15 @@ def get_data_loader(
         input_nodes = (node_type, dataset.test_node_ids[node_type])
     else:
         raise ValueError(f"Unknown split: {split}")
-    fanout = [10, 10]  # Arbitrary fanout for the example, can be adjusted.
 
     # Wrap with InfiniteIterator to fully support distributed training.
     return InfiniteIterator(
         DistABLPLoader(
             dataset=dataset,
-            num_neighbors=fanout,
+            num_neighbors=FANOUT,
             input_nodes=input_nodes,
             batch_size=batch_size,
-            supervision_edge_type=("paper", "to", "author"),
+            supervision_edge_type=SUPERVISION_EDGE_TYPE,
             pin_memory_device=torch.device(
                 "cpu"
             ),  # Only CPU training for this example.
@@ -127,18 +153,7 @@ def train(
         split="train", dataset=dataset, batch_size=batch_size
     )
     val_loader = get_data_loader(split="val", dataset=dataset, batch_size=batch_size)
-    hgt = HGTConv(
-        in_channels=-1,
-        out_channels=16,
-        metadata=(
-            ["paper", "author", "term"],
-            [
-                ("paper", "to", "author"),
-                ("author", "to", "paper"),
-                ("term", "to", "paper"),
-            ],
-        ),
-    )
+    hgt = init_model()
     compute_loss(hgt, next(iter(train_loader)))  # initialize model weights for DDP
     model = DistributedDataParallel(
         hgt,
@@ -181,11 +196,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        default="examples/tutorial/KDD_2025/dblp_task_config.yaml",
+        default="examples/tutorial/KDD_2025/toy_graph_task_config.yaml",
         help="Path to the task config URI.",
     )
     parser.add_argument(
-        "--process_count", type=int, default=2, help="Number of processes to spawn."
+        "--process_count", type=int, default=1, help="Number of processes to spawn."
     )
     parser.add_argument(
         "--batch_size",

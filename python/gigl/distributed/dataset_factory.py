@@ -516,7 +516,8 @@ def build_dataset_from_task_config_uri(
         splitter = None
     else:
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
-
+        num_val = float(args.get("num_val", "0.1"))
+        num_test = float(args.get("num_test", "0.1"))
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
             if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
@@ -529,6 +530,8 @@ def build_dataset_from_task_config_uri(
             sampling_direction=sample_edge_direction,
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,
+            num_val=num_val,
+            num_test=num_test,
         )
 
     assert sample_edge_direction in (
