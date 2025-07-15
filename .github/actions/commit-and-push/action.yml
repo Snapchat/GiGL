@@ -4,7 +4,7 @@ description: |
   Includes changes the workflow has made.
   Only commits changes to files that have been modified or deleted, without adding new files.
   If a new branch is specified, the action will create a new branch and push the changes to it.
-  If no new branch is specified, the action will push the changes to the current branch.
+  Otherwise, the action will push the changes to the current branch.
 
 
 inputs:
