@@ -22,7 +22,7 @@ if using a different dataset, also update the following fields:
  if doing multi node training, make sure to set the `--host` and `--port` arguments
  to the same values across all nodes.
 
- You may use the `--process_count` argument to control how many processes.
+ You may use the `--process_count` argument to control how many training processes will be spawned.
 
 """
 import os
