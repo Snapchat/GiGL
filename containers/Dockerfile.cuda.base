@@ -33,7 +33,7 @@ RUN echo "conda activate gnn" >> ~/.bashrc
 
 COPY requirements tmp/requirements
 # Copy the post install script to the builder image so that install_py_deps.sh can leverage it
-COPY python/gigl/scripts tools/gigl/python/gigl/scripts
+COPY python/gigl/scripts tmp/python/gigl/scripts
 RUN source ~/.bashrc && pip install --upgrade pip
 RUN source ~/.bashrc && cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
 

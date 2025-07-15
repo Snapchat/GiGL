@@ -8,6 +8,20 @@ is_running_on_mac() {
     return $?
 }
 
+has_cuda_driver() {
+    # Use the whereis command to locate the CUDA driver
+    cuda_location=$(whereis cuda)
+
+    # Check if the cuda_location variable is empty
+    if [[ -z "$cuda_location" || "$cuda_location" == "cuda:" ]]; then
+        echo "CUDA driver not found."
+        return 1
+    else
+        echo "CUDA driver found at: $cuda_location"
+        return 0
+    fi
+}
+
 # Only install GLT if not running on Mac.
 if ! is_running_on_mac;
 then
