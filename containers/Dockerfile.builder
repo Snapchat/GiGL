@@ -3,7 +3,7 @@
 # This dockerfile is contains all Dev dependencies, and is used by gcloud
 # builders for running tests, et al.
 
-FROM continuumio/miniconda3:4.12.0
+FROM condaforge/miniforge3:25.3.0-1
 
 SHELL ["/bin/bash", "-c"]
 
@@ -41,7 +41,7 @@ RUN echo 'export JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"' >> /root/.b
 
 # Create the environment:
 # TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y --name gigl python=3.9 pip
+RUN conda create -y -c conda-forge --name gigl python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
 ENV PATH=/opt/conda/envs/gigl/bin:$PATH
