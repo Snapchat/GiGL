@@ -4,13 +4,12 @@ from typing import Dict
 import requests
 
 from gigl.common import HttpUri, LocalUri
-
 from gigl.common.logger import Logger
+
 logger = Logger()
 
 
 class HttpUtils:
-
     @staticmethod
     def does_http_path_resolve(http_path: HttpUri) -> bool:
         """

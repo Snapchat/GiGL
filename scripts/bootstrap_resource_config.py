@@ -5,7 +5,6 @@ import os
 import pathlib
 import subprocess
 import tempfile
-import urllib.request
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -21,6 +20,7 @@ LOCAL_DEV_TEMPLATE_RES_CONF = LocalUri(
 FALLBACK_TEMPLATE_RES_CONF = HttpUri(
     uri="https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/deployment/configs/unittest_resource_config.yaml"
 )
+
 
 @dataclass
 class Param:
@@ -201,10 +201,10 @@ if __name__ == "__main__":
         )
         resource_config_path = LOCAL_DEV_TEMPLATE_RES_CONF.uri
     else:
-        print(
-            f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF}"
+        print(f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF}")
+        tmp_file = file_loader.load_to_temp_file(
+            file_uri_src=FALLBACK_TEMPLATE_RES_CONF
         )
-        tmp_file = file_loader.load_to_temp_file(file_uri_src=FALLBACK_TEMPLATE_RES_CONF)
         print(f"Downloaded fallback template resource config to {tmp_file.name}")
         resource_config_path = tmp_file.name
 
