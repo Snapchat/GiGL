@@ -109,8 +109,8 @@ class DistNeighborLoader(DistLoader):
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
 
-        node_world_size: int
-        node_rank: int
+        machine_world_size: int
+        machine_rank: int
         rank: int
         world_size: int
         local_rank: int
@@ -128,13 +128,13 @@ class DistNeighborLoader(DistLoader):
             ), "context: DistributedContext provided, so local_process_rank must be provided."
 
             master_ip_address = context.main_worker_ip_address
-            node_world_size = context.global_world_size
-            node_rank = context.global_rank
+            machine_world_size = context.global_world_size
+            machine_rank = context.global_rank
             local_world_size = local_process_world_size
             local_rank = local_process_rank
 
-            rank = node_rank * local_world_size + local_rank
-            world_size = node_world_size * local_world_size
+            rank = machine_rank * local_world_size + local_rank
+            world_size = machine_world_size * local_world_size
 
             if not torch.distributed.is_initialized():
                 logger.info(
@@ -170,9 +170,9 @@ class DistNeighborLoader(DistLoader):
                         + f"count_ranks_per_ip_address = {count_ranks_per_ip_address}"
                     )
 
-            node_world_size = len(count_ranks_per_ip_address)
+            machine_world_size = len(count_ranks_per_ip_address)
             local_rank = rank % local_world_size
-            node_rank = rank // local_world_size
+            machine_rank = rank // local_world_size
 
         del (
             context,
@@ -188,7 +188,7 @@ class DistNeighborLoader(DistLoader):
             )
         )
         logger.info(
-            f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: {master_ip_address}"
+            f"Dataset Building started on {machine_rank} of {machine_world_size} nodes, using following node as main: {master_ip_address}"
         )
 
         if input_nodes is None:
@@ -201,25 +201,6 @@ class DistNeighborLoader(DistLoader):
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
             input_nodes = dataset.node_ids
-
-        if isinstance(num_neighbors, abc.Mapping):
-            # TODO(kmonte): We should enable this. We have two blockers:
-            # 1. We need to treat `EdgeType` as a proper tuple, not the GiGL`EdgeType`.
-            # 2. There are (likely) some GLT bugs around https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
-            # Where if num_neighbors is a dict then we index into it improperly.
-            if not isinstance(dataset.graph, abc.Mapping):
-                raise ValueError(
-                    "When num_neighbors is a dict, the dataset must be heterogeneous."
-                )
-            if num_neighbors.keys() != dataset.graph.keys():
-                raise ValueError(
-                    f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset.graph.keys()}"
-                )
-            hops = len(next(iter(num_neighbors.values())))
-            if not all(len(fanout) == hops for fanout in num_neighbors.values()):
-                raise ValueError(
-                    f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
-                )
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         self._is_labeled_heterogeneous = False
@@ -235,9 +216,6 @@ class DistNeighborLoader(DistLoader):
                 ):
                     node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
                     self._is_labeled_heterogeneous = True
-                    num_neighbors = patch_fanout_for_sampling(
-                        dataset.get_edge_types(), num_neighbors
-                    )
                 else:
                     raise ValueError(
                         f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
@@ -249,9 +227,10 @@ class DistNeighborLoader(DistLoader):
             assert isinstance(
                 dataset.node_ids, abc.Mapping
             ), "Dataset must be heterogeneous if provided input nodes are a tuple."
-            num_neighbors = patch_fanout_for_sampling(
-                dataset.get_edge_types(), num_neighbors
-            )
+
+        num_neighbors = patch_fanout_for_sampling(
+            dataset.get_edge_types(), num_neighbors
+        )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
@@ -261,7 +240,7 @@ class DistNeighborLoader(DistLoader):
 
         input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
-        # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
+        # Sets up processes for initializing the dataloader, setting up worker groups to minimize
         # the memory overhead and CPU contention.
         logger.info(
             f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {device}"
@@ -274,21 +253,14 @@ class DistNeighborLoader(DistLoader):
             )
             num_cpu_threads = DEFAULT_NUM_CPU_THREADS
 
-        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
-
         gigl.distributed.utils.init_neighbor_loader_worker(
-            master_ip_address=master_ip_address,
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
-            rank=node_rank,
-            world_size=node_world_size,
-            master_worker_port=neighbor_loader_port_for_current_rank,
+            machine_rank=machine_rank,
+            machine_world_size=machine_world_size,
             device=device,
             should_use_cpu_workers=should_use_cpu_workers,
-            # Lever to explore tuning for CPU based inference
+            # Lever to explore tuning for CPU based training or inference
             num_cpu_threads=num_cpu_threads,
             process_start_gap_seconds=process_start_gap_seconds,
         )

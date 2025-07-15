@@ -1,6 +1,7 @@
 """Utils for Neighbor loaders."""
+from collections import abc
 from copy import deepcopy
-from typing import Union
+from typing import Optional, Union
 
 import torch
 from torch_geometric.data import Data, HeteroData
@@ -13,40 +14,67 @@ logger = Logger()
 
 
 def patch_fanout_for_sampling(
-    edge_types: list[EdgeType],
+    edge_types: Optional[list[EdgeType]],
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
-) -> dict[EdgeType, list[int]]:
+) -> Union[list[int], dict[EdgeType, list[int]]]:
     """
-    Setups an approprirate fanout for sampling.
+    Sets up an approprirate fanout for sampling.
 
     Does the following:
     - For all label edge types, sets the fanout to be zero.
     - For all other edge types, if the fanout is not specified, uses the original fanout.
 
+    Note that if fanout is provided as a dict, the keys (edges) in the fanout must be in `edge_types`.
+
     We add this because the existing sampling logic (below) makes strict assumptions that we need to conform to.
     https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
 
     Args:
-        edge_types (list[EdgeType]): List of all edge types in the graph.
+        edge_types (Optional[list[EdgeType]]): List of all edge types in the graph, is None for homogeneous datasets
         num_neighbors (dict[EdgeType, list[int]]): Specified fanout by the user
     Returns:
-        dict[EdgeType, list[int]]: Modified fanout that is approariate for sampling.
+        Union[list[int], dict[EdgeType, list[int]]]: Modified fanout that is appropriate for sampling. Is a list[int]
+            if the dataset is homogeneous, otherwise is dict[EdgeType, list[int]]
     """
+    if edge_types is None:
+        if isinstance(num_neighbors, abc.Mapping):
+            raise ValueError(
+                "When dataset is homogeneous, the num_neighbors field cannot be a dictionary."
+            )
+        return num_neighbors
     if isinstance(num_neighbors, list):
         original_fanout = num_neighbors
+        should_broadcast_fanout = True
         num_neighbors = {}
     else:
+        extra_edge_types = set(num_neighbors.keys()) - set(edge_types)
+        if extra_edge_types:
+            raise ValueError(
+                f"Found extra edge types {extra_edge_types} in fanout which is not in dataset edge types {edge_types}."
+            )
         original_fanout = next(iter(num_neighbors.values()))
+        should_broadcast_fanout = False
         num_neighbors = deepcopy(num_neighbors)
 
     num_hop = len(original_fanout)
     zero_samples = [0 for _ in range(num_hop)]
     for edge_type in edge_types:
+        # TODO(kmonte): stop setting fanout for positive/negative edges once GLT sampling correctly ignores those edges during fanout.
         if is_label_edge_type(edge_type):
             num_neighbors[edge_type] = zero_samples
-        elif edge_type not in num_neighbors:
+        elif should_broadcast_fanout and edge_type not in num_neighbors:
             num_neighbors[edge_type] = original_fanout
+        elif not should_broadcast_fanout and edge_type not in num_neighbors:
+            raise ValueError(
+                f"Found non-labeled edge type in dataset {edge_type} which is not in the provided fanout {num_neighbors.keys()}. \
+                If fanout is provided as a dict, all edges must be present."
+            )
 
+    hops = len(next(iter(num_neighbors.values())))
+    if not all(len(fanout) == hops for fanout in num_neighbors.values()):
+        raise ValueError(
+            f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
+        )
     logger.info(f"Overwrote num_neighbors to: {num_neighbors}.")
     return num_neighbors
 

@@ -1,6 +1,6 @@
 import unittest
 from collections import abc
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -365,6 +365,7 @@ def _run_toy_heterogeneous_ablp(
     dataset: DistLinkPredictionDataset,
     context: DistributedContext,
     supervision_edge_types: list[EdgeType],
+    fanout: Union[list[int], dict[EdgeType, list[int]]],
 ):
     anchor_node_type = NodeType("user")
     supervision_node_type = NodeType("story")
@@ -374,17 +375,15 @@ def _run_toy_heterogeneous_ablp(
     supervision_edge_type = supervision_edge_types[0]
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
-    fanout = [2, 2]
     labeled_edge_type = EdgeType(
         supervision_node_type, Relation("to_gigl_positive"), anchor_node_type
     )
-    num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
     all_positive_supervision_nodes, all_anchor_nodes, _, _ = dataset.graph[
         labeled_edge_type
     ].topo.to_coo()
     loader = DistABLPLoader(
         dataset=dataset,
-        num_neighbors=num_neighbors,
+        num_neighbors=fanout,
         input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),
         context=context,
         local_process_rank=0,
@@ -749,11 +748,38 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     @parameterized.expand(
         [
-            param("Tensor-based partitioning", partitioner_class=DistPartitioner),
-            param("Range-based partitioning", partitioner_class=DistRangePartitioner),
+            param(
+                "Tensor-based partitioning, list fanout",
+                partitioner_class=DistPartitioner,
+                fanout=[2, 2],
+            ),
+            param(
+                "Range-based partitioning, list fanout",
+                partitioner_class=DistRangePartitioner,
+                fanout=[2, 2],
+            ),
+            param(
+                "Range-based partitioning, dict fanout",
+                partitioner_class=DistRangePartitioner,
+                fanout={
+                    EdgeType(NodeType("user"), Relation("to"), NodeType("story")): [
+                        2,
+                        2,
+                    ],
+                    EdgeType(NodeType("story"), Relation("to"), NodeType("user")): [
+                        2,
+                        2,
+                    ],
+                },
+            ),
         ]
     )
-    def test_toy_heterogeneous_ablp(self, _, partitioner_class: type[DistPartitioner]):
+    def test_toy_heterogeneous_ablp(
+        self,
+        _,
+        partitioner_class: type[DistPartitioner],
+        fanout: Union[list[int], dict[EdgeType, list[int]]],
+    ):
         toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[
             HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -791,7 +817,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_toy_heterogeneous_ablp,
-            args=(dataset, self._context, supervision_edge_types),
+            args=(dataset, self._context, supervision_edge_types, fanout),
         )
 
 
