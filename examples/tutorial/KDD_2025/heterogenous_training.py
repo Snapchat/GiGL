@@ -5,8 +5,6 @@ Run with:
 """
 import os
 
-from gigl.src.common.types.graph_data import NodeType
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 
 
@@ -29,6 +27,7 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.utils import get_free_port
+from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.utils.model import save_state_dict
 
 logger = Logger()
