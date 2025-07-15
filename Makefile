@@ -75,7 +75,6 @@ install_dev_deps: check_if_valid_env
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
 	pip install -e ./python/
-	gigl-post-install
 	pre-commit install --hook-type pre-commit --hook-type pre-push
 
 
@@ -85,7 +84,6 @@ install_deps:
 	bash ./requirements/install_py_deps.sh
 	bash ./requirements/install_scala_deps.sh
 	pip install -e ./python/
-	gigl-post-install
 
 # Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
 generate_mac_arm64_cpu_hashed_requirements:
