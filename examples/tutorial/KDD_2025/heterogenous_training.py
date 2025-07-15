@@ -29,6 +29,7 @@ from gigl.distributed import (
 from gigl.distributed.utils import get_free_port
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.utils.model import save_state_dict
+from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
 
@@ -75,7 +76,7 @@ def get_data_loader(
     split: Literal["train", "val", "test"],
     dataset: DistLinkPredictionDataset,
     batch_size: int,
-) -> DistABLPLoader:
+) -> Iterable[HeteroData]:
     node_type = NodeType("paper")
     if split == "train":
         assert isinstance(dataset.train_node_ids, Mapping)
@@ -89,13 +90,20 @@ def get_data_loader(
     else:
         raise ValueError(f"Unknown split: {split}")
     fanout = [10, 10]  # Arbitrary fanout for the example, can be adjusted.
-    return DistABLPLoader(
-        dataset=dataset,
-        num_neighbors=fanout,
-        input_nodes=input_nodes,
-        batch_size=batch_size,
-        supervision_edge_type=("paper", "to", "author"),
-        pin_memory_device=torch.device("cpu"),  # Only CPU training for this example.
+
+    # Wrap with InfiniteIterator to fully support distributed training.
+    return InfiniteIterator(
+        DistABLPLoader(
+            dataset=dataset,
+            num_neighbors=fanout,
+            input_nodes=input_nodes,
+            batch_size=batch_size,
+            supervision_edge_type=("paper", "to", "author"),
+            pin_memory_device=torch.device(
+                "cpu"
+            ),  # Only CPU training for this example.
+            shuffle=True,
+        )
     )
 
 
@@ -104,6 +112,7 @@ def train(
     process_count: int,
     port: int,
     dataset: DistLinkPredictionDataset,
+    max_training_batches: int,
     batch_size: int = 4,
     val_every: int = 20,
     saved_model_path: str = "/tmp/gigl/dblp_model.pt",
@@ -138,6 +147,8 @@ def train(
     logger.info(f"Process {process_number} initialized model: {model}")
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.001)
     for batch_idx, main_data in enumerate(train_loader):
+        if batch_idx >= max_training_batches:
+            break
         loss = compute_loss(model, main_data)
         optimizer.zero_grad()
         loss.backward()
@@ -233,6 +244,9 @@ if __name__ == "__main__":
     assert isinstance(dataset.train_node_ids, Mapping)
     for node_type, node_ids in dataset.train_node_ids.items():
         logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")
+        max_training_batches = node_ids.size(0) // (
+            args.batch_size * args.world_size * args.process_count
+        )
     assert isinstance(dataset.val_node_ids, Mapping)
     for node_type, node_ids in dataset.val_node_ids.items():
         logger.info(f"Validation node type {node_type} has {node_ids.size(0)} nodes.")
@@ -241,12 +255,14 @@ if __name__ == "__main__":
         logger.info(f"Test node type {node_type} has {node_ids.size(0)} nodes.")
     training_process_port = get_free_port()
     process_count = args.process_count
+    logger.info(f"Will train for {max_training_batches} batches.")
     torch.multiprocessing.spawn(
         train,
         args=(
             process_count,  # process_count
             training_process_port,  # port
             dataset,  # dataset
+            max_training_batches,  # max_training_batches
             args.batch_size,  # batch_size
             args.val_every,  # val_every
             args.saved_model_path,  # saved_model_path
