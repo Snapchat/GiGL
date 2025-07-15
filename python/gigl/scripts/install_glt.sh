@@ -8,7 +8,6 @@ is_running_on_mac() {
     return $?
 }
 
-
 has_cuda_driver() {
     # Use the whereis command to locate the CUDA driver
     cuda_location=$(whereis cuda)
