@@ -22,7 +22,7 @@ You can run this example in a full pipeline with `make run_het_dblp_sup_test` fr
 import argparse
 import gc
 import time
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 import torch
 import torch.distributed
@@ -96,7 +96,7 @@ def _inference_process(
     # This fanout is defaulted to match the fanout provided in the DBLP E2E Config:
     # `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`
     # Users can feel free to parse this argument from `inferencer_args`
-    num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
+    num_neighbors: list[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for

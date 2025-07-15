@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Dict, List
 
 from gigl.src.common.types.graph_data import EdgeUsageType, NodeId
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo

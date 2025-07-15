@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Generic, Iterable, Iterator, List, TypeVar
+from typing import Callable, Dict, Generic, Iterable, Iterator, TypeVar
 
 import numpy as np
 import tensorflow as tf
@@ -49,13 +49,13 @@ class _TfRecordDatasetIterable(Generic[T]):
 class TfRecordsIterableDataset(torch.utils.data.IterableDataset, Generic[T]):
     def __init__(
         self,
-        tf_record_uris: List[UriType],
+        tf_record_uris: list[UriType],
         process_raw_sample_fn: Callable[[bytes], T],
         seed: int = 42,
     ) -> None:
         """
         Args:
-            tf_record_uris (List[UriType]): Holds all the uris for the dataset.
+            tf_record_uris (list[UriType]): Holds all the uris for the dataset.
             Note: for now only uris supported are ones that `tf.data.TFRecordDataset`
             can load from default; i.e .GcsUri and LocalUri.
             We permute the file list based on a seed as a means of "shuffling" the data
@@ -134,7 +134,7 @@ class CombinedIterableDatasets(torch.utils.data.IterableDataset, Generic[T]):
             yield combined_data
 
 
-def get_np_iterator_from_tfrecords(schema_path: Uri, tfrecord_files: List[str]):
+def get_np_iterator_from_tfrecords(schema_path: Uri, tfrecord_files: list[str]):
     batch_size = 1
     schema = tfdv.load_schema_text(schema_path.uri)
     feature_spec = tft.tf_metadata.schema_utils.schema_as_feature_spec(

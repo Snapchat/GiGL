@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Callable, List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -12,7 +11,7 @@ class DecoderType(Enum):
     inner_product = "inner_product"
 
     @classmethod
-    def get_all_criteria(cls) -> List[str]:
+    def get_all_criteria(cls) -> list[str]:
         return [m.name for m in cls]
 
 
@@ -20,10 +19,10 @@ class LinkPredictionDecoder(nn.Module):
     def __init__(
         self,
         decoder_type: DecoderType = DecoderType.inner_product,
-        decoder_channel_list: Optional[List[int]] = None,
+        decoder_channel_list: Optional[list[int]] = None,
         act: Union[str, Callable, None] = F.relu,
         act_first: bool = False,
-        bias: Union[bool, List[bool]] = False,
+        bias: Union[bool, list[bool]] = False,
         plain_last: bool = False,
         norm: Optional[Union[str, Callable]] = None,
     ):

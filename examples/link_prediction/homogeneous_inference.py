@@ -22,7 +22,7 @@ You can run this example in a full pipeline with `make run_hom_cora_sup_test` fr
 import argparse
 import gc
 import time
-from typing import Dict, List
+from typing import Dict
 
 import torch
 import torch.multiprocessing as mp
@@ -100,7 +100,7 @@ def _inference_process(
     # `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
     # Users can feel free to parse this argument from `inferencer_args`
 
-    num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
+    num_neighbors: list[int] = [fanout_per_hop, fanout_per_hop]
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for

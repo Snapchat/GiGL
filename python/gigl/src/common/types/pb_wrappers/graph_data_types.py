@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Union, cast
+from typing import Dict, Optional, Sequence, Set, Union, cast
 
 from gigl.common.utils.func_tools import lru_cache
 from gigl.src.common.types.graph_data import CondensedEdgeType, CondensedNodeType
@@ -188,28 +188,28 @@ class GraphPbWrapper:
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def nodes_wrapper(self) -> List[NodePbWrapper]:
+    def nodes_wrapper(self) -> list[NodePbWrapper]:
         # TODO: rename to nodes_pb_wrapper for clarity
         return [NodePbWrapper(pb=node_pb2) for node_pb2 in self.pb.nodes]
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def nodes_pb(self) -> List[graph_schema_pb2.Node]:
+    def nodes_pb(self) -> list[graph_schema_pb2.Node]:
         return list(self.pb.nodes)
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def edges_wrapper(self) -> List[EdgePbWrapper]:
+    def edges_wrapper(self) -> list[EdgePbWrapper]:
         # TODO: rename to edges_pb_wrapper for clarity
         return [EdgePbWrapper(pb=edge_pb2) for edge_pb2 in self.pb.edges]
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def edges_pb(self) -> List[graph_schema_pb2.Edge]:
+    def edges_pb(self) -> list[graph_schema_pb2.Edge]:
         return list(self.pb.edges)
 
     @classmethod
-    def merge_subgraphs(cls, subgraphs: List[GraphPbWrapper]) -> GraphPbWrapper:
+    def merge_subgraphs(cls, subgraphs: list[GraphPbWrapper]) -> GraphPbWrapper:
         # proto object types are un-hashable using set operation,
         # and mergeFrom function does not deduplicate,
         # so unfold and rebuild below
@@ -231,8 +231,8 @@ class GraphPbWrapper:
     @classmethod
     def build_dry_subgraph(
         cls,
-        node_wrappers: List[NodePbWrapper],
-        edge_wrappers: Optional[List[EdgePbWrapper]] = None,
+        node_wrappers: list[NodePbWrapper],
+        edge_wrappers: Optional[list[EdgePbWrapper]] = None,
     ) -> GraphPbWrapper:
         if edge_wrappers:
             graph_pb = graph_schema_pb2.Graph(
@@ -260,7 +260,7 @@ class GraphPbWrapper:
         # if nodes in the proto doesn't have features throw error
 
         if node_features_dict:
-            nodes_pb: List[graph_schema_pb2.Node] = []
+            nodes_pb: list[graph_schema_pb2.Node] = []
             for wrapped_node in dry_graph_proto.nodes_wrapper:
                 try:
                     node_feature_values = node_features_dict[wrapped_node]
@@ -275,7 +275,7 @@ class GraphPbWrapper:
             nodes_pb = dry_graph_proto.nodes_pb
 
         if edge_features_dict:
-            edges_pb: List[graph_schema_pb2.Edge] = []
+            edges_pb: list[graph_schema_pb2.Edge] = []
             for wrapped_edge in dry_graph_proto.edges_wrapper:
                 try:
                     edge_feature_values = edge_features_dict[wrapped_edge]
