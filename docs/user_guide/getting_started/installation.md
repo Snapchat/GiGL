@@ -112,11 +112,10 @@ tooling useful for contributions:
 make install_dev_deps
 ```
 
-
-### Install Wheel (Development Mode)
+### Install Wheel (In Development)
 
 ```{caution}
-The instructions below are for development purposes. For production use, please use the [PyPI installation](#install-from-pypi-recommended) method above.
+The instructions below are in development and are not recommended. We are working on making our whls publicly accessible, for the time being you will need to [install from source](#install-from-source).
 ```
 
 1. Create a python environment
@@ -158,10 +157,4 @@ gigl-post-install
 ```{note}
 `gigl-post-install` is needed to install GLT from source.
 Currently, building/using wheels for GLT is errorprone, thus we opt to install from source every time.
-```
-
-3. Install Additional Dependencies
-
-```bash
-gigl-install-deps
 ```
