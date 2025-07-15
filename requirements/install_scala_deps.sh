@@ -39,8 +39,10 @@ gunzip -c tools/scala/spark-3.1.3-bin-hadoop3.2.tgz | tar xopf - -C tools/scala
 echo "Installing tooling for spark 3.5; this will deprecate regular installation for spark 3.1 above"
 gsutil cp gs://public-gigl/tools/scala/spark/spark-3.5.0-bin-hadoop3.tgz tools/scala/spark-3.5.0-bin-hadoop3.tgz
 gunzip -c tools/scala/spark-3.5.0-bin-hadoop3.tgz | tar xopf - -C tools/scala
+
 # Remove SparkR, as it contains GPL licensed code - even though Spark is Apache licensed
 # We don't use this anyways.
+rm -rf tools/scala/spark-3.1.3-bin-hadoop3.2/R
 rm -rf tools/scala/spark-3.5.0-bin-hadoop3/R
 
 # Pulls custom package which allows for parsing and output tf records
