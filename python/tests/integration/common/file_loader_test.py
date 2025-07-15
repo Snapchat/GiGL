@@ -301,6 +301,9 @@ class FileLoaderTest(unittest.TestCase):
     def test_can_file_loader_check_existance_and_delete_uris(self):
         tmp_local_file = LocalUri.join(self.test_asset_directory, "tmp_local_file.txt")
         tmp_gcs_file = GcsUri.join(self.gcs_test_asset_directory, "tmp_gcs_file.txt")
+        http_file: HttpUri = HttpUri(
+            "https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/LICENSE"
+        )
         # Write to local file
         local_fs.create_empty_file_if_none_exists(local_path=tmp_local_file)
         # Copy the file to GCS
@@ -311,7 +314,9 @@ class FileLoaderTest(unittest.TestCase):
         file_loader = FileLoader()
         self.assertTrue(file_loader.does_uri_exist(uri=tmp_local_file))
         self.assertTrue(file_loader.does_uri_exist(uri=tmp_gcs_file))
-        # Delete the files
+        self.assertTrue(file_loader.does_uri_exist(uri=http_file))
+
+        # Delete the supported files; we cannot delete the HTTP URIs
         file_loader.delete_files(uris=[tmp_local_file, tmp_gcs_file])
         # Ensure both files are deleted
         self.assertFalse(file_loader.does_uri_exist(uri=tmp_local_file))
