@@ -30,10 +30,7 @@ def main():
         # Run the install_glt.sh script
         print(f"Executing {install_glt_script}...")
         result = subprocess.run(
-            [str(install_glt_script)],
-            cwd=script_dir,
-            check=True,
-            capture_output=False
+            [str(install_glt_script)], cwd=script_dir, check=True, capture_output=False
         )
 
         print("Post-install script completed successfully!")
