@@ -26,6 +26,7 @@ class FileLoaderTest(unittest.TestCase):
         self.gcs_utils.delete_files_in_bucket_dir(
             gcs_path=self.gcs_test_asset_directory
         )
+        local_fs.remove_folder_if_exist(local_path=self.test_asset_directory)
 
     def test_local_temp_file(self):
         local_file_path_src: LocalUri = LocalUri.join(
