@@ -1,7 +1,28 @@
 """
 Dead simple heterogenous training loop.
+This training loop only supports CPU training.
+It does support multi process/multi node training.
+
 Run with:
     python examples/tutorial/KDD_2025/heterogeneous_training.py
+
+This example is meant to be run on the "toy graph" dataset,
+which is a small heterogeneous graph with two node types (user and story)
+and one edge type (user to story).
+
+The dataset it reads from may be configured in the `task_config_uri` argument,
+if using a different dataset, also update the following fields:
+ - QUERY_NODE_TYPE
+ - TARGET_NODE_TYPE
+ - SUPERVISION_EDGE_TYPE
+ and the metadata in the `init_model` function.
+
+ Multi node training is supported by via the --rank and --world_size arguments.
+ if doing multi node training, make sure to set the `--host` and `--port` arguments
+ to the same values across all nodes.
+
+ You may use the `--process_count` argument to control how many processes.
+
 """
 import os
 
@@ -33,6 +54,7 @@ from gigl.utils.iterator import InfiniteIterator
 
 logger = Logger()
 
+# Make sure to update these if using a different dataset.
 QUERY_NODE_TYPE = NodeType("user")
 TARGET_NODE_TYPE = NodeType("story")
 

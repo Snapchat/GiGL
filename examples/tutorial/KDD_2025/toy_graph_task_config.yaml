@@ -66,6 +66,8 @@ taskMetadata:
       srcNodeType: user
 trainerConfig:
   trainerArgs:
+    # Setup splits for training.
+    # These arguements are read by `build_dataset_from_task_config_uri`.
     ssl_positive_label_percentage: ".7"
     num_val: "0.3"
     num_test: "0.3"

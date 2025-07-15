@@ -483,9 +483,16 @@ def build_dataset_from_task_config_uri(
 
 
     The current parsable arguments are here are
-    - sample_edge_direction: Direction of the graph
-    - should_use_range_partitioning: Whether we should be using range-based partitioning
-    - should_load_tensors_in_parallel: Whether TFRecord loading should happen in parallel across entities
+    - sample_edge_direction (Literal["in", "out"]): Direction of the graph
+    - should_use_range_partitioning (bool): Whether we should be using range-based partitioning
+    - should_load_tensors_in_parallel (bool): Whether TFRecord loading should happen in parallel across entities
+    - ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels.
+        Must be None if supervised edge labels are provided in advance.
+        Slotted for refactor once this functionality is available in the transductive `splitter` directly.
+    If training there are two additional arguments:
+    - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
+    - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
+
     Args:
         task_config_uri (str): URI to a GBML Config
         distributed_context (Optional[DistributedContext]): Distributed context containing information for
