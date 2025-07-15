@@ -41,7 +41,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         service_account = resource_config.service_account_email
         staging_bucket = resource_config.temp_assets_regional_bucket_path.uri
         job_name = f"GiGL-Intergration-Test-{uuid.uuid4()}"
-        container_uri = "continuumio/miniconda3:4.12.0"
+        container_uri = "condaforge/miniforge3:25.3.0-1"
         command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
 
         job_config = VertexAiJobConfig(
