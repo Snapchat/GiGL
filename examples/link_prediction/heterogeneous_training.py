@@ -695,8 +695,8 @@ def _run_example_training(
     # For the heterogeneous case, the fanouts can be specified as a string of a list of integers, such as "[10, 10]", which will apply this fanout
     # to each edge type in the graph, or as string of format dict[(tuple[str, str, str])), list[int]] which will specify fanouts per edge type.
     # In the case of the latter, the keys should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE).
-    # For the default, we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`.
-    # To see an example of a 'fanout' with different behaviors per edge type, refer to `examples.link_prediction.configs.e2e_het_dblp_sup_task_config.yaml`.
+    # For the default example, we make a decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`.
+    # To see an example of a 'fanout' with different behaviors per edge type, refer to `examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
 
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)

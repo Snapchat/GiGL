@@ -47,14 +47,14 @@ def _validate_parsed_hops(parsed_fanout: Any) -> None:
 
 def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]:
     """
-    Parses fanout from a string. The fanout string provided must be a well-formed and must be provided as a list[int] or as a
-    dict[tuple[str, str, str], list[int]], where each item in the tuple corresponds to the source node type, relation, and destination node type, respectively.
+    Parses fanout from a string. The fanout string should be equivalent to a str(list[int]) or a
+    str(dict[tuple[str, str, str], list[int]]), where each item in the tuple corresponds to the source node type, relation, and destination node type, respectively.
 
     For example, to parse a list[int], one could provide a fanout_str such as
-        [10, 15, 20]
+        '[10, 15, 20]'
 
     To parse a dict[EdgeType, list[int]], one could provide a fanout_str such as
-        {("user", "to", "user"): [10, 10], ("user", "to", "item"): [20, 20]}
+        '{("user", "to", "user"): [10, 10], ("user", "to", "item"): [20, 20]}'
 
     Args:
         fanout_str (str): Provided string to be parsed into fanout

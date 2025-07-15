@@ -7,7 +7,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.utils.sampling import parse_fanout
 
 
-class ParseFanoutTest(unittest.TestCase):
+class SamplingTest(unittest.TestCase):
     @parameterized.expand(
         [
             param(
@@ -58,8 +58,13 @@ class ParseFanoutTest(unittest.TestCase):
                 expected_error_type=ValueError,
             ),
             param(
-                "Fails when list contains non-integers",
+                "Fails when list contains non-integers, string",
                 input_fanout='["10", 15, 20]',
+                expected_error_type=ValueError,
+            ),
+            param(
+                "Fails when list contains non-integers, float",
+                input_fanout="[10.0, 15.0, 20.0]",
                 expected_error_type=ValueError,
             ),
             param(
