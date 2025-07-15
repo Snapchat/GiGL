@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 from torch_geometric.data.hetero_data import HeteroData
@@ -31,7 +31,7 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
     @property
     def edge_types_to_be_registered(
         self,
-    ) -> list[EdgeType]:
+    ) -> List[EdgeType]:
         edge_types_to_be_registered = []
         if hasattr(self, "_edge_store_dict"):
             edge_types_to_be_registered = [

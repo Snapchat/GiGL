@@ -1,6 +1,6 @@
 import copy
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.nn as nn
@@ -51,7 +51,7 @@ class NodeAnchorBasedLinkPredictionBaseTask(ABC, nn.Module):
 
     @property
     @abstractmethod
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         raise NotImplementedError
 
     @property
@@ -78,7 +78,7 @@ class Softmax(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(loss_input=task_input.batch_scores, device=device)
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.batch_scores]
 
 
@@ -101,7 +101,7 @@ class Margin(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(loss_input=task_input.batch_scores, device=device)
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.batch_scores]
 
 
@@ -205,7 +205,7 @@ class Retrieval(NodeAnchorBasedLinkPredictionBaseTask):
         return running_loss, running_batch_size
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.batch_combined_scores, ModelResultType.batch_embeddings]
 
 
@@ -275,7 +275,7 @@ class GRACE(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(h1=h1, h2=h2, device=device)
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -344,7 +344,7 @@ class FeatureReconstruction(NodeAnchorBasedLinkPredictionBaseTask):
         )
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -414,7 +414,7 @@ class WhiteningDecorrelation(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(h1=h1, h2=h2, N=augmented_embeddings_1.shape[0], device=device)
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -476,7 +476,7 @@ class GBT(NodeAnchorBasedLinkPredictionBaseTask):
         )
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -556,7 +556,7 @@ class BGRL(NodeAnchorBasedLinkPredictionBaseTask):
             param_k.data.mul_(mm).add_(param_q.data, alpha=1.0 - mm)
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -649,7 +649,7 @@ class TBGRL(NodeAnchorBasedLinkPredictionBaseTask):
             param_k.data.mul_(mm).add_(param_q.data, alpha=1.0 - mm)
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -692,7 +692,7 @@ class DirectAU(NodeAnchorBasedLinkPredictionBaseTask):
         return running_loss, 1
 
     @property
-    def result_types(self) -> list[ModelResultType]:
+    def result_types(self) -> List[ModelResultType]:
         return [ModelResultType.batch_embeddings]
 
 
@@ -704,8 +704,8 @@ class NodeAnchorBasedLinkPredictionTasks:
 
     def _get_all_tasks(
         self,
-    ) -> list[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]]:
-        tasks_list: list[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]] = []
+    ) -> List[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]]:
+        tasks_list: List[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]] = []
         for task in list(self._task_to_weights_map.keys()):
             fn = self._task_to_fn_map[task]
             weight = self._task_to_weights_map[task]

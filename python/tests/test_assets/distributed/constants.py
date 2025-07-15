@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Final
+from typing import Dict, Final, List
 
 import torch
 
@@ -26,10 +26,10 @@ USER_TO_ITEM_EDGE_TYPE: Final[EdgeType] = EdgeType(
     dst_node_type=ITEM_NODE_TYPE,
 )
 
-MOCKED_HETEROGENEOUS_NODE_TYPES: Final[list[NodeType]] = sorted(
+MOCKED_HETEROGENEOUS_NODE_TYPES: Final[List[NodeType]] = sorted(
     [USER_NODE_TYPE, ITEM_NODE_TYPE]
 )
-MOCKED_HETEROGENEOUS_EDGE_TYPES: Final[list[EdgeType]] = sorted(
+MOCKED_HETEROGENEOUS_EDGE_TYPES: Final[List[EdgeType]] = sorted(
     [USER_TO_USER_EDGE_TYPE, USER_TO_ITEM_EDGE_TYPE]
 )
 

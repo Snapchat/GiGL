@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 
@@ -99,7 +99,7 @@ class GbmlProtosTranslator:
 
     @staticmethod
     def graph_data_from_GraphPb(
-        samples: list[graph_schema_pb2.Graph],
+        samples: List[graph_schema_pb2.Graph],
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         builder: GraphBuilder,
     ) -> GbmlGraphDataProtocol:

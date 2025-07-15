@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import List
+
 import torch
 
 from gigl.common.collections.frozen_dict import FrozenDict
@@ -38,10 +40,10 @@ class PygGraphBuilder(GraphBuilder[PygGraphData]):
         # Register Edge Features
         for edge_type, ordered_edges in self.ordered_edges.items():
             logger.debug(f"Registering {len(ordered_edges)} edges of type {edge_type}")
-            src_node_list: list[int] = []
-            dst_node_list: list[int] = []
+            src_node_list: List[int] = []
+            dst_node_list: List[int] = []
 
-            edge_features_list: list[torch.Tensor] = []
+            edge_features_list: List[torch.Tensor] = []
             for edge in ordered_edges:
                 src_node_list.append(int(edge.src_node.id))
                 dst_node_list.append(int(edge.dst_node.id))

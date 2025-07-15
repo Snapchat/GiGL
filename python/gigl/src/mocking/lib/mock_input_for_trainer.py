@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 import torch_geometric.transforms as T
 from torch_geometric.data import HeteroData
@@ -28,7 +30,7 @@ def split_and_write_supervised_node_classification_subgraph_samples_from_mocked_
     split_data: HeteroData = transductive_split_cls(hetero_data)
 
     # Build all SNC samples from dataset.
-    samples: list[
+    samples: List[
         training_samples_schema_pb2.SupervisedNodeClassificationSample
     ] = pyg_to_training_samples.build_supervised_node_classification_samples_from_pyg_heterodata(
         hetero_data=split_data,
@@ -42,13 +44,13 @@ def split_and_write_supervised_node_classification_subgraph_samples_from_mocked_
     val_idxs = set(torch.where(root_node_data_view.val_mask)[0].tolist())
     test_idxs = set(torch.where(root_node_data_view.test_mask)[0].tolist())
 
-    train_samples: list[
+    train_samples: List[
         training_samples_schema_pb2.SupervisedNodeClassificationSample
     ] = list()
-    val_samples: list[
+    val_samples: List[
         training_samples_schema_pb2.SupervisedNodeClassificationSample
     ] = list()
-    test_samples: list[
+    test_samples: List[
         training_samples_schema_pb2.SupervisedNodeClassificationSample
     ] = list()
 

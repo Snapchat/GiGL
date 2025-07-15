@@ -7,7 +7,7 @@ import sys
 import threading
 import traceback
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
@@ -82,14 +82,14 @@ class InferencerV1:
 
     def write_from_gcs_to_bq(
         self,
-        schema: Dict[str, list[Dict[str, str]]],
+        schema: Dict[str, List[Dict[str, str]]],
         gcs_uri: GcsUri,
         bq_table_uri: str,
     ) -> None:
         """
         Writes embeddings or predictions from gcs folder to bq table with specified schema
         Args:
-            schema (Optional[Dict[str, list[Dict[str, str]]]): BQ Table schema for embeddings or predictions from inference output
+            schema (Optional[Dict[str, List[Dict[str, str]]]): BQ Table schema for embeddings or predictions from inference output
             gcs_uri (GcsUri): GCS Folder for embeddings or predictions from inference output
             bq_table_uri (str): Path to the table for embeddings or predictions output
         """
@@ -145,7 +145,7 @@ class InferencerV1:
         applied_task_identifier: AppliedTaskIdentifier,
         custom_worker_image_uri: Optional[str],
         node_type: NodeType,
-        uri_prefix_list: list[Uri],
+        uri_prefix_list: List[Uri],
         lock: threading.Lock,
     ) -> InferencerOutputPaths:
         """
@@ -155,7 +155,7 @@ class InferencerV1:
             applied_task_identifier (AppliedTaskIdentifier): Identifier for the GiGL job
             custom_worker_image_uri (Optional[str]): Uri to custom worker image
             node_type (NodeType): Node type being inferred
-            uri_prefix_list (list[Uri]): List of prefixes for running inference for given node type
+            uri_prefix_list (List[Uri]): List of prefixes for running inference for given node type
             lock (threading.Lock): lock to prevent race conditions when starting dataflow pipelines
         Returns:
             (InferencerOutputPaths): Dataclass with path fields for writing from gcs to bigquery for given node type

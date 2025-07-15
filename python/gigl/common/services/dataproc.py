@@ -1,6 +1,6 @@
 import concurrent.futures
 import datetime
-from typing import Optional
+from typing import List, Optional
 
 import google.api_core.exceptions
 import google.cloud.dataproc_v1 as dataproc_v1
@@ -136,8 +136,8 @@ class DataprocService:
         cluster_name: str,
         max_job_duration: datetime.timedelta,
         main_jar_file_uri: Uri,
-        runtime_args: Optional[list[str]] = [],
-        extra_jar_file_uris: Optional[list[str]] = [],
+        runtime_args: Optional[List[str]] = [],
+        extra_jar_file_uris: Optional[List[str]] = [],
         properties: Optional[dict] = {},
         fail_if_job_already_running_on_cluster: Optional[bool] = True,
     ) -> None:
@@ -148,8 +148,8 @@ class DataprocService:
             cluster_name (str): The name of the Dataproc cluster.
             max_job_duration (datetime.timedelta): The maximum duration allowed for the job to run.
             main_jar_file_uri (Uri): The URI of the main jar file for the Spark job.
-            runtime_args (Optional[list[str]]: Additional runtime arguments for the Spark job. Defaults to [].
-            extra_jar_file_uris (Optional[list[str]]: Additional jar file URIs for the Spark job. Defaults to [].
+            runtime_args (Optional[List[str]]: Additional runtime arguments for the Spark job. Defaults to [].
+            extra_jar_file_uris (Optional[List[str]]: Additional jar file URIs for the Spark job. Defaults to [].
             fail_if_job_already_running_on_cluster (Optional[bool]): Whether to fail if there are already running jobs on the cluster. Defaults to True.
 
         Returns:
@@ -210,7 +210,7 @@ class DataprocService:
                 f"Cancelled job with id: '{current_job_id}' on cluster: '{cluster_name}' since it was running longer than max job duration: '{max_job_duration}'"
             )
 
-    def get_submitted_job_ids(self, cluster_name: str) -> list[str]:
+    def get_submitted_job_ids(self, cluster_name: str) -> List[str]:
         """
         Retrieves the job IDs of all active jobs submitted to a specific cluster.
 
@@ -218,7 +218,7 @@ class DataprocService:
             cluster_name (str): The name of the cluster.
 
         Returns:
-            list[str]: The job IDs of all active jobs submitted to the cluster.
+            List[str]: The job IDs of all active jobs submitted to the cluster.
         """
         submitted_jobs: ListJobsPager = self.job_client.list_jobs(
             project_id=self.project_id,
@@ -228,7 +228,7 @@ class DataprocService:
         job_ids = [job.reference.job_id for job in submitted_jobs.jobs]
         return job_ids
 
-    def get_running_job_ids_on_cluster(self, cluster_name: str) -> list[str]:
+    def get_running_job_ids_on_cluster(self, cluster_name: str) -> List[str]:
         """
         Retrieves the running job IDs on the specified cluster.
 
@@ -236,7 +236,7 @@ class DataprocService:
             cluster_name (str): The name of the cluster.
 
         Returns:
-            list[str]: The running job IDs on the cluster.
+            List[str]: The running job IDs on the cluster.
         """
         job_ids = self.get_submitted_job_ids(cluster_name=cluster_name)
         running_job_ids = []

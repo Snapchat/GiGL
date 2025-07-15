@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, Optional, Set
+from typing import Generic, List, Optional, Set
 
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder, TGraph
@@ -27,7 +27,7 @@ class NodeClassificationSplitData(Generic[TGraph]):
 
 def build_single_data_split_subgraph_from_dataset_samples(
     split_samples: Optional[
-        list[training_samples_schema_pb2.SupervisedNodeClassificationSample]
+        List[training_samples_schema_pb2.SupervisedNodeClassificationSample]
     ],
     graph_metadata_wrapper: GraphMetadataPbWrapper,
     graph_builder: GraphBuilder,

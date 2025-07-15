@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from collections import defaultdict
-from typing import Dict
+from typing import Dict, List
 
 import tensorflow as tf
 
@@ -30,7 +30,7 @@ class CombinedIterableDatasetTest(unittest.TestCase):
         self._files = self.__mock_tfrecord_files()
 
     def __mock_tfrecord_files(self):
-        tfrecord_files: Dict[NodeType, list[LocalUri]] = defaultdict(list)
+        tfrecord_files: Dict[NodeType, List[LocalUri]] = defaultdict(list)
         for node_type_idx, condensed_node_type in enumerate(self._condensed_node_types):
             node_type = EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER.condensed_node_type_to_node_type_map[
                 condensed_node_type

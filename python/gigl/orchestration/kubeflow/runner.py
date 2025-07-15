@@ -66,6 +66,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from enum import Enum
+from typing import List
 
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
@@ -123,12 +124,12 @@ logger = Logger()
 
 
 def _parse_additional_job_args(
-    additional_job_args: list[str],
+    additional_job_args: List[str],
 ) -> dict[GiGLComponents, dict[str, str]]:
     """
     Parse the additional job arguments for the pipeline components, by component.
     Args:
-        additional_job_args list[str]: Each element is of form: "<gigl_component>.<arg_name>=<value>"
+        additional_job_args List[str]: Each element is of form: "<gigl_component>.<arg_name>=<value>"
             Where <gigl_component> is one of the string representations of component specified in
             gigl.src.common.constants.components.GiGLComponents
             Example:

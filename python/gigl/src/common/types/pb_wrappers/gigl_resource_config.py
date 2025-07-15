@@ -1,7 +1,7 @@
 import argparse
 import os
 from dataclasses import dataclass
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import gigl.src.common.constants.resource_config as resource_config_constants
 from gigl.common import GcsUri, UriFactory
@@ -149,8 +149,8 @@ class GiglResourceConfigWrapper:
     def get_resource_labels_formatted_for_dataflow(
         self,
         component: Optional[GiGLComponents] = None,
-    ) -> list[str]:
-        labels: list[str] = []
+    ) -> List[str]:
+        labels: List[str] = []
         for key, val in self.get_resource_labels(component=component).items():
             labels.append(f"{key}={val}")
         return labels

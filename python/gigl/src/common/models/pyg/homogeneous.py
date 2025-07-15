@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -118,7 +118,7 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
         if self.feats_interaction:
             x = self.feats_interaction(x)
 
-        xs: list[torch.Tensor] = []
+        xs: List[torch.Tensor] = []
         for i, conv_layer in enumerate(self.conv_layers):
             if self.supports_edge_attr:
                 x = conv_layer(x=x, edge_index=edge_index, edge_attr=edge_attr)

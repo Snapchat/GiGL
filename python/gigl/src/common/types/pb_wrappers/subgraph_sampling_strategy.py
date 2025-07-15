@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Set, cast
+from typing import Dict, List, Set, cast
 
 from gigl.src.common.types.exception import (
     SubgraphSamplingValidationError,
@@ -59,7 +59,7 @@ class MessagePassingPathPbWrapper:
                 sampling_op_pb.op_name
             ]
             parent_input_op_names = cur_sampling_op_pb_wrapper.input_op_names
-            parent_sampling_op_pb_wrappers: list[SamplingOpPbWrapper] = []
+            parent_sampling_op_pb_wrappers: List[SamplingOpPbWrapper] = []
 
             for parent_input_op_name in parent_input_op_names:
                 # Check that each input op name maps to a valid sampling op
@@ -89,7 +89,7 @@ class MessagePassingPathPbWrapper:
         return NodeType(self.message_passing_path_pb.root_node_type)
 
     @property
-    def root_sampling_op_names(self) -> list[str]:
+    def root_sampling_op_names(self) -> List[str]:
         return self.__root_sampling_op_names
 
     @property
@@ -253,7 +253,7 @@ class SubgraphSamplingStrategyPbWrapper:
                 )
             # Check if we have any cycles in the current dag
             visited_sampling_op_names: Set[str] = set()
-            cycle_sampling_op_names: list[str] = []
+            cycle_sampling_op_names: List[str] = []
             for (
                 root_sampling_op_name
             ) in message_passing_path_pb_wrapper.root_sampling_op_names:

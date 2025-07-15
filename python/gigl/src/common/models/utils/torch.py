@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List
 
 import torch
 
@@ -6,7 +6,7 @@ from gigl.src.common.types.graph_data import NodeType
 
 
 def to_hetero_feat(
-    h: torch.Tensor, type_indices: torch.LongTensor, types: list[str]
+    h: torch.Tensor, type_indices: torch.LongTensor, types: List[str]
 ) -> Dict[NodeType, torch.Tensor]:
     """
     Convert homogeneous graph features into heterogeneous graph feature dict.

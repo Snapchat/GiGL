@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from typing import cast
+from typing import List, cast
 
 import tensorflow as tf
 
@@ -26,7 +26,7 @@ class TfRecordsIterableDatasetTest(unittest.TestCase):
         self._files = self.__mock_tfrecord_files()
 
     def __mock_tfrecord_files(self):
-        tfrecord_files: list[LocalUri] = list()
+        tfrecord_files: List[LocalUri] = list()
         for file_id in range(self._num_files):
             tfh = tempfile.NamedTemporaryFile(delete=False)
             with tf.io.TFRecordWriter(tfh.name) as writer:

@@ -1,4 +1,4 @@
-from typing import Any, AnyStr, Union
+from typing import Any, AnyStr, List, Union
 
 import tensorflow as tf
 
@@ -22,7 +22,7 @@ class TFValueEncoder:
             return "MISSING"
 
     @staticmethod
-    def __bytes_values_to_tf_feature(value: list[AnyStr]) -> tf.train.Feature:
+    def __bytes_values_to_tf_feature(value: List[AnyStr]) -> tf.train.Feature:
         """
         Returns a bytes_list from a string / byte (or list of such).
         """
@@ -32,7 +32,7 @@ class TFValueEncoder:
                 value.numpy()
             )  # BytesList won't unpack a string from an EagerTensor.
 
-        value_bytes: list[bytes] = []
+        value_bytes: List[bytes] = []
         for v in value:
             if isinstance(v, str):
                 value_bytes.append(v.encode("utf-8"))
@@ -43,7 +43,7 @@ class TFValueEncoder:
         return tf.train.Feature(bytes_list=tf.train.BytesList(value=value_bytes))
 
     @staticmethod
-    def __float_values_to_tf_feature(value: list[float]) -> tf.train.Feature:
+    def __float_values_to_tf_feature(value: List[float]) -> tf.train.Feature:
         """
         Returns a float_list from a float / double (or list of such).
         """
@@ -51,7 +51,7 @@ class TFValueEncoder:
         return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     @staticmethod
-    def __int_values_to_tf_feature(value: list[int]) -> tf.train.Feature:
+    def __int_values_to_tf_feature(value: List[int]) -> tf.train.Feature:
         """
         Returns an int64_list from a bool / enum / int / uint (or list of such).
         """

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 import tensorflow as tf
 
@@ -62,15 +62,15 @@ class DataPreprocessorConfig(ABC):
 
 
 def build_ingestion_feature_spec_fn(
-    fixed_string_fields: Optional[list[str]] = None,
-    fixed_string_field_shapes: Dict[str, list[int]] = {},
-    fixed_float_fields: Optional[list[str]] = None,
-    fixed_float_field_shapes: Dict[str, list[int]] = {},
-    fixed_int_fields: Optional[list[str]] = None,
-    fixed_int_field_shapes: Dict[str, list[int]] = {},
-    varlen_string_fields: Optional[list[str]] = None,
-    varlen_float_fields: Optional[list[str]] = None,
-    varlen_int_fields: Optional[list[str]] = None,
+    fixed_string_fields: Optional[List[str]] = None,
+    fixed_string_field_shapes: Dict[str, List[int]] = {},
+    fixed_float_fields: Optional[List[str]] = None,
+    fixed_float_field_shapes: Dict[str, List[int]] = {},
+    fixed_int_fields: Optional[List[str]] = None,
+    fixed_int_field_shapes: Dict[str, List[int]] = {},
+    varlen_string_fields: Optional[List[str]] = None,
+    varlen_float_fields: Optional[List[str]] = None,
+    varlen_int_fields: Optional[List[str]] = None,
 ) -> Callable[[], FeatureSpecDict]:
     """
     Returns a callable, which when called, generates the FeatureSpecDict which lets TFTransform know how to

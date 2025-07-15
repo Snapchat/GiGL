@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from typing import Set, Tuple, Type, TypeVar, cast
+from typing import List, Set, Tuple, Type, TypeVar, cast
 
 import numpy as np
 
@@ -360,7 +360,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
         _SCALA_TOOLS_PATH = os.path.join(get_project_root_directory(), "tools", "scala")
         _SPLIT_GEN_SCALA_PROJECT_NAME = "split_generator"
 
-        commands: list[str] = [
+        commands: List[str] = [
             f"cd {_PATH_TO_SPLIT_GEN_SCALA_ROOT} && sbt {_SPLIT_GEN_SCALA_PROJECT_NAME}/assembly",
             f"""{_SCALA_TOOLS_PATH}/spark-3.5.0-bin-hadoop3/bin/spark-submit \\
                 --class Main \\
@@ -387,7 +387,7 @@ class SplitGeneratorPipelineTest(unittest.TestCase):
     @staticmethod
     def __read_training_sample_protos_from_tfrecords(
         uri_prefix: Uri, proto_cls: Type[TSample]
-    ) -> list[TSample]:
+    ) -> List[TSample]:
         def parse_training_sample_pb(byte_str: bytes) -> TSample:
             pb = proto_cls()
             pb.ParseFromString(byte_str)

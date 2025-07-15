@@ -1,4 +1,5 @@
 import concurrent
+from typing import List
 
 from google.cloud import bigquery
 
@@ -138,7 +139,7 @@ def unenumerate_all_inferred_bq_assets(gbml_config_pb_wrapper: GbmlConfigPbWrapp
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=get_available_cpus()
     ) as executor:
-        futures: list[concurrent.futures.Future] = list()
+        futures: List[concurrent.futures.Future] = list()
         for (
             enumerated_assets_table,
             node_id_field,

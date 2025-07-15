@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import apache_beam as beam
 import tensorflow as tf
@@ -81,7 +81,7 @@ def get_inferencer_pipeline_component_for_single_node_type(
     applied_task_identifier: AppliedTaskIdentifier,
     custom_worker_image_uri: Optional[str],
     node_type: NodeType,
-    uri_prefix_list: list[Uri],
+    uri_prefix_list: List[Uri],
     temp_predictions_gcs_path: Optional[GcsUri],
     temp_embeddings_gcs_path: Optional[GcsUri],
 ) -> beam.Pipeline:
@@ -93,7 +93,7 @@ def get_inferencer_pipeline_component_for_single_node_type(
         applied_task_identifier (AppliedTaskIdentifier): Identifier for the GiGL job
         custom_worker_image_uri (Optional[str]): Uri to custom worker image
         node_type (NodeType): Node type being inferred
-        uri_prefix_list (list[Uri]): List of prefixes for running inference for given node type
+        uri_prefix_list (List[Uri]): List of prefixes for running inference for given node type
         temp_predictions_gcs_path (Optional[GcsUri]): Gcs uri for writing temp predictions
         temp_embeddings_gcs_path (Optional[GcsUri]): Gcs uri for writing temp embeddings
     Returns:

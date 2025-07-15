@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import List
 
 import tensorflow_transform.beam as tft_beam
 from tensorflow_transform.beam import tft_unit
@@ -19,7 +20,7 @@ class DataPreprocessorConfigTest(tft_unit.TransformTestCase):
         :return:
         """
         # Create some mock input data.
-        input_data: list[InstanceDict] = [
+        input_data: List[InstanceDict] = [
             {"a": 1, "b": 1.5, "c": "first", "d": [0.1, 0.1]},
             {"a": 2, "b": 2.5, "c": "second", "d": [0.2, 0.2]},
             {"a": 3, "b": 3.5, "c": "third", "d": [0.3, 0.3]},

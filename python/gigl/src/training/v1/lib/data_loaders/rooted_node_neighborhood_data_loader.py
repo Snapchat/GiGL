@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
-from typing import Dict, Set, Union
+from typing import Dict, List, Set, Union
 
 import torch
 import torch_geometric.data
@@ -39,7 +39,7 @@ class RootedNodeNeighborhoodBatch:
     condensed_node_type_to_root_node_indices_map: Dict[
         CondensedNodeType, torch.LongTensor
     ]  # maps condensed node type to root node indices within the batch for whom to compute loss
-    root_nodes: list[Node]
+    root_nodes: List[Node]
     condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
         CondensedNodeType, Dict[NodeId, NodeId]
     ]  # for each condensed node type, maps subgraph node id to global node id
@@ -79,7 +79,7 @@ class RootedNodeNeighborhoodBatch:
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
-        samples: list[Dict[NodeType, RootedNodeNeighborhoodSample]],
+        samples: List[Dict[NodeType, RootedNodeNeighborhoodSample]],
     ) -> RootedNodeNeighborhoodBatch:
         """
         We coalesce the various sample subgraphs to build a single unified neighborhood, which we use for message
@@ -91,7 +91,7 @@ class RootedNodeNeighborhoodBatch:
         :return:
         """
         # TODO (mkolodner-sc) Investigate ways to customize batch size for each node type
-        ordered_root_nodes: list[Node] = []
+        ordered_root_nodes: List[Node] = []
         unique_node_types: Set[NodeType] = set()
         for node_type_to_sample_map in samples:
             for node_type, sample in node_type_to_sample_map.items():
@@ -128,7 +128,7 @@ class RootedNodeNeighborhoodBatch:
             CondensedNodeType, torch.LongTensor
         ] = {}
         for node_type in unique_node_types:
-            root_node_indices_list: list[NodeId] = [
+            root_node_indices_list: List[NodeId] = [
                 node_mapping[ordered_root_node].id
                 for ordered_root_node in ordered_root_nodes
                 if ordered_root_node.type == node_type
@@ -159,14 +159,14 @@ class RootedNodeNeighborhoodBatch:
 
     @staticmethod
     def process_raw_pyg_samples_and_collate_fn(
-        batch: list[training_samples_schema_pb2.RootedNodeNeighborhood],
+        batch: List[training_samples_schema_pb2.RootedNodeNeighborhood],
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
     ) -> RootedNodeNeighborhoodBatch:
-        ordered_root_nodes: list[Node] = []
+        ordered_root_nodes: List[Node] = []
         unique_node_types: Set[NodeType] = set()
-        graph_samples: list[graph_schema_pb2.Graph] = []
+        graph_samples: List[graph_schema_pb2.Graph] = []
 
         for sample in batch:
             root_node = Node(

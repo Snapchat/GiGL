@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import tensorflow as tf
 
@@ -51,8 +51,8 @@ logger = Logger()
 
 @dataclass
 class EdgeMetadataInfo:
-    feasible_adjacency_list_map: Dict[NodePbWrapper, list[EdgePbWrapper]]
-    edge_type_to_edge_to_features_map: Dict[EdgeType, Dict[EdgePbWrapper, list[float]]]
+    feasible_adjacency_list_map: Dict[NodePbWrapper, List[EdgePbWrapper]]
+    edge_type_to_edge_to_features_map: Dict[EdgeType, Dict[EdgePbWrapper, List[float]]]
 
 
 @dataclass
@@ -67,7 +67,7 @@ class ExpectedGraphFromPreprocessor:
     - Edge metadata for negative user-defined label edges.
     """
 
-    node_type_to_node_to_features_map: Dict[NodeType, Dict[NodePbWrapper, list[float]]]
+    node_type_to_node_to_features_map: Dict[NodeType, Dict[NodePbWrapper, List[float]]]
     main_edge_info: EdgeMetadataInfo
     pos_edge_info: EdgeMetadataInfo
     neg_edge_info: EdgeMetadataInfo
@@ -76,8 +76,8 @@ class ExpectedGraphFromPreprocessor:
 def read_output_nablp_samples_from_subgraph_sampler(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
 ) -> Tuple[
-    Dict[NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]],
-    list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
+    Dict[NodeType, List[training_samples_schema_pb2.RootedNodeNeighborhood]],
+    List[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
 ]:
     """
     Reads the output RNN samples keyed by NodeType, as well as the output training samples.
@@ -90,7 +90,7 @@ def read_output_nablp_samples_from_subgraph_sampler(
     )
 
     node_type_to_rooted_neighborhood_samples: Dict[
-        NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]
+        NodeType, List[training_samples_schema_pb2.RootedNodeNeighborhood]
     ] = defaultdict(list)
     for (
         node_type,
@@ -106,7 +106,7 @@ def read_output_nablp_samples_from_subgraph_sampler(
                 proto_cls=training_samples_schema_pb2.RootedNodeNeighborhood,
             )
         )
-    samples: list[
+    samples: List[
         training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
     ] = read_training_sample_protos_from_tfrecords(
         uri_prefix=UriFactory.create_uri(
@@ -120,8 +120,8 @@ def read_output_nablp_samples_from_subgraph_sampler(
 def read_output_node_based_task_samples_from_subgraph_sampler(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
 ) -> Tuple[
-    list[training_samples_schema_pb2.RootedNodeNeighborhood],
-    list[training_samples_schema_pb2.RootedNodeNeighborhood],
+    List[training_samples_schema_pb2.RootedNodeNeighborhood],
+    List[training_samples_schema_pb2.RootedNodeNeighborhood],
 ]:
     """
     Reads the output RNN samples for both labeled and unlabeled data.
@@ -152,7 +152,7 @@ def read_output_node_based_task_samples_from_subgraph_sampler(
 
 def _build_node_features_map(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Dict[NodeType, Dict[NodePbWrapper, list[float]]]:
+) -> Dict[NodeType, Dict[NodePbWrapper, List[float]]]:
     """
     Builds a map from NodeType to a map from NodePbWrapper to a list of features for that node, for all NodeTypes encountered in preprocessed output.
     """
@@ -162,7 +162,7 @@ def _build_node_features_map(
     )
 
     node_type_to_node_to_features_map: Dict[
-        NodeType, Dict[NodePbWrapper, list[float]]
+        NodeType, Dict[NodePbWrapper, List[float]]
     ] = {}
     for (
         condensed_node_type,
@@ -197,7 +197,7 @@ def _build_node_features_map(
 def _build_edge_features_map(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     edge_usage_type: EdgeUsageType = EdgeUsageType.MAIN,
-) -> Dict[EdgeType, Dict[EdgePbWrapper, list[float]]]:
+) -> Dict[EdgeType, Dict[EdgePbWrapper, List[float]]]:
     """
     Builds a map from EdgeType to a map from EdgePbWrapper to a list of features for that edge, for all EdgeTypes encountered in preprocessed output.
     """
@@ -207,7 +207,7 @@ def _build_edge_features_map(
     )
 
     edge_type_to_edge_to_features_map: Dict[
-        EdgeType, Dict[EdgePbWrapper, list[float]]
+        EdgeType, Dict[EdgePbWrapper, List[float]]
     ] = {}
     for (
         condensed_edge_type,
@@ -248,7 +248,7 @@ def _build_edge_features_map(
 def _build_feasible_adjacency_list_map(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     edge_usage_type: EdgeUsageType = EdgeUsageType.MAIN,
-) -> Dict[NodePbWrapper, list[EdgePbWrapper]]:
+) -> Dict[NodePbWrapper, List[EdgePbWrapper]]:
     """
     Builds a map from NodePbWrapper to a list of EdgePbWrappers, representing the adjacency list for each src node,
     for all nodes encountered in Data Preprocessor output.  This will be used to test feasibility of edges which
@@ -260,7 +260,7 @@ def _build_feasible_adjacency_list_map(
     )
     graph_metadata_pb_wrapper = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    src_node_to_edge_map: Dict[NodePbWrapper, list[EdgePbWrapper]] = defaultdict(list)
+    src_node_to_edge_map: Dict[NodePbWrapper, List[EdgePbWrapper]] = defaultdict(list)
 
     for (
         condensed_edge_type,
@@ -308,9 +308,9 @@ def _build_feasible_adjacency_list_map(
 
 
 def bidirectionalize_feasible_adjacency_list_map(
-    src_node_to_edge_map: Dict[NodePbWrapper, list[EdgePbWrapper]],
+    src_node_to_edge_map: Dict[NodePbWrapper, List[EdgePbWrapper]],
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Dict[NodePbWrapper, list[EdgePbWrapper]]:
+) -> Dict[NodePbWrapper, List[EdgePbWrapper]]:
     """
     Given an adjacency list map from NodePbWrapper to a list of EdgePbWrappers, this function
     returns a bidirectional adjacency list map applied to main graph edges.
@@ -329,7 +329,7 @@ def bidirectionalize_feasible_adjacency_list_map(
     ), "Bidirectionalizing adjacency list map is only supported for homogeneous graphs."
 
     bidirectional_adjacency_list_map: Dict[
-        NodePbWrapper, list[EdgePbWrapper]
+        NodePbWrapper, List[EdgePbWrapper]
     ] = defaultdict(list)
     for _, edge_pbws in src_node_to_edge_map.items():
         for edge_pbw in edge_pbws:
@@ -347,9 +347,9 @@ def bidirectionalize_feasible_adjacency_list_map(
 
 
 def bidirectionalize_edge_type_to_edge_to_features_map(
-    edge_type_to_edge_to_features_map: Dict[EdgeType, Dict[EdgePbWrapper, list[float]]],
+    edge_type_to_edge_to_features_map: Dict[EdgeType, Dict[EdgePbWrapper, List[float]]],
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Dict[EdgeType, Dict[EdgePbWrapper, list[float]]]:
+) -> Dict[EdgeType, Dict[EdgePbWrapper, List[float]]]:
     """
     Given a map from EdgeType to a map from EdgePbWrapper to a list of features for that edge, this function
     returns a bidirectional map.
@@ -368,10 +368,10 @@ def bidirectionalize_edge_type_to_edge_to_features_map(
     ), "Bidirectionalizing edge type to edge to features map is only supported for homogeneous graphs."
 
     bidirectional_edge_type_to_edge_to_features_map: Dict[
-        EdgeType, Dict[EdgePbWrapper, list[float]]
+        EdgeType, Dict[EdgePbWrapper, List[float]]
     ] = {}
     for edge_type, edge_to_features_map in edge_type_to_edge_to_features_map.items():
-        bidirectional_edge_to_features_map: Dict[EdgePbWrapper, list[float]] = {}
+        bidirectional_edge_to_features_map: Dict[EdgePbWrapper, List[float]] = {}
         for edge_pbw, features in edge_to_features_map.items():
             bidirectional_edge_pbw = edge_pbw.flip_edge()
             bidirectional_edge_to_features_map[edge_pbw] = features
@@ -589,7 +589,7 @@ def compile_and_run_sgs_pipeline_locally(
     )
     _SGS_SCALA_PROJECT_NAME = "subgraph_sampler"
 
-    commands: list[str]
+    commands: List[str]
     if use_spark35:
         commands = [
             f"cd {_PATH_TO_SGS_SCALA_SPARK_35_ROOT} && sbt {_SGS_SCALA_PROJECT_NAME}/assembly",

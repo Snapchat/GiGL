@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, List, Union
 
 
 class Uri(object):
@@ -41,7 +41,7 @@ class Uri(object):
 
         """
         token = cls._token_to_string(token)
-        token_strs: list[str] = [cls._token_to_string(token) for token in tokens]
+        token_strs: List[str] = [cls._token_to_string(token) for token in tokens]
         joined_tmp_path = os.path.join(token, *token_strs)
         joined_path = Uri(joined_tmp_path)
         return joined_path

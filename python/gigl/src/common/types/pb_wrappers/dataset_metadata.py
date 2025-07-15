@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Type, cast
+from typing import Dict, List, Type, cast
 
 from gigl.common import Uri, UriFactory
 from gigl.src.common.types.pb_wrappers.types import DatasetMetadataPb, TrainingSamplePb
@@ -51,7 +51,7 @@ class DatasetMetadataPbWrapper:
         ]
         return training_sample_type
 
-    def get_output_paths(self) -> list[Uri]:
+    def get_output_paths(self) -> List[Uri]:
         """
         Returns a list of output paths referenced by the output metadata.
         :return:

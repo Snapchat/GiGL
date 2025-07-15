@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional, Set, Union, cast
+from typing import Dict, List, Optional, Set, Union, cast
 
 from gigl.src.common.types.exception import (
     SubgraphSamplingValidationError,
@@ -24,7 +24,7 @@ class SamplingDirectionEnumType(Enum):
     OUTGOING = 1
 
     @classmethod
-    def get_all_directions(cls) -> list[str]:
+    def get_all_directions(cls) -> List[str]:
         return [m.name for m in cls]
 
 
@@ -193,7 +193,7 @@ class SamplingOpPbWrapper:
         return self.__sampling_method
 
     @property
-    def input_op_names(self) -> list[str]:
+    def input_op_names(self) -> List[str]:
         return list(self.sampling_op_pb.input_op_names)
 
     @property
@@ -419,14 +419,14 @@ class SamplingOpPbWrapper:
         self,
         visited_sampling_op_names: Set[str],
         recursing_sampling_op_names: Set[str],
-        cycle_sampling_op_names: list[str],
+        cycle_sampling_op_names: List[str],
     ) -> bool:
         """
         Recursively checks if provided dag contains cycles
         Args:
             visited_sampling_op_names (Set[str]): set of sampling op names that have been fully visited and verified to not have a cycle
             recursing_sampling_op_names (Set[str]): set of sampling op names that are currently being explored recursively in DFS
-            cycle_sampling_op_names (list[str]): Populated with list of sampling op node names in message passing traversal path where a cycle is found, empty if there is no cycle.
+            cycle_sampling_op_names (List[str]): Populated with list of sampling op node names in message passing traversal path where a cycle is found, empty if there is no cycle.
         Returns:
             bool: Whether there is a cycle from the sampling op
         """

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import glob
 from dataclasses import dataclass
-from typing import Dict, Optional, Type, TypeVar, Union, cast
+from typing import Dict, List, Optional, Type, TypeVar, Union, cast
 
 import google.protobuf.message
 import torch
@@ -41,12 +41,12 @@ T = TypeVar("T", bound=google.protobuf.message.Message)
 # TODO: (svij-sc) Refactor this function to move inside `data_loading`
 # Also, have `get_default_data_loader` take `uri_prefix` and then `get_default_data_loader` can call
 # `_get_tfrecord_uris` - would promote much better clarity
-def _get_tfrecord_uris(uri_prefix: Uri) -> list[Uri]:
+def _get_tfrecord_uris(uri_prefix: Uri) -> List[Uri]:
     gcs_utils = GcsUtils(get_resource_config().project)
-    uris: list[Uri]
+    uris: List[Uri]
     if isinstance(uri_prefix, GcsUri):
         uris = cast(
-            list[Uri],
+            List[Uri],
             gcs_utils.list_uris_with_gcs_path_pattern(
                 gcs_path=uri_prefix, suffix=".tfrecord"
             ),
@@ -54,7 +54,7 @@ def _get_tfrecord_uris(uri_prefix: Uri) -> list[Uri]:
     elif isinstance(uri_prefix, LocalUri):
         logger.info(f"We will be globing: {uri_prefix.uri}*.tfrecord")
         uris = cast(
-            list[Uri],
+            List[Uri],
             [LocalUri(path) for path in glob.glob(uri_prefix.uri + "*.tfrecord")],
         )
     else:
@@ -65,7 +65,7 @@ def _get_tfrecord_uris(uri_prefix: Uri) -> list[Uri]:
 # TODO: (svij-sc) This function should move inside `data_loading` too
 def read_training_sample_protos_from_tfrecords(
     uri_prefix: Uri, proto_cls: Type[T]
-) -> list[T]:
+) -> List[T]:
     def parse_training_sample_pb(byte_str: bytes) -> T:
         pb = proto_cls()
         pb.ParseFromString(byte_str)
@@ -146,7 +146,7 @@ class SupervisedNodeClassificationDatasetDataloaders:
     def _get_uri_prefix_map(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        data_loader_types: list[DataloaderTypes],
+        data_loader_types: List[DataloaderTypes],
     ) -> Dict[DataloaderTypes, str]:
         dataset_pb: dataset_metadata_pb2.SupervisedNodeClassificationDataset = (
             gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.supervised_node_classification_dataset
@@ -169,7 +169,7 @@ class SupervisedNodeClassificationDatasetDataloaders:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         graph_backend: GraphBackend,
         device: torch.device,
-        data_loader_types: list[DataloaderTypes],
+        data_loader_types: List[DataloaderTypes],
         should_loop: bool = True,
     ) -> Dict[DataloaderTypes, torch.utils.data.DataLoader]:
         graph_builder = GraphBuilderFactory.get_graph_builder(
@@ -269,7 +269,7 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         }
 
         for data_loader_type in data_loader_types:
-            uris: Union[list[Uri], Dict[NodeType, list[Uri]]]
+            uris: Union[List[Uri], Dict[NodeType, List[Uri]]]
             if isinstance(uris_prefix_map[data_loader_type], str):
                 uris_prefix: str = uris_prefix_map[data_loader_type]  # type: ignore
                 uris = _get_tfrecord_uris(UriFactory.create_uri(uris_prefix))
@@ -338,7 +338,7 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def _get_uri_prefix_map(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        data_loader_types: list[DataloaderTypes],
+        data_loader_types: List[DataloaderTypes],
     ) -> Dict[DataloaderTypes, Union[str, Dict[str, str]]]:
         dataset_pb: dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset = (
             gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.node_anchor_based_link_prediction_dataset
@@ -370,7 +370,7 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         graph_backend: GraphBackend,
         device: torch.device,
-        data_loader_types: list[DataloaderTypes],
+        data_loader_types: List[DataloaderTypes],
         should_loop: bool = True,
     ) -> Dict[DataloaderTypes, torch.utils.data.DataLoader]:
         graph_builder = GraphBuilderFactory.get_graph_builder(

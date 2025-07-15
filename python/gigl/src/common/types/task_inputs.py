@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 
@@ -53,5 +53,5 @@ class BatchCombinedScores:
 class NodeAnchorBasedLinkPredictionTaskInputs:
     input_batch: InputBatch
     batch_embeddings: Optional[BatchEmbeddings]
-    batch_scores: list[Dict[CondensedEdgeType, BatchScores]]
+    batch_scores: List[Dict[CondensedEdgeType, BatchScores]]
     batch_combined_scores: Dict[CondensedEdgeType, BatchCombinedScores]

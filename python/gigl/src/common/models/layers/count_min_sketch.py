@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, List
 
 import numpy as np
 import torch
@@ -31,7 +31,7 @@ class CountMinSketch(object):
         self.__table: np.ndarray = np.zeros((depth, width), dtype=np.int32)
         self.__total: int = 0
 
-    def __hash_all(self, item: Any) -> list[int]:
+    def __hash_all(self, item: Any) -> List[int]:
         """
         Return the hash values of the item for all hash functions
         """
@@ -50,7 +50,7 @@ class CountMinSketch(object):
         """
         Add an item to the sketch
         """
-        hashed_values: list[int] = self.__hash_all(item)
+        hashed_values: List[int] = self.__hash_all(item)
         for i, hashed_value in enumerate(hashed_values):
             self.__table[i][hashed_value % self.__width] += delta
         self.__total += delta
@@ -73,7 +73,7 @@ class CountMinSketch(object):
         """
         Return the estimated count of the item
         """
-        hashed_values: list[int] = self.__hash_all(item)
+        hashed_values: List[int] = self.__hash_all(item)
         return min(
             self.__table[i][hashed_value % self.__width]
             for i, hashed_value in enumerate(hashed_values)

@@ -1,3 +1,5 @@
+from typing import List
+
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
@@ -226,7 +228,7 @@ class InferenceAssets:
         embeddingsPath contains the unenumerated embeddings table path. This function returns the input enumerated embeddings table path.
         bq_table_path: str: The path to the enumerated embeddings table. Format should be project-id.dataset-id.table-id
         """
-        bq_table_path_list: list[str] = unenumerated_bq_table_path.split(".")
+        bq_table_path_list: List[str] = unenumerated_bq_table_path.split(".")
         assert (
             len(bq_table_path_list) == 3
         ), f"Invalid bq_table_path: {unenumerated_bq_table_path}, expected format: project-id.dataset-id.table-id; got"

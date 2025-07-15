@@ -1,7 +1,7 @@
 import gc
 import time
 from collections import abc, defaultdict
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
@@ -54,7 +54,7 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
         logger.info(
             f"Since the world size is {world_size}, using dtype of {self._pb_dtype} for partition book"
         )
-        self.cur_part_val_list: list[Tuple[torch.Tensor, ...]] = []
+        self.cur_part_val_list: List[Tuple[torch.Tensor, ...]] = []
         self.generate_pb: bool
         super().__init__(total_val_size, generate_pb)
 
@@ -183,8 +183,8 @@ class DistPartitioner:
 
         self._is_input_homogeneous: Optional[bool] = None
         self._should_assign_edges_by_src_node: bool = should_assign_edges_by_src_node
-        self._edge_types: list[EdgeType] = []
-        self._node_types: list[NodeType] = []
+        self._edge_types: List[EdgeType] = []
+        self._node_types: List[NodeType] = []
         self._num_nodes: Optional[Dict[NodeType, int]] = None
         self._num_edges: Optional[Dict[EdgeType, int]] = None
 
@@ -588,7 +588,7 @@ class DistPartitioner:
 
         """
         # chunk_res is a list where index `i` corresponds to Tuple[input_data_on_i, rank_indices_on_i]
-        chunk_res: list[
+        chunk_res: List[
             Tuple[Optional[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
         ] = []
         chunk_length = chunk_end_pos - chunk_start_pos
@@ -615,7 +615,7 @@ class DistPartitioner:
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         total_val_size: int = 0,
         generate_pb: bool = False,
-    ) -> Tuple[list[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]:
+    ) -> Tuple[List[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]:
         r"""Partitions input data chunk by chunk.
         Args:
             input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned across machine, which any information that should be partitioned across machines.
@@ -627,7 +627,7 @@ class DistPartitioner:
             generate_pb (bool): Whether a partition book should be generated, defaults to False. This should only be set to true if partitioning nodes or edges for
                 tensor-based partitioning and should be false if partitioning node features or edge features or if doing range-based partitioning.
         Return:
-            list[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
+            List[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
             Optional[torch.Tensor]: Torch Tensor if `generate_pb` is True, returns None if `generate_pb` is False
         """
         num_items = len(rank_indices)

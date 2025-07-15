@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 import yaml
 from torch_geometric.data import HeteroData
@@ -15,7 +17,7 @@ def load_toy_graph(graph_config_path: str) -> HeteroData:
 
     # Add node features
     for node_type in node_config:
-        node_feats_list: list[str] = []
+        node_feats_list: List[str] = []
         for node in graph_config["nodes"][node_type]:
             features = node["features"]
             node_feats_list.append(features)

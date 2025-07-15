@@ -1,6 +1,6 @@
 from collections import defaultdict
 from functools import partial
-from typing import Callable, Dict
+from typing import Callable, Dict, List
 
 import apache_beam as beam
 
@@ -56,7 +56,7 @@ class NodeAnchorBasedLinkPredictionInferenceBlueprint(
         assert isinstance(inferencer, NodeAnchorBasedLinkPredictionBaseInferencer)
         super().__init__(inferencer=inferencer)
 
-    def get_inference_data_tf_record_uri_prefixes(self) -> Dict[NodeType, list[Uri]]:
+    def get_inference_data_tf_record_uri_prefixes(self) -> Dict[NodeType, List[Uri]]:
         flattened_graph_metadata_pb_wrapper = (
             self.__gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
         )
@@ -64,7 +64,7 @@ class NodeAnchorBasedLinkPredictionInferenceBlueprint(
             flattened_graph_metadata_pb_wrapper.output_metadata,
             flattened_graph_metadata_pb2.NodeAnchorBasedLinkPredictionOutput,
         )
-        node_type_to_tf_record_uri_prefixes: Dict[NodeType, list[Uri]] = defaultdict(
+        node_type_to_tf_record_uri_prefixes: Dict[NodeType, List[Uri]] = defaultdict(
             list
         )
         node_type_to_random_negative_tfrecord_uri_prefix = (

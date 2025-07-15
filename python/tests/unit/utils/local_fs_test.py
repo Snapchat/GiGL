@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from parameterized import param, parameterized
 
@@ -84,7 +84,7 @@ class LocalFsUtilsTest(unittest.TestCase):
         test_name: str,
         regex: Optional[str],
         entity: Optional[local_fs_utils.FileSystemEntity],
-        expected_names: list[str],
+        expected_names: List[str],
     ):
         del test_name  # unused.
         result = local_fs_utils.list_at_path(

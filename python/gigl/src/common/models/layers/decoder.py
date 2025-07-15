@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Callable, List, Optional, Union
 
 import torch
 import torch.nn as nn

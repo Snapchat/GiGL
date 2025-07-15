@@ -2,7 +2,7 @@
 
 import unittest
 from collections import abc, defaultdict
-from typing import Dict, Iterable, MutableMapping, Optional, Tuple, Type, Union
+from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple, Type, Union
 
 import graphlearn_torch as glt
 import torch
@@ -57,7 +57,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             Dict[EdgeType, GraphPartitionData],
         ],
         is_heterogeneous: bool,
-        expected_entity_types: Union[list[EdgeType], list[NodeType]],
+        expected_entity_types: Union[List[EdgeType], List[NodeType]],
     ):
         """
         Checks that each item in the provided output data is correctly typed and, if heterogeneous, that edge types and node types are as expected.
@@ -76,7 +76,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 Dict[EdgeType, GraphPartitionData],
             ]): Items of which correctness is being checked for
             is_heterogeneous (bool): Whether the provided input data is heterogeneous or homogeneous
-            expected_entity_types(Union[list[EdgeType], list[NodeType]]): Expected node or edge type which we are checking against for heterogeneous inputs
+            expected_entity_types(Union[List[EdgeType], List[NodeType]]): Expected node or edge type which we are checking against for heterogeneous inputs
         """
         self.assertIsNotNone(output_data)
         if is_heterogeneous:
@@ -97,10 +97,10 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         output_edge_index: Union[
             GraphPartitionData, Dict[EdgeType, GraphPartitionData]
         ],
-        expected_node_types: list[NodeType],
-        expected_edge_types: list[EdgeType],
+        expected_node_types: List[NodeType],
+        expected_edge_types: List[EdgeType],
         expected_pb_dtype: torch.dtype,
-        expected_edge_feat_types: list[EdgeType],
+        expected_edge_feat_types: List[EdgeType],
     ) -> None:
         """
         Checks correctness for graph outputs of partitioning, including node partition book, edge partition book, and the graph edge indices + ids
@@ -111,11 +111,11 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             output_node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): Node Partition Book from partitioning, either a PartitionBook if homogeneous or a Dict[NodeType, PartitionBook] if heterogeneous
             output_edge_partition_book (Union[PartitionBook, Dict[EdgeType, PartitionBook]]): Edge Partition Book from partitioning, either a PartitionBook if homogeneous or a Dict[EdgeType, PartitionBook] if heterogeneous
             output_edge_index: (Union[GraphPartitionData, Dict[EdgeType, GraphPartitionData]]): Output edge indices and ids from partitioning, either a GraphPartitionData if homogeneous or a Dict[EdgeType, GraphPartitionData] if heterogeneous
-            expected_node_types (list[NodeType]): Expected node types for heterogeneous input
-            expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
+            expected_node_types (List[NodeType]): Expected node types for heterogeneous input
+            expected_edge_types (List[EdgeType]): Expected edge types for heterogeneous input
             expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
                 Otherwise, it will be a torch.uint8.
-            expected_edge_feat_types (list[EdgeType]): Expected edge types that have edge features
+            expected_edge_feat_types (List[EdgeType]): Expected edge types that have edge features
         """
         self._assert_data_type_correctness(
             output_data=output_node_partition_book,
@@ -258,8 +258,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         output_node_feat: Union[
             FeaturePartitionData, Dict[NodeType, FeaturePartitionData]
         ],
-        expected_node_types: list[NodeType],
-        expected_edge_types: list[EdgeType],
+        expected_node_types: List[NodeType],
+        expected_edge_types: List[EdgeType],
     ) -> None:
         """
         Checks correctness for node feature outputs of partitioning
@@ -270,8 +270,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
             output_graph: (Union[GraphPartitionData, Dict[EdgeType, GraphPartitionData]]): Output edge indices and ids from partitioning, either a GraphPartitionData if homogeneous or a Dict[EdgeType, GraphPartitionData] if heterogeneous
             output_node_feat (Union[FeaturePartitionData, Dict[NodeType, FeaturePartitionData]]): Output node features from partitioning, either a FeaturePartitionData if homogeneous or a Dict[NodeType, FeaturePartitionData] if heterogeneous
-            expected_node_types (list[NodeType]): Expected node types for heterogeneous input
-            expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
+            expected_node_types (List[NodeType]): Expected node types for heterogeneous input
+            expected_edge_types (List[EdgeType]): Expected edge types for heterogeneous input
         """
         self._assert_data_type_correctness(
             output_data=output_graph,
@@ -366,7 +366,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         output_edge_feat: Union[
             FeaturePartitionData, Dict[EdgeType, FeaturePartitionData]
         ],
-        expected_edge_types: list[EdgeType],
+        expected_edge_types: List[EdgeType],
     ) -> None:
         """
         Checks correctness for edge feature outputs of partitioning
@@ -377,7 +377,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
             output_graph: (Union[GraphPartitionData, Dict[EdgeType, GraphPartitionData]]): Output edge indices and ids from partitioning, either a GraphPartitionData if homogeneous or a Dict[EdgeType, GraphPartitionData] if heterogeneous
             output_edge_feat (Union[FeaturePartitionData, Dict[EdgeType, FeaturePartitionData]]): Output node features from partitioning, either a FeaturePartitionData if homogeneous or a Dict[EdgeType, FeaturePartitionData] if heterogeneous
-            expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
+            expected_edge_types (List[EdgeType]): Expected edge types for heterogeneous input
         """
         self._assert_data_type_correctness(
             output_data=output_graph,
@@ -484,7 +484,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         should_assign_edges_by_src_node: bool,
         output_node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]],
         output_labeled_edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]],
-        expected_edge_types: list[EdgeType],
+        expected_edge_types: List[EdgeType],
         expected_pb_dtype: torch.dtype,
     ) -> None:
         """
@@ -495,7 +495,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
             output_node_partition_book: (Union[PartitionBook, Dict[NodeType, PartitionBook]]): Node Partition Book from partitioning, either a PartitionBook if homogeneous or a Dict[NodeType, PartitionBook] if heterogeneous
             output_labeled_edge_index (Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]): Output labeled edges from partitioning, either a FeaturePartitionData if homogeneous or a Dict[EdgeType, FeaturePartitionData] if heterogeneous
-            expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
+            expected_edge_types (List[EdgeType]): Expected edge types for heterogeneous input
                 expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
             Otherwise, it will be a torch.uint8.
         """
@@ -670,17 +670,17 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             join=True,
         )
 
-        unified_output_edge_index: Dict[EdgeType, list[torch.Tensor]] = defaultdict(
+        unified_output_edge_index: Dict[EdgeType, List[torch.Tensor]] = defaultdict(
             list
         )
 
-        unified_output_node_feat: Dict[NodeType, list[torch.Tensor]] = defaultdict(list)
+        unified_output_node_feat: Dict[NodeType, List[torch.Tensor]] = defaultdict(list)
 
-        unified_output_edge_feat: Dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
+        unified_output_edge_feat: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
 
-        unified_output_pos_label: Dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
+        unified_output_pos_label: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
 
-        unified_output_neg_label: Dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
+        unified_output_neg_label: Dict[EdgeType, List[torch.Tensor]] = defaultdict(list)
 
         is_range_based_partition = partitioner_class is DistRangePartitioner
 
