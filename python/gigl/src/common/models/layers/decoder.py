@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Callable, List, Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -32,20 +32,20 @@ class LinkPredictionDecoder(nn.Module):
         self.decoder_channel_list = decoder_channel_list
 
         if self.decoder_type.value == "hadamard_MLP" and not isinstance(
-            self.decoder_channel_list, List
+            self.decoder_channel_list, list
         ):
             raise ValueError(
                 f"The decoder channel list must be provided when using 'hadamard_MLP' decoder, however you provided {self.decoder_channel_list}"
             )
         if (
-            isinstance(self.decoder_channel_list, List)
+            isinstance(self.decoder_channel_list, list)
             and len(self.decoder_channel_list) <= 1
         ):
             raise ValueError(
                 f"The decoder channel list must have length at least 2, however you provided a list of length {len(self.decoder_channel_list)}"
             )
         if (
-            isinstance(self.decoder_channel_list, List)
+            isinstance(self.decoder_channel_list, list)
             and self.decoder_channel_list[-1] != 1
         ):
             raise ValueError(
