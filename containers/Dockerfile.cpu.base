@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM condaforge/miniforge3:25.3.0-1
+FROM continuumio/miniconda3:4.12.0
 
 SHELL ["/bin/bash", "-c"]
 
@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 
 # Create the environment:
 # TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y -c conda-forge --name gnn python=3.9 pip
+RUN conda create -y --name gnn python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
 ENV PATH=/opt/conda/envs/gnn/bin:$PATH
