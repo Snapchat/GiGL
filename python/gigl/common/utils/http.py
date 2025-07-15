@@ -42,8 +42,11 @@ class HttpUtils:
             http_to_local_path_map (Dict[HttpUri, LocalUri]): A dictionary mapping HTTP(S) URLs to local file paths.
         """
         with ThreadPoolExecutor() as executor:
-            executor.map(
+            results = executor.map(
                 HttpUtils.download_file_from_http,
                 http_to_local_path_map.keys(),
                 http_to_local_path_map.values(),
             )
+            list(
+                results
+            )  # wait for all downloads to finish - also throws exceptions from threads, if any failed

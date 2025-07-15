@@ -76,6 +76,29 @@ class FileLoader:
                     Dict[Uri, Uri], local_file_path_to_gcs_path_map
                 )
             )
+        elif uri_map_schema == (LocalUri, LocalUri):
+            dir_uri_src = cast(LocalUri, dir_uri_src)
+            dir_uri_dst = cast(LocalUri, dir_uri_dst)
+
+            local_src_paths: List[LocalUri] = list_at_path(
+                local_path=dir_uri_src, file_system_entity=FileSystemEntity.FILE
+            )
+            local_dst_paths: List[LocalUri] = [
+                LocalUri.join(dir_uri_dst, local_src_fn)
+                for local_src_fn in list_at_path(
+                    local_path=dir_uri_src,
+                    names_only=True,
+                    file_system_entity=FileSystemEntity.FILE,
+                )
+            ]
+            source_to_dest_file_uri_map = {
+                src: dst for src, dst in zip(local_src_paths, local_dst_paths)
+            }
+            self.load_files(
+                source_to_dest_file_uri_map=cast(
+                    Dict[Uri, Uri], source_to_dest_file_uri_map
+                )
+            )
         else:
             raise TypeError(self.__unsupported_uri_message)
 
