@@ -1,7 +1,7 @@
 """
 Dead simple training loop on the toy example dataset.
 Run with:
-    python examples/tutorial/KDD_2025/training.py
+    python examples/tutorial/KDD_2025/heterogeneous_training.py
 """
 import os
 
