@@ -1,8 +1,8 @@
 include dep_vars.env
 
 SHELL := /bin/bash
-CONDA_ENV_NAME=gnn
-PYTHON_VERSION=3.9
+CONDA_ENV_NAME=gigl-313
+PYTHON_VERSION=3.13
 PIP_VERSION=25.0.1
 DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
 
