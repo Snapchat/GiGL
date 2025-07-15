@@ -9,8 +9,8 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 
 
 import argparse
-from collections.abc import Mapping
-from typing import Iterable, Literal
+from collections.abc import Iterable, Mapping
+from typing import Literal
 
 import torch
 import torch.multiprocessing.spawn
