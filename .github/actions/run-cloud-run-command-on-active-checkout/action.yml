@@ -31,5 +31,5 @@ runs:
           --project="${{ inputs.project }}" \
           --machine-type="${{ inputs.machine_type }}" \
           --timeout="${{ inputs.timeout }}" \
-          --polling-interval=15
+          --polling-interval=15 # Polling interval is set to 15 seconds to avoid rate limiting issues with Cloud Build API
       shell: bash
