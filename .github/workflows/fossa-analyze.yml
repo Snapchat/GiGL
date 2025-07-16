@@ -1,0 +1,61 @@
+name: Fossa Analyze
+# Workflow used for analyzing GiGL dependencies with Fossa for license compliance
+# and security vulnerability scanning.
+#
+# Fossa is a dependency analysis tool that helps track open source licenses
+# and security vulnerabilities in project dependencies across GiGL's python,
+# and scala codebase.
+# https://fossa.com/
+
+on:
+  # Runs on pushes targeting the default branch
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  id-token: write
+
+# Concurrency configuration to prevent multiple Fossa analyses from running simultaneously
+# This ensures only one analysis runs at a time to avoid conflicts
+concurrency:
+  group: "fossa"
+  cancel-in-progress: false
+
+jobs:
+  fossa-analyze:
+    # Uses the 'fossa' environment which contains the required information to run fossa
+    environment:
+      name: fossa
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Machine for fossa-analyze
+        uses: snapchat/gigl/.github/actions/setup-python-tools@main
+        with:
+            install_dev_deps: "true"
+            setup_gcloud: "true"
+            gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+            workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+            gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Install Fossa
+        run: |
+            SHA256=0c59fed2b76ddd6a9dbd0b2a937796a162b8ccc730c63a3a33528b30291dc5cb
+            wget "https://github.com/fossas/fossa-cli/releases/download/v3.9.42/fossa_3.9.42_linux_amd64.zip" \
+                && echo "$SHA256 fossa_3.9.42_linux_amd64.zip" | sha256sum -c - \
+                && unzip fossa_3.9.42_linux_amd64.zip
+            ./fossa --version
+      - name: Run Fossa
+        env:
+          FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
+        run: |
+          # Suppress stdout, capture stderr
+          stderr=$(./fossa analyze 2>&1 >/dev/null)
+          if [ $? -ne 0 ]; then
+            echo "Fossa analysis failed"
+            echo "$stderr"
+            exit 1
+          fi
