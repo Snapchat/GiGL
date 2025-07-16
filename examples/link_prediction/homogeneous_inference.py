@@ -22,12 +22,11 @@ You can run this example in a full pipeline with `make run_hom_cora_sup_test` fr
 import argparse
 import gc
 import time
-from typing import Dict, List
+from typing import Dict
 
 import torch
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -46,6 +45,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
+from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
@@ -96,12 +96,9 @@ def _inference_process(
         edge_feature_dim (int): Input edge feature dimension for the model
     """
 
-    fanout_per_hop = int(inferencer_args.get("fanout_per_hop", "10"))
-    # This fanout is defaulted to match the fanout provided in the CORA UDL E2E Config:
-    # `python/gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml`
-    # Users can feel free to parse this argument from `inferencer_args`
-
-    num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
+    # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified as a string of a list of integers, such as "[10, 10]".
+    fanout = inferencer_args.get("num_neighbors", "[10, 10]")
+    num_neighbors = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -195,7 +192,7 @@ def _inference_process(
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
 
-    barrier()
+    torch.distributed.barrier()
 
     t = time.time()
     data_loading_start_time = time.time()
@@ -257,17 +254,16 @@ def _inference_process(
     # machine + process -- otherwise we may fail on processes which are still doing on-the-fly subgraph sampling. We then call `gc.collect()` to cleanup the memory
     # used by the data_loader on the current machine.
 
-    barrier()
+    torch.distributed.barrier()
 
     del data_loader
     gc.collect()
 
+    torch.distributed.destroy_process_group()
+
     logger.info(
         f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )
-
-    # Clean up for a graceful exit
-    shutdown_rpc()
 
 
 def _run_example_inference(

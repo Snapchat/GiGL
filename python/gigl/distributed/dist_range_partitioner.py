@@ -1,6 +1,6 @@
 import gc
 import time
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.distributed.rpc import all_gather
@@ -29,7 +29,7 @@ class DistRangePartitioner(DistPartitioner):
     """
 
     def register_edge_index(
-        self, edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
+        self, edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ) -> None:
         """
         Registers the edge_index to the partitioner. Unlike the tensor-based partitioner, this register pattern
@@ -40,8 +40,8 @@ class DistRangePartitioner(DistPartitioner):
         cause OOM concerns.
 
         Args:
-            edge_index (Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]): Input edge index which is either a
-                torch.Tensor if homogeneous or a Dict if heterogeneous
+            edge_index (Union[torch.Tensor, dict[EdgeType, torch.Tensor]]): Input edge index which is either a
+                torch.Tensor if homogeneous or a dict if heterogeneous
         """
         self._assert_and_get_rpc_setup()
 
@@ -59,6 +59,35 @@ class DistRangePartitioner(DistPartitioner):
 
         self._edge_index = convert_to_tensor(input_edge_index, dtype=torch.int64)
 
+        # Logging information about number of edges across the machines
+
+        edge_type_to_num_edges: dict[EdgeType, int] = {
+            edge_type: input_edge_index[edge_type].size(1)
+            for edge_type in sorted(input_edge_index.keys())
+        }
+
+        # The tuple here represents a (rank, num_edges_on_rank) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`
+        # num_edges_on_rank is a dict[EdgeType, int].
+        # Gathered_num_edges is then used to identify the number of edges on each rank, allowing us to access the total number of edges across all ranks
+        gathered_edge_info: dict[str, tuple[int, dict[EdgeType, int]]]
+
+        # Gathering to compute the number of edges on each rank for each edge type
+        gathered_edge_info = all_gather((self._rank, edge_type_to_num_edges))
+
+        self._num_edges = {}
+
+        # Looping through registered edge types in graph
+        for edge_type in self._edge_types:
+            # Populating num_edges_all_ranks list, where num_edges_all_ranks[i] = num_edges means that rank `i`` has `num_edges` edges
+            num_edges_all_ranks = [0] * self._world_size
+            for (
+                rank,
+                gathered_edge_type_to_num_edges,
+            ) in gathered_edge_info.values():
+                num_edges_all_ranks[rank] = gathered_edge_type_to_num_edges[edge_type]
+
+            self._num_edges[edge_type] = sum(num_edges_all_ranks)
+
     def _partition_node(self, node_type: NodeType) -> PartitionBook:
         """
         Partition graph nodes of a specific node type. For range-based partitioning, we partition all
@@ -72,6 +101,8 @@ class DistRangePartitioner(DistPartitioner):
         Returns:
             PartitionBook: The partition book of graph nodes.
         """
+
+        start_time = time.time()
 
         assert (
             self._num_nodes is not None
@@ -102,11 +133,15 @@ class DistRangePartitioner(DistPartitioner):
             f"Got node range-based partition book for node type {node_type} on rank {self._rank} with partition bounds: {node_partition_book.partition_bounds}"
         )
 
+        logger.info(
+            f"Node Partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
+        )
+
         return node_partition_book
 
     def _partition_node_features(
         self,
-        node_partition_book: Dict[NodeType, PartitionBook],
+        node_partition_book: dict[NodeType, PartitionBook],
         node_type: NodeType,
     ) -> FeaturePartitionData:
         """
@@ -115,7 +150,7 @@ class DistRangePartitioner(DistPartitioner):
         id2idx corresponds correctly to the node features.
 
         Args:
-            node_partition_book (Dict[NodeType, PartitionBook]): The partition book of nodes
+            node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
             node_type (NodeType): Node type of input data
 
         Returns:
@@ -135,7 +170,7 @@ class DistRangePartitioner(DistPartitioner):
 
     def _partition_edge_index_and_edge_features(
         self,
-        node_partition_book: Dict[NodeType, PartitionBook],
+        node_partition_book: dict[NodeType, PartitionBook],
         edge_type: EdgeType,
     ) -> tuple[
         GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
@@ -149,7 +184,7 @@ class DistRangePartitioner(DistPartitioner):
         If there are no edge features for the current edge type, both the returned edge feature and edge partition book will be None.
 
         Args:
-            node_partition_book (Dict[NodeType, PartitionBook]): The partition books of all graph nodes.
+            node_partition_book (dict[NodeType, PartitionBook]): The partition books of all graph nodes.
             edge_type (EdgeType): The edge type for input edges
 
         Returns:
@@ -157,6 +192,8 @@ class DistRangePartitioner(DistPartitioner):
             Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
             Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
+
+        start_time = time.time()
 
         assert (
             self._edge_index is not None
@@ -270,18 +307,22 @@ class DistRangePartitioner(DistPartitioner):
             )
             edge_partition_book = None
 
+        logger.info(
+            f"Edge Index and Feature Partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
+        )
+
         return current_graph_part, current_feat_part, edge_partition_book
 
     def partition_edge_index_and_edge_features(
-        self, node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]]
+        self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
     ) -> Union[
         tuple[
             GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
         ],
         tuple[
-            Dict[EdgeType, GraphPartitionData],
-            Dict[EdgeType, FeaturePartitionData],
-            Dict[EdgeType, PartitionBook],
+            dict[EdgeType, GraphPartitionData],
+            dict[EdgeType, FeaturePartitionData],
+            dict[EdgeType, PartitionBook],
         ],
     ]:
         """
@@ -291,18 +332,18 @@ class DistRangePartitioner(DistPartitioner):
         pre-computed as a prerequisite for partitioning edges and edge features.
 
         Args:
-            node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
+            node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
         Returns:
             Union[
                 Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]],
-                Tuple[Dict[EdgeType, GraphPartitionData], Dict[EdgeType, FeaturePartitionData], Dict[EdgeType, PartitionBook]],
+                Tuple[dict[EdgeType, GraphPartitionData], dict[EdgeType, FeaturePartitionData], dict[EdgeType, PartitionBook]],
             ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
         """
 
         self._assert_and_get_rpc_setup()
 
         assert (
-            self._edge_index is not None
+            self._edge_index is not None and self._num_edges is not None
         ), "Must have registered edges prior to partitioning them"
 
         logger.info("Partitioning Edges ...")
@@ -329,9 +370,9 @@ class DistRangePartitioner(DistPartitioner):
                 input_entity=self._edge_feat, is_node_entity=False, is_subset=True
             )
 
-        edge_partition_book: Dict[EdgeType, PartitionBook] = {}
-        partitioned_edge_index: Dict[EdgeType, GraphPartitionData] = {}
-        partitioned_edge_features: Dict[EdgeType, FeaturePartitionData] = {}
+        edge_partition_book: dict[EdgeType, PartitionBook] = {}
+        partitioned_edge_index: dict[EdgeType, GraphPartitionData] = {}
+        partitioned_edge_features: dict[EdgeType, FeaturePartitionData] = {}
         for edge_type in self._edge_types:
             (
                 partitioned_edge_index_per_edge_type,
@@ -351,7 +392,15 @@ class DistRangePartitioner(DistPartitioner):
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
 
+        formatted_num_edges = {
+            edge_type: f"{num_edges:,}"
+            for edge_type, num_edges in self._num_edges.items()
+        }
+
         if self._is_input_homogeneous:
+            logger.info(
+                f"Partitioned {to_homogeneous(formatted_num_edges)} edges for homogeneous dataset"
+            )
             return (
                 to_homogeneous(partitioned_edge_index),
                 to_homogeneous(partitioned_edge_features)
@@ -362,6 +411,7 @@ class DistRangePartitioner(DistPartitioner):
                 else None,
             )
         else:
+            logger.info(f"Partitioned {formatted_num_edges} edges per edge type")
             return (
                 partitioned_edge_index,
                 partitioned_edge_features,

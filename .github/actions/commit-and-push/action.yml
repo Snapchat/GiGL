@@ -1,5 +1,12 @@
 name: "Commit and Push Changes"
-description: "Commits and pushes changes with a customizable commit message"
+description: |
+  Commits and pushes changes to the current or specified branch with a customizable commit message.
+  Includes changes the workflow has made.
+  Only commits changes to files that have been modified or deleted, without adding new files.
+  If a new branch is specified, the action will create a new branch and push the changes to it.
+  Otherwise, the action will push the changes to the current branch.
+
+
 inputs:
   commit_message:
     description: "Commit message for the changes"
@@ -8,6 +15,10 @@ inputs:
   github_token:
     description: "GitHub token to authenticate and push the changes"
     required: true
+  to_new_branch_named:
+    description: "Name of the branch to push the changes to. If not provided, the changes will be pushed to the current branch."
+    required: false
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -15,17 +26,27 @@ runs:
       env:
         COMMIT_MESSAGE: ${{ inputs.commit_message }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
+        TO_NEW_BRANCH_NAMED: ${{ inputs.to_new_branch_named }}
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git add .
-        
-        # Check if there are any changes
+        if [ "$TO_NEW_BRANCH_NAMED" != "" ]; then
+          echo "Creating a new branch, named $TO_NEW_BRANCH_NAMED, and pushing the changes to it"
+          git checkout -b $TO_NEW_BRANCH_NAMED
+          git push --set-upstream origin $TO_NEW_BRANCH_NAMED
+        fi
+
+        # Stages changes (modifications and deletions) to tracked files, but ignores new untracked files.
+        # This is to ensure that workflows are not staging any files that might have been created
+        # temporarily and have not been cleaned up.
+        git add --update
+
+        # If no changes, exit gracefully. If not done, git commit will fail.
         if git diff --cached --exit-code; then
           echo "No changes to commit."
           exit 0
         fi
-        
+
         git commit -m "$COMMIT_MESSAGE"
         git push
       shell: bash

@@ -571,7 +571,10 @@ def build_dataset_from_task_config_uri(
         tfrecord_uri_pattern=_tfrecord_uri_pattern,
     )
 
-    if should_use_range_partitioning:
+    # Need to do this "backwards" so the parent class can be defined first.
+    # Otherwise, mypy complains that:
+    # "expression has type "type[DistPartitioner]", variable has type "type[DistRangePartitioner]"
+    if not should_use_range_partitioning:
         partitioner_class = DistPartitioner
     else:
         partitioner_class = DistRangePartitioner

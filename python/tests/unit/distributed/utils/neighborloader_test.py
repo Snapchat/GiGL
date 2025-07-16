@@ -1,4 +1,5 @@
 import unittest
+from typing import Optional, Union
 
 import torch
 from parameterized import param, parameterized
@@ -53,7 +54,7 @@ class LoaderUtilsTest(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "Test set_labeled_edge_type on num_neighbors dict with labeled edge type",
+                "Test patch_fanout_for_sampling on num_neighbors dict with labeled edge type in dataset",
                 edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
                 num_neighbors={
                     _U2I_EDGE_TYPE: [2, 7],
@@ -66,16 +67,23 @@ class LoaderUtilsTest(unittest.TestCase):
                 },
             ),
             param(
-                "Test set_labeled_edge_type on num_neighbors dict with no labeled edge type",
-                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE],
-                num_neighbors={_U2I_EDGE_TYPE: [2, 7]},
+                "Test patch_fanout_for_sampling on num_neighbors dict with labeled edge type in dataset and fanout",
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
+                num_neighbors={
+                    _U2I_EDGE_TYPE: [2, 7],
+                    _I2U_EDGE_TYPE: [3, 4],
+                    # If labeled edge type fanout is provided by the user, we assume it was by accident, since users shouldn't be aware of this injected edge type,
+                    # and still set the fanout of it to be 0.
+                    _LABELED_EDGE_TYPE: [2, 2],
+                },
                 expected_num_neighbors={
                     _U2I_EDGE_TYPE: [2, 7],
-                    _I2U_EDGE_TYPE: [2, 7],
+                    _I2U_EDGE_TYPE: [3, 4],
+                    _LABELED_EDGE_TYPE: [0, 0],
                 },
             ),
             param(
-                "Test set_labeled_edge_type on num_neighbors list",
+                "Test patch_fanout_for_sampling on num_neighbors list",
                 edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
                 num_neighbors=[1, 3],
                 expected_num_neighbors={
@@ -84,17 +92,75 @@ class LoaderUtilsTest(unittest.TestCase):
                     _LABELED_EDGE_TYPE: [0, 0],
                 },
             ),
+            param(
+                "Test patch_fanout_for_sampling on homogeneous dataset",
+                edge_types=None,
+                num_neighbors=[1, 3],
+                expected_num_neighbors=[1, 3],
+            ),
         ]
     )
     def test_patch_neighbors_with_zero_fanout(
         self,
         _,
-        edge_types: list[EdgeType],
-        num_neighbors: dict[EdgeType, list[int]],
-        expected_num_neighbors: dict[EdgeType, list[int]],
+        edge_types: Optional[list[EdgeType]],
+        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
+        expected_num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
     ):
         num_neighbors = patch_fanout_for_sampling(edge_types, num_neighbors)
         self.assertEqual(num_neighbors, expected_num_neighbors)
+
+    @parameterized.expand(
+        [
+            param(
+                "Test when homogeneous dataset has heterogeneous num_neighbors",
+                edge_types=None,
+                num_neighbors={_U2I_EDGE_TYPE: [2, 7]},
+            ),
+            param(
+                "Test when heterogeneous dataset and num_neighbors has different number of hops per edge type",
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE],
+                num_neighbors={
+                    _U2I_EDGE_TYPE: [2, 7, 10],
+                    _I2U_EDGE_TYPE: [3, 4],
+                },
+            ),
+            param(
+                "Test for heterogeneous dataset and num_neighbors when there is a missing edge type in num_neighbors from the dataset",
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE],
+                num_neighbors={_U2I_EDGE_TYPE: [2, 7]},
+            ),
+            param(
+                "Test for heterogeneous dataset and num_neighbors when there is an extra edge type in num_neighbors from the dataset",
+                edge_types=[_I2U_EDGE_TYPE],
+                num_neighbors={
+                    _U2I_EDGE_TYPE: [2, 7, 10],
+                    _I2U_EDGE_TYPE: [3, 4],
+                },
+            ),
+            param(
+                "Test for homogeneous dataset with negative fanout",
+                edge_types=None,
+                num_neighbors=[-1, 3],
+            ),
+            param(
+                "Test for heterogeneous dataset with negative fanout",
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE],
+                num_neighbors={
+                    _U2I_EDGE_TYPE: [2, -7],
+                    _I2U_EDGE_TYPE: [3, 4],
+                },
+            ),
+        ]
+    )
+    def test_patch_neighbors_failure(
+        self,
+        _,
+        edge_types: Optional[list[EdgeType]],
+        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
+    ):
+        with self.assertRaises(ValueError):
+            num_neighbors = patch_fanout_for_sampling(edge_types, num_neighbors)
 
     def test_pyg_to_homogeneous(self):
         data = HeteroData()
