@@ -4,6 +4,8 @@ FROM continuumio/miniconda3:4.12.0
 
 SHELL ["/bin/bash", "-c"]
 
+# We install some basic dependencies and gcsfuse for GCS access.
+# We can use gcsfuse to mount GCS buckets in the container.
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
 RUN apt-get update && apt-get install -y \
@@ -12,6 +14,14 @@ RUN apt-get update && apt-get install -y \
     wget \
     cmake \
     iputils-ping \
+    lsb-release \
+    curl \
+    fuse \
+    && GCSFUSE_REPO=gcsfuse-`lsb_release -c -s` \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt $GCSFUSE_REPO main" | tee /etc/apt/sources.list.d/gcsfuse.list \
+    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | tee /usr/share/keyrings/cloud.google.asc \
+    && apt-get update \
+    && apt-get install -y gcsfuse \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
