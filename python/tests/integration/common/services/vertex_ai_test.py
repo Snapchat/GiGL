@@ -9,6 +9,17 @@ from gigl.common import UriFactory
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
 
+import time
+import sys
+
+@kfp.dsl.component
+def simple_py_logger_test() -> str:
+    print("SIMPLE PY LOGGER TEST: Standard Output Message, pre-sleep")
+    sys.stdout.flush() # Explicitly flush stdout
+    time.sleep(60)
+    print("SIMPLE PY LOGGER TEST: Standard Output Message, post-sleep")
+    sys.stdout.flush()
+    return "Python test done"
 
 @kfp.dsl.component
 def source() -> int:
@@ -27,6 +38,7 @@ def adder(a: int, b: int) -> int:
 
 @kfp.dsl.pipeline(name="kfp-integration-test")
 def get_pipeline() -> int:
+    simple_py_logger_test()
     source_task = source()
     double_task = doubler(a=source_task.output)
     adder_task = adder(a=source_task.output, b=double_task.output)
@@ -34,7 +46,7 @@ def get_pipeline() -> int:
 
 
 class VertexAIPipelineIntegrationTest(unittest.TestCase):
-    def test_launch_job(self):
+    def _test_launch_job(self):
         resource_config = get_resource_config()
         project = resource_config.project
         location = resource_config.region

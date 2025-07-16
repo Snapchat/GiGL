@@ -1,5 +1,6 @@
 import argparse
 from typing import Optional
+import logging
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
@@ -267,7 +268,9 @@ if __name__ == "__main__":
         help="Runtime argument for resource and env specifications of each component",
     )
     args = parser.parse_args()
-
+    logging.info(f"Py logging...")
+    logging.info(f"Args: {args}")
+    logging.info(f"Running kfp validation checks...")
     kfp_validation_checks(
         job_name=args.job_name,
         task_config_uri=UriFactory.create_uri(args.task_config_uri),
