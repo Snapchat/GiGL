@@ -48,19 +48,19 @@ GROUP BY
 query_template_cast_to_intermediary_homogeneous_node_table = (
     """
 WITH authors AS (
-    SELECT 
+    SELECT
         DISTINCT src as author_id
-    FROM 
+    FROM
         `{reindexed_author_writes_paper_table}`
 )
-SELECT 
+SELECT
     author_id as node_id,
 """
     + ",\n".join([f"    0 AS feat_{i}" for i in range(NUM_PAPER_FEATURES)])
     + """
 FROM authors
 UNION ALL
-SELECT 
+SELECT
     paper as node_id,
 """
     + ",\n".join([f"    feat_{i}" for i in range(NUM_PAPER_FEATURES)])
@@ -92,3 +92,22 @@ ON
     interim_node_table.node_id = node_degree_table.node_id
 """
 )
+
+query_template_compute_average_features = """
+WITH joined_table AS (
+  SELECT
+    *
+  FROM `{feature_table}` AS feature_table
+  JOIN
+    `{edge_table}` AS edge_table
+  ON
+    feature_table.{join_identifier} = edge_table.{join_identifier}
+)
+SELECT
+  {group_by_identifier},
+  `{average_feature_query}`
+FROM
+  joined_table
+GROUP BY
+  {group_by_identifier};
+    """
