@@ -486,12 +486,12 @@ def build_dataset_from_task_config_uri(
     - sample_edge_direction (Literal["in", "out"]): Direction of the graph
     - should_use_range_partitioning (bool): Whether we should be using range-based partitioning
     - should_load_tensors_in_parallel (bool): Whether TFRecord loading should happen in parallel across entities
-    - ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels.
         Must be None if supervised edge labels are provided in advance.
         Slotted for refactor once this functionality is available in the transductive `splitter` directly.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
+    - ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels.
 
     Args:
         task_config_uri (str): URI to a GBML Config
@@ -515,6 +515,7 @@ def build_dataset_from_task_config_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
 
+    ssl_positive_label_percentage: Optional[float] = None
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
@@ -540,6 +541,8 @@ def build_dataset_from_task_config_uri(
             num_val=num_val,
             num_test=num_test,
         )
+        if "ssl_positive_label_percentage" in args:
+            ssl_positive_label_percentage = float(args["ssl_positive_label_percentage"])
 
     assert sample_edge_direction in (
         "in",
@@ -553,13 +556,6 @@ def build_dataset_from_task_config_uri(
     should_load_tensors_in_parallel = bool(
         strtobool(args.get("should_load_tensors_in_parallel", "True"))
     )
-
-    ssl_positive_label_percentage: Optional[float]
-
-    if "ssl_positive_label_percentage" in args:
-        ssl_positive_label_percentage = float(args["ssl_positive_label_percentage"])
-    else:
-        ssl_positive_label_percentage = None
 
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."
