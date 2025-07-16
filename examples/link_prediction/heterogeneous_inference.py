@@ -93,6 +93,7 @@ def _inference_process(
         node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
         edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
     """
+
     # Parses the fanout as a string.
     # For the heterogeneous case, the fanouts can be specified as a string of a list of integers, such as "[10, 10]", which will apply this fanout
     # to each edge type in the graph, or as string of format dict[(tuple[str, str, str])), list[int]] which will specify fanouts per edge type.
