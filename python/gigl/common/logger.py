@@ -72,3 +72,5 @@ class Logger(logging.LoggerAdapter):
 
     def __getattr__(self, name: str):
         return getattr(self._logger, name)
+
+logging.debug("Logger initialized with custom settings.")
