@@ -22,6 +22,7 @@ steps:
         echo "source /root/.profile" >> ~/.profile
 
         source ~/.profile
+        source ~/.bashrc
         docker buildx create --driver=docker-container --use
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:34da44a28b168e45a4e5516681142d60cd295776.18.1
@@ -32,6 +33,7 @@ steps:
 
         # Since more deps were installed we need to re-source the bashrc
         source ~/.profile
+        source ~/.bashrc
 
         echo "Finished setting up environment."
         echo "========================="
