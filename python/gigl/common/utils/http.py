@@ -1,3 +1,4 @@
+import pathlib
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 
@@ -30,6 +31,8 @@ class HttpUtils:
         logger.info(f"Downloading file from {http_path.uri} to {dest_file_path.uri}")
         response = requests.get(http_path.uri)
         response.raise_for_status()
+
+        pathlib.Path(dest_file_path.uri).parent.mkdir(parents=True, exist_ok=True)
         with open(dest_file_path.uri, "wb") as f:
             f.write(response.content)
 

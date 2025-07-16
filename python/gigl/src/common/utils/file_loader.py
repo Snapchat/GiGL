@@ -237,12 +237,13 @@ class FileLoader:
         """ ""
 
         _uri = UriFactory.create_uri(uri=uri) if isinstance(uri, str) else uri
+
         exists: bool
-        if GcsUri.is_valid(uri=_uri, raise_exception=False):
-            exists = self.__gcs_utils.does_gcs_file_exist(gcs_path=_uri)  # type: ignore
-        elif LocalUri.is_valid(uri=_uri, raise_exception=False):
+        if type(_uri) == GcsUri:
+            exists = self.__gcs_utils.does_gcs_file_exist(gcs_path=_uri)
+        elif type(_uri) == LocalUri:
             exists = does_path_exist(cast(LocalUri, _uri))
-        elif HttpUri.is_valid(uri=_uri, raise_exception=False):
+        elif type(_uri) == HttpUri:
             exists = HttpUtils.does_http_path_resolve(http_path=cast(HttpUri, _uri))
         else:
             raise NotImplementedError(f"{self.__unsupported_uri_message} : {_uri}")
