@@ -17,6 +17,8 @@ def init_example_gigl_homogeneous_model(
     num_layers: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
+    wrap_with_ddp: bool = False,
+    find_unused_encoder_parameters: bool = False,
 ) -> LinkPredictionGNN:
     """
     Initializes a homogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -30,10 +32,16 @@ def init_example_gigl_homogeneous_model(
         num_layers (int): Number of layers to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
+        wrap_with_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
+            If True, the model will be setup for `DistributedDataParallel`.
+        find_unused_encoder_parameters (bool): If when `find_unused_parameters` should be passed in when initializing the encoder for DDP training.
+            See the docs at https://docs.pytorch.org/docs/stable/notes/ddp.html for more details.
+            At a high level - this should only be True if the model has parameters that are not used in the forward pass,
+            e.g. when the model has been initialized with all edge types in the graph, but the training task only uses a subset of them.
+
     Returns:
         LinkPredictionGNN: Link Prediction model for training or inference
     """
-
     # We use the GiGL GraphSAGE encoder for this example instead of the base PyG GraphSAGE model since the base model doesn't
     # have support for edge features or additional utilities like `should_l2_normalize_embedding_layer_output`,
     # which normalizes the output embeddings from the encoder. However, a base GraphSAGE encoder would also work in this case,
@@ -49,13 +57,16 @@ def init_example_gigl_homogeneous_model(
     )
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-
-    model: LinkPredictionGNN = LinkPredictionGNN(
+    model = LinkPredictionGNN(
         encoder=encoder_model,
         decoder=decoder_model,
     )
-
-    # Push the model to the specified device.
+    if wrap_with_ddp:
+        # Initialize the model for DDP training.
+        model = model.to_ddp(
+            device=device,
+            find_unused_encoder_parameters=find_unused_encoder_parameters,
+        )
     if device is None:
         device = torch.device("cpu")
     model.to(device)
@@ -75,6 +86,8 @@ def init_example_gigl_heterogeneous_model(
     num_heads: int = 2,
     device: Optional[torch.device] = None,
     state_dict: Optional[dict[str, torch.Tensor]] = None,
+    wrap_with_ddp: bool = False,
+    find_unused_encoder_parameters: bool = False,
 ) -> LinkPredictionGNN:
     """
     Initializes a heterogeneous GiGL LinkPredictionGNN model, which inherits from `nn.Module`. Note that this is just an example --
@@ -89,10 +102,15 @@ def init_example_gigl_heterogeneous_model(
         num_heads (int): Number of attention heads to include in model
         device (Optional[torch.device]): Torch device of the model, if None defaults to CPU
         state_dict (Optional[dict[str, torch.Tensor]]): State dictionary for pretrained model
+        wrap_with_ddp (bool): Whether to initialize the model for DistributedDataParallel (DDP) training.
+            If True, the model will be setup for `DistributedDataParallel`.
+        find_unused_encoder_parameters (bool): If when `find_unused_parameters` should be passed in when initializing the encoder for DDP training.
+            See the docs at https://docs.pytorch.org/docs/stable/notes/ddp.html for more details.
+            At a high level - this should only be True if the model has parameters that are not used in the forward pass,
+            e.g. when the model has been initialized with all edge types in the graph, but the training task only uses a subset of them.
     Returns:
         LinkPredictionGNN: Link Prediction model for inference
     """
-
     # We use the GiGL HGT encoder for this example, since PyG only has support for the HGTConv layer, but not an entire HGT encoder.
     encoder_model = HGT(
         node_type_to_feat_dim_map=node_type_to_feature_dim,
@@ -105,12 +123,20 @@ def init_example_gigl_heterogeneous_model(
     )
 
     decoder_model = LinkPredictionDecoder()  # Defaults to inner product decoder
-
-    model: LinkPredictionGNN = LinkPredictionGNN(
+    model = LinkPredictionGNN(
         encoder=encoder_model,
         decoder=decoder_model,
     )
-
+    if wrap_with_ddp:
+        # Initialize the model for DDP training.
+        # Since the HGT encoder has params for *all* node and edge types [1]
+        # We need to allow DDP to find unused parameters.
+        # As not all node types may be present in the training task.
+        # 1. https://github.com/Snapchat/GiGL/blob/766fae5dc313e1224998ed5618cf70cf0fb4da30/python/gigl/src/common/models/pyg/heterogeneous.py#L47-L51
+        model.to_ddp(
+            device=device,
+            find_unused_encoder_parameters=find_unused_encoder_parameters,
+        )
     # Push the model to the specified device.
     if device is None:
         device = torch.device("cpu")
