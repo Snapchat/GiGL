@@ -33,9 +33,9 @@ def parse_args() -> TestArgs:
         help="""
         Glob pattern for filtering which test files to run. By default runs *all* files ("*_test.py").
         Only *one* regex is supported at a time.
-        Only the file *name* is checked, if a file *path* is provided then nothing will be matched. 
+        Only the file *name* is checked, if a file *path* is provided then nothing will be matched.
         (Unless your file name has "/" in it, which is very unlikely.)
-        Examples: 
+        Examples:
         ```
             -tf="frozen_dict_test.py"
             -tf="pyg*_test.py"
@@ -49,6 +49,13 @@ def parse_args() -> TestArgs:
 
 
 def _run_individual_test(test: unittest.TestCase) -> Tuple[bool, int]:
+    # If we don't have any test cases, we skip running the test.
+    # This reduces some noise in the logs.
+    if test.countTestCases() == 0:
+        logger.warning(
+            f"Test {test} has no test cases to run. Skipping execution of this test."
+        )
+        return (True, 0)
     runner = unittest.TextTestRunner(verbosity=2)
     result: unittest.TestResult = runner.run(test=test)
 
