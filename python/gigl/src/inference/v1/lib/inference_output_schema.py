@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, NamedTuple, Optional
 
 import google.cloud.bigquery as bigquery
 
@@ -16,7 +16,7 @@ class InferenceOutputBigqueryTableSchema(NamedTuple):
     identifier, which assists during de-enumeration.
     """
 
-    schema: Optional[Dict[str, List[Dict[str, str]]]] = None
+    schema: Optional[Dict[str, list[Dict[str, str]]]] = None
     node_field: Optional[str] = None
 
 
@@ -43,7 +43,7 @@ class InferenceOutputBigqueryTableSchemaBuilder:
         self._node_field = name
         return self
 
-    def _build_schema_property(self) -> Dict[str, List[Dict[str, str]]]:
+    def _build_schema_property(self) -> Dict[str, list[Dict[str, str]]]:
         schema_fields = [
             {"name": field.name, "type": field.field_type, "mode": field.mode}
             for field in self._fields.values()
