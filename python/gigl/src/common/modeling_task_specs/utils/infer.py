@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Dict, List, Set, Union
+from typing import Dict, Set, Union
 
 import torch
 import torch.nn as nn
@@ -109,25 +109,25 @@ def infer_task_inputs(
     device: torch.device,
 ) -> NodeAnchorBasedLinkPredictionTaskInputs:
     # Initializing empty container values
-    batch_scores: List[Dict[CondensedEdgeType, BatchScores]] = []
+    batch_scores: list[Dict[CondensedEdgeType, BatchScores]] = []
     batch_combined_scores: Dict[CondensedEdgeType, BatchCombinedScores] = {}
 
     pos_embeddings: Dict[CondensedEdgeType, torch.FloatTensor] = {}
     hard_neg_embeddings: Dict[CondensedEdgeType, torch.FloatTensor] = {}
     repeated_anchor_embeddings: Dict[CondensedEdgeType, torch.FloatTensor] = {}
 
-    _pos_embeddings: Dict[CondensedEdgeType, List[torch.FloatTensor]] = defaultdict(
+    _pos_embeddings: Dict[CondensedEdgeType, list[torch.FloatTensor]] = defaultdict(
         list
     )
     _hard_neg_embeddings: Dict[
-        CondensedEdgeType, List[torch.FloatTensor]
+        CondensedEdgeType, list[torch.FloatTensor]
     ] = defaultdict(list)
 
-    _positive_ids: Dict[CondensedEdgeType, List[torch.LongTensor]] = defaultdict(list)
-    _hard_neg_ids: Dict[CondensedEdgeType, List[torch.LongTensor]] = defaultdict(list)
+    _positive_ids: Dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
+    _hard_neg_ids: Dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
 
     # Map of Condensed Edge Type to list of num_pos_nodes for retrieval calculation
-    repeated_anchor_count: Dict[CondensedEdgeType, List[int]] = defaultdict(list)
+    repeated_anchor_count: Dict[CondensedEdgeType, list[int]] = defaultdict(list)
 
     # Populate main_batch and RNN task inputs field
     input_batch = InputBatch(main_batch=main_batch, random_neg_batch=random_neg_batch)
