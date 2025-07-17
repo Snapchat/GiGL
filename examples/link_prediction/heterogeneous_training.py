@@ -37,7 +37,6 @@ import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
-from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
 import gigl.distributed.utils
@@ -52,10 +51,12 @@ from gigl.distributed import (
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_available_device
 from gigl.module.loss import RetrievalLoss
+from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.utils.iterator import InfiniteIterator
+from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
@@ -79,7 +80,7 @@ def _setup_dataloaders(
     dataset: DistLinkPredictionDataset,
     split: Literal["train", "val", "test"],
     supervision_edge_type: EdgeType,
-    subgraph_fanout: list[int],
+    num_neighbors: list[int],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -92,7 +93,7 @@ def _setup_dataloaders(
     Args:
         dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training and testing
         split (Literal["train", "val", "test"]): The current split which we are loading data for
-        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): sampling_workers_per_process (int): Number of sampling workers per training/testing process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
@@ -123,7 +124,7 @@ def _setup_dataloaders(
 
     main_loader = DistABLPLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         input_nodes=(query_node_type, main_input_nodes[query_node_type]),
         supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
@@ -146,7 +147,7 @@ def _setup_dataloaders(
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=subgraph_fanout,
+        num_neighbors=num_neighbors,
         input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
@@ -166,7 +167,7 @@ def _setup_dataloaders(
 
 
 def _compute_loss(
-    model: DistributedDataParallel,
+    model: LinkPredictionGNN,
     main_data: HeteroData,
     random_negative_data: HeteroData,
     loss_fn: RetrievalLoss,
@@ -176,7 +177,7 @@ def _compute_loss(
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
-        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
+        model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
         main_data (HeteroData): The batch of data containing query nodes, positive nodes, and hard negative nodes
         random_negative_data (HeteroData): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
@@ -242,7 +243,7 @@ def _compute_loss(
 
     # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
 
-    repeated_candidate_scores = model.module.decode(
+    repeated_candidate_scores = model.decode(
         query_embeddings=repeated_query_embeddings,
         candidate_embeddings=torch.cat(
             [
@@ -290,7 +291,7 @@ def _training_process(
     master_ip_address: str,
     master_default_process_group_port: int,
     model_uri: Uri,
-    subgraph_fanout: list[int],
+    num_neighbors: list[int],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -318,7 +319,7 @@ def _training_process(
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
         model_uri (Uri): URI Path to save the model to
-        subgraph_fanout: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
+        num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): Number of sampling workers per training process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
@@ -364,7 +365,7 @@ def _training_process(
             dataset=dataset,
             split="train",
             supervision_edge_type=supervision_edge_type,
-            subgraph_fanout=subgraph_fanout,
+            num_neighbors=num_neighbors,
             sampling_workers_per_process=sampling_workers_per_process,
             main_batch_size=main_batch_size,
             random_batch_size=random_batch_size,
@@ -384,7 +385,7 @@ def _training_process(
             dataset=dataset,
             split="val",
             supervision_edge_type=supervision_edge_type,
-            subgraph_fanout=subgraph_fanout,
+            num_neighbors=num_neighbors,
             sampling_workers_per_process=sampling_workers_per_process,
             main_batch_size=main_batch_size,
             random_batch_size=random_batch_size,
@@ -397,23 +398,20 @@ def _training_process(
         # so we can clean up resources from the dataloader later.
         val_main_loader_iter = InfiniteIterator(val_main_loader)
         val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
-
-        model = DistributedDataParallel(
-            init_example_gigl_heterogeneous_model(
-                node_type_to_feature_dim=node_type_to_feature_dim,
-                edge_type_to_feature_dim=edge_type_to_feature_dim,
-                device=device,
-            ),
-            device_ids=[device] if torch.cuda.is_available() else None,
-            # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
-            find_unused_parameters=True,
+        model = init_example_gigl_heterogeneous_model(
+            node_type_to_feature_dim=node_type_to_feature_dim,
+            edge_type_to_feature_dim=edge_type_to_feature_dim,
+            device=device,
+            wrap_with_ddp=True,
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
         )
-
         optimizer = torch.optim.AdamW(
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
         # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
@@ -509,19 +507,18 @@ def _training_process(
 
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
-        model = DistributedDataParallel(
-            init_example_gigl_heterogeneous_model(
-                node_type_to_feature_dim=node_type_to_feature_dim,
-                edge_type_to_feature_dim=edge_type_to_feature_dim,
-                device=device,
-                state_dict=state_dict,
-            ),
-            device_ids=[device],
-            # We should set `find_unused_parameters` to True since not all of the model parameters may be used in backward pass in the heterogeneous setting
-            find_unused_parameters=True,
+        model = init_example_gigl_heterogeneous_model(
+            node_type_to_feature_dim=node_type_to_feature_dim,
+            edge_type_to_feature_dim=edge_type_to_feature_dim,
+            device=device,
+            wrap_with_ddp=True,
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
+            state_dict=state_dict,  # We load the model state dict for testing
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
     logger.info(f"---Rank {rank} started testing")
@@ -532,7 +529,7 @@ def _training_process(
         dataset=dataset,
         split="test",
         supervision_edge_type=supervision_edge_type,
-        subgraph_fanout=subgraph_fanout,
+        num_neighbors=num_neighbors,
         sampling_workers_per_process=sampling_workers_per_process,
         main_batch_size=main_batch_size,
         random_batch_size=random_batch_size,
@@ -573,14 +570,16 @@ def _training_process(
         logger.info(
             f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
         )
-        save_state_dict(model=model, save_to_path_uri=model_uri)
+        # We unwrap the model from DDP to save it
+        # We do this so we can use the model without DDP later, e.g. for inference.
+        save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
 
     torch.distributed.destroy_process_group()
 
 
 @torch.inference_mode()
 def _run_validation_loops(
-    model: DistributedDataParallel,
+    model: LinkPredictionGNN,
     main_loader: Iterator[HeteroData],
     random_negative_loader: Iterator[HeteroData],
     loss_fn: RetrievalLoss,
@@ -593,7 +592,7 @@ def _run_validation_loops(
     Runs validation using the provided models and dataloaders.
     This function is shared for both validation while training and testing after training has completed.
     Args:
-        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
+        model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
         main_loader (Iterator[HeteroData]): Dataloader for loading main batch data with query and labeled nodes
         random_negative_loader (Iterator[HeteroData]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
@@ -695,19 +694,15 @@ def _run_example_training(
                 f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
             )
 
-    fanout_per_hop = int(trainer_args.get("fanout_per_hop", "10"))
+    # Parses the fanout as a string.
+    # For the heterogeneous case, the fanouts can be specified as a string of a list of integers, such as "[10, 10]", which will apply this fanout
+    # to each edge type in the graph, or as string of format dict[(tuple[str, str, str])), list[int]] which will specify fanouts per edge type.
+    # In the case of the latter, the keys should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE).
+    # For the default example, we make a decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`.
+    # To see an example of a 'fanout' with different behaviors per edge type, refer to `examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
 
-    # If `subgraph_fanout` is provided as a list, it will use that fanout for each edge type. Otherwise, subgraph fanout should be provided as a
-    # dict[EdgeType, list[int]], indicating the fanout behavior for each edge type. Different edge types can have different fanout strategies. For simplicity,
-    # we make an opinionated decision to keep the fanouts for all edge types the same, specifying the `subraph_fanout` with a `list[int]`.
-
-    # TODO (mkolodner-sc): Make the heterogeneous example use a dict[EdgeType, list[int]] instead of list[int] for specifying fanout
-    # For example:
-    # subgraph_fanout: dict[EdgeType, list[int]] = {
-    #    EdgeType(NodeType("author"), Relation("to"), NodeType("paper")): [10, 10].
-    #    EdgeType(NodeType("term"), Relation("to"), NodeType("paper")): [10, 10].
-    # }
-    subgraph_fanout: list[int] = [fanout_per_hop, fanout_per_hop]
+    fanout = trainer_args.get("num_neighbors", "[10, 10]")
+    num_neighbors = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -740,7 +735,7 @@ def _run_example_training(
 
     logger.info(
         f"Got training args local_world_size={local_world_size}, \
-        fanout_per_hop={fanout_per_hop}, \
+        num_neighbors={num_neighbors}, \
         sampling_workers_per_process={sampling_workers_per_process}, \
         main_batch_size={main_batch_size}, \
         random_batch_size={random_batch_size}, \
@@ -825,7 +820,7 @@ def _run_example_training(
             master_ip_address,  # master_ip_address
             master_default_process_group_port,  # master_default_process_group_port
             model_uri,  # model_uri
-            subgraph_fanout,  # subgraph_fanout
+            num_neighbors,  # num_neighbors
             sampling_workers_per_process,  # sampling_workers_per_process
             main_batch_size,  # main_batch_size
             random_batch_size,  # random_batch_size

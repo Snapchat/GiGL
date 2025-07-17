@@ -3,9 +3,10 @@ from collections.abc import Mapping
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
 from typing import Dict, List, Optional, Sequence, Tuple, Type, Union, cast
 
-from gigl.common import GcsUri, LocalUri, Uri, UriFactory
+from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
+from gigl.common.utils.http import HttpUtils
 from gigl.common.utils.local_fs import (
     FileSystemEntity,
     copy_files,
@@ -140,6 +141,13 @@ class FileLoader:
                     ),
                     should_overwrite=True,
                 )
+        elif uri_map_schema == (HttpUri, LocalUri):
+            logger.info("Downloading from HTTP to Local")
+            HttpUtils.download_files_from_http(
+                http_to_local_path_map=cast(
+                    Dict[HttpUri, LocalUri], source_to_dest_file_uri_map
+                ),
+            )
         else:
             for file_uri_src, file_uri_dst in source_to_dest_file_uri_map.items():
                 self.load_file(
@@ -183,6 +191,10 @@ class FileLoader:
                     ),
                     should_overwrite=True,
                 )
+        elif uri_map_schema == (HttpUri, LocalUri):
+            HttpUtils.download_files_from_http(
+                http_to_local_path_map=cast(Dict[HttpUri, LocalUri], uri_map),
+            )
         else:
             logger.warning(f"Unsupported uri_map_schema: {uri_map_schema}")
             raise TypeError(self.__unsupported_uri_message)
@@ -225,11 +237,14 @@ class FileLoader:
         """ ""
 
         _uri = UriFactory.create_uri(uri=uri) if isinstance(uri, str) else uri
+
         exists: bool
-        if GcsUri.is_valid(uri=_uri, raise_exception=False):
-            exists = self.__gcs_utils.does_gcs_file_exist(gcs_path=_uri)  # type: ignore
-        elif LocalUri.is_valid(uri=_uri, raise_exception=False):
+        if type(_uri) == GcsUri:
+            exists = self.__gcs_utils.does_gcs_file_exist(gcs_path=_uri)
+        elif type(_uri) == LocalUri:
             exists = does_path_exist(cast(LocalUri, _uri))
+        elif type(_uri) == HttpUri:
+            exists = HttpUtils.does_http_path_resolve(http_path=cast(HttpUri, _uri))
         else:
             raise NotImplementedError(f"{self.__unsupported_uri_message} : {_uri}")
         return exists
