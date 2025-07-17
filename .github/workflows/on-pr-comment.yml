@@ -3,7 +3,6 @@ name: On Demand Pr Comment Workflows
 on:
   issue_comment:
     types: [created]
-  push: #testing4
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
