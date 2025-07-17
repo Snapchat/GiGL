@@ -105,7 +105,7 @@ WITH joined_table AS (
 )
 SELECT
   {group_by_identifier},
-  `{average_feature_query}`
+  {average_feature_query}
 FROM
   joined_table
 GROUP BY

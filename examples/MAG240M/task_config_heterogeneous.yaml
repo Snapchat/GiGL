@@ -21,7 +21,7 @@ taskMetadata:
     # We aim to predict paper -> paper links in the graph.
     supervisionEdgeTypes:
     - dstNodeType: paper
-      relation: to
+      relation: cites
       srcNodeType: paper
 datasetConfig:
   dataPreprocessorConfig:
@@ -41,12 +41,7 @@ trainerConfig:
     # use the same fanout. If you want different anchor node types to have different fanouts, we encourage adding additional arguemnts here to parse
     # fanouts for each anchor node type.
     # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
-    num_neighbors: >-
-      {
-        ("term", "to", "paper"): [10, 10],
-        ("paper", "to", "author"): [15, 15],
-        ("author", "to", "paper"): [20, 20]
-      }
+    num_neighbors: "[10, 10]"
   command: python -m examples.link_prediction.heterogeneous_training
 inferencerConfig:
   inferencerArgs:
@@ -56,12 +51,7 @@ inferencerConfig:
     # use the same fanout. If you want different anchor node types to have different fanouts, we encourage adding additional arguemnts here to parse
     # fanouts for each anchor node type.
     # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
-    num_neighbors: >-
-      {
-        ("term", "to", "paper"): [10, 10],
-        ("paper", "to", "author"): [15, 15],
-        ("author", "to", "paper"): [20, 20]
-      }
+    num_neighbors: "[10, 10]"
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.heterogeneous_inference
 sharedConfig:
