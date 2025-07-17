@@ -21,6 +21,12 @@ steps:
         echo "source /root/.bashrc" >> ~/.bashrc
         echo "source /root/.profile" >> ~/.profile
 
+        echo "========DEBUG DEBUG========="
+        cat /root/.bashrc
+        cat /root/.profile
+        echo "========DEBUG DEBUG========="
+
+
         source ~/.profile
         source ~/.bashrc
         echo "DEBUG bashrc"
