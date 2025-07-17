@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 20 # If our linting takes longer than 20 minutes something has gone very wrong...
     steps:
     - name: Run Linting Tests
-      uses: .github/actions/run-command-on-pr
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}

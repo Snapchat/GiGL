@@ -93,7 +93,7 @@ runs:
 
     - name: Run specified command on the PR branch using Cloud Run
       if: ${{ inputs.use_cloud_run == 'true' }}
-      uses: .github/actions/run-cloud-run-command-on-active-checkout
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         cmd: ${{ inputs.command }}
         service_account: ${{ inputs.gcp_service_account_email }}
