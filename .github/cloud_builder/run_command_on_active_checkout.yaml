@@ -17,6 +17,11 @@ steps:
         fi
 
         echo "Setting up environment..."
+        # gcloud runner will run as a non-root user, but all paths/profiles, etc are set up for root
+        echo "source /root/.bashrc" >> ~/.bashrc
+        echo "source /root/.profile" >> ~/.profile
+
+        source ~/.profile
         docker buildx create --driver=docker-container --use
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -24,6 +29,9 @@ steps:
         # TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
         bash ./requirements/install_scala_deps.sh
         pip install -e ./python/
+
+        # Since more deps were installed we need to re-source the bashrc
+        source ~/.profile
 
         echo "Finished setting up environment."
         echo "========================="
