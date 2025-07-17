@@ -4,11 +4,13 @@ from typing import Dict, Final, List, Optional
 import kfp
 import kfp.dsl.pipeline_channel
 from kfp.dsl import PipelineTask
+from sympy import comp
 
 import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
+from gigl.orchestration.kubeflow import compoent_wrappers
 from gigl.orchestration.kubeflow.utils.glt_backend import (
     check_glt_backend_eligibility_component,
 )
@@ -57,30 +59,52 @@ def _generate_component_task(
 ) -> PipelineTask:
     component_task: PipelineTask
     if component == GiGLComponents.ConfigPopulator:
-        component_task = _speced_component_op_dict[component](
+        component_task = compoent_wrappers.ConfigPopulator(
+            base_image=common_pipeline_component_configs.cpu_container_image,
             job_name=job_name,
-            template_uri=task_config_uri,
+            task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
-            **common_pipeline_component_configs.additional_job_args.get(component, {}),
         )
+        # component_task = _speced_component_op_dict[component](
+        #     job_name=job_name,
+        #     template_uri=task_config_uri,
+        #     resource_config_uri=resource_config_uri,
+        #     **common_pipeline_component_configs.additional_job_args.get(component, {}),
+        # )
 
     elif component == GiGLComponents.ConfigValidator:
-        component_task = _speced_component_op_dict[component](
+        component_task = compoent_wrappers.ConfigValidator(
+            base_image=common_pipeline_component_configs.cpu_container_image,
             job_name=job_name,
             task_config_uri=task_config_uri,
             start_at=start_at,
             resource_config_uri=resource_config_uri,
             stop_after=stop_after,
-            **common_pipeline_component_configs.additional_job_args.get(component, {}),
         )
+        # component_task = _speced_component_op_dict[component](
+        #     job_name=job_name,
+        #     task_config_uri=task_config_uri,
+        #     start_at=start_at,
+        #     resource_config_uri=resource_config_uri,
+        #     stop_after=stop_after,
+        #     **common_pipeline_component_configs.additional_job_args.get(component, {}),
+        # )
     elif component == GiGLComponents.SubgraphSampler:
-        component_task = _speced_component_op_dict[component](
+        component_task = compoent_wrappers.SubgraphSampler(
+            base_image=common_pipeline_component_configs.dataflow_container_image,
             job_name=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             custom_worker_image_uri=common_pipeline_component_configs.dataflow_container_image,
             **common_pipeline_component_configs.additional_job_args.get(component, {}),
         )
+        # component_task = _speced_component_op_dict[component](
+        #     job_name=job_name,
+        #     task_config_uri=task_config_uri,
+        #     resource_config_uri=resource_config_uri,
+        #     custom_worker_image_uri=common_pipeline_component_configs.dataflow_container_image,
+        #     **common_pipeline_component_configs.additional_job_args.get(component, {}),
+        # )
     elif component == GiGLComponents.Trainer:
         component_task = _speced_component_op_dict[component](
             job_name=job_name,
@@ -252,7 +276,7 @@ def _create_config_populator_task_op(
         common_pipeline_component_configs=common_pipeline_component_configs,
         stop_after=stop_after,
     )
-    frozen_gbml_config_uri = config_populator_task.outputs["frozen_gbml_config_uri"]
+    frozen_gbml_config_uri = config_populator_task.output
 
     with kfp.dsl.Condition(stop_after != GiGLComponents.ConfigPopulator.value):
         data_preprocessor_task = _create_data_preprocessor_task_op(
