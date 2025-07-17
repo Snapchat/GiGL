@@ -77,7 +77,7 @@ jobs:
           make run_all_e2e_tests
 
   notebooks-e2e-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
+    #if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
