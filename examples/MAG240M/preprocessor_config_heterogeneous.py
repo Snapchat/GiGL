@@ -256,13 +256,6 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
             edge_usage_type=EdgeUsageType.MAIN,
         )
 
-        # Our training task is link prediction on paper -> cites -> paper edges, thus we specify this as the only positive edge
-        positive_edge_data_ref = BigqueryEdgeDataReference(
-            reference_uri=self.paper_cite_paper_table,
-            edge_type=main_edge_type,
-            edge_usage_type=EdgeUsageType.POSITIVE,
-        )
-
         feature_spec_fn = build_ingestion_feature_spec_fn(
             fixed_int_fields=[
                 self.src_id_column_name,
@@ -286,6 +279,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         )
 
         return {
-            main_edge_data_ref: edge_data_preprocessing_spec,
-            positive_edge_data_ref: edge_data_preprocessing_spec,
+            paper_cites_paper_edge_ref: edge_data_preprocessing_spec,
+            author_writes_paper_edge_ref: edge_data_preprocessing_spec,
+            author_affiliated_insititution_edge_ref: edge_data_preprocessing_spec,
         }
