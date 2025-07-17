@@ -138,6 +138,19 @@ class LoaderUtilsTest(unittest.TestCase):
                     _I2U_EDGE_TYPE: [3, 4],
                 },
             ),
+            param(
+                "Test for homogeneous dataset with negative fanout",
+                edge_types=None,
+                num_neighbors=[-1, 3],
+            ),
+            param(
+                "Test for heterogeneous dataset with negative fanout",
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE],
+                num_neighbors={
+                    _U2I_EDGE_TYPE: [2, -7],
+                    _I2U_EDGE_TYPE: [3, 4],
+                },
+            ),
         ]
     )
     def test_patch_neighbors_failure(
