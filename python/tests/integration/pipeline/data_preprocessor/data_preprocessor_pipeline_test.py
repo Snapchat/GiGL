@@ -1,7 +1,7 @@
 import platform
 import tempfile
 import unittest
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
 import tensorflow as tf
@@ -73,13 +73,13 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
         self.gcs_utils = GcsUtils()
         self.bq_utils = BqUtils()
         self.proto_utils = ProtoUtils()
-        self.__gcs_dirs_to_cleanup: List[GcsUri] = []
-        self.__applied_tasks_to_cleanup: List[AppliedTaskIdentifier] = []
+        self.__gcs_dirs_to_cleanup: list[GcsUri] = []
+        self.__applied_tasks_to_cleanup: list[AppliedTaskIdentifier] = []
 
     @staticmethod
     def __get_np_arrays_from_tfrecords(
         schema_path: GcsUri,
-        tfrecord_files: List[str],
+        tfrecord_files: list[str],
         # This is set larger than cora num nodes & edges so as to read the whole dataset in 1 go.
         max_batch_size=16384,
     ) -> Dict[str, np.ndarray]:
@@ -225,7 +225,7 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
                 ]
             )
 
-            expected_node_feature_names: List[str] = [
+            expected_node_feature_names: list[str] = [
                 get_feature_field_name(n=n)
                 for n in range(mocked_dataset_info.num_node_features[node_type])
             ]
@@ -323,7 +323,7 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
         dst_node_id_key: str,
         expected_num_edge_features: int,
         expected_num_edges: int,
-        expected_edge_feature_names: List[str],
+        expected_edge_feature_names: list[str],
         expected_edge_feats_indexed_by_feat_name: Dict[str, tf.Tensor],
     ):
         logger.info(
@@ -436,7 +436,7 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
                 ]
             )
 
-            expected_edge_feature_names: List[str] = [
+            expected_edge_feature_names: list[str] = [
                 get_feature_field_name(n=n)
                 for n in range(expected_num_user_def_edge_features_for_label_type)
             ]
@@ -513,7 +513,7 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
             src_node_id_key = edge_metadata_output_pb.src_node_id_key
             dst_node_id_key = edge_metadata_output_pb.dst_node_id_key
 
-            expected_main_edge_feature_names: List[str] = [
+            expected_main_edge_feature_names: list[str] = [
                 get_feature_field_name(n=n)
                 for n in range(mocked_dataset_info.num_edge_features[edge_type])
             ]
