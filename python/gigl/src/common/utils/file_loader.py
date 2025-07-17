@@ -1,7 +1,7 @@
 import tempfile
 from collections.abc import Mapping
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
-from typing import Dict, List, Optional, Sequence, Tuple, Type, Union, cast
+from typing import Dict, Optional, Sequence, Tuple, Type, Union, cast
 
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -34,8 +34,8 @@ class FileLoader:
     ) -> Tuple[Optional[Type[Uri]], Optional[Type[Uri]]]:
         uniform_src_type: Optional[Type[Uri]] = None
         uniform_dst_type: Optional[Type[Uri]] = None
-        src_types: List[Type[Uri]] = [uri.__class__ for uri in uri_map.keys()]
-        dst_types: List[Type[Uri]] = [uri.__class__ for uri in uri_map.values()]
+        src_types: list[Type[Uri]] = [uri.__class__ for uri in uri_map.keys()]
+        dst_types: list[Type[Uri]] = [uri.__class__ for uri in uri_map.values()]
         if all([src_types[0] == x for x in src_types]):
             uniform_src_type = src_types[0]
         if all([dst_types[0] == x for x in dst_types]):
@@ -61,10 +61,10 @@ class FileLoader:
         elif uri_map_schema == (LocalUri, GcsUri):
             dir_uri_src = cast(LocalUri, dir_uri_src)
             dir_uri_dst = cast(GcsUri, dir_uri_dst)
-            local_paths: List[LocalUri] = list_at_path(
+            local_paths: list[LocalUri] = list_at_path(
                 local_path=dir_uri_src, file_system_entity=FileSystemEntity.FILE
             )
-            gcs_paths: List[GcsUri] = [
+            gcs_paths: list[GcsUri] = [
                 GcsUri.join(dir_uri_dst, local_fn.uri)
                 for local_fn in list_at_path(dir_uri_src, names_only=True)
             ]
@@ -80,10 +80,10 @@ class FileLoader:
             dir_uri_src = cast(LocalUri, dir_uri_src)
             dir_uri_dst = cast(LocalUri, dir_uri_dst)
 
-            local_src_paths: List[LocalUri] = list_at_path(
+            local_src_paths: list[LocalUri] = list_at_path(
                 local_path=dir_uri_src, file_system_entity=FileSystemEntity.FILE
             )
-            local_dst_paths: List[LocalUri] = [
+            local_dst_paths: list[LocalUri] = [
                 LocalUri.join(dir_uri_dst, local_src_fn)
                 for local_src_fn in list_at_path(
                     local_path=dir_uri_src,
@@ -249,12 +249,12 @@ class FileLoader:
             raise NotImplementedError(f"{self.__unsupported_uri_message} : {_uri}")
         return exists
 
-    def delete_files(self, uris: List[Uri]) -> None:
+    def delete_files(self, uris: list[Uri]) -> None:
         """
         Recursively delete files in the specified URIs.
 
         Args:
-            uris (List[Uri]): URIs to delete
+            uris (list[Uri]): URIs to delete
         Returns
             None
         """
@@ -275,7 +275,7 @@ class FileLoader:
             uri (Uri): The URI to list children of.
             pattern (Optional[str]): Optional regex to match. If not provided then all children will be returned.
         Returns:
-            List[Uri]: A list of URIs for the children of the given URI.
+            list[Uri]: A list of URIs for the children of the given URI.
         """
         if isinstance(uri, GcsUri):
             return self.__gcs_utils.list_uris_with_gcs_path_pattern(
