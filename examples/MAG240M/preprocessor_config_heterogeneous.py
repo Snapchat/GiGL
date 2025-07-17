@@ -97,10 +97,6 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
             NodeType(self.institution_node_type),
         )
 
-        # We specify the column names for the input node/edge tables
-        self.node_id_column_name = "node_id"
-        self.src_id_column_name = "src"
-        self.dst_id_column_name = "dst"
         self.feature_list = [f"feat_{i}" for i in range(NUM_PAPER_FEATURES)]
         self.average_feature_query = ",\n".join(
             [f"AVG({col}) AS {col}" for col in self.feature_list]
@@ -184,102 +180,85 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         # We specify where the input data is located using NodeDataReference
         # In this case, we are reading from BigQuery, thus make use off BigqueryNodeDataReference
 
-        paper_node_data_reference: NodeDataReference = BigqueryNodeDataReference(
-            reference_uri=self.paper_table,
-            node_type=NodeType(self.paper_node_type),
-        )
+        output_dict: dict[NodeDataReference, NodeDataPreprocessingSpec] = {}
+        node_data_reference: NodeDataReference
 
-        author_node_data_reference: NodeDataReference = BigqueryNodeDataReference(
-            reference_uri=self.author_table,
-            node_type=NodeType(self.author_node_type),
-        )
+        for node_type, table in zip(
+            [self.paper_node_type, self.author_node_type, self.institution_node_type],
+            [self.paper_table, self.author_table, self.institution_table],
+        ):
+            node_data_reference = BigqueryNodeDataReference(
+                reference_uri=table,
+                node_type=NodeType(node_type),
+            )
 
-        institution_node_data_reference: NodeDataReference = BigqueryNodeDataReference(
-            reference_uri=self.institution_node_type,
-            node_type=NodeType(self.institution_node_type),
-        )
+            node_output_id = NodeOutputIdentifier(node_type)
 
-        # The ingestion feature spec function is used to specify the input columns and their types
-        # that will be read from the NodeDataReference - which in this case is BQ.
-        feature_spec_fn = build_ingestion_feature_spec_fn(
-            fixed_int_fields=[self.node_id_column_name],
-            fixed_float_fields=self.feature_list,
-        )
+            # The ingestion feature spec function is used to specify the input columns and their types
+            # that will be read from the NodeDataReference - which in this case is BQ.
+            feature_spec_fn = build_ingestion_feature_spec_fn(
+                fixed_int_fields=[node_type],
+                fixed_float_fields=self.feature_list,
+            )
 
-        # We don't need any special preprocessing for the node features.
-        # Thus, we can make use of a "passthrough" transform preprocessing function that simply passes the input
-        # features through to the output features.
-        preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+            # We don't need any special preprocessing for the node features.
+            # Thus, we can make use of a "passthrough" transform preprocessing function that simply passes the input
+            # features through to the output features.
+            preprocessing_fn = build_passthrough_transform_preprocessing_fn()
 
-        node_output_id = NodeOutputIdentifier(self.node_id_column_name)
-        node_features_outputs = self.feature_list
+            node_features_outputs = self.feature_list
 
-        return {
-            paper_node_data_reference: NodeDataPreprocessingSpec(
+            output_dict[node_data_reference] = NodeDataPreprocessingSpec(
                 feature_spec_fn=feature_spec_fn,
                 preprocessing_fn=preprocessing_fn,
                 identifier_output=node_output_id,
                 features_outputs=node_features_outputs,
-            ),
-            author_node_data_reference: NodeDataPreprocessingSpec(
-                feature_spec_fn=feature_spec_fn,
-                preprocessing_fn=preprocessing_fn,
-                identifier_output=node_output_id,
-                features_outputs=node_features_outputs,
-            ),
-            institution_node_data_reference: NodeDataPreprocessingSpec(
-                feature_spec_fn=feature_spec_fn,
-                preprocessing_fn=preprocessing_fn,
-                identifier_output=node_output_id,
-                features_outputs=node_features_outputs,
-            ),
-        }
+            )
+        return output_dict
 
     def get_edges_preprocessing_spec(
         self,
     ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
-        paper_cites_paper_edge_ref = BigqueryEdgeDataReference(
-            reference_uri=self.paper_cites_paper_table,
-            edge_type=self.paper_cites_paper_edge_type,
-            edge_usage_type=EdgeUsageType.MAIN,
-        )
+        output_dict: dict[EdgeDataReference, EdgeDataPreprocessingSpec] = {}
 
-        author_writes_paper_edge_ref = BigqueryEdgeDataReference(
-            reference_uri=self.author_writes_paper_table,
-            edge_type=self.author_writes_paper_edge_type,
-            edge_usage_type=EdgeUsageType.MAIN,
-        )
+        for edge_type, table in zip(
+            [
+                self.paper_cites_paper_edge_type,
+                self.author_writes_paper_edge_type,
+                self.author_affiliated_insitution_edge_type,
+            ],
+            [
+                self.paper_cites_paper_table,
+                self.author_writes_paper_table,
+                self.author_affiliated_institution_table,
+            ],
+        ):
+            edge_ref = BigqueryEdgeDataReference(
+                reference_uri=table,
+                edge_type=edge_type,
+                edge_usage_type=EdgeUsageType.MAIN,
+            )
 
-        author_affiliated_insititution_edge_ref = BigqueryEdgeDataReference(
-            reference_uri=self.author_affiliated_institution_table,
-            edge_type=self.author_affiliated_insitution_edge_type,
-            edge_usage_type=EdgeUsageType.MAIN,
-        )
+            feature_spec_fn = build_ingestion_feature_spec_fn(
+                fixed_int_fields=[
+                    edge_type.src_node_type,
+                    edge_type.dst_node_type,
+                ]
+            )
 
-        feature_spec_fn = build_ingestion_feature_spec_fn(
-            fixed_int_fields=[
-                self.src_id_column_name,
-                self.dst_id_column_name,
-            ]
-        )
+            # We don't need any special preprocessing for the edges as there are no edge features to begin with.
+            # Thus, we can make use of a "passthrough" transform preprocessing function that simply passes the input
+            # features through to the output features.
+            preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+            edge_output_id = EdgeOutputIdentifier(
+                src_node=NodeOutputIdentifier(edge_type.src_node_type),
+                dst_node=NodeOutputIdentifier(edge_type.dst_node_type),
+            )
 
-        # We don't need any special preprocessing for the edges as there are no edge features to begin with.
-        # Thus, we can make use of a "passthrough" transform preprocessing function that simply passes the input
-        # features through to the output features.
-        preprocessing_fn = build_passthrough_transform_preprocessing_fn()
-        edge_output_id = EdgeOutputIdentifier(
-            src_node=NodeOutputIdentifier(self.src_id_column_name),
-            dst_node=NodeOutputIdentifier(self.dst_id_column_name),
-        )
+            output_dict[edge_ref] = EdgeDataPreprocessingSpec(
+                identifier_output=edge_output_id,
+                feature_spec_fn=feature_spec_fn,
+                preprocessing_fn=preprocessing_fn,
+            )
 
-        edge_data_preprocessing_spec = EdgeDataPreprocessingSpec(
-            identifier_output=edge_output_id,
-            feature_spec_fn=feature_spec_fn,
-            preprocessing_fn=preprocessing_fn,
-        )
-
-        return {
-            paper_cites_paper_edge_ref: edge_data_preprocessing_spec,
-            author_writes_paper_edge_ref: edge_data_preprocessing_spec,
-            author_affiliated_insititution_edge_ref: edge_data_preprocessing_spec,
-        }
+        return output_dict
