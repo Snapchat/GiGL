@@ -39,7 +39,13 @@ class LocalUri(Uri, os.PathLike):
         Returns:
             bool: True if the URI is valid, False otherwise.
         """
-        return True  # Default
+        is_valid: bool = True
+        # Check if path starts with known remote schemes
+        if str(uri).startswith(("gs://", "http://", "https://")):
+            is_valid = False
+            if raise_exception:
+                raise ValueError(f"URI {uri} is not a valid local path")
+        return is_valid
 
     def absolute(self) -> LocalUri:
         """Returns an absolute `LocalUri` object.
