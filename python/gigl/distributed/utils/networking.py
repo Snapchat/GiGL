@@ -1,5 +1,5 @@
 import socket
-from typing import List, Optional
+from typing import Optional
 
 import torch
 
@@ -19,18 +19,18 @@ def get_free_port() -> int:
     return get_free_ports(num_ports=1)[0]
 
 
-def get_free_ports(num_ports: int) -> List[int]:
+def get_free_ports(num_ports: int) -> list[int]:
     """
     Get a list of free port numbers.
     Note: If you call `get_free_ports` multiple times, it can return the same port number if the port is still free.
     Args:
         num_ports (int): Number of free ports to find.
     Returns:
-        List[int]: A list of free port numbers on the current machine.
+        list[int]: A list of free port numbers on the current machine.
     """
     assert num_ports >= 1, "num_ports must be >= 1"
-    ports: List[int] = []
-    open_sockets: List[socket.socket] = []
+    ports: list[int] = []
+    open_sockets: list[socket.socket] = []
     for _ in range(num_ports):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # OS assigns a free port; we want to keep it open until we have all ports so we only return unique ports
@@ -45,7 +45,7 @@ def get_free_ports(num_ports: int) -> List[int]:
 
 def get_free_ports_from_master_node(
     num_ports=1, _global_rank_override: Optional[int] = None
-) -> List[int]:
+) -> list[int]:
     """
     Get free ports from master node, that can be used for communication between workers.
     Args:
@@ -53,7 +53,7 @@ def get_free_ports_from_master_node(
         _global_rank_override (Optional[int]): Override for the global rank,
             useful for testing or if global rank is not accurately available.
     Returns:
-        List[int]: A list of free port numbers on the master node.
+        list[int]: A list of free port numbers on the master node.
     """
     # Ensure that the distributed environment is initialized
     assert (
@@ -69,7 +69,7 @@ def get_free_ports_from_master_node(
     logger.info(
         f"Rank {rank} is requesting {num_ports} free ports from rank 0 (master)"
     )
-    ports: List[int]
+    ports: list[int]
     if rank == 0:
         ports = get_free_ports(num_ports)
         logger.info(f"Rank {rank} found free ports: {ports}")
@@ -107,7 +107,7 @@ def get_internal_ip_from_master_node(
         f"Rank {rank} is requesting internal ip address of master node from rank 0 (master)"
     )
 
-    master_ip_list: List[Optional[str]] = []
+    master_ip_list: list[Optional[str]] = []
     if rank == 0:
         # Master node, return its own internal IP
         master_ip_list = [socket.gethostbyname(socket.gethostname())]
@@ -123,7 +123,7 @@ def get_internal_ip_from_master_node(
     return master_ip
 
 
-def get_internal_ip_from_all_ranks() -> List[str]:
+def get_internal_ip_from_all_ranks() -> list[str]:
     """
     Get the internal IP addresses of all ranks in a distributed setup. Internal IPs are usually not accessible
     from the web. i.e. the machines will have to be on the same network or VPN to get the right address so each
@@ -132,7 +132,7 @@ def get_internal_ip_from_all_ranks() -> List[str]:
     Or, if you are trying to run validation checks, get local world size for a specific node, etc.
 
     Returns:
-        List[str]: A list of internal IP addresses of all ranks.
+        list[str]: A list of internal IP addresses of all ranks.
     """
     assert (
         torch.distributed.is_initialized()
@@ -142,7 +142,7 @@ def get_internal_ip_from_all_ranks() -> List[str]:
     world_size = torch.distributed.get_world_size()
     logger.info(f"Rank {rank} is requesting internal IP addresses from all ranks")
 
-    ip_list: List[str] = [""] * world_size
+    ip_list: list[str] = [""] * world_size
     curr_rank_ip = socket.gethostbyname(socket.gethostname())
     torch.distributed.all_gather_object(ip_list, curr_rank_ip)
 
