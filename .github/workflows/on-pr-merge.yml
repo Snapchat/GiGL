@@ -6,6 +6,7 @@ on:
   # https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
   pull_request:
   merge_group:
+  push:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -82,7 +83,7 @@ jobs:
         project:  ${{ secrets.gcp_project_id }}
 
   ci-integration-example-notebooks-test:
-    if: github.event_name == 'merge_group'
+    # if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
