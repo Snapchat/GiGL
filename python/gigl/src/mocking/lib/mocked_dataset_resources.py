@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import torch
 
@@ -21,11 +21,11 @@ class MockedDatasetInfo:
     # TODO: (svij) Deprecate MockedDatasetInfo in favor of pyg.HeteroData
 
     @property
-    def node_types(self) -> List[NodeType]:
+    def node_types(self) -> list[NodeType]:
         return list(self.node_feats.keys())
 
     @property
-    def edge_types(self) -> List[EdgeType]:
+    def edge_types(self) -> list[EdgeType]:
         return list(self.edge_index.keys())
 
     @property

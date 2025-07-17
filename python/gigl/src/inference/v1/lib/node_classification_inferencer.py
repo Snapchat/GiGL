@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Dict, List
+from typing import Callable, Dict
 
 import apache_beam as beam
 
@@ -52,7 +52,7 @@ class NodeClassificationInferenceBlueprint(
         assert isinstance(inferencer, SupervisedNodeClassificationBaseInferencer)
         super().__init__(inferencer=inferencer)
 
-    def get_inference_data_tf_record_uri_prefixes(self) -> Dict[NodeType, List[Uri]]:
+    def get_inference_data_tf_record_uri_prefixes(self) -> Dict[NodeType, list[Uri]]:
         flattened_graph_metadata_pb_wrapper = (
             self.__gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
         )

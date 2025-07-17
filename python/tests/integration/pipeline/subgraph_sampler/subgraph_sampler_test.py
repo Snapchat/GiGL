@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from collections import defaultdict
 from itertools import chain
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Dict, Iterable, Set, Tuple
 
 from gigl.common import LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -173,8 +173,8 @@ class SubgraphSamplerTest(unittest.TestCase):
         use_spark35: bool = False,
     ) -> Tuple[
         ExpectedGraphFromPreprocessor,
-        Dict[NodeType, List[RootedNodeNeighborhood]],
-        List[NodeAnchorBasedLinkPredictionSample],
+        Dict[NodeType, list[RootedNodeNeighborhood]],
+        list[NodeAnchorBasedLinkPredictionSample],
     ]:
         """
         Run the SGS pipeline for a NABLP task using the provided GbmlConfig and check the validity of the output.
@@ -730,7 +730,7 @@ class SubgraphSamplerTest(unittest.TestCase):
         subgraph_sampler_config_pb: gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig,
         is_subgraph_sampling_strategy_provided: bool = False,
     ) -> Dict[
-        NodeType, Dict[NodeType, List[subgraph_sampling_strategy_pb2.SamplingOp]]
+        NodeType, Dict[NodeType, list[subgraph_sampling_strategy_pb2.SamplingOp]]
     ]:
         """
         Builds a map of samplingOps for each path in the subgraph sampling strategy. For each root node type, maps to the dst node type to the sampling ops.
@@ -738,7 +738,7 @@ class SubgraphSamplerTest(unittest.TestCase):
         """
         # map subgraph sampling strategy root node to dst node to sampling op
         root_node_type_to_dst_node_type_to_sampling_ops_map: Dict[
-            NodeType, Dict[NodeType, List[subgraph_sampling_strategy_pb2.SamplingOp]]
+            NodeType, Dict[NodeType, list[subgraph_sampling_strategy_pb2.SamplingOp]]
         ] = defaultdict(lambda: defaultdict(list))
         if is_subgraph_sampling_strategy_provided:
             for (
@@ -758,8 +758,8 @@ class SubgraphSamplerTest(unittest.TestCase):
     def __build_sample_node_to_in_edge_map(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        rooted_node_neighborhood_samples: List[RootedNodeNeighborhood],
-    ) -> Dict[NodePbWrapper, List[EdgePbWrapper]]:
+        rooted_node_neighborhood_samples: list[RootedNodeNeighborhood],
+    ) -> Dict[NodePbWrapper, list[EdgePbWrapper]]:
         """
         Builds a map of NodePbWrapper to inbound EdgePbWrappers for each sample.
         """
@@ -821,7 +821,7 @@ class SubgraphSamplerTest(unittest.TestCase):
 
         def __check_exact_number_of_in_edges_for_dst_node(
             dst_node_pb_wrapper: NodePbWrapper,
-            sampling_ops: List[subgraph_sampling_strategy_pb2.SamplingOp],
+            sampling_ops: list[subgraph_sampling_strategy_pb2.SamplingOp],
             condensed_edge_type_to_in_edges_count: Dict[CondensedEdgeType, int],
         ):
             for sampling_op in sampling_ops:
@@ -850,7 +850,7 @@ class SubgraphSamplerTest(unittest.TestCase):
 
         def __check_number_of_in_edges_for_dst_node(
             dst_node_pb_wrapper: NodePbWrapper,
-            sampling_ops: List[subgraph_sampling_strategy_pb2.SamplingOp],
+            sampling_ops: list[subgraph_sampling_strategy_pb2.SamplingOp],
             condensed_edge_type_to_in_edges_count: Dict[CondensedEdgeType, int],
         ):
             condensed_edge_type_to_max_num_nodes_to_sample: Dict[
@@ -898,7 +898,7 @@ class SubgraphSamplerTest(unittest.TestCase):
                 )
 
         def __build_condensed_edge_type_to_in_edges_count_map(
-            in_edges: List[EdgePbWrapper],
+            in_edges: list[EdgePbWrapper],
         ):
             condensed_edge_type_to_in_edges_count: Dict[
                 CondensedEdgeType, int
@@ -970,8 +970,8 @@ class SubgraphSamplerTest(unittest.TestCase):
 
     def __check_nodes_do_not_have_nablp_training_samples(
         self,
-        training_samples: List[NodeAnchorBasedLinkPredictionSample],
-        nodes_to_check: List[NodePbWrapper],
+        training_samples: list[NodeAnchorBasedLinkPredictionSample],
+        nodes_to_check: list[NodePbWrapper],
     ):
         """
         Check that the provided nodes do not appear in the training samples.
@@ -994,7 +994,7 @@ class SubgraphSamplerTest(unittest.TestCase):
         self,
         mocked_dataset_info: MockedDatasetInfo,
         subgraph_sampler_config_pb: gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig,
-        isolated_node_ids: List[int] = [],
+        isolated_node_ids: list[int] = [],
         should_check_user_defined_labels: bool = False,
     ):
         """
@@ -1295,8 +1295,8 @@ class SubgraphSamplerTest(unittest.TestCase):
         subgraph_sampler_config_pb: gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig,
     ) -> Tuple[
         ExpectedGraphFromPreprocessor,
-        List[RootedNodeNeighborhood],
-        List[RootedNodeNeighborhood],
+        list[RootedNodeNeighborhood],
+        list[RootedNodeNeighborhood],
     ]:
         """
         Run the SGS pipeline for a Node-Based Task using the provided GbmlConfig and check the validity of the output.

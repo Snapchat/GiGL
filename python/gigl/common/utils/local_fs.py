@@ -4,7 +4,7 @@ import os
 import pathlib
 import re
 import shutil
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
@@ -84,7 +84,7 @@ def list_at_path(
     regex: Optional[str] = None,
     file_system_entity: Optional[FileSystemEntity] = None,
     names_only: bool = False,
-) -> List[LocalUri]:
+) -> list[LocalUri]:
     """
     List all files and directories in the given local path.
 
@@ -95,7 +95,7 @@ def list_at_path(
         names_only (bool): If True, return only the base names of the files and directories. Defaults to False. e.g /path/to/file.txt -> file.txt
 
     Returns:
-        List[LocalUri]: A list of local URIs for the files and directories in the given path.
+        list[LocalUri]: A list of local URIs for the files and directories in the given path.
     """
     children = os.listdir(local_path.uri)
     entity_filter: Callable[[str], bool]
