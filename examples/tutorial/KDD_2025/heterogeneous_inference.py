@@ -1,4 +1,22 @@
 """
+Example heterogeneous inference script for GiGL.
+This script demonstrates how to run inference on a heterogeneous graph model using GiGL.
+It initializes a model, loads the state from a saved URI, and performs inference on the dataset.
+It also exports the embeddings to a specified GCS URI and loads them into BigQuery.
+
+Example usage:
+    python \
+        examples/tutorial/KDD_2025/heterogeneous_inference.py \
+        --embedding_output_uri=gs://MY BUCKET/my/embeddings.path \
+        --project_id=$PROJECT_ID \
+        --dataset_id=gigl_embeddings \
+        --table_id=gigl_embeddings_table
+
+Multi node inference is supported by via the --rank and --world_size arguments.
+Ff doing multi node inference, make sure to set the `--host` and `--port` arguments
+to the same values across all nodes.
+
+You may use the `--process_count` argument to control how many training processes will be spawned.
 """
 import os
 
@@ -185,8 +203,8 @@ if __name__ == "__main__":
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
             UriFactory.create_uri(args.saved_model_uri),  # saved_model_uri
-            args.project_id,  # project_id
-            args.dataset_id,  # dataset_id
+            args.project_id, # project_id
+            args.dataset_id, # dataset_id
             args.table_id,  # table_id
             args.batch_size,  # batch_size
         ),
