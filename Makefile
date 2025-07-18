@@ -131,11 +131,11 @@ generate_dev_linux_cuda_hashed_requirements:
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
-	python shared/tests/dep_vars_check.py
+	python testing/dep_vars_check.py
 
 
 assert_yaml_configs_parse:
-	python scripts/assert_yaml_configs_parse.py -d .
+	python testing/assert_yaml_configs_parse.py -d .
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
