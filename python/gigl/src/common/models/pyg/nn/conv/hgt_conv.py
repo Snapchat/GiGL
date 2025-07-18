@@ -1,5 +1,5 @@
 import math
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 from torch import Tensor
@@ -36,7 +36,7 @@ class HGTConv(MessagePassing):
             node type, or :obj:`-1` to derive the size from the first input(s)
             to the forward method.
         out_channels (int): Size of each output sample.
-        metadata (Tuple[List[str], List[Tuple[str, str, str]]]): The metadata
+        metadata (Tuple[list[str], list[Tuple[str, str, str]]]): The metadata
             of the heterogeneous graph, *i.e.* its node and edge types given
             by a list of strings and a list of string triplets, respectively.
             See :meth:`torch_geometric.data.HeteroData.metadata` for more
@@ -108,7 +108,7 @@ class HGTConv(MessagePassing):
     def _cat(self, x_dict: Dict[str, Tensor]) -> Tuple[Tensor, Dict[str, int]]:
         """Concatenates a dictionary of features."""
         cumsum = 0
-        outs: List[Tensor] = []
+        outs: list[Tensor] = []
         offset: Dict[str, int] = {}
         for key, x in x_dict.items():
             outs.append(x)
@@ -128,9 +128,9 @@ class HGTConv(MessagePassing):
         H, D = self.heads, self.out_channels // self.heads
 
         # Flatten into a single tensor with shape [num_edge_types * heads, D]:
-        ks: List[Tensor] = []
-        vs: List[Tensor] = []
-        type_list: List[Tensor] = []
+        ks: list[Tensor] = []
+        vs: list[Tensor] = []
+        type_list: list[Tensor] = []
         offset: Dict[EdgeType, int] = {}
         for edge_type in edge_index_dict.keys():
             src = edge_type[0]
