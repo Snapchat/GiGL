@@ -1,5 +1,5 @@
 from contextlib import ExitStack
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -90,7 +90,7 @@ class GraphSageTemplateTrainerSpec(
         )
 
         # Prepare dataloader configurations
-        dataloader_batch_size_map: Dict[DataloaderTypes, int] = {
+        dataloader_batch_size_map: dict[DataloaderTypes, int] = {
             DataloaderTypes.train_main: self.main_sample_batch_size,
             DataloaderTypes.val_main: self.main_sample_batch_size,
             DataloaderTypes.test_main: self.main_sample_batch_size,
@@ -99,7 +99,7 @@ class GraphSageTemplateTrainerSpec(
             DataloaderTypes.test_random_negative: self.random_negative_batch_size,
         }
 
-        dataloader_num_workers_map: Dict[DataloaderTypes, int] = {
+        dataloader_num_workers_map: dict[DataloaderTypes, int] = {
             DataloaderTypes.train_main: int(kwargs.get("train_main_num_workers", 2)),
             DataloaderTypes.val_main: int(kwargs.get("val_main_num_workers", 1)),
             DataloaderTypes.test_main: int(kwargs.get("test_main_num_workers", 1)),
@@ -460,7 +460,7 @@ class GraphSageTemplateTrainerSpec(
         random_negative_data_loader: torch.utils.data.dataloader._BaseDataLoaderIter,
         device: torch.device,
         num_batches: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self.model.eval()
         total_mrr: float = 0.0
         total_loss: float = 0.0

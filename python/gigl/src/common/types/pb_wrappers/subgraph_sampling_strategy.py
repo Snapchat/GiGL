@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Set, cast
+from typing import Set, cast
 
 from gigl.src.common.types.exception import (
     SubgraphSamplingValidationError,
@@ -27,7 +27,7 @@ class MessagePassingPathPbWrapper:
         """
         Builds dags using the provided message passing path sampling strategy for graph traversal
         """
-        op_name_to_sampling_op_pb_wrapper: Dict[str, SamplingOpPbWrapper] = {}
+        op_name_to_sampling_op_pb_wrapper: dict[str, SamplingOpPbWrapper] = {}
         root_sampling_op_names: Set[str] = set()
         # Firstly create the raw SamplingOpNodes indexed by the op name and identify root sampling op nodes
         for sampling_op_pb in self.message_passing_path_pb.sampling_ops:
@@ -93,7 +93,7 @@ class MessagePassingPathPbWrapper:
         return self.__root_sampling_op_names
 
     @property
-    def op_name_to_sampling_op_pb_wrapper(self) -> Dict[str, SamplingOpPbWrapper]:
+    def op_name_to_sampling_op_pb_wrapper(self) -> dict[str, SamplingOpPbWrapper]:
         return self.__op_name_to_sampling_op_pb_wrapper
 
 
@@ -102,7 +102,7 @@ class MessagePassingPathStrategyPbWrapper:
     message_passing_path_strategy_pb: MessagePassingPathStrategy
 
     def __post_init__(self):
-        root_node_type_to_message_passing_path_pb_wrapper: Dict[
+        root_node_type_to_message_passing_path_pb_wrapper: dict[
             NodeType, MessagePassingPathPbWrapper
         ] = {}
         for message_passing_path_pb in self.message_passing_path_strategy_pb.paths:
@@ -127,7 +127,7 @@ class MessagePassingPathStrategyPbWrapper:
     @property
     def root_node_type_to_message_passing_path_pb_wrapper(
         self,
-    ) -> Dict[NodeType, MessagePassingPathPbWrapper]:
+    ) -> dict[NodeType, MessagePassingPathPbWrapper]:
         return self.__root_node_type_to_message_passing_path_pb_wrapper
 
 
@@ -142,7 +142,7 @@ class GlobalRandomUniformStrategyPbWrapper:
     @property
     def root_node_type_to_message_passing_path_pb_wrapper(
         self,
-    ) -> Dict[NodeType, MessagePassingPathPbWrapper]:
+    ) -> dict[NodeType, MessagePassingPathPbWrapper]:
         return self.__root_node_type_to_message_passing_path_pb_wrapper
 
 
@@ -151,7 +151,7 @@ class SubgraphSamplingStrategyPbWrapper:
     subgraph_sampling_strategy_pb: SubgraphSamplingStrategy
 
     def __post_init__(self) -> None:
-        self.__root_node_type_to_message_passing_path_pb_wrapper: Dict[
+        self.__root_node_type_to_message_passing_path_pb_wrapper: dict[
             NodeType, MessagePassingPathPbWrapper
         ]
         sampling_strategy_field = cast(
@@ -285,7 +285,7 @@ class SubgraphSamplingStrategyPbWrapper:
     @property
     def root_node_type_to_message_passing_path_pb_wrapper(
         self,
-    ) -> Dict[NodeType, MessagePassingPathPbWrapper]:
+    ) -> dict[NodeType, MessagePassingPathPbWrapper]:
         """
         Returns a mapping of each root node type to their respective sampling op dag
         """

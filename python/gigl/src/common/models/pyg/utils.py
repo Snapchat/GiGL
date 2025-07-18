@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Iterable, Tuple
 
 import torch_geometric
 
@@ -10,8 +10,8 @@ MESSAGE_PASSING_BASE_CLS_ARGS = list(
 
 
 def filter_dict(
-    input_dict: Dict[str, Any], keys_to_keep: Iterable[str] = []
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    input_dict: dict[str, Any], keys_to_keep: Iterable[str] = []
+) -> Tuple[dict[str, Any], dict[str, Any]]:
     """
     Filters out certain items from an input directory based on keys to keep.
 

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch_geometric.transforms as T
@@ -156,7 +156,7 @@ def build_k_hop_subgraphs_from_pyg_heterodata(
     root_node_idxs: Optional[torch.Tensor] = None,
     num_hops: int = DEFAULT_NUM_HOPS_FOR_DATASETS,
     num_neighbors: int = DEFAULT_NUM_NODES_PER_HOP,
-) -> Dict[NodeId, GraphPbWrapper]:
+) -> dict[NodeId, GraphPbWrapper]:
     """
     Given inputs, return a map of each root node of type `root_node_type` and index in `root_node_idxs'
     to GraphPbWrappers which describe the `num_hops` surrounding subgraph.
@@ -178,7 +178,7 @@ def build_k_hop_subgraphs_from_pyg_heterodata(
         - 1,  # use all available CPUs except one, for this task.
     )
 
-    k_hop_subgraphs: Dict[NodeId, GraphPbWrapper] = dict()
+    k_hop_subgraphs: dict[NodeId, GraphPbWrapper] = dict()
 
     sample: HeteroData
     for root_node_idx, sample in zip(root_node_idxs.tolist(), loader):
@@ -207,7 +207,7 @@ def _get_random_negative_samples_for_pos_edges(
 
 
 def _build_rooted_node_neighborhood_samples_from_subgraphs(
-    subgraph_dict: Dict[NodeId, GraphPbWrapper], condensed_node_type: CondensedNodeType
+    subgraph_dict: dict[NodeId, GraphPbWrapper], condensed_node_type: CondensedNodeType
 ) -> list[training_samples_schema_pb2.RootedNodeNeighborhood]:
     samples: list[training_samples_schema_pb2.RootedNodeNeighborhood] = list()
 

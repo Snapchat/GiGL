@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from typing import Dict
 
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import LocalUri
@@ -39,7 +38,7 @@ class InferencerTest(unittest.TestCase):
     def __clean_up_inferencer_test_assets(
         self,
         applied_task_identifier: AppliedTaskIdentifier,
-        node_type_to_inferencer_output_map: Dict[str, InferenceOutput],
+        node_type_to_inferencer_output_map: dict[str, InferenceOutput],
     ):
         self.__gcs_utils.delete_files_in_bucket_dir(
             gcs_path=gcs_constants.get_applied_task_temp_gcs_path(

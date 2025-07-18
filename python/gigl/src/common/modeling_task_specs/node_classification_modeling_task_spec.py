@@ -1,5 +1,6 @@
+from collections import OrderedDict
 from contextlib import ExitStack
-from typing import Callable, Dict, Optional, OrderedDict
+from typing import Callable, Optional
 
 import tensorflow as tf
 import torch
@@ -56,13 +57,13 @@ class NodeClassificationModelingTaskSpec(
 
         main_sample_batch_size = int(kwargs.get("main_sample_batch_size", 16))
 
-        dataloader_batch_size_map: Dict[DataloaderTypes, int] = {
+        dataloader_batch_size_map: dict[DataloaderTypes, int] = {
             DataloaderTypes.train_main: main_sample_batch_size,
             DataloaderTypes.val_main: main_sample_batch_size,
             DataloaderTypes.test_main: main_sample_batch_size,
         }
         # TODO (mkolodner-sc): Investigate how we can automatically infer num_worker values
-        dataloader_num_workers_map: Dict[DataloaderTypes, int] = {
+        dataloader_num_workers_map: dict[DataloaderTypes, int] = {
             DataloaderTypes.train_main: int(kwargs.get("train_main_num_workers", 0)),
             DataloaderTypes.val_main: int(kwargs.get("val_main_num_workers", 0)),
             DataloaderTypes.test_main: int(kwargs.get("test_main_num_workers", 0)),

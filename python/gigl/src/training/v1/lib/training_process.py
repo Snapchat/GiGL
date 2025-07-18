@@ -5,7 +5,7 @@ import sys
 import tempfile
 import traceback
 from distutils.util import strtobool
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import tensorflow as tf
 import torch
@@ -122,7 +122,7 @@ def setup_model_device(
 def generate_trainer_instance(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
 ) -> BaseTrainer:
-    kwargs: Dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
 
     trainer_class_path: str = gbml_config_pb_wrapper.trainer_config.trainer_cls_path
     kwargs = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)

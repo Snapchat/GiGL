@@ -1,5 +1,3 @@
-from typing import Dict
-
 import torch
 
 from gigl.src.common.types.graph_data import NodeType
@@ -7,7 +5,7 @@ from gigl.src.common.types.graph_data import NodeType
 
 def to_hetero_feat(
     h: torch.Tensor, type_indices: torch.LongTensor, types: list[str]
-) -> Dict[NodeType, torch.Tensor]:
+) -> dict[NodeType, torch.Tensor]:
     """
     Convert homogeneous graph features into heterogeneous graph feature dict.
 
@@ -17,7 +15,7 @@ def to_hetero_feat(
         types (list): indicates the possible types
 
     Returns
-        Dict[str, torch.Tensor]: dictionary mapping each type to a tensor of corresponding rows in the heterogeneous graph
+        dict[str, torch.Tensor]: dictionary mapping each type to a tensor of corresponding rows in the heterogeneous graph
 
     """
 

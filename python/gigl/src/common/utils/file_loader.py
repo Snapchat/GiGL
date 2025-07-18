@@ -1,7 +1,7 @@
 import tempfile
 from collections.abc import Mapping
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
-from typing import Dict, Optional, Sequence, Tuple, Type, Union, cast
+from typing import Optional, Sequence, Tuple, Type, Union, cast
 
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -44,7 +44,7 @@ class FileLoader:
 
     def load_directories(
         self,
-        source_to_dest_directory_map: Dict[Uri, Uri],
+        source_to_dest_directory_map: dict[Uri, Uri],
     ):
         for dir_uri_src, dir_uri_dst in source_to_dest_directory_map.items():
             self.load_directory(dir_uri_src=dir_uri_src, dir_uri_dst=dir_uri_dst)
@@ -68,12 +68,12 @@ class FileLoader:
                 GcsUri.join(dir_uri_dst, local_fn.uri)
                 for local_fn in list_at_path(dir_uri_src, names_only=True)
             ]
-            local_file_path_to_gcs_path_map: Dict[LocalUri, GcsUri] = {
+            local_file_path_to_gcs_path_map: dict[LocalUri, GcsUri] = {
                 src: dst for src, dst in zip(local_paths, gcs_paths)
             }
             self.load_files(
                 source_to_dest_file_uri_map=cast(
-                    Dict[Uri, Uri], local_file_path_to_gcs_path_map
+                    dict[Uri, Uri], local_file_path_to_gcs_path_map
                 )
             )
         elif uri_map_schema == (LocalUri, LocalUri):
@@ -96,7 +96,7 @@ class FileLoader:
             }
             self.load_files(
                 source_to_dest_file_uri_map=cast(
-                    Dict[Uri, Uri], source_to_dest_file_uri_map
+                    dict[Uri, Uri], source_to_dest_file_uri_map
                 )
             )
         else:
@@ -112,13 +112,13 @@ class FileLoader:
         if uri_map_schema == (GcsUri, LocalUri):
             logger.info("Downloading from GCS to Local")
             self.__gcs_utils.download_files_from_gcs_paths_to_local_paths(
-                file_map=cast(Dict[GcsUri, LocalUri], source_to_dest_file_uri_map)
+                file_map=cast(dict[GcsUri, LocalUri], source_to_dest_file_uri_map)
             )
         elif uri_map_schema == (LocalUri, GcsUri):
             logger.info("Uploading from Local to GCS")
             self.__gcs_utils.upload_files_to_gcs(
                 local_file_path_to_gcs_path_map=cast(
-                    Dict[LocalUri, GcsUri], source_to_dest_file_uri_map
+                    dict[LocalUri, GcsUri], source_to_dest_file_uri_map
                 ),
                 parallel=True,
             )
@@ -129,7 +129,7 @@ class FileLoader:
                 logger.info("Will create symlinks")
                 create_file_symlinks(
                     local_source_to_link_path_map=cast(
-                        Dict[LocalUri, LocalUri], local_source_to_link_path_map
+                        dict[LocalUri, LocalUri], local_source_to_link_path_map
                     ),
                     should_overwrite=True,
                 )
@@ -137,7 +137,7 @@ class FileLoader:
                 logger.info("Will copy files")
                 copy_files(
                     local_source_to_local_dst_path_map=cast(
-                        Dict[LocalUri, LocalUri], local_source_to_link_path_map
+                        dict[LocalUri, LocalUri], local_source_to_link_path_map
                     ),
                     should_overwrite=True,
                 )
@@ -145,7 +145,7 @@ class FileLoader:
             logger.info("Downloading from HTTP to Local")
             HttpUtils.download_files_from_http(
                 http_to_local_path_map=cast(
-                    Dict[HttpUri, LocalUri], source_to_dest_file_uri_map
+                    dict[HttpUri, LocalUri], source_to_dest_file_uri_map
                 ),
             )
         else:
@@ -172,7 +172,7 @@ class FileLoader:
             )
         elif uri_map_schema == (LocalUri, GcsUri):
             self.__gcs_utils.upload_files_to_gcs(
-                local_file_path_to_gcs_path_map=cast(Dict[LocalUri, GcsUri], uri_map),
+                local_file_path_to_gcs_path_map=cast(dict[LocalUri, GcsUri], uri_map),
                 parallel=False,
             )
         elif uri_map_schema == (LocalUri, LocalUri):
@@ -180,20 +180,20 @@ class FileLoader:
             if should_create_symlinks_if_possible:
                 create_file_symlinks(
                     local_source_to_link_path_map=cast(
-                        Dict[LocalUri, LocalUri], local_source_to_link_path_map
+                        dict[LocalUri, LocalUri], local_source_to_link_path_map
                     ),
                     should_overwrite=True,
                 )
             else:
                 copy_files(
                     local_source_to_local_dst_path_map=cast(
-                        Dict[LocalUri, LocalUri], local_source_to_link_path_map
+                        dict[LocalUri, LocalUri], local_source_to_link_path_map
                     ),
                     should_overwrite=True,
                 )
         elif uri_map_schema == (HttpUri, LocalUri):
             HttpUtils.download_files_from_http(
-                http_to_local_path_map=cast(Dict[HttpUri, LocalUri], uri_map),
+                http_to_local_path_map=cast(dict[HttpUri, LocalUri], uri_map),
             )
         else:
             logger.warning(f"Unsupported uri_map_schema: {uri_map_schema}")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable
 
 import tensorflow as tf
 import tensorflow_transform as tft
@@ -261,7 +261,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
     def get_nodes_preprocessing_spec(
         self,
-    ) -> Dict[NodeDataReference, NodeDataPreprocessingSpec]:
+    ) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
         # We specify where the input data is located using NodeDataReference
         # In this case, we are reading from BigQuery, thus make use off BigqueryNodeDataReference
         paper_node_data_reference: NodeDataReference = BigqueryNodeDataReference(
@@ -292,7 +292,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
     def get_edges_preprocessing_spec(
         self,
-    ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+    ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
         main_edge_type = EdgeType(
             src_node_type=NodeType(self.node_type_paper_or_author),
             relation=Relation(self.relation_references),

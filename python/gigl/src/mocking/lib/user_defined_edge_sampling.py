@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Dict, List
+from typing import List
 
 from gigl.src.common.types.graph_data import EdgeUsageType, NodeId
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
@@ -7,7 +7,7 @@ from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 
 def sample_hydrate_user_def_edge(
     mocked_dataset_info: MockedDatasetInfo, edge_usage_type: EdgeUsageType
-) -> Dict[NodeId, List]:
+) -> dict[NodeId, List]:
     """
     Samples all available pos/neg edges and hydrated these edges with their features.
     e.g. for positive edge the output will be {pos_edge_src: [pos_edge_dst, [f0, f1, ..., fn]]}

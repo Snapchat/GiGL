@@ -1,6 +1,6 @@
 import datetime as dt
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Tuple
 
 import pandas as pd
 
@@ -121,7 +121,7 @@ def calculate_cosine_similarity_stats(
 
 
 def assert_cosine_similarity_stats(
-    cosine_similarity_stats: pd.DataFrame, expected_cosine_similarity: Dict[str, float]
+    cosine_similarity_stats: pd.DataFrame, expected_cosine_similarity: dict[str, float]
 ) -> None:
     for stat, expected_val in expected_cosine_similarity.items():
         if cosine_similarity_stats[stat] < expected_val:

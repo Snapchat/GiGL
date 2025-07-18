@@ -22,7 +22,6 @@ You can run this example in a full pipeline with `make run_hom_cora_sup_test` fr
 import argparse
 import gc
 import time
-from typing import Dict
 
 import torch
 import torch.multiprocessing as mp
@@ -70,7 +69,7 @@ def _inference_process(
     model_state_dict_uri: GcsUri,
     inference_batch_size: int,
     dataset: DistLinkPredictionDataset,
-    inferencer_args: Dict[str, str],
+    inferencer_args: dict[str, str],
     inference_node_type: NodeType,
     node_feature_dim: int,
     edge_feature_dim: int,
@@ -89,7 +88,7 @@ def _inference_process(
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
         dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
-        inferencer_args (Dict[str, str]): Additional arguments for inferencer
+        inferencer_args (dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for. This is used to
             tag the embeddings written to GCS.
         node_feature_dim (int): Input node feature dimension for the model

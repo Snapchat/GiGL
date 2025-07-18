@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable
+from typing import Any, Iterable
 
 import apache_beam as beam
 import pyarrow as pa
@@ -30,7 +30,7 @@ class RuntimeTFExampleProtoCoderFn(beam.DoFn):
 
     def process(
         self,
-        element: Dict[str, common_types.TensorType],
+        element: dict[str, common_types.TensorType],
         transformed_metadata: tensorflow_transform.tf_metadata.dataset_metadata.DatasetMetadata,
         *args,
         **kwargs,
@@ -40,7 +40,7 @@ class RuntimeTFExampleProtoCoderFn(beam.DoFn):
         which only materializes as the true transformed-metadata when passed in as part of process.
 
         Args:
-            sample (Dict[str, common_types.TensorType]): TfExample Instance Dict
+            sample (dict[str, common_types.TensorType]): TfExample Instance Dict
             transformed_metadata (tensorflow_transform.tf_metadata.dataset_metadata.DatasetMetadata):
                 Used to generate the ExampleProtoCoder
 

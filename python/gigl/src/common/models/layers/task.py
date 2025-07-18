@@ -1,6 +1,6 @@
 import copy
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Set, Tuple
+from typing import Optional, Set, Tuple
 
 import torch
 import torch.nn as nn
@@ -699,7 +699,7 @@ class DirectAU(NodeAnchorBasedLinkPredictionBaseTask):
 class NodeAnchorBasedLinkPredictionTasks:
     def __init__(self) -> None:
         self._task_to_fn_map = nn.ModuleDict()
-        self._task_to_weights_map: Dict[str, float] = {}
+        self._task_to_weights_map: dict[str, float] = {}
         self._result_types: Set[ModelResultType] = set()
 
     def _get_all_tasks(
@@ -726,9 +726,9 @@ class NodeAnchorBasedLinkPredictionTasks:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        loss_to_val_map: Dict[str, float] = {}
-        loss_to_batch_size_map: Dict[str, int] = {}
+    ) -> Tuple[torch.Tensor, dict[str, float]]:
+        loss_to_val_map: dict[str, float] = {}
+        loss_to_batch_size_map: dict[str, int] = {}
         for task, weight in self._get_all_tasks():
             loss_val, batch_size = task(
                 task_input=batch_results,
@@ -743,7 +743,7 @@ class NodeAnchorBasedLinkPredictionTasks:
             cur_loss = loss_to_val_map[loss_type]
             sample_wise_loss += cur_loss / loss_to_batch_size_map[loss_type]
         final_loss: torch.Tensor
-        final_loss_map: Dict[str, float]
+        final_loss_map: dict[str, float]
 
         final_loss = sample_wise_loss
         final_loss_map = {

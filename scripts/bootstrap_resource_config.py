@@ -6,7 +6,7 @@ import pathlib
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Optional
 
 import yaml
 
@@ -42,7 +42,7 @@ class SupportedParams:
                 e,
             )
             raise
-        self.defaults: Dict[str, Param] = {
+        self.defaults: dict[str, Param] = {
             "project": Param(
                 default=project,
                 description="GCP Project name that you are planning on using",
@@ -221,7 +221,7 @@ if __name__ == "__main__":
         parser.add_argument(f"--{key}", type=str, help=help_text)
     args = parser.parse_args()
 
-    values: Dict[str, str] = {}
+    values: dict[str, str] = {}
     for key, param in supported_params.defaults.items():
         # Check if value is provided in command line arguments
         if getattr(args, key):

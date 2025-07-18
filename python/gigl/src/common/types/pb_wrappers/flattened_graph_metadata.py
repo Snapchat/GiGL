@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Type, cast
+from typing import Type, cast
 
 from gigl.common import Uri, UriFactory
 from gigl.src.common.types.pb_wrappers.types import (
@@ -13,7 +13,7 @@ from snapchat.research.gbml import (
     training_samples_schema_pb2,
 )
 
-FLATTENED_GRAPH_TO_TRAINING_SAMPLE_TYPE: Dict[
+FLATTENED_GRAPH_TO_TRAINING_SAMPLE_TYPE: dict[
     Type[FlattenedGraphMetadataOutputPb], Type[TrainingSamplePb]
 ] = {
     flattened_graph_metadata_pb2.SupervisedNodeClassificationOutput: training_samples_schema_pb2.SupervisedNodeClassificationSample,
@@ -22,7 +22,7 @@ FLATTENED_GRAPH_TO_TRAINING_SAMPLE_TYPE: Dict[
 }
 
 
-FLATTENED_GRAPH_TO_DATASET_TYPE: Dict[
+FLATTENED_GRAPH_TO_DATASET_TYPE: dict[
     Type[FlattenedGraphMetadataOutputPb], Type[DatasetMetadataPb]
 ] = {
     flattened_graph_metadata_pb2.SupervisedNodeClassificationOutput: dataset_metadata_pb2.SupervisedNodeClassificationDataset,

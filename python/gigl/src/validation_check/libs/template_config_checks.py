@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
@@ -60,7 +60,7 @@ def check_pipeline_has_valid_start_and_stop_flags(
                 )
 
 
-def check_if_runtime_args_all_str(args_name: str, runtime_args: Dict[str, Any]) -> None:
+def check_if_runtime_args_all_str(args_name: str, runtime_args: dict[str, Any]) -> None:
     """
     Check if all values of the given runtime arguements are string.
     """
@@ -241,7 +241,7 @@ def check_if_data_preprocessor_config_cls_valid(
     data_preprocessor_config_cls_path = (
         gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path
     )
-    runtime_args: Dict[str, str] = dict(
+    runtime_args: dict[str, str] = dict(
         gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_args
     )
     check_if_runtime_args_all_str(
@@ -278,7 +278,7 @@ def check_if_trainer_cls_valid(
         )
         return
     trainer_cls_path = gbml_config_pb.trainer_config.trainer_cls_path
-    runtime_args: Dict[str, str] = dict(gbml_config_pb.trainer_config.trainer_args)
+    runtime_args: dict[str, str] = dict(gbml_config_pb.trainer_config.trainer_args)
     check_if_runtime_args_all_str(args_name="trainerArgs", runtime_args=runtime_args)
     try:
         trainer_cls = os_utils.import_obj(trainer_cls_path)
@@ -301,7 +301,7 @@ def check_if_inferencer_cls_valid(
     """
     logger.info("Config validation check: if inferencerClsPath and its args are valid.")
     inferencer_cls_path = gbml_config_pb.inferencer_config.inferencer_cls_path
-    runtime_args: Dict[str, str] = dict(
+    runtime_args: dict[str, str] = dict(
         gbml_config_pb.inferencer_config.inferencer_args
     )
     check_if_runtime_args_all_str(args_name="inferencerArgs", runtime_args=runtime_args)
@@ -448,7 +448,7 @@ def check_if_post_processor_cls_valid(
         )
         return
 
-    runtime_args: Dict[str, str] = dict(
+    runtime_args: dict[str, str] = dict(
         gbml_config_pb.post_processor_config.post_processor_args
     )
     check_if_runtime_args_all_str(

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from collections import defaultdict
 from itertools import chain
-from typing import Dict, Iterable, Set, Tuple
+from typing import Iterable, Set, Tuple
 
 from gigl.common import LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -173,7 +173,7 @@ class SubgraphSamplerTest(unittest.TestCase):
         use_spark35: bool = False,
     ) -> Tuple[
         ExpectedGraphFromPreprocessor,
-        Dict[NodeType, list[RootedNodeNeighborhood]],
+        dict[NodeType, list[RootedNodeNeighborhood]],
         list[NodeAnchorBasedLinkPredictionSample],
     ]:
         """
@@ -278,7 +278,7 @@ class SubgraphSamplerTest(unittest.TestCase):
             "Missing node-anchor training samples from SGS output",
         )
 
-        root_node_type_to_num_training_samples: Dict[NodeType, int] = defaultdict(
+        root_node_type_to_num_training_samples: dict[NodeType, int] = defaultdict(
             lambda: 0
         )
         for training_sample in training_samples:
@@ -690,13 +690,13 @@ class SubgraphSamplerTest(unittest.TestCase):
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         expected_graph_from_preprocessor: ExpectedGraphFromPreprocessor,
-    ) -> Dict[NodePbWrapper, Dict[NodeType, int]]:
+    ) -> dict[NodePbWrapper, dict[NodeType, int]]:
         """
         Builds a map counting the in-edge for each dst node from input graph, per src node type.
         Used to check the number of inbound edges for each node in the rooted subgraph samples
         """
-        input_graph_dst_node_to_src_node_type_to_in_edges_count_map: Dict[
-            NodePbWrapper, Dict[NodeType, int]
+        input_graph_dst_node_to_src_node_type_to_in_edges_count_map: dict[
+            NodePbWrapper, dict[NodeType, int]
         ] = defaultdict(lambda: defaultdict(lambda: 0))
         for (
             src_node,
@@ -729,16 +729,16 @@ class SubgraphSamplerTest(unittest.TestCase):
         self,
         subgraph_sampler_config_pb: gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig,
         is_subgraph_sampling_strategy_provided: bool = False,
-    ) -> Dict[
-        NodeType, Dict[NodeType, list[subgraph_sampling_strategy_pb2.SamplingOp]]
+    ) -> dict[
+        NodeType, dict[NodeType, list[subgraph_sampling_strategy_pb2.SamplingOp]]
     ]:
         """
         Builds a map of samplingOps for each path in the subgraph sampling strategy. For each root node type, maps to the dst node type to the sampling ops.
         For each rooted node neighborhood sample, we can check that each dst node has the correct number of in-edges based on the sampling ops.
         """
         # map subgraph sampling strategy root node to dst node to sampling op
-        root_node_type_to_dst_node_type_to_sampling_ops_map: Dict[
-            NodeType, Dict[NodeType, list[subgraph_sampling_strategy_pb2.SamplingOp]]
+        root_node_type_to_dst_node_type_to_sampling_ops_map: dict[
+            NodeType, dict[NodeType, list[subgraph_sampling_strategy_pb2.SamplingOp]]
         ] = defaultdict(lambda: defaultdict(list))
         if is_subgraph_sampling_strategy_provided:
             for (
@@ -759,7 +759,7 @@ class SubgraphSamplerTest(unittest.TestCase):
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         rooted_node_neighborhood_samples: list[RootedNodeNeighborhood],
-    ) -> Dict[NodePbWrapper, list[EdgePbWrapper]]:
+    ) -> dict[NodePbWrapper, list[EdgePbWrapper]]:
         """
         Builds a map of NodePbWrapper to inbound EdgePbWrappers for each sample.
         """
@@ -822,7 +822,7 @@ class SubgraphSamplerTest(unittest.TestCase):
         def __check_exact_number_of_in_edges_for_dst_node(
             dst_node_pb_wrapper: NodePbWrapper,
             sampling_ops: list[subgraph_sampling_strategy_pb2.SamplingOp],
-            condensed_edge_type_to_in_edges_count: Dict[CondensedEdgeType, int],
+            condensed_edge_type_to_in_edges_count: dict[CondensedEdgeType, int],
         ):
             for sampling_op in sampling_ops:
                 sampling_op_edge_type = EdgeType(
@@ -851,9 +851,9 @@ class SubgraphSamplerTest(unittest.TestCase):
         def __check_number_of_in_edges_for_dst_node(
             dst_node_pb_wrapper: NodePbWrapper,
             sampling_ops: list[subgraph_sampling_strategy_pb2.SamplingOp],
-            condensed_edge_type_to_in_edges_count: Dict[CondensedEdgeType, int],
+            condensed_edge_type_to_in_edges_count: dict[CondensedEdgeType, int],
         ):
-            condensed_edge_type_to_max_num_nodes_to_sample: Dict[
+            condensed_edge_type_to_max_num_nodes_to_sample: dict[
                 CondensedEdgeType, int
             ] = defaultdict(lambda: 0)
             for sampling_op in sampling_ops:
@@ -900,7 +900,7 @@ class SubgraphSamplerTest(unittest.TestCase):
         def __build_condensed_edge_type_to_in_edges_count_map(
             in_edges: list[EdgePbWrapper],
         ):
-            condensed_edge_type_to_in_edges_count: Dict[
+            condensed_edge_type_to_in_edges_count: dict[
                 CondensedEdgeType, int
             ] = defaultdict(lambda: 0)
             for edge_pb_wrapper in in_edges:
