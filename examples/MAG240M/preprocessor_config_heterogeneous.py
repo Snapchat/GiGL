@@ -206,13 +206,11 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
             # features through to the output features.
             preprocessing_fn = build_passthrough_transform_preprocessing_fn()
 
-            node_features_outputs = self.feature_list
-
             output_dict[node_data_reference] = NodeDataPreprocessingSpec(
                 feature_spec_fn=feature_spec_fn,
                 preprocessing_fn=preprocessing_fn,
                 identifier_output=node_output_id,
-                features_outputs=node_features_outputs,
+                features_outputs=self.feature_list,
             )
         return output_dict
 
