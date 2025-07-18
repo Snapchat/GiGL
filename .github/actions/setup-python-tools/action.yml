@@ -7,7 +7,7 @@ inputs:
     description: "Set up Google Cloud authentication and tooling"
     required: false
     default: "false"
-  
+
   try_cleaning_disk_space:
     description: "Try to clean up disk space by removing caches; useful when building docker images, et al."
     required: false
@@ -22,7 +22,7 @@ inputs:
     description: "Google Cloud Project ID"
     required: false
     default: ""
-  
+
   workload_identity_provider:
     description: "Workload Identity Provider"
     required: false
@@ -43,7 +43,7 @@ runs:
         with:
           # Available versions: https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json
           # Ensure to use a version that has support for arm64-darwin so we can build for Apple Silicon (macOS 14).
-          python-version: '3.9.13' 
+          python-version: '3.9.13'
 
       # Step 2: Install pip-tools, which is used to generate hashed requirements.
       # Note: pip 25.1 has a bug that causes pip-tools to fail with the following error:
@@ -61,7 +61,10 @@ runs:
       # See following for context: https://cloud.google.com/blog/products/identity-security/enabling-keyless-authentication-from-github-actions
       - name: Google Cloud Auth
         if: inputs.setup_gcloud == 'true'
-        uses: 'google-github-actions/auth@v2'
+        # NOTE: If upgrading, please ensure that the generated
+        # credentials file is gitignored/ docker ignored: `gha-creds-*.json`
+        # More info: https://github.com/google-github-actions/auth/issues/123
+        uses: 'google-github-actions/auth@v2' # WARNING: See note above.
         with:
           project_id: ${{ inputs.gcp_project_id }}
           workload_identity_provider: ${{ inputs.workload_identity_provider }}
