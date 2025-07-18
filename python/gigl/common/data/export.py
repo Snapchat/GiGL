@@ -20,10 +20,10 @@ from google.cloud.bigquery.job import LoadJob
 from google.cloud.exceptions import GoogleCloudError
 from typing_extensions import Self
 
-from gigl.common import GcsUri
+from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
-from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.retry import retry
+from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 
@@ -54,7 +54,7 @@ BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
 class EmbeddingExporter:
     def __init__(
         self,
-        export_dir: GcsUri,
+        export_dir: Uri,
         file_prefix: Optional[str] = None,
         min_shard_size_threshold_bytes: int = 0,
     ):
@@ -72,8 +72,9 @@ class EmbeddingExporter:
         └── shard_00000002.avro
 
         Args:
-            export_dir (GcsUri): The Google Cloud Storage URI where the Avro files will be uploaded.
-                                 This should be a fully qualified GCS path, e.g., 'gs://bucket_name/path/to/'.
+            export_dir (Uri): URI where the Avro files will be uploaded.
+                                 If a GCS URI, this should be a fully qualified GCS path,
+                                 e.g., 'gs://bucket_name/path/to/'.
             file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
                                          the file names will be like $file_prefix_shard_00000000.avro.
             min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
@@ -95,9 +96,9 @@ class EmbeddingExporter:
         self._num_files_written = 0
         self._in_context = False
         self._context_start_time = 0.0
-        self._base_gcs_uri = export_dir
+        self._base_export_uri = export_dir
         self._write_time = 0.0
-        self._gcs_utils = GcsUtils()
+        self._file_utils = FileLoader()
         self._prefix = file_prefix
         self._min_shard_size_threshold_bytes = min_shard_size_threshold_bytes
 
@@ -154,7 +155,7 @@ class EmbeddingExporter:
         max_delay_s=60,
     )
     def _flush(self):
-        """Flushes the in-memory buffer to GCS, retrying on failure."""
+        """Flushes the in-memory buffer, retrying on failure."""
         logger.info(
             f"Building and writing {self._num_records_written:,} records into in-memory buffer took {self._write_time:.2f} seconds"
         )
@@ -162,7 +163,7 @@ class EmbeddingExporter:
 
         start = time.perf_counter()
         # Reset the buffer to the beginning so we upload all records.
-        # This is needed in both the happy path - writing we want to dump all the buffer to GCS,
+        # This is needed in both the happy path - writing we want to dump all the buffer,
         # and in the error case where we uploaded *some* of the buffer and then failed.
         self._buffer.seek(0)
         filename = (
@@ -170,10 +171,10 @@ class EmbeddingExporter:
             if not self._prefix
             else f"{self._prefix}_{self._num_files_written:08}.avro"
         )
-        self._gcs_utils.upload_from_filelike(
-            GcsUri.join(self._base_gcs_uri, filename),
+        fname = self._base_export_uri.join(self._base_export_uri, filename)
+        self._file_utils.load_from_filelike(
+            fname,
             self._buffer,
-            content_type="application/octet-stream",
         )
         self._num_files_written += 1
         # BytesIO.close() frees up memory used by the buffer.
@@ -184,13 +185,13 @@ class EmbeddingExporter:
         self._buffer = io.BytesIO()
 
         logger.info(
-            f"Upload the {buff_size:,} bytes Avro data to GCS took {time.perf_counter()- start:.2f} seconds"
+            f"Upload the {buff_size:,} bytes Avro data took {time.perf_counter()- start:.2f} seconds"
         )
         self._num_records_written = 0
         self._write_time = 0.0
 
     def flush_embeddings(self):
-        """Flushes the in-memory buffer to GCS.
+        """Flushes the in-memory buffer.
 
         After this method is called, the buffer is reset to an empty state.
         """

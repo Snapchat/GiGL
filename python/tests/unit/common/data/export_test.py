@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from typing import Optional
 from unittest.mock import ANY, MagicMock, patch
+from uuid import uuid4
 
 import fastavro
 import requests
@@ -11,7 +12,7 @@ import torch
 from google.cloud.exceptions import GoogleCloudError
 from parameterized import param, parameterized
 
-from gigl.common import GcsUri, Uri
+from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.utils.retry import RetriesFailedException
 
@@ -20,8 +21,8 @@ class TestEmbeddingExporter(unittest.TestCase):
     def setUp(self):
         super().setUp()
         self._temp_dir = tempfile.TemporaryDirectory()
-
-        self.test_uris: list[GcsUri] = []
+        self.local_export_dir = Path(self._temp_dir.name) / uuid4().hex / "local-export"
+        self.local_export_dir.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
         super().tearDown()
@@ -60,44 +61,26 @@ class TestEmbeddingExporter(unittest.TestCase):
             ),
         ]
     )
-    @patch("gigl.common.data.export.GcsUtils")
-    def test_write_embeddings_to_gcs(
+    def test_write_embeddings_to_local(
         self,
         _,
-        mock_gcs_utils_class,
         file_prefix: Optional[str],
         expected_file_name: str,
     ):
         # Mock inputs
-        gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
         id_batches = [torch.tensor([1, 2, 3]), torch.tensor([4, 5, 6])]
         embedding_batches = [
             torch.tensor([[1, 11], [2, 12], [3, 13]]),
             torch.tensor([[4, 14], [5, 15], [6, 16]]),
         ]
         embedding_type = "test_type"
-        test_file = Path(self._temp_dir.name) / "test-file"
-
-        # Mock GCS blob
-        self.test_uri = None
-
-        def mock_write(uri, buff: io.BytesIO, **kwargs):
-            self.test_uri = uri
-            with test_file.open("wb") as f:
-                f.write(buff.getvalue())
-
-        mock_gcs_utils = MagicMock()
-        mock_gcs_utils.upload_from_filelike.side_effect = mock_write
-        mock_gcs_utils_class.return_value = mock_gcs_utils
-
+        test_file = self.local_export_dir / expected_file_name
         with EmbeddingExporter(
-            export_dir=gcs_base_uri, file_prefix=file_prefix
+            export_dir=LocalUri(self.local_export_dir), file_prefix=file_prefix
         ) as exporter:
             for id_batch, embedding_batch in zip(id_batches, embedding_batches):
                 exporter.add_embedding(id_batch, embedding_batch, embedding_type)
 
-        # Assertions
-        self.assertEqual(self.test_uri, GcsUri.join(gcs_base_uri, expected_file_name))
         avro_reader = fastavro.reader(test_file.open("rb"))
         records = list(avro_reader)
         expected_records = [
@@ -110,33 +93,19 @@ class TestEmbeddingExporter(unittest.TestCase):
         ]
         self.assertEqual(records, expected_records)
 
-    @patch("gigl.common.data.export.GcsUtils")
-    def test_write_embeddings_to_gcs_multiple_flushes(self, mock_gcs_utils_class):
-        # Mock inputs
-        gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
+    def test_write_embeddings_multiple_flushes(self):
         id_batches = [torch.tensor([1, 2, 3]), torch.tensor([4, 5, 6])]
         embedding_batches = [
             torch.tensor([[1, 11], [2, 12], [3, 13]]),
             torch.tensor([[4, 14], [5, 15], [6, 16]]),
         ]
         embedding_type = "test_type"
-        self.test_files = [
-            Path(self._temp_dir.name) / f"test-file-{i}" for i in range(2)
-        ]
-        self.test_file_iter = iter(self.test_files)
-
-        # Mock GCS blob
-        def mock_write(uri, buff: io.BytesIO, **kwargs):
-            self.test_uris.append(uri)
-            next(self.test_file_iter).write_bytes(buff.getvalue())
-
-        mock_gcs_utils = MagicMock()
-        mock_gcs_utils.upload_from_filelike.side_effect = mock_write
-        mock_gcs_utils_class.return_value = mock_gcs_utils
 
         # Write first batch using context manager
         id_embedding_batch_iter = zip(id_batches, embedding_batches)
-        exporter = EmbeddingExporter(export_dir=gcs_base_uri)
+        exporter = EmbeddingExporter(
+            export_dir=UriFactory.create_uri(self.local_export_dir)
+        )
         with exporter:
             id_batch, embedding_batch = next(id_embedding_batch_iter)
             exporter.add_embedding(id_batch, embedding_batch, embedding_type)
@@ -147,11 +116,14 @@ class TestEmbeddingExporter(unittest.TestCase):
         exporter.flush_embeddings()
 
         # Assertions
+        written_files = list(
+            map(UriFactory.create_uri, self.local_export_dir.glob("*"))
+        )
         self.assertEqual(
-            self.test_uris,
+            written_files,
             [
-                GcsUri.join(gcs_base_uri, f"shard_{0:08}.avro"),
-                GcsUri.join(gcs_base_uri, f"shard_{1:08}.avro"),
+                LocalUri.join(self.local_export_dir, f"shard_{0:08}.avro"),
+                LocalUri.join(self.local_export_dir, f"shard_{1:08}.avro"),
             ],
         )
         expected_records_by_batch = [
@@ -166,47 +138,36 @@ class TestEmbeddingExporter(unittest.TestCase):
                 {"node_id": 6, "node_type": "test_type", "emb": [6.0, 16.0]},
             ],
         ]
-        for i, record_file in enumerate(self.test_files):
+        for i, record_file in enumerate(written_files):
             with self.subTest(f"Records for batch {i}"):
-                reader = fastavro.reader(record_file.open("rb"))
+                reader = fastavro.reader(Path(record_file.uri).open("rb"))
                 records = list(reader)
                 self.assertEqual(records, expected_records_by_batch[i])
 
-    @patch("gigl.common.data.export.GcsUtils")
-    def test_flushes_after_maximum_buffer_size(self, mock_gcs_utils_class):
-        # Mock inputs
-        gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
+    def test_flushes_after_maximum_buffer_size(self):
         id_batches = [torch.tensor([1, 2, 3]), torch.tensor([4, 5, 6])]
         embedding_batches = [
             torch.tensor([[1, 11], [2, 12], [3, 13]]),
             torch.tensor([[4, 14], [5, 15], [6, 16]]),
         ]
         embedding_type = "test_type"
-        self.test_files = [
-            Path(self._temp_dir.name) / f"test-file-{i}" for i in range(2)
-        ]
-        self.test_file_iter = iter(self.test_files)
-
-        # Mock GCS blob
-        def mock_write(uri, buff: io.BytesIO, **kwargs):
-            self.test_uris.append(uri)
-            next(self.test_file_iter).write_bytes(buff.getvalue())
-
-        mock_gcs_utils = MagicMock()
-        mock_gcs_utils.upload_from_filelike.side_effect = mock_write
-        mock_gcs_utils_class.return_value = mock_gcs_utils
 
         with EmbeddingExporter(
-            export_dir=gcs_base_uri, min_shard_size_threshold_bytes=1
+            export_dir=UriFactory.create_uri(self.local_export_dir),
+            min_shard_size_threshold_bytes=1,
         ) as exporter:
             for id_batch, embedding_batch in zip(id_batches, embedding_batches):
                 exporter.add_embedding(id_batch, embedding_batch, embedding_type)
 
+        # Assertions
+        written_files = list(
+            map(UriFactory.create_uri, self.local_export_dir.glob("*"))
+        )
         self.assertEqual(
-            self.test_uris,
+            written_files,
             [
-                GcsUri.join(gcs_base_uri, f"shard_{0:08}.avro"),
-                GcsUri.join(gcs_base_uri, f"shard_{1:08}.avro"),
+                LocalUri.join(self.local_export_dir, f"shard_{0:08}.avro"),
+                LocalUri.join(self.local_export_dir, f"shard_{1:08}.avro"),
             ],
         )
         expected_records_by_batch = [
@@ -221,13 +182,13 @@ class TestEmbeddingExporter(unittest.TestCase):
                 {"node_id": 6, "node_type": "test_type", "emb": [6.0, 16.0]},
             ],
         ]
-        for i, record_file in enumerate(self.test_files):
+        for i, record_file in enumerate(written_files):
             with self.subTest(f"Records for batch {i}"):
-                reader = fastavro.reader(record_file.open("rb"))
+                reader = fastavro.reader(Path(record_file.uri).open("rb"))
                 records = list(reader)
                 self.assertEqual(records, expected_records_by_batch[i])
 
-    @patch("gigl.common.data.export.GcsUtils")
+    @patch("gigl.src.common.utils.file_loader.GcsUtils")
     def test_flush_resets_buffer(self, mock_gcs_utils_class):
         # Mock inputs
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
@@ -238,18 +199,18 @@ class TestEmbeddingExporter(unittest.TestCase):
 
         test_file = Path(self._temp_dir.name) / "test-file"
 
-        def mock_upload(uri: Uri, buffer: io.BytesIO, content_type: str):
+        def mock_upload(gcs_path: Uri, filelike: io.BytesIO):
             if self._mock_call_count == 0:
                 # Read the buffer, then fail.
                 # We want to ensure that the buffer gets reset on retry.
-                buffer.read()
+                filelike.read()
                 self._mock_call_count += 1
                 google_cloud_error = GoogleCloudError("GCS upload failed")
                 google_cloud_error.code = 503  # Service Unavailable
                 raise google_cloud_error
             elif self._mock_call_count == 1:
                 with test_file.open("wb") as f:
-                    f.write(buffer.read())
+                    f.write(filelike.read())
                 self._mock_call_count += 1
             else:
                 self.fail(
@@ -273,7 +234,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         self.assertEqual(records, expected_records)
 
     @patch("time.sleep")
-    @patch("gigl.common.data.export.GcsUtils")
+    @patch("gigl.src.common.utils.file_loader.GcsUtils")
     def test_write_embeddings_to_gcs_upload_retries_on_google_cloud_error_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
@@ -297,7 +258,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
     @patch("time.sleep")
-    @patch("gigl.common.data.export.GcsUtils")
+    @patch("gigl.src.common.utils.file_loader.GcsUtils")
     def test_write_embeddings_to_gcs_upload_retries_on_request_exception_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
@@ -323,7 +284,7 @@ class TestEmbeddingExporter(unittest.TestCase):
             exporter.flush_embeddings()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
-    @patch("gigl.common.data.export.GcsUtils")
+    @patch("gigl.src.common.utils.file_loader.GcsUtils")
     def test_skips_flush_if_empty(self, mock_gcs_utils_class):
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
 

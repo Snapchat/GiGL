@@ -19,11 +19,10 @@ if using a different dataset, also update the following fields:
  and the metadata in the `init_model` function.
 
  Multi node training is supported by via the --rank and --world_size arguments.
- if doing multi node training, make sure to set the `--host` and `--port` arguments
+ If doing multi node training, make sure to set the `--host` and `--port` arguments
  to the same values across all nodes.
 
- You may use the `--process_count` argument to control how many training processes will be spawned.
-
+ You may use the `--process_count` argument to control how many training processes will be spawned. per machine.
 """
 import os
 
@@ -237,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--saved_model_path",
         type=str,
-        default="/tmp/gigl/dblp_model.pt",
+        default="/tmp/gigl/toy_hgt_model.pt",
         help="Path to save the trained model.",
     )
     parser.add_argument(
