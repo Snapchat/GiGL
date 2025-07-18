@@ -231,6 +231,13 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
                 self.author_affiliated_institution_table,
             ],
         ):
+            if edge_type.src_node_type == edge_type.dst_node_type:
+                src_node_type = "src"
+                dst_node_type = "dst"
+            else:
+                src_node_type = edge_type.src_node_type
+                dst_node_type = edge_type.dst_node_type
+
             edge_ref = BigqueryEdgeDataReference(
                 reference_uri=table,
                 edge_type=edge_type,
@@ -239,8 +246,8 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
             feature_spec_fn = build_ingestion_feature_spec_fn(
                 fixed_int_fields=[
-                    edge_type.src_node_type,
-                    edge_type.dst_node_type,
+                    src_node_type,
+                    dst_node_type,
                 ]
             )
 
@@ -249,8 +256,8 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
             # features through to the output features.
             preprocessing_fn = build_passthrough_transform_preprocessing_fn()
             edge_output_id = EdgeOutputIdentifier(
-                src_node=NodeOutputIdentifier(edge_type.src_node_type),
-                dst_node=NodeOutputIdentifier(edge_type.dst_node_type),
+                src_node=NodeOutputIdentifier(src_node_type),
+                dst_node=NodeOutputIdentifier(dst_node_type),
             )
 
             output_dict[edge_ref] = EdgeDataPreprocessingSpec(
