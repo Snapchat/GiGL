@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import tensorflow as tf
 import torch
@@ -28,13 +28,13 @@ _FEATURE_SPEC_WITHOUT_ENTITY_KEY: FeatureSpecDict = {
 }
 
 
-def _get_mock_node_examples() -> List[tf.train.Example]:
+def _get_mock_node_examples() -> list[tf.train.Example]:
     """Generate mock examples for testing.
 
     These examples are, for now, hard-coded to match the feature spec defined in TFRecordDataLoaderTest.setUp().
     And are also hard-coded to have 100 examples.
     """
-    examples: List[tf.train.Example] = []
+    examples: list[tf.train.Example] = []
     for i in range(100):
         examples.append(
             tf.train.Example(
@@ -130,7 +130,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         self,
         _,
         feature_spec: FeatureSpecDict,
-        feature_keys: List[str],
+        feature_keys: list[str],
         feature_dim: int,
         expected_id_tensor: torch.Tensor,
         expected_feature_tensor: Optional[torch.Tensor],
@@ -201,7 +201,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
     def test_load_empty_directory(
         self,
         _,
-        feature_keys: List[str],
+        feature_keys: list[str],
         feature_dim: int,
         expected_node_ids: torch.Tensor,
         expected_features: Optional[torch.Tensor],
@@ -243,7 +243,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         ]
     )
     def test_partition(
-        self, _, num_workers: int, num_files: int, expected_partitions: List[List[int]]
+        self, _, num_workers: int, num_files: int, expected_partitions: list[list[int]]
     ):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)

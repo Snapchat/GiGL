@@ -1,5 +1,5 @@
 from contextlib import ExitStack
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -261,9 +261,9 @@ class GraphSageTemplateTrainerSpec(
 
     def _compute_loss(
         self,
-        pos_scores_list: List[torch.Tensor],
-        hard_neg_scores_list: List[torch.Tensor],
-        random_neg_scores_list: List[torch.Tensor],
+        pos_scores_list: list[torch.Tensor],
+        hard_neg_scores_list: list[torch.Tensor],
+        random_neg_scores_list: list[torch.Tensor],
         device: torch.device,
     ) -> torch.Tensor:
         total_loss: torch.Tensor = torch.tensor(0.0, device=device)
@@ -301,7 +301,7 @@ class GraphSageTemplateTrainerSpec(
         main_batch: NodeAnchorBasedLinkPredictionBatch,
         random_negative_batch: RootedNodeNeighborhoodBatch,
         device: torch.device,
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+    ) -> Tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
         main_embeddings = self.model(
             main_batch.graph.x.to(device), main_batch.graph.edge_index.to(device)
         )
@@ -310,9 +310,9 @@ class GraphSageTemplateTrainerSpec(
             random_negative_batch.graph.edge_index.to(device),
         )
 
-        pos_score_list: List[torch.Tensor] = []
-        hard_neg_score_list: List[torch.Tensor] = []
-        random_neg_score_list: List[torch.Tensor] = []
+        pos_score_list: list[torch.Tensor] = []
+        hard_neg_score_list: list[torch.Tensor] = []
+        random_neg_score_list: list[torch.Tensor] = []
 
         main_batch_root_node_indices = main_batch.root_node_indices.to(device=device)
 
