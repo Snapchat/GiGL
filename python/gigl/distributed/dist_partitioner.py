@@ -1,7 +1,7 @@
 import gc
 import time
 from collections import abc, defaultdict
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
@@ -54,7 +54,7 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
         logger.info(
             f"Since the world size is {world_size}, using dtype of {self._pb_dtype} for partition book"
         )
-        self.cur_part_val_list: List[Tuple[torch.Tensor, ...]] = []
+        self.cur_part_val_list: list[Tuple[torch.Tensor, ...]] = []
         self.generate_pb: bool
         super().__init__(total_val_size, generate_pb)
 
@@ -183,8 +183,8 @@ class DistPartitioner:
 
         self._is_input_homogeneous: Optional[bool] = None
         self._should_assign_edges_by_src_node: bool = should_assign_edges_by_src_node
-        self._edge_types: List[EdgeType] = []
-        self._node_types: List[NodeType] = []
+        self._edge_types: list[EdgeType] = []
+        self._node_types: list[NodeType] = []
         self._num_nodes: Optional[Dict[NodeType, int]] = None
         self._num_edges: Optional[Dict[EdgeType, int]] = None
 
@@ -588,7 +588,7 @@ class DistPartitioner:
 
         """
         # chunk_res is a list where index `i` corresponds to Tuple[input_data_on_i, rank_indices_on_i]
-        chunk_res: List[
+        chunk_res: list[
             Tuple[Optional[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
         ] = []
         chunk_length = chunk_end_pos - chunk_start_pos
@@ -615,7 +615,7 @@ class DistPartitioner:
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         total_val_size: int = 0,
         generate_pb: bool = False,
-    ) -> Tuple[List[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]:
+    ) -> Tuple[list[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]:
         r"""Partitions input data chunk by chunk.
         Args:
             input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned across machine, which any information that should be partitioned across machines.
@@ -627,7 +627,7 @@ class DistPartitioner:
             generate_pb (bool): Whether a partition book should be generated, defaults to False. This should only be set to true if partitioning nodes or edges for
                 tensor-based partitioning and should be false if partitioning node features or edge features or if doing range-based partitioning.
         Return:
-            List[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
+            list[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
             Optional[torch.Tensor]: Torch Tensor if `generate_pb` is True, returns None if `generate_pb` is False
         """
         num_items = len(rank_indices)
@@ -696,6 +696,8 @@ class DistPartitioner:
             self._num_nodes is not None
         ), "Must have registered nodes prior to partitioning them"
 
+        start_time = time.time()
+
         num_nodes = self._num_nodes[node_type]
 
         per_node_num = num_nodes // self._world_size
@@ -734,6 +736,10 @@ class DistPartitioner:
             f"Got node tensor-based partition book for node type {node_type} on rank {self._rank} of shape {node_partition_book.shape}"
         )
 
+        logger.info(
+            f"Node Partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
+        )
+
         return node_partition_book
 
     def _partition_node_features(
@@ -751,6 +757,8 @@ class DistPartitioner:
         Returns:
             FeaturePartitionData: Ids and Features of input nodes
         """
+
+        start_time = time.time()
 
         assert (
             self._node_feat is not None
@@ -814,6 +822,10 @@ class DistPartitioner:
 
         gc.collect()
 
+        logger.info(
+            f"Node Feature Partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
+        )
+
         return feature_partition_data
 
     def _partition_edge_index_and_edge_features(
@@ -835,6 +847,8 @@ class DistPartitioner:
             Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
             Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
+
+        start_time = time.time()
 
         assert (
             self._edge_index is not None
@@ -969,6 +983,9 @@ class DistPartitioner:
             logger.info(
                 f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
             )
+            logger.info(
+                f"Edge Index and Feature Partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
+            )
 
         return current_graph_part, current_feat_part, edge_partition_book
 
@@ -989,6 +1006,8 @@ class DistPartitioner:
         Returns:
             torch.Tensor: Edge index tensor of positive or negative labels, depending on is_positive flag
         """
+        start_time = time.time()
+
         if edge_type.src_node_type not in node_partition_book:
             raise ValueError(
                 f"Edge type {edge_type} source node type {edge_type.src_node_type} not found in the node partition book node keys: {node_partition_book.keys()}"
@@ -1065,6 +1084,10 @@ class DistPartitioner:
 
         gc.collect()
 
+        logger.info(
+            f"Edge label partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
+        )
+
         return partitioned_label_edge_index
 
     def partition_node(self) -> Union[PartitionBook, Dict[NodeType, PartitionBook]]:
@@ -1095,10 +1118,18 @@ class DistPartitioner:
         elapsed_time = time.time() - start_time
         logger.info(f"Node Partitioning finished, took {elapsed_time:.3f}s")
 
+        formatted_num_nodes = {
+            node_type: f"{num_nodes:,}"
+            for node_type, num_nodes in self._num_nodes.items()
+        }
+
         if self._is_input_homogeneous:
-            # Converting heterogeneous input back to homogeneous
-            return node_partition_book[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+            logger.info(
+                f"Partitioned {to_homogeneous(formatted_num_nodes)} nodes for homogeneous dataset"
+            )
+            return to_homogeneous(node_partition_book)
         else:
+            logger.info(f"Partitioned {formatted_num_nodes} nodes per node type")
             return node_partition_book
 
     def partition_node_features(
@@ -1244,7 +1275,15 @@ class DistPartitioner:
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
 
+        formatted_num_edges = {
+            edge_type: f"{num_edges:,}"
+            for edge_type, num_edges in self._num_edges.items()
+        }
+
         if self._is_input_homogeneous:
+            logger.info(
+                f"Partitioned {to_homogeneous(formatted_num_edges)} edges for homogeneous dataset"
+            )
             return (
                 to_homogeneous(partitioned_edge_index),
                 to_homogeneous(partitioned_edge_features)
@@ -1255,6 +1294,7 @@ class DistPartitioner:
                 else None,
             )
         else:
+            logger.info(f"Partitioned {self._num_edges} edges per edge type")
             return (
                 partitioned_edge_index,
                 partitioned_edge_features,

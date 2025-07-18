@@ -2,12 +2,11 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
 import psutil
 import tensorflow as tf
 import torch
-import tqdm
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
@@ -50,7 +49,7 @@ class SerializedTFRecordInfo:
 @dataclass(frozen=True)
 class TFDatasetOptions:
     """
-    Options for tuning a tf.data.Dataset.
+    Options for tuning the loading of a tf.data.Dataset. Note that this dataclass is tied to TFRecord loading specifically for the `load_as_torch_tensors` function.
 
     Choosing between interleave or not is not straightforward.
     We've found that interleave is faster for large numbers (>100) of small (<20M) files.
@@ -64,7 +63,8 @@ class TFDatasetOptions:
         deterministic (bool): Whether to use deterministic processing, if False then the order of elements can be non-deterministic.
         use_interleave (bool): Whether to use tf.data.Dataset.interleave to read files in parallel, if not set then `num_parallel_file_reads` will be used.
         num_parallel_file_reads (int): The number of files to read in parallel if `use_interleave` is False.
-        ram_budget_multiplier (float): The multiplier of the total system memory to set as the tf.data RAM budget..
+        ram_budget_multiplier (float): The multiplier of the total system memory to set as the tf.data RAM budget.
+        log_every_n_batch (int): Frequency that we should log information while looping through the dataset
     """
 
     batch_size: int = 10_000
@@ -73,6 +73,7 @@ class TFDatasetOptions:
     use_interleave: bool = True
     num_parallel_file_reads: int = 64
     ram_budget_multiplier: float = 0.5
+    log_every_n_batch: int = 1000
 
 
 def _concatenate_features_by_names(
@@ -86,13 +87,13 @@ def _concatenate_features_by_names(
 
     Args:
         feature_key_to_tf_tensor (Dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
-        feature_keys (List[str]): A list of feature names specifying the order in which tensors should be concatenated.
+        feature_keys (list[str]): A list of feature names specifying the order in which tensors should be concatenated.
 
     Returns:
         tf.Tensor: A concatenated tensor of the features in the specified order.
     """
 
-    features: List[tf.Tensor] = []
+    features: list[tf.Tensor] = []
 
     for feature_key in feature_keys:
         tensor = feature_key_to_tf_tensor[feature_key]
@@ -168,7 +169,7 @@ class TFRecordDataLoader:
             tfrecord_pattern (str): Regex pattern to match for loading serialized tfrecords from uri prefix
 
         Returns:
-            List[Uri]: The list of file Uris for the current partition.
+            list[Uri]: The list of file Uris for the current partition.
         """
         file_loader = FileLoader()
         uris = sorted(
@@ -374,7 +375,7 @@ class TFRecordDataLoader:
         num_entities_processed = 0
         id_tensors = []
         feature_tensors = []
-        for batch in tqdm.tqdm(dataset):
+        for idx, batch in enumerate(dataset):
             id_tensors.append(proccess_id_tensor(batch))
             if feature_keys:
                 feature_tensors.append(
@@ -385,6 +386,10 @@ class TFRecordDataLoader:
                 if entity_type == FeatureTypes.NODE
                 else id_tensors[-1].shape[1]
             )
+            if (idx + 1) % tf_dataset_options.log_every_n_batch == 0:
+                logger.info(
+                    f"Processed {idx + 1:,} total batches with {num_entities_processed:,} {entity_type.name}"
+                )
         end = time.perf_counter()
         logger.info(
             f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"

@@ -62,11 +62,12 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Dict, Final, List, Optional
+from typing import Dict, Final, Optional
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
+    DiskSpec,
     MachineSpec,
     WorkerPoolSpec,
     env_var,
@@ -90,13 +91,15 @@ DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
 class VertexAiJobConfig:
     job_name: str
     container_uri: str
-    command: List[str]
-    args: Optional[List[str]] = None
-    environment_variables: Optional[List[Dict[str, str]]] = None
+    command: list[str]
+    args: Optional[list[str]] = None
+    environment_variables: Optional[list[Dict[str, str]]] = None
     machine_type: str = "n1-standard-4"
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
     replica_count: int = 1
+    boot_disk_type: str = "pd-ssd"  # Persistent Disk SSD
+    boot_disk_size_gb: int = 100  # Default disk size in GB
     labels: Optional[Dict[str, str]] = None
     timeout_s: Optional[
         int
@@ -179,20 +182,29 @@ class VertexAIService:
             env=env_vars,
         )
 
+        disk_spec = DiskSpec(
+            boot_disk_type=job_config.boot_disk_type,
+            boot_disk_size_gb=job_config.boot_disk_size_gb,
+        )
+
         assert (
             job_config.replica_count >= 1
         ), "Replica count can be at minumum 1, i.e. leader worker"
 
         leader_worker_spec = WorkerPoolSpec(
-            machine_spec=machine_spec, container_spec=container_spec, replica_count=1
+            machine_spec=machine_spec,
+            container_spec=container_spec,
+            disk_spec=disk_spec,
+            replica_count=1,
         )
 
-        worker_pool_specs: List[WorkerPoolSpec] = [leader_worker_spec]
+        worker_pool_specs: list[WorkerPoolSpec] = [leader_worker_spec]
 
         if job_config.replica_count > 1:
             worker_spec = WorkerPoolSpec(
                 machine_spec=machine_spec,
                 container_spec=container_spec,
+                disk_spec=disk_spec,
                 replica_count=job_config.replica_count - 1,
             )
             worker_pool_specs.append(worker_spec)

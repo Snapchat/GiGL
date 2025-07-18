@@ -36,8 +36,8 @@ RUN mkdir -p /tools && \
     bash /tools/google-cloud-sdk/install.sh --quiet --path-update=true --usage-reporting=false && \
     rm -rf /tools/google-cloud-cli-linux-x86_64.tar.gz
 
-RUN echo 'export PATH="/tools/google-cloud-sdk/bin:/usr/lib/jvm/java-1.11.0-openjdk-amd64/bin:$PATH"' >> /root/.bashrc
-RUN echo 'export JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"' >> /root/.bashrc
+ENV PATH="/tools/google-cloud-sdk/bin:/usr/lib/jvm/java-1.11.0-openjdk-amd64/bin:$PATH"
+ENV JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"
 
 # Create the environment:
 # TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
@@ -45,16 +45,15 @@ RUN conda create -y -c conda-forge --name gigl python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
 ENV PATH=/opt/conda/envs/gigl/bin:$PATH
-
+# For debugging purposes, we also initialize respective conda env in bashrc
 RUN conda init bash
 RUN echo "conda activate gigl" >> ~/.bashrc
 
 COPY requirements tools/gigl/requirements
-# Copy the post install script to the builder image so that install_py_deps.sh can leverage it
 COPY python/gigl/scripts tools/gigl/python/gigl/scripts
-RUN source ~/.bashrc && pip install --upgrade pip
-RUN source ~/.bashrc && cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
+RUN pip install --upgrade pip
+RUN cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
 # TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
-# RUN source ~/.bashrc && cd tools/gigl && bash ./requirements/install_scala_deps.sh
+# RUN cd tools/gigl && bash ./requirements/install_scala_deps.sh
 
 CMD [ "/bin/bash" ]

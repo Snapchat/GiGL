@@ -37,7 +37,7 @@ you have done this before proceeding.
 Run the following command and follow the steps:
 
 ```bash
-python scripts/bootstrap_resource_config.py
+python <(curl -s https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/scripts/bootstrap_resource_config.py)
 ```
 
 You will note that if the script finishes successfully, it will have added three environment variables to your main

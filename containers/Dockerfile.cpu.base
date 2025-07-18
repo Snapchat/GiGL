@@ -22,13 +22,13 @@ RUN conda create -y -c conda-forge --name gnn python=3.9 pip
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
 ENV PATH=/opt/conda/envs/gnn/bin:$PATH
 
+# For debugging purposes, we also initialize respective conda env in bashrc
 RUN conda init bash
 RUN echo "conda activate gnn" >> ~/.bashrc
 
 COPY requirements tmp/requirements
-# Copy the post install script to the builder image so that install_py_deps.sh can leverage it
 COPY python/gigl/scripts tmp/python/gigl/scripts
-RUN source ~/.bashrc && pip install --upgrade pip
-RUN source ~/.bashrc && cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+RUN pip install --upgrade pip
+RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
 
 CMD [ "/bin/bash" ]

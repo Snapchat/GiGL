@@ -132,28 +132,43 @@ class ScalaPackager:
             use_spark35=use_spark35,
         )
 
+    def package_all(self) -> tuple[LocalUri, LocalUri, LocalUri]:
+        """
+        Packages all components. Returns the local URIs of the packaged JAR files.
+
+        Returns:
+            tuple[LocalUri, LocalUri, LocalUri]:
+                LocalURI of the Spark 3.1 Subgraph Sampler JAR,
+                LocalURI of the Spark 3.5 Subgraph Sampler JAR,
+                LocalURI of the Spark 3.1 Split Generator JAR,
+        """
+        # Remove all existing jars
+        dirs_to_delete = [
+            dep_constants.get_local_jar_directory(
+                component=GiGLComponents.SubgraphSampler, use_spark35=False
+            ).uri,
+            dep_constants.get_local_jar_directory(
+                component=GiGLComponents.SplitGenerator, use_spark35=False
+            ).uri,
+            dep_constants.get_local_jar_directory(
+                component=GiGLComponents.SubgraphSampler, use_spark35=True
+            ).uri,
+            dep_constants.get_local_jar_directory(
+                component=GiGLComponents.SplitGenerator, use_spark35=True
+            ).uri,
+        ]
+        for directory in dirs_to_delete:
+            shutil.rmtree(directory, ignore_errors=True)
+        sgs_path = self.package_subgraph_sampler(use_spark35=False)
+        sgs_spark35_path = self.package_subgraph_sampler(use_spark35=True)
+        split_gen_path = self.package_split_generator(use_spark35=True)
+
+        return (
+            sgs_path,
+            sgs_spark35_path,
+            split_gen_path,
+        )
+
 
 if __name__ == "__main__":
-    packager = ScalaPackager()
-
-    # Remove all existing jars
-    dirs_to_delete = [
-        dep_constants.get_local_jar_directory(
-            component=GiGLComponents.SubgraphSampler, use_spark35=False
-        ).uri,
-        dep_constants.get_local_jar_directory(
-            component=GiGLComponents.SplitGenerator, use_spark35=False
-        ).uri,
-        dep_constants.get_local_jar_directory(
-            component=GiGLComponents.SubgraphSampler, use_spark35=True
-        ).uri,
-        dep_constants.get_local_jar_directory(
-            component=GiGLComponents.SplitGenerator, use_spark35=True
-        ).uri,
-    ]
-    for directory in dirs_to_delete:
-        shutil.rmtree(directory, ignore_errors=True)
-
-    packager.package_subgraph_sampler()
-    packager.package_subgraph_sampler(use_spark35=True)
-    packager.package_split_generator(use_spark35=True)
+    ScalaPackager().package_all()
