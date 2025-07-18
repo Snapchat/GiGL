@@ -8,6 +8,18 @@ from google.cloud import logging as google_cloud_logging
 
 _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
 
+_LOG_SPAM = [
+    "TFDV visualization APIs",
+    "external/local_xla/xla",
+]
+
+
+class _LogSpamFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if any(spam in record.getMessage() for spam in _LOG_SPAM):
+            return False
+        return True
+
 
 class Logger(logging.LoggerAdapter):
     """
@@ -43,6 +55,11 @@ class Logger(logging.LoggerAdapter):
                 # Google Cloud Logging
                 client = google_cloud_logging.Client()
                 client.setup_logging(log_level=logging.INFO)
+                cloud_handler = google_cloud_logging.handlers.CloudLoggingHandler(
+                    client
+                )
+                cloud_handler.addFilter(_LogSpamFilter())
+                logger.addHandler(cloud_handler)
             else:
                 # Logging locally. Set up logging to console or file
                 if log_to_file:
