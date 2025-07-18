@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Dict, List
+from typing import Dict
 
 from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 
@@ -199,7 +199,7 @@ class PreprocessedMetadataPbWrapper:
         )
 
     def __get_feature_spec_for_feature_keys(
-        self, feature_spec: FeatureSpecDict, feature_keys: List[str]
+        self, feature_spec: FeatureSpecDict, feature_keys: list[str]
     ) -> FeatureSpecDict:
         """
         Return feature spec for the given feature keys
@@ -210,7 +210,7 @@ class PreprocessedMetadataPbWrapper:
         self,
         feature_schema: Schema,
         feature_spec: FeatureSpecDict,
-        feature_keys: List[str],
+        feature_keys: list[str],
     ) -> FeatureSchemaDict:
         """
         Return feature schema for the given feature keys
@@ -225,7 +225,7 @@ class PreprocessedMetadataPbWrapper:
         self,
         schema_uri: Uri,
         transform_fn_assets_uri: Uri,
-        feature_keys: List[str],
+        feature_keys: list[str],
     ) -> FeatureSchema:
         """
         Return FeatureSchema NamedTuple for the given feature keys
@@ -373,12 +373,12 @@ class PreprocessedMetadataPbWrapper:
     @property
     def condensed_node_type_to_feature_keys_map(
         self,
-    ) -> Dict[CondensedNodeType, List[str]]:
+    ) -> Dict[CondensedNodeType, list[str]]:
         """
         Allows access to a mapping which stores the feature keys of each CondensedNodeTypes.
 
         Returns:
-            Dict[CondensedNodeType, List[str]]: A mapping which stores the feature keys of each CondensedNodeTypes
+            Dict[CondensedNodeType, list[str]]: A mapping which stores the feature keys of each CondensedNodeTypes
         """
         return {
             condensed_node_type: list(
@@ -420,12 +420,12 @@ class PreprocessedMetadataPbWrapper:
     @property
     def condensed_edge_type_to_feature_keys_map(
         self,
-    ) -> Dict[CondensedEdgeType, List[str]]:
+    ) -> Dict[CondensedEdgeType, list[str]]:
         """
         Allows access to a mapping which stores the feature keys of each CondensedEdgeTypes.
 
         Returns:
-            Dict[CondensedEdgeType, List[str]]: A mapping which stores the feature keys of each CondensedEdgeTypes
+            Dict[CondensedEdgeType, list[str]]: A mapping which stores the feature keys of each CondensedEdgeTypes
         """
         return {
             condensed_edge_type: list(
@@ -467,12 +467,12 @@ class PreprocessedMetadataPbWrapper:
     @property
     def condensed_edge_type_to_pos_edge_feature_keys_map(
         self,
-    ) -> Dict[CondensedEdgeType, List[str]]:
+    ) -> Dict[CondensedEdgeType, list[str]]:
         """
         Allows access to a mapping which stores the feature keys of each CondensedEdgeTypes.
 
         Returns:
-            Dict[CondensedEdgeType, List[str]]: A mapping which stores the feature keys of each CondensedEdgeTypes
+            Dict[CondensedEdgeType, list[str]]: A mapping which stores the feature keys of each CondensedEdgeTypes
         """
         return {
             condensed_edge_type: list(
@@ -514,12 +514,12 @@ class PreprocessedMetadataPbWrapper:
     @property
     def condensed_edge_type_to_hard_neg_edge_feature_keys_map(
         self,
-    ) -> Dict[CondensedEdgeType, List[str]]:
+    ) -> Dict[CondensedEdgeType, list[str]]:
         """
         Allows access to a mapping which stores the feature keys of each CondensedEdgeTypes.
 
         Returns:
-            Dict[CondensedEdgeType, List[str]]: A mapping which stores the feature keys of each CondensedEdgeTypes
+            Dict[CondensedEdgeType, list[str]]: A mapping which stores the feature keys of each CondensedEdgeTypes
         """
         return {
             condensed_edge_type: list(
