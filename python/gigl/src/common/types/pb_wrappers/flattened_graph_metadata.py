@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Type, cast
+from typing import Dict, Type, cast
 
 from gigl.common import Uri, UriFactory
 from gigl.src.common.types.pb_wrappers.types import (
@@ -79,7 +79,7 @@ class FlattenedGraphMetadataPbWrapper:
         dataset_type = FLATTENED_GRAPH_TO_DATASET_TYPE[self.output_metadata_type]
         return dataset_type
 
-    def get_output_paths(self) -> List[Uri]:
+    def get_output_paths(self) -> list[Uri]:
         """
         Returns a list of output paths referenced by the output metadata.
         :return:
