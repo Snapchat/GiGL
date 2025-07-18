@@ -1,5 +1,5 @@
 import unittest
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 
 import google.cloud.bigquery as bigquery
 import pandas as pd
@@ -45,7 +45,7 @@ _NEGATIVE_EDGES = [("Alice", "Alice"), ("Bob", "Bob"), ("Charlie", "Charlie")]
 _PERSON_NODE_IDENTIFIER_FIELD = "person"
 # Define node features rows for each node
 _PERSON_NODE_FEATURE_FLOAT_FIELDS = ["height", "age", "weight"]
-_PERSON_NODE_FEATURE_RECORDS: List[Dict[str, Any]] = [
+_PERSON_NODE_FEATURE_RECORDS: list[Dict[str, Any]] = [
     {
         _PERSON_NODE_IDENTIFIER_FIELD: node,
         "height": float(i),
@@ -79,7 +79,7 @@ _POSITIVE_EDGE_FEATURE_RECORDS = [
     }
     for (src, dst) in _POSITIVE_EDGES
 ]
-_NEGATIVE_EDGE_FEATURE_INT_FIELDS: List[str] = []
+_NEGATIVE_EDGE_FEATURE_INT_FIELDS: list[str] = []
 _NEGATIVE_EDGE_FEATURE_RECORDS = [
     {
         _MESSAGES_EDGE_SRC_IDENTIFIER_FIELD: src,
@@ -94,11 +94,11 @@ class EnumeratorTest(unittest.TestCase):
     def __upload_records_to_bq(
         self,
         data_reference: Union[BigqueryEdgeDataReference, BigqueryNodeDataReference],
-        records: List[Dict[str, Any]],
+        records: list[Dict[str, Any]],
     ):
         self.__bq_utils.create_or_empty_bq_table(bq_path=data_reference.reference_uri)
-        columns: List[str] = []
-        schema: List[bigquery.SchemaField] = []
+        columns: list[str] = []
+        schema: list[bigquery.SchemaField] = []
         for record in records[0].items():
             field_name, field_value = record
             columns.append(field_name)
@@ -225,7 +225,7 @@ class EnumeratorTest(unittest.TestCase):
         )
 
     def __assert_bq_table_schema_contains_all_fields(
-        self, table_name: str, expected_fields: List[str] = []
+        self, table_name: str, expected_fields: list[str] = []
     ):
         logger.info(
             f"Asserting {table_name} has the following expected fields: {expected_fields}"
@@ -382,8 +382,8 @@ class EnumeratorTest(unittest.TestCase):
         # Check that all the rows have unique ids and feature values.
         def __assert_enumerated_table_rows_match_original_rows(
             table_name: str,
-            expected_edge_feature_fields: List[str],
-            original_edge_feature_records: List[Dict[str, Any]],
+            expected_edge_feature_fields: list[str],
+            original_edge_feature_records: list[Dict[str, Any]],
         ):
             result = list(
                 self.__bq_utils.run_query(
@@ -454,8 +454,8 @@ class EnumeratorTest(unittest.TestCase):
 
     def test_for_correctness(self):
         enumerator = Enumerator()
-        list_enumerator_node_type_metadata: List[EnumeratorNodeTypeMetadata]
-        list_enumerator_edge_type_metadata: List[EnumeratorEdgeTypeMetadata]
+        list_enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata]
+        list_enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata]
         (
             list_enumerator_node_type_metadata,
             list_enumerator_edge_type_metadata,

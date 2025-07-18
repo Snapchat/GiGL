@@ -1,6 +1,6 @@
 import datetime
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from google.cloud.dataproc_v1.types import (
     Cluster,
@@ -164,8 +164,8 @@ class SparkJobManager:
         self,
         main_jar_file_uri: Uri,
         max_job_duration: datetime.timedelta,
-        runtime_args: List[str] = [],
-        extra_jar_file_uris: List[str] = [],
+        runtime_args: list[str] = [],
+        extra_jar_file_uris: list[str] = [],
         use_spark35: bool = False,
     ):
         # The DataprocFileOutputCommitter feature is an enhanced version of the open source FileOutputCommitter.

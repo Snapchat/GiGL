@@ -1,7 +1,7 @@
 import json
 import tempfile
 from functools import partial
-from typing import List, Tuple
+from typing import Tuple
 
 import tensorflow as tf
 from google.cloud import bigquery
@@ -109,7 +109,7 @@ def _infer_supervised_node_classification_model(
     builder = PygGraphBuilder()
 
     def _collate_node_classification_batch(
-        elements: List[SupervisedNodeClassificationSample],
+        elements: list[SupervisedNodeClassificationSample],
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
         builder: GraphBuilder,
@@ -233,7 +233,7 @@ def _infer_node_anchor_based_link_prediction_model(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
 ):
     def _collate_rooted_node_neighborhood_batch(
-        elements: List[RootedNodeNeighborhoodSample],
+        elements: list[RootedNodeNeighborhoodSample],
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
         builder: GraphBuilder,
