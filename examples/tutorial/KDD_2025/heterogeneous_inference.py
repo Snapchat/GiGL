@@ -13,10 +13,10 @@ Example usage:
         --table_id=gigl_embeddings_table
 
 Multi node inference is supported by via the --rank and --world_size arguments.
-Ff doing multi node inference, make sure to set the `--host` and `--port` arguments
+If doing multi node inference, make sure to set the `--host` and `--port` arguments
 to the same values across all nodes.
 
-You may use the `--process_count` argument to control how many training processes will be spawned.
+You may use the `--process_count` argument to control how many inference processes will be spawned, per machine.
 """
 import os
 
@@ -203,8 +203,8 @@ if __name__ == "__main__":
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
             UriFactory.create_uri(args.saved_model_uri),  # saved_model_uri
-            args.project_id, # project_id
-            args.dataset_id, # dataset_id
+            args.project_id,  # project_id
+            args.dataset_id,  # dataset_id
             args.table_id,  # table_id
             args.batch_size,  # batch_size
         ),
