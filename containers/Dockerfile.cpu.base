@@ -27,6 +27,7 @@ RUN conda init bash
 RUN echo "conda activate gnn" >> ~/.bashrc
 
 COPY requirements tmp/requirements
+COPY python/gigl/scripts tmp/python/gigl/scripts
 RUN pip install --upgrade pip
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
 
