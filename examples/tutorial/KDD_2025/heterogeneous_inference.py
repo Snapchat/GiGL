@@ -2,15 +2,10 @@
 Example heterogeneous inference script for GiGL.
 This script demonstrates how to run inference on a heterogeneous graph model using GiGL.
 It initializes a model, loads the state from a saved URI, and performs inference on the dataset.
-It also exports the embeddings to a specified GCS URI and loads them into BigQuery.
+It also exports the embeddings to a specified output URI, which can be a GCS bucket or a local directory.
 
 Example usage:
-    python \
-        examples/tutorial/KDD_2025/heterogeneous_inference.py \
-        --embedding_output_uri=gs://MY BUCKET/my/embeddings.path \
-        --project_id=$PROJECT_ID \
-        --dataset_id=gigl_embeddings \
-        --table_id=gigl_embeddings_table
+    python examples/tutorial/KDD_2025/heterogeneous_inference.py
 
 Multi node inference is supported by via the --rank and --world_size arguments.
 If doing multi node inference, make sure to set the `--host` and `--port` arguments
@@ -24,14 +19,18 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 
 
 import argparse
+import datetime
 from collections.abc import Mapping
+from pathlib import Path
 
+import fastavro
+import pandas as pd
 import torch
 import torch.multiprocessing.spawn
 from torch_geometric.nn import HGTConv
 
-from gigl.common import GcsUri, Uri, UriFactory
-from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
+from gigl.common import Uri, UriFactory
+from gigl.common.data.export import EmbeddingExporter
 from gigl.common.logger import Logger
 from gigl.distributed import (
     DistLinkPredictionDataset,
@@ -50,11 +49,8 @@ def inference(
     process_count: int,
     port: int,
     dataset: DistLinkPredictionDataset,
-    embedding_output_uri: GcsUri,
+    embedding_output_uri: Uri,
     saved_model_uri: Uri,
-    project_id: str,
-    dataset_id: str,
-    table_id: str,
     batch_size: int = 4,
 ):
     """Run inference on the model."""
@@ -97,7 +93,10 @@ def inference(
             process_start_gap_seconds=0,
             pin_memory_device=torch.device("cpu"),
         )
-        export_dir = GcsUri.join(embedding_output_uri, f"node_{node_type}")
+        export_dir = embedding_output_uri.join(
+            embedding_output_uri, f"node_{node_type}"
+        )
+        Path(export_dir).mkdir(parents=True, exist_ok=True)
         exporter = EmbeddingExporter(
             export_dir, file_prefix=f"embeddings_{process_number}_"
         )
@@ -111,16 +110,6 @@ def inference(
             )
         exporter.flush_embeddings()
         torch.distributed.barrier()  # Wait for all ranks to finish exporting embeddings
-        if process_number == 0:
-            logger.info(
-                f"Exported embeddings for node type {node_type} to BQ {project_id}.{dataset_id}.{table_id}."
-            )
-            load_embeddings_to_bigquery(
-                gcs_folder=export_dir,
-                project_id=project_id,
-                dataset_id=dataset_id,
-                table_id=table_id,
-            )
     logger.info(f"Finished inference on process {process_number}")
 
 
@@ -147,8 +136,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--embedding_output_uri",
         type=str,
-        required=True,
-        help="GCS URI to save embeddings",
+        default=f"/tmp/gigl/embeddings/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        help="URI to save embeddings",
     )
     parser.add_argument(
         "--saved_model_uri",
@@ -156,13 +145,6 @@ if __name__ == "__main__":
         default="/tmp/gigl/toy_hgt_model.pt",
         help="URI of the saved model",
     )
-    parser.add_argument(
-        "--project_id", type=str, required=True, help="GCP project ID for BigQuery"
-    )
-    parser.add_argument(
-        "--dataset_id", type=str, required=True, help="BigQuery dataset ID"
-    )
-    parser.add_argument("--table_id", type=str, required=True, help="BigQuery table ID")
     parser.add_argument(
         "--batch_size", type=int, default=4, help="Batch size for inference"
     )
@@ -203,11 +185,27 @@ if __name__ == "__main__":
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
             UriFactory.create_uri(args.saved_model_uri),  # saved_model_uri
-            args.project_id,  # project_id
-            args.dataset_id,  # dataset_id
-            args.table_id,  # table_id
             args.batch_size,  # batch_size
         ),
         nprocs=args.process_count,
         join=True,
     )
+
+    # Now let's load the embeddings to a dataframe
+    # Note in a "production" setting we have `gigl.common.data.export.load_embeddings_to_bigquery`
+    # to upload the embeddings to BigQuery.
+    # You make use it like:
+    # load_embeddings_to_bigquery(
+    #     gcs_folder=args.embedding_output_uri,
+    #     project_id=<your project>,
+    #     dataset_id=<your dataset>,
+    #     table_id=<your table>,
+    # )
+    avro_files = list(
+        f for f in Path(args.embedding_output_uri).rglob("*.avro") if f.is_file()
+    )
+    avro_data = []
+    for avro_file in avro_files:
+        avro_data.extend(fastavro.reader(avro_file.open("rb")))
+    df = pd.DataFrame.from_records(avro_data)
+    logger.info(f"Dataframe {df}.")
