@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict
 
 
 class EvalMetricType(Enum):
@@ -32,11 +31,11 @@ class EvalMetric:
 
 class EvalMetricsCollection:
     def __init__(self, metrics: list[EvalMetric] = []):
-        self._metrics: Dict[str, EvalMetric] = dict()
+        self._metrics: dict[str, EvalMetric] = dict()
         self.add_metrics(metrics=metrics)
 
     @property
-    def metrics(self) -> Dict[str, EvalMetric]:
+    def metrics(self) -> dict[str, EvalMetric]:
         return self._metrics
 
     def add_metric(self, model_metric: EvalMetric):

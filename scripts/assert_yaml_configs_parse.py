@@ -30,7 +30,6 @@ Examples:
 import argparse
 import os
 import re
-from typing import Dict
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
@@ -60,7 +59,7 @@ def assert_configs_parse(directories: list[str], ignore_regex: list[str] = []) -
         - Errors for invalid YAML files.
     """
     proto_utils = ProtoUtils()
-    invalid_configs: Dict[Uri, str] = {}
+    invalid_configs: dict[Uri, str] = {}
     logger.info(f"Checking if configs in {directories} are valid.")
     logger.info(f"Ignoring regex: {ignore_regex}")
     ignore = [re.compile(regex) for regex in ignore_regex]

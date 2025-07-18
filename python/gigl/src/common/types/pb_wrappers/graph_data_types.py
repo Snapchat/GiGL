@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence, Set, Union, cast
+from typing import Optional, Sequence, Set, Union, cast
 
 from gigl.common.utils.func_tools import lru_cache
 from gigl.src.common.types.graph_data import CondensedEdgeType, CondensedNodeType
@@ -247,8 +247,8 @@ class GraphPbWrapper:
     @staticmethod
     def hydrate_subgraph_features(
         dry_graph_proto: GraphPbWrapper,
-        node_features_dict: Optional[Dict[NodePbWrapper, Sequence[float]]] = None,
-        edge_features_dict: Optional[Dict[EdgePbWrapper, Sequence[float]]] = None,
+        node_features_dict: Optional[dict[NodePbWrapper, Sequence[float]]] = None,
+        edge_features_dict: Optional[dict[EdgePbWrapper, Sequence[float]]] = None,
     ) -> GraphPbWrapper:
         """
         Hydrate subgraph function is currently used in graphflat,

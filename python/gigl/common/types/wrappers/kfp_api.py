@@ -2,7 +2,7 @@
 Marked for deprecation
 """
 import datetime
-from typing import Dict, Optional
+from typing import Optional
 
 import kfp_server_api
 from kfp_server_api.models.v2beta1_pipeline_task_detail import V2beta1PipelineTaskDetail
@@ -74,8 +74,8 @@ class ApiRunDetailWrapper:
 
     @property
     @lru_cache(maxsize=1)
-    def job_parameters(self) -> Dict[str, str]:
-        parameters_dict: Dict[str, str] = {}
+    def job_parameters(self) -> dict[str, str]:
+        parameters_dict: dict[str, str] = {}
 
         runtime_config: V2beta1RuntimeConfig = self.api_run.runtime_config
         for name, val in runtime_config.parameters.items():
@@ -87,13 +87,13 @@ class ApiRunDetailWrapper:
     @lru_cache(maxsize=1)
     def task_details_map(
         self,
-    ) -> Dict[str, KfpTaskDetails]:
+    ) -> dict[str, KfpTaskDetails]:
         """
 
         Returns:
-            Dict[str, KfpTaskDetails]: Note that the keys are the display name of the KFP component
+            dict[str, KfpTaskDetails]: Note that the keys are the display name of the KFP component
         """
-        task_details_dict: Dict[str, KfpTaskDetails] = {}
+        task_details_dict: dict[str, KfpTaskDetails] = {}
         run_details: V2beta1RunDetails = self.api_run.run_details
         task: V2beta1PipelineTaskDetail
         for task in run_details.task_details:
