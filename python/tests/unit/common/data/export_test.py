@@ -118,7 +118,8 @@ class TestEmbeddingExporter(unittest.TestCase):
 
         # Assertions
         written_files = sorted(
-            list(map(UriFactory.create_uri, self.local_export_dir.glob("*")))
+            list(map(UriFactory.create_uri, self.local_export_dir.glob("*"))),
+            key=lambda x: x.uri,
         )
         self.assertEqual(
             written_files,
@@ -162,7 +163,8 @@ class TestEmbeddingExporter(unittest.TestCase):
 
         # Assertions
         written_files = sorted(
-            list(map(UriFactory.create_uri, self.local_export_dir.glob("*")))
+            list(map(UriFactory.create_uri, self.local_export_dir.glob("*"))),
+            key=lambda x: x.uri,
         )
         self.assertEqual(
             written_files,
