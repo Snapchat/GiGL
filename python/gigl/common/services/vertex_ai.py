@@ -62,7 +62,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Dict, Final, List, Optional
+from typing import Dict, Final, Optional
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -91,9 +91,9 @@ DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
 class VertexAiJobConfig:
     job_name: str
     container_uri: str
-    command: List[str]
-    args: Optional[List[str]] = None
-    environment_variables: Optional[List[Dict[str, str]]] = None
+    command: list[str]
+    args: Optional[list[str]] = None
+    environment_variables: Optional[list[Dict[str, str]]] = None
     machine_type: str = "n1-standard-4"
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
@@ -198,7 +198,7 @@ class VertexAIService:
             replica_count=1,
         )
 
-        worker_pool_specs: List[WorkerPoolSpec] = [leader_worker_spec]
+        worker_pool_specs: list[WorkerPoolSpec] = [leader_worker_spec]
 
         if job_config.replica_count > 1:
             worker_spec = WorkerPoolSpec(

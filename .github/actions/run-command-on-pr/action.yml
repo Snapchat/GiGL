@@ -1,7 +1,7 @@
 name: 'Run Command on a Specified PR'
 description: 'Runs a command and posts comments on a PR based on workflow progress'
 inputs:
-  github-token: 
+  github-token:
     description: 'GitHub token for authentication'
     required: true
   pr_number:
@@ -23,7 +23,7 @@ inputs:
   install_dev_deps:
     description: |
       Set up the development environment that can allow for testing. If testing requires gcloud
-      please pass in `setup_gcloud: true`, `gcp_project_id`, `workload_identity_provider`, and 
+      please pass in `setup_gcloud: true`, `gcp_project_id`, `workload_identity_provider`, and
       `gcp_service_account_email` as inputs.
     required: false
     default: "false"
@@ -90,7 +90,7 @@ runs:
       if: ${{ inputs.use_cloud_run == 'false' }}
       shell: bash
       run: ${{ inputs.command }}
-    
+
     - name: Run specified command on the PR branch using Cloud Run
       if: ${{ inputs.use_cloud_run == 'true' }}
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
@@ -98,7 +98,7 @@ runs:
         cmd: ${{ inputs.command }}
         service_account: ${{ inputs.gcp_service_account_email }}
         project: ${{ inputs.gcp_project_id }}
-        
+
     - name: Commment workflow succeeded
       if: ${{ inputs.should_leave_progress_comments == 'true' }}
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
@@ -119,5 +119,3 @@ runs:
           ❌ Workflow failed.
           Please check the logs for more details.
         comment_id: ${{ steps.comment_workflow_started.outputs.comment_id }} # Append to the previous comment
-
-
