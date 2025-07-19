@@ -44,6 +44,7 @@ class HGT(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self._node_type_to_feat_dim_map = node_type_to_feat_dim_map
         node_types = list(node_type_to_feat_dim_map.keys())
         edge_types = list(edge_type_to_feat_dim_map.keys())
         self.lin_dict = torch.nn.ModuleDict()
@@ -83,6 +84,12 @@ class HGT(nn.Module):
             Dict[NodeType, torch.Tensor]: Dictionary with node types as keys and output tensors as values.
         """
         node_type_to_features_dict = data.x_dict
+
+        for node_type, feat_dim in self._node_type_to_feat_dim_map.items():
+            if node_type not in data.x_dict:
+                data[node_type].x = torch.empty((0, feat_dim), dtype=torch.long).to(
+                    device
+                )
 
         if self.feature_embedding_layers:
             node_type_to_features_dict = {
