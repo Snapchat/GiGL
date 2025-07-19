@@ -81,17 +81,16 @@ class TestExampleNotebooks(unittest.TestCase):
             #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
             #     },
             # ),
-            # TODO(kmonte): Look into why this notebook is failing.
-            # _NoteBookTestConfig(
-            #     name="toy_example",
-            #     notebook_path=str(
-            #         GIGL_ROOT_DIR
-            #         / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
-            #     ),
-            #     env_overrides={
-            #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
-            #     },
-            # ),
+            _NoteBookTestConfig(
+                name="toy_example",
+                notebook_path=str(
+                    GIGL_ROOT_DIR
+                    / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
+                ),
+                env_overrides={
+                    "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
+                },
+            ),
         ]
 
     def test_notebooks(self):
