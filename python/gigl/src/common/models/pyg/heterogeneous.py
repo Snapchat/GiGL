@@ -86,7 +86,7 @@ class HGT(nn.Module):
 
         for node_type, feat_dim in self._node_type_to_feat_dim_map.items():
             if node_type not in data.x_dict:
-                data[node_type].x = torch.empty((0, feat_dim), dtype=torch.float64).to(
+                data[node_type].x = torch.empty((0, feat_dim), dtype=torch.float32).to(
                     device
                 )
 
