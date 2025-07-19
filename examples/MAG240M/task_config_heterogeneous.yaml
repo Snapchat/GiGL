@@ -9,9 +9,9 @@ graphMetadata:
   - dstNodeType: paper
     relation: writes
     srcNodeType: author
-  - dstNodeType: institution
+  - dstNodeType: author
     relation: affiliated
-    srcNodeType: author
+    srcNodeType: institution
   nodeTypes:
   - paper
   - author

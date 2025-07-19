@@ -65,7 +65,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         | Author      | 122_383_112 | 768            |  Average of neighboring paper features                   |
         | Institution | 25_721      | 768            |  Average of neighboring author features                  |
         """
-        self.author_affiliated_institution_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_author_affiliated_with_institution"
+        self.institution_affiliated_author_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_author_affiliated_with_institution"
         self.author_writes_paper_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_author_writes_paper"
         self.paper_cites_paper_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper_cites_paper"
 
@@ -91,10 +91,10 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
             NodeType(self.paper_node_type),
         )
 
-        self.author_affiliated_insitution_edge_type = EdgeType(
-            NodeType(self.author_node_type),
-            Relation("affiliated"),
+        self.institution_affiliated_author_edge_type = EdgeType(
             NodeType(self.institution_node_type),
+            Relation("affiliated"),
+            NodeType(self.author_node_type),
         )
 
         self.feature_list = [f"feat_{i}" for i in range(NUM_PAPER_FEATURES)]
@@ -156,7 +156,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
         average_institution_query = query_template_compute_average_features.format(
             feature_table=self.author_table,
-            edge_table=self.author_affiliated_institution_table,
+            edge_table=self.institution_affiliated_author_table,
             join_identifier=self.author_node_type,
             group_by_identifier=self.institution_node_type,
             average_feature_query=self.average_feature_query,
@@ -223,12 +223,12 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
             [
                 self.paper_cites_paper_edge_type,
                 self.author_writes_paper_edge_type,
-                self.author_affiliated_insitution_edge_type,
+                self.institution_affiliated_author_edge_type,
             ],
             [
                 self.paper_cites_paper_table,
                 self.author_writes_paper_table,
-                self.author_affiliated_institution_table,
+                self.institution_affiliated_author_table,
             ],
         ):
             if edge_type.src_node_type == edge_type.dst_node_type:
