@@ -20,6 +20,7 @@ from gigl.common.utils.retry import RetriesFailedException
 class TestEmbeddingExporter(unittest.TestCase):
     def setUp(self):
         super().setUp()
+        self.maxDiff = 1_000  # Set a high maxDiff to see full error messages
         self._temp_dir = tempfile.TemporaryDirectory()
         self.local_export_dir = Path(self._temp_dir.name) / uuid4().hex / "local-export"
         self.local_export_dir.mkdir(parents=True, exist_ok=True)
@@ -116,8 +117,9 @@ class TestEmbeddingExporter(unittest.TestCase):
         exporter.flush_embeddings()
 
         # Assertions
-        written_files = list(
-            map(UriFactory.create_uri, self.local_export_dir.glob("*"))
+        written_files = sorted(
+            list(map(UriFactory.create_uri, self.local_export_dir.glob("*"))),
+            key=lambda x: x.uri,
         )
         self.assertEqual(
             written_files,
@@ -160,8 +162,9 @@ class TestEmbeddingExporter(unittest.TestCase):
                 exporter.add_embedding(id_batch, embedding_batch, embedding_type)
 
         # Assertions
-        written_files = list(
-            map(UriFactory.create_uri, self.local_export_dir.glob("*"))
+        written_files = sorted(
+            list(map(UriFactory.create_uri, self.local_export_dir.glob("*"))),
+            key=lambda x: x.uri,
         )
         self.assertEqual(
             written_files,

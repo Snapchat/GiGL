@@ -81,6 +81,25 @@ jobs:
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
+  ci-integration-example-notebooks-test:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup development environment
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ secrets.gcp_project_id }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run Example Notebook E2E Tests
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: "make notebooks_test"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ secrets.gcp_project_id }}
+
   ci-lint-test:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
