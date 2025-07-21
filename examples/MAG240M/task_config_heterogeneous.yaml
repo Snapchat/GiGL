@@ -31,7 +31,7 @@ datasetConfig:
 trainerConfig:
   trainerArgs:
     # Example argument to trainer
-    log_every_n_batch: "50"
+    log_every_n_batch: "1000"
     # The DBLP Dataset does not have specified labeled edges so we provide this field to indicate what
     # percentage of edges we should select as self-supervised labeled edges. Doing this randomly sets 5% as "labels".
     # Note that the current GiGL implementation does not remove these selected edges from the global set of edges, which may
@@ -42,6 +42,13 @@ trainerConfig:
     # fanouts for each anchor node type.
     # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
     num_neighbors: "[10, 10]"
+    main_batch_size: "256"
+    random_batch_size: "256"
+    num_max_train_batches: "20000"
+    hid_dim: "256"
+    out_dim: "256"
+    val_every_n_batch: "1000"
+    learning_rate: "0.005"
   command: python -m examples.link_prediction.heterogeneous_training
 inferencerConfig:
   inferencerArgs:
@@ -52,7 +59,9 @@ inferencerConfig:
     # fanouts for each anchor node type.
     # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
     num_neighbors: "[10, 10]"
-  inferenceBatchSize: 512
+    hid_dim: "256"
+    out_dim: "256"
+  inferenceBatchSize: 256
   command: python -m examples.link_prediction.heterogeneous_inference
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false

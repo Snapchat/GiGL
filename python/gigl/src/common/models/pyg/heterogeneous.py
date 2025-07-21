@@ -46,7 +46,7 @@ class HGT(nn.Module):
         super().__init__()
         self._node_type_to_feat_dim_map = node_type_to_feat_dim_map
         node_types = list(node_type_to_feat_dim_map.keys())
-        edge_types = list(edge_type_to_feat_dim_map.keys())
+        edge_types = sorted(list(edge_type_to_feat_dim_map.keys()))
         self.lin_dict = torch.nn.ModuleDict()
         for node_type, in_dim in node_type_to_feat_dim_map.items():
             self.lin_dict[node_type] = Linear(in_channels=in_dim, out_channels=hid_dim)
@@ -92,6 +92,8 @@ class HGT(nn.Module):
 
         node_type_to_features_dict = data.x_dict
 
+        edge_index_dict = {edge_type: data.edge_index_dict[edge_type] for edge_type in sorted(data.edge_index_dict)}
+
         if self.feature_embedding_layers:
             node_type_to_features_dict = {
                 node_type: self.feature_embedding_layers[node_type](x)
@@ -107,7 +109,7 @@ class HGT(nn.Module):
 
         for conv in self.convs:
             node_type_to_features_dict = conv(
-                node_type_to_features_dict, data.edge_index_dict
+                node_type_to_features_dict, edge_index_dict
             )
 
         node_typed_embeddings: Dict[NodeType, torch.Tensor] = {}
