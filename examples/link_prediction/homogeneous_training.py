@@ -256,6 +256,8 @@ def _training_process(
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
+    hid_dim: int,
+    out_dim: int,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
     log_every_n_batch: int,
@@ -283,6 +285,8 @@ def _training_process(
         sampling_workers_per_process (int): Number of sampling workers per training process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
+        hid_dim (int): Hidden dimension of the model
+        out_dim (int): Output dimension of the model
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
         process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
             field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
@@ -362,6 +366,8 @@ def _training_process(
         model = init_example_gigl_homogeneous_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
+            hid_dim=hid_dim,
+            out_dim=out_dim,
             device=device,
             wrap_with_ddp=True,  # We initialize the model for DDP
             # Find unused parameters in the encoder.
@@ -469,6 +475,8 @@ def _training_process(
         model = init_example_gigl_homogeneous_model(
             node_feature_dim=node_feature_dim,
             edge_feature_dim=edge_feature_dim,
+            hid_dim=hid_dim,
+            out_dim=out_dim,
             device=device,
             wrap_with_ddp=True,  # We initialize the model for DDP
             # Find unused parameters in the encoder.
@@ -659,8 +667,11 @@ def _run_example_training(
         trainer_args.get("sampling_workers_per_process", "4")
     )
 
-    main_batch_size = int(trainer_args.get("main_batch_size", 16))
-    random_batch_size = int(trainer_args.get("random_batch_size", 16))
+    main_batch_size = int(trainer_args.get("main_batch_size", "16"))
+    random_batch_size = int(trainer_args.get("random_batch_size", "16"))
+
+    hid_dim = int(trainer_args.get("hid_dim", "16"))
+    out_dim = int(trainer_args.get("out_dim", "16"))
 
     # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
     # is the place to store pre-fetched data, so if it is too small then prefetching is limited, causing sampling slowdown. This parameter is a string
@@ -685,6 +696,8 @@ def _run_example_training(
         sampling_workers_per_process={sampling_workers_per_process}, \
         main_batch_size={main_batch_size}, \
         random_batch_size={random_batch_size}, \
+        hid_dim={hid_dim}, \
+        out_dim={out_dim}, \
         sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, \
         process_start_gap_seconds={process_start_gap_seconds}, \
         log_every_n_batch={log_every_n_batch}, \
@@ -753,6 +766,8 @@ def _run_example_training(
             sampling_workers_per_process,  # sampling_workers_per_process
             main_batch_size,  # main_batch_size
             random_batch_size,  # random_batch_size
+            hid_dim,  # hid_dim
+            out_dim,  # out_dim
             sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
             process_start_gap_seconds,  # process_start_gap_seconds
             log_every_n_batch,  # log_every_n_batch

@@ -70,6 +70,8 @@ def _inference_process(
     embedding_gcs_path: GcsUri,
     model_state_dict_uri: GcsUri,
     inference_batch_size: int,
+    hid_dim: int,
+    out_dim: int,
     dataset: DistLinkPredictionDataset,
     inferencer_args: Dict[str, str],
     inference_node_type: NodeType,
@@ -89,6 +91,8 @@ def _inference_process(
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
+        hid_dim (int): Hidden dimension of the model
+        out_dim (int): Output dimension of the model
         dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
         inferencer_args (Dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for. This is used to
@@ -163,6 +167,8 @@ def _inference_process(
     model: LinkPredictionGNN = init_example_gigl_homogeneous_model(
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
+        hid_dim=hid_dim,
+        out_dim=out_dim,
         device=device,
         state_dict=model_state_dict,
     )
@@ -325,6 +331,9 @@ def _run_example_inference(
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
 
+    hid_dim = int(inferencer_args.get("hid_dim", "16"))
+    out_dim = int(inferencer_args.get("out_dim", "16"))
+
     local_world_size: int
     arg_local_world_size = inferencer_args.get("local_world_size")
     if arg_local_world_size is not None:
@@ -367,19 +376,21 @@ def _run_example_inference(
     mp.spawn(
         fn=_inference_process,
         args=(
-            local_world_size,
-            machine_rank,
-            machine_world_size,
-            master_ip_address,
-            master_default_process_group_port,
-            embedding_output_gcs_folder,
-            model_uri,
-            inference_batch_size,
-            dataset,
-            inferencer_args,
-            graph_metadata.homogeneous_node_type,
-            node_feature_dim,
-            edge_feature_dim,
+            local_world_size,  # local_world_size
+            machine_rank,  # machine_rank
+            machine_world_size,  # machine_world_size
+            master_ip_address,  # master_ip_address
+            master_default_process_group_port,  # master_default_process_group_port
+            embedding_output_gcs_folder,  # embedding_gcs_path
+            model_uri,  # model_state_dict_uri
+            inference_batch_size,  # inference_batch_size
+            hid_dim,  # hid_dim
+            out_dim,  # out_dim
+            dataset,  # dataset
+            inferencer_args,  # inferencer_args
+            graph_metadata.homogeneous_node_type,  # inference_node_type
+            node_feature_dim,  # node_feature_dim
+            edge_feature_dim,  # edge_feature_dim
         ),
         nprocs=local_world_size,
         join=True,
