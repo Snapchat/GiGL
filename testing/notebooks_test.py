@@ -92,10 +92,10 @@ class TestExampleNotebooks(unittest.TestCase):
                 },
             ),
             _NoteBookTestConfig(
-                "kdd_2025_heterogeneous_inference",
+                "kdd_2025_heterogeneous",
                 notebook_path=str(
                     GIGL_ROOT_DIR
-                    / "examples/tutorial/KDD_2025/heterogeneous_inference.ipynb"
+                    / "examples/tutorial/KDD_2025/heterogeneous_walkthrough.ipynb"
                 ),
             ),
         ]
