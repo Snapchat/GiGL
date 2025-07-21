@@ -35,10 +35,9 @@ from typing import Literal
 
 import torch
 import torch.multiprocessing.spawn
+from examples.tutorial.KDD_2025.utils import init_model
 from torch.nn.parallel import DistributedDataParallel
-from torch_geometric import typing as pyg_typing
 from torch_geometric.data import HeteroData
-from torch_geometric.nn import HGTConv
 
 from gigl.common.logger import Logger
 from gigl.common.types.uri.uri_factory import UriFactory
@@ -51,7 +50,6 @@ from gigl.distributed.utils import get_free_port
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.utils.model import save_state_dict
 from gigl.utils.iterator import InfiniteIterator
-from examples.tutorial.KDD_2025.utils import init_model
 
 logger = Logger()
 

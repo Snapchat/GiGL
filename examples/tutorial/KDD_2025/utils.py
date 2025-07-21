@@ -3,9 +3,9 @@ from torch_geometric.typing import Metadata
 
 
 def init_model(
-    metadata: Metadata = ( # Hard code metadata for toy graph example.
-        ["user", "story"], # node types
-        [("user", "to", "story"), ("story", "to", "user")], # edge types
+    metadata: Metadata = (  # Hard code metadata for toy graph example.
+        ["user", "story"],  # node types
+        [("user", "to", "story"), ("story", "to", "user")],  # edge types
     )
 ) -> HGTConv:
     return HGTConv(

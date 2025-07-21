@@ -27,7 +27,7 @@ import fastavro
 import pandas as pd
 import torch
 import torch.multiprocessing.spawn
-from torch_geometric.nn import HGTConv
+from examples.tutorial.KDD_2025.utils import init_model
 
 from gigl.common import Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter
@@ -40,7 +40,6 @@ from gigl.distributed import (
 from gigl.distributed.utils import get_free_port
 from gigl.src.common.utils.model import load_state_dict_from_uri
 
-from examples.tutorial.KDD_2025.utils import init_model
 logger = Logger()
 
 
