@@ -40,6 +40,7 @@ from gigl.distributed import (
 from gigl.distributed.utils import get_free_port
 from gigl.src.common.utils.model import load_state_dict_from_uri
 
+from examples.tutorial.KDD_2025.utils import init_model
 logger = Logger()
 
 
@@ -65,14 +66,7 @@ def inference(
     )
 
     # Create the model
-    model = HGTConv(
-        in_channels=-1,
-        out_channels=16,
-        metadata=[
-            tuple(dataset.get_node_types()),
-            tuple(dataset.get_edge_types()),
-        ],
-    )
+    model = init_model()
     # Load the model state
     model.load_state_dict(load_state_dict_from_uri(saved_model_uri))
     logger.info(
@@ -96,7 +90,7 @@ def inference(
         export_dir = embedding_output_uri.join(
             embedding_output_uri, f"node_{node_type}"
         )
-        Path(export_dir).mkdir(parents=True, exist_ok=True)
+        Path(export_dir.uri).mkdir(parents=True, exist_ok=True)
         exporter = EmbeddingExporter(
             export_dir, file_prefix=f"embeddings_{process_number}_"
         )
@@ -204,8 +198,13 @@ if __name__ == "__main__":
     avro_files = list(
         f for f in Path(args.embedding_output_uri).rglob("*.avro") if f.is_file()
     )
-    avro_data = []
+    # Schema here is:
+    # node_id: int
+    # embedding: list[float]
+    # node_type: str
+    avro_data: list = []
     for avro_file in avro_files:
-        avro_data.extend(fastavro.reader(avro_file.open("rb")))
+        avro_data.extend(fastavro.reader(avro_file.open("rb")))  # type: ignore
+    print(f"First data: {avro_data[0] if avro_data else 'No data found'}")
     df = pd.DataFrame.from_records(avro_data)
     logger.info(f"Dataframe {df}.")

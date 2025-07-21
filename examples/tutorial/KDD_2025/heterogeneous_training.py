@@ -51,6 +51,7 @@ from gigl.distributed.utils import get_free_port
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.utils.model import save_state_dict
 from gigl.utils.iterator import InfiniteIterator
+from examples.tutorial.KDD_2025.utils import init_model
 
 logger = Logger()
 
@@ -62,23 +63,6 @@ SUPERVISION_EDGE_TYPE = EdgeType(QUERY_NODE_TYPE, Relation("to"), TARGET_NODE_TY
 
 # Arbitrary fanout for the example, can be adjusted based on dataset and model.
 FANOUT = [10, 10]
-
-
-def init_model(
-    out_channels: int = 16,
-    metadata: pyg_typing.Metadata = (
-        ["user", "story"],
-        [
-            ("user", "to", "story"),
-            ("story", "to", "user"),
-        ],
-    ),
-) -> HGTConv:
-    return HGTConv(
-        in_channels=-1,  # Input channels will be set dynamically based on the dataset.
-        out_channels=out_channels,
-        metadata=metadata,
-    )
 
 
 def compute_loss(model: torch.nn.Module, data: HeteroData) -> torch.Tensor:
