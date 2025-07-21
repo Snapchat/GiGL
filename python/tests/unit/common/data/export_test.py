@@ -23,7 +23,6 @@ class TestEmbeddingExporter(unittest.TestCase):
         self.maxDiff = 1_000  # Set a high maxDiff to see full error messages
         self._temp_dir = tempfile.TemporaryDirectory()
         self.local_export_dir = Path(self._temp_dir.name) / uuid4().hex / "local-export"
-        self.local_export_dir.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
         super().tearDown()
