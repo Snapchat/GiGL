@@ -222,7 +222,7 @@ class DistLinkPredictionDataset(DistDataset):
         return self._negative_edge_label
 
     @property
-    def node_ids(self) -> Optional[Union[torch.Tensor, Dict[NodeType, int]]]:
+    def node_ids(self) -> Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]:
         return self._node_ids
 
     @property
