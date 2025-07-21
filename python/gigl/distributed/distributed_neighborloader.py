@@ -16,6 +16,7 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
 )
@@ -238,6 +239,9 @@ class DistNeighborLoader(DistLoader):
             local_process_world_size=local_world_size,
         )
 
+        self._node_feature_dim = dataset.node_feature_dim
+        self._edge_feature_dim = dataset.edge_feature_dim
+
         input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
@@ -325,9 +329,14 @@ class DistNeighborLoader(DistLoader):
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
+        data = set_missing_features(
+            data=data,
+            node_feature_dim=self._node_feature_dim,
+            edge_feature_dim=self._edge_feature_dim,
+            device=self.to_device,
+        )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
-
         if self._is_labeled_heterogeneous:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
         return data

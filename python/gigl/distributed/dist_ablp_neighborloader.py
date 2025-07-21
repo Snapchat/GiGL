@@ -23,6 +23,7 @@ from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
 )
@@ -321,6 +322,10 @@ class DistABLPLoader(DistLoader):
             local_process_world_size=local_world_size,
         )
 
+        self._node_feature_dim = dataset.node_feature_dim
+
+        self._edge_feature_dim = dataset.edge_feature_dim
+
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
         neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
@@ -575,6 +580,12 @@ class DistABLPLoader(DistLoader):
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         msg, positive_labels, negative_labels = self._get_labels(msg)
         data = super()._collate_fn(msg)
+        data = set_missing_features(
+            data=data,
+            node_feature_dim=self._node_feature_dim,
+            edge_feature_dim=self._edge_feature_dim,
+            device=self.to_device,
+        )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
         if not self._is_input_heterogeneous:
