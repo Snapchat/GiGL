@@ -105,8 +105,8 @@ runs:
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
-          ✅ Workflow completed successfully.
-        comment_id: ${{ steps.comment_workflow_started.outputs.comment_id }} # Append to the previous comment
+          ✅ Workflow $${{ inputs.descriptive_workflow_name }} completed [successfully]($${{ env.WORKFLOW_URL }}).
+        # comment_id: ${{ steps.comment_workflow_started.outputs.comment_id }} # Append to the previous comment
 
     # Failure handling step
     - name: Comment workflow failed
@@ -116,6 +116,6 @@ runs:
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
-          ❌ Workflow failed.
-          Please check the logs for more details.
-        comment_id: ${{ steps.comment_workflow_started.outputs.comment_id }} # Append to the previous comment
+          ❌ Workflow $${{ inputs.descriptive_workflow_name }} failed.
+          Please check the [logs]($${{ env.WORKFLOW_URL }}) for more details.
+        # comment_id: ${{ steps.comment_workflow_started.outputs.comment_id }} # Append to the previous comment

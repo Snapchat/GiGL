@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 55
     steps:
     - name: Run Unit Tests
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      uses: .github/actions/run-command-on-pr
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -102,7 +102,7 @@ jobs:
     timeout-minutes: 20 # If our linting takes longer than 20 minutes something has gone very wrong...
     steps:
     - name: Run Linting Tests
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      uses: .github/actions/run-command-on-pr
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -117,3 +117,4 @@ jobs:
           source ~/.profile
           make check_format
           make assert_yaml_configs_parse
+          pre-commit run --all-files
