@@ -91,6 +91,13 @@ class TestExampleNotebooks(unittest.TestCase):
                     "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
                 },
             ),
+            _NoteBookTestConfig(
+                "kdd_2025_heterogeneous_inference",
+                notebook_path=str(
+                    GIGL_ROOT_DIR
+                    / "examples/tutorial/KDD_2025/heterogeneous_inference.ipynb"
+                ),
+            ),
         ]
 
     def test_notebooks(self):
