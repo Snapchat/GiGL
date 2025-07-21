@@ -19,11 +19,10 @@ if using a different dataset, also update the following fields:
  and the metadata in the `init_model` function.
 
  Multi node training is supported by via the --rank and --world_size arguments.
- if doing multi node training, make sure to set the `--host` and `--port` arguments
+ If doing multi node training, make sure to set the `--host` and `--port` arguments
  to the same values across all nodes.
 
- You may use the `--process_count` argument to control how many training processes will be spawned.
-
+ You may use the `--process_count` argument to control how many training processes will be spawned. per machine.
 """
 import os
 
@@ -36,10 +35,9 @@ from typing import Literal
 
 import torch
 import torch.multiprocessing.spawn
+from examples.tutorial.KDD_2025.utils import init_model
 from torch.nn.parallel import DistributedDataParallel
-from torch_geometric import typing as pyg_typing
 from torch_geometric.data import HeteroData
-from torch_geometric.nn import HGTConv
 
 from gigl.common.logger import Logger
 from gigl.common.types.uri.uri_factory import UriFactory
@@ -63,23 +61,6 @@ SUPERVISION_EDGE_TYPE = EdgeType(QUERY_NODE_TYPE, Relation("to"), TARGET_NODE_TY
 
 # Arbitrary fanout for the example, can be adjusted based on dataset and model.
 FANOUT = [10, 10]
-
-
-def init_model(
-    out_channels: int = 16,
-    metadata: pyg_typing.Metadata = (
-        ["user", "story"],
-        [
-            ("user", "to", "story"),
-            ("story", "to", "user"),
-        ],
-    ),
-) -> HGTConv:
-    return HGTConv(
-        in_channels=-1,  # Input channels will be set dynamically based on the dataset.
-        out_channels=out_channels,
-        metadata=metadata,
-    )
 
 
 def compute_loss(model: torch.nn.Module, data: HeteroData) -> torch.Tensor:
@@ -237,7 +218,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--saved_model_path",
         type=str,
-        default="/tmp/gigl/dblp_model.pt",
+        default="/tmp/gigl/toy_hgt_model.pt",
         help="Path to save the trained model.",
     )
     parser.add_argument(
