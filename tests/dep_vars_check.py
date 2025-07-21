@@ -1,6 +1,6 @@
 from pathlib import Path
 
-# We're in GiGL/testing, so we need to go up one level to find dep_vars.env
+# We're in GiGL/tests, so we need to go up one level to find dep_vars.env
 DEP_VARS_FILE_PATH = Path.joinpath(Path(__file__).parent.parent, "dep_vars.env")
 
 if __name__ == "__main__":
