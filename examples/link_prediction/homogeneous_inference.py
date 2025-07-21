@@ -383,8 +383,8 @@ def _run_example_inference(
             dataset,  # dataset
             inferencer_args,  # inferencer_args
             graph_metadata.homogeneous_node_type,  # inference_node_type
-            node_feature_dim,  # int
-            edge_feature_dim,  # int
+            node_feature_dim,  # node_feature_dim
+            edge_feature_dim,  # edge_feature_dim
         ),
         nprocs=local_world_size,
         join=True,
