@@ -1,7 +1,7 @@
 import os
 import unittest
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from unittest import mock
 from uuid import uuid4
 
@@ -22,7 +22,7 @@ logger = Logger()
 class _NoteBookTestConfig:
     name: str
     notebook_path: str
-    env_overrides: dict[str, str]
+    env_overrides: dict[str, str] = field(default_factory=dict)
     timeout: int = 60 * 60
 
 
