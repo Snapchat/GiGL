@@ -105,7 +105,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=dict,
                 expected_node_feature_info={
-                    NodeType("user"): 2,
+                    NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
                     NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
                 },
                 expected_edge_feature_info={
