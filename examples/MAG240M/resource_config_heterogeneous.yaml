@@ -42,10 +42,10 @@ trainer_resource_config:
     machine_type: n1-highmem-96
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 4
-    num_replicas: 40
+    num_replicas: 20
 inferencer_resource_config:
   vertex_ai_inferencer_config:
     machine_type: n1-highmem-96
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 4
-    num_replicas: 40
+    num_replicas: 20
