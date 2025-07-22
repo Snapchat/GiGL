@@ -1,6 +1,10 @@
+import io
 import os
+import tempfile
 import unittest
 import uuid
+
+from parameterized import param, parameterized
 
 import gigl.common.utils.local_fs as local_fs
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri
@@ -321,3 +325,64 @@ class FileLoaderTest(unittest.TestCase):
         # Ensure both files are deleted
         self.assertFalse(file_loader.does_uri_exist(uri=tmp_local_file))
         self.assertFalse(file_loader.does_uri_exist(uri=tmp_gcs_file))
+
+    @parameterized.expand(
+        [
+            param(
+                "local_bytesio_buffer",
+                filelike=io.BytesIO(b"hello world"),
+                expected_content=b"world",
+                expected_mode="rb",
+            ),
+            param(
+                "local_stringio_buffer",
+                filelike=io.StringIO("hello world"),
+                expected_content="world",
+                expected_mode="r",
+            ),
+        ]
+    )
+    def test_load_from_filelike_local(
+        self, _, filelike, expected_content, expected_mode
+    ):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            uri = LocalUri(tmp_path)
+            loader = FileLoader()
+            # Move pointer to middle, write from there, check only written from pointer
+            filelike.seek(6)
+            loader.load_from_filelike(uri, filelike)
+            with open(
+                tmp_path,
+                expected_mode,
+                encoding=None if expected_mode == "rb" else "utf-8",
+            ) as f:
+                result = f.read()
+            self.assertEqual(result, expected_content)
+
+    @parameterized.expand(
+        [
+            param(
+                "gcs_bytesio_buffer",
+                io.BytesIO(b"gcs test bytes"),
+                "gcs test bytes",  # Note our tests just check that this is a string...
+            ),
+            param(
+                "gcs_stringio_buffer",
+                io.StringIO("gcs test string"),
+                "gcs test string",
+            ),
+        ]
+    )
+    def test_load_from_filelike_gcs(self, _, filelike, expected_content):
+        uri = GcsUri.join(
+            self.gcs_test_asset_directory,
+            f"upload_from_likelike/{uuid.uuid4().hex}/test_file.txt",
+        )
+        loader = FileLoader()
+        loader.load_from_filelike(uri, filelike)
+
+        gcs_utils = GcsUtils()
+        # Read the content back from GCS
+        content = gcs_utils.read_from_gcs(uri)
+        self.assertEqual(content, expected_content)

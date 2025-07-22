@@ -1,7 +1,8 @@
+import shutil
 import tempfile
 from collections.abc import Mapping
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
-from typing import Optional, Sequence, Tuple, Type, Union, cast
+from typing import IO, AnyStr, Optional, Sequence, Tuple, Type, Union, cast
 
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -198,6 +199,32 @@ class FileLoader:
         else:
             logger.warning(f"Unsupported uri_map_schema: {uri_map_schema}")
             raise TypeError(self.__unsupported_uri_message)
+
+    def load_from_filelike(self, uri: Uri, filelike: IO[AnyStr]) -> None:
+        """
+        Load a file from a file-like object into the specified URI.
+
+        Args:
+            uri (Uri): The URI to load the file into.
+            filelike (IO[AnyStr]): A file-like object containing the data to be loaded.
+        """
+        if isinstance(uri, GcsUri):
+            self.__gcs_utils.upload_from_filelike(gcs_path=uri, filelike=filelike)
+        elif isinstance(uri, LocalUri):
+            ptr = filelike.tell()
+            first = filelike.read(1)
+            filelike.seek(ptr)  # Reset the file pointer after reading
+            if isinstance(first, bytes):
+                with open(uri.uri, "wb") as dest:
+                    shutil.copyfileobj(filelike, dest)
+            else:
+                with open(uri.uri, "w", encoding="utf-8") as dest:
+                    shutil.copyfileobj(filelike, dest)
+
+        else:
+            raise NotImplementedError(
+                f"Cannot load file from buffer to URI {uri.uri} of type {type(uri)}; {self.__unsupported_uri_message}"
+            )
 
     def load_to_temp_file(
         self,
