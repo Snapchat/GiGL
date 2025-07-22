@@ -116,7 +116,7 @@ jobs:
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Download scala deps so they are avaialble for docker context to use
         # See: Dockerfile.builder
-        requirements/install_scala_deps.sh --download-only
+        bash ./requirements/install_scala_deps.sh --download-only
         docker build -f ./containers/Dockerfile.builder  -t ${GIGL_BUILDER_IMAGE} .
         docker push ${GIGL_BUILDER_IMAGE}
         echo "Pushed Builder image to ${GIGL_BUILDER_IMAGE}"
