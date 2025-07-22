@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -400,7 +400,7 @@ class DatasetAssetMockingSuite:
 
         node_feats_dict = {}
         for node_type in node_config:
-            node_feats_list: List[str] = []
+            node_feats_list: list[str] = []
             for node in graph_config["nodes"][node_type]:
                 features = node["features"]
                 node_feats_list.append(features)
@@ -558,14 +558,14 @@ class DatasetAssetMockingSuite:
         return mocked_dataset_info
 
     def compute_datasets_to_mock(
-        self, selected_datasets: Optional[List[str]] = None
+        self, selected_datasets: Optional[list[str]] = None
     ) -> Dict[str, MockedDatasetInfo]:
         """
         Returns a dictionary of mocked datasets to be used in the mocking suite.
         If `selected_datasets` is provided, only those datasets will be returned.
         """
         mocked_datasets: Dict[str, MockedDatasetInfo] = dict()
-        all_mocking_func_names: List[str] = [
+        all_mocking_func_names: list[str] = [
             attr
             for attr in dir(self)
             if callable(getattr(self, attr)) and attr.startswith("mock")
@@ -573,7 +573,7 @@ class DatasetAssetMockingSuite:
         print(f"All mocking functions: {all_mocking_func_names}")
         print(f"Selected datasets: {selected_datasets}")
 
-        mocking_func_names: List[str]
+        mocking_func_names: list[str]
         if selected_datasets:
             mocking_func_names = [
                 func_name

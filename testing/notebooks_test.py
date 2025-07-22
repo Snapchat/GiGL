@@ -1,7 +1,7 @@
 import os
 import unittest
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from unittest import mock
 from uuid import uuid4
 
@@ -22,7 +22,7 @@ logger = Logger()
 class _NoteBookTestConfig:
     name: str
     notebook_path: str
-    env_overrides: dict[str, str]
+    env_overrides: dict[str, str] = field(default_factory=dict)
     timeout: int = 60 * 60
 
 
@@ -81,17 +81,23 @@ class TestExampleNotebooks(unittest.TestCase):
             #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
             #     },
             # ),
-            # TODO(kmonte): Look into why this notebook is failing.
-            # _NoteBookTestConfig(
-            #     name="toy_example",
-            #     notebook_path=str(
-            #         GIGL_ROOT_DIR
-            #         / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
-            #     ),
-            #     env_overrides={
-            #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
-            #     },
-            # ),
+            _NoteBookTestConfig(
+                name="toy_example",
+                notebook_path=str(
+                    GIGL_ROOT_DIR
+                    / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
+                ),
+                env_overrides={
+                    "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
+                },
+            ),
+            _NoteBookTestConfig(
+                "kdd_2025_heterogeneous",
+                notebook_path=str(
+                    GIGL_ROOT_DIR
+                    / "examples/tutorial/KDD_2025/heteregeneous_walkthrough.ipynb"
+                ),
+            ),
         ]
 
     def test_notebooks(self):

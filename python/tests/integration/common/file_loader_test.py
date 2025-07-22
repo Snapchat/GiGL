@@ -1,10 +1,14 @@
+import io
 import os
+import tempfile
 import unittest
 import uuid
-from typing import Dict, List
+from typing import Dict
+
+from parameterized import param, parameterized
 
 import gigl.common.utils.local_fs as local_fs
-from gigl.common import GcsUri, LocalUri, Uri
+from gigl.common import GcsUri, HttpUri, LocalUri, Uri
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
@@ -26,6 +30,7 @@ class FileLoaderTest(unittest.TestCase):
         self.gcs_utils.delete_files_in_bucket_dir(
             gcs_path=self.gcs_test_asset_directory
         )
+        local_fs.remove_folder_if_exist(local_path=self.test_asset_directory)
 
     def test_local_temp_file(self):
         local_file_path_src: LocalUri = LocalUri.join(
@@ -121,6 +126,18 @@ class FileLoaderTest(unittest.TestCase):
         self.assertTrue(self.gcs_utils.does_gcs_file_exist(gcs_path=gcs_file_path_dst))
         self.gcs_utils.delete_gcs_file_if_exist(gcs_path=gcs_file_path_dst)
 
+    def test_http_to_local_file(self):
+        http_file_path_src: HttpUri = HttpUri(
+            "https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/LICENSE"
+        )
+        local_file_path_dst: LocalUri = LocalUri.join(
+            self.test_asset_directory, "test_http_to_local.txt"
+        )
+        local_fs.remove_file_if_exist(local_path=local_file_path_dst)
+        file_uri_map: Dict[Uri, Uri] = {http_file_path_src: local_file_path_dst}
+        self.file_loader.load_files(source_to_dest_file_uri_map=file_uri_map)
+        self.assertTrue(local_fs.does_path_exist(local_file_path_dst))
+
     def test_gcs_to_local_file(self):
         local_file_path_src: LocalUri = LocalUri.join(
             self.test_asset_directory, "test_gcs_to_local.txt"
@@ -169,10 +186,10 @@ class FileLoaderTest(unittest.TestCase):
         local_src_dir: LocalUri = LocalUri.join(self.test_asset_directory, "src")
         local_dst_dir: LocalUri = LocalUri.join(self.test_asset_directory, "dst")
 
-        local_file_paths_src: List[LocalUri] = [
+        local_file_paths_src: list[LocalUri] = [
             LocalUri.join(local_src_dir, file) for file in local_files
         ]
-        local_file_paths_dst: List[LocalUri] = [
+        local_file_paths_dst: list[LocalUri] = [
             LocalUri.join(local_dst_dir, file) for file in local_files
         ]
 
@@ -197,10 +214,10 @@ class FileLoaderTest(unittest.TestCase):
             self.gcs_test_asset_directory, self.test_asset_directory, "dst"
         )
 
-        local_file_paths_src: List[LocalUri] = [
+        local_file_paths_src: list[LocalUri] = [
             LocalUri.join(local_src_dir, file) for file in local_files
         ]
-        gcs_file_paths_dst: List[GcsUri] = [
+        gcs_file_paths_dst: list[GcsUri] = [
             GcsUri.join(gcs_dst_dir, file) for file in local_files
         ]
 
@@ -231,13 +248,13 @@ class FileLoaderTest(unittest.TestCase):
         )
         local_dst_dir: LocalUri = LocalUri.join(self.test_asset_directory, "dst")
 
-        local_file_paths_src: List[LocalUri] = [
+        local_file_paths_src: list[LocalUri] = [
             LocalUri.join(local_src_dir, file) for file in local_files
         ]
-        gcs_file_paths_src: List[GcsUri] = [
+        gcs_file_paths_src: list[GcsUri] = [
             GcsUri.join(gcs_src_dir, file) for file in local_files
         ]
-        local_file_paths_dst: List[LocalUri] = [
+        local_file_paths_dst: list[LocalUri] = [
             LocalUri.join(local_dst_dir, file) for file in local_files
         ]
 
@@ -289,6 +306,9 @@ class FileLoaderTest(unittest.TestCase):
     def test_can_file_loader_check_existance_and_delete_uris(self):
         tmp_local_file = LocalUri.join(self.test_asset_directory, "tmp_local_file.txt")
         tmp_gcs_file = GcsUri.join(self.gcs_test_asset_directory, "tmp_gcs_file.txt")
+        http_file: HttpUri = HttpUri(
+            "https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/LICENSE"
+        )
         # Write to local file
         local_fs.create_empty_file_if_none_exists(local_path=tmp_local_file)
         # Copy the file to GCS
@@ -299,8 +319,71 @@ class FileLoaderTest(unittest.TestCase):
         file_loader = FileLoader()
         self.assertTrue(file_loader.does_uri_exist(uri=tmp_local_file))
         self.assertTrue(file_loader.does_uri_exist(uri=tmp_gcs_file))
-        # Delete the files
+        self.assertTrue(file_loader.does_uri_exist(uri=http_file))
+
+        # Delete the supported files; we cannot delete the HTTP URIs
         file_loader.delete_files(uris=[tmp_local_file, tmp_gcs_file])
         # Ensure both files are deleted
         self.assertFalse(file_loader.does_uri_exist(uri=tmp_local_file))
         self.assertFalse(file_loader.does_uri_exist(uri=tmp_gcs_file))
+
+    @parameterized.expand(
+        [
+            param(
+                "local_bytesio_buffer",
+                filelike=io.BytesIO(b"hello world"),
+                expected_content=b"world",
+                expected_mode="rb",
+            ),
+            param(
+                "local_stringio_buffer",
+                filelike=io.StringIO("hello world"),
+                expected_content="world",
+                expected_mode="r",
+            ),
+        ]
+    )
+    def test_load_from_filelike_local(
+        self, _, filelike, expected_content, expected_mode
+    ):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            uri = LocalUri(tmp_path)
+            loader = FileLoader()
+            # Move pointer to middle, write from there, check only written from pointer
+            filelike.seek(6)
+            loader.load_from_filelike(uri, filelike)
+            with open(
+                tmp_path,
+                expected_mode,
+                encoding=None if expected_mode == "rb" else "utf-8",
+            ) as f:
+                result = f.read()
+            self.assertEqual(result, expected_content)
+
+    @parameterized.expand(
+        [
+            param(
+                "gcs_bytesio_buffer",
+                io.BytesIO(b"gcs test bytes"),
+                "gcs test bytes",  # Note our tests just check that this is a string...
+            ),
+            param(
+                "gcs_stringio_buffer",
+                io.StringIO("gcs test string"),
+                "gcs test string",
+            ),
+        ]
+    )
+    def test_load_from_filelike_gcs(self, _, filelike, expected_content):
+        uri = GcsUri.join(
+            self.gcs_test_asset_directory,
+            f"upload_from_likelike/{uuid.uuid4().hex}/test_file.txt",
+        )
+        loader = FileLoader()
+        loader.load_from_filelike(uri, filelike)
+
+        gcs_utils = GcsUtils()
+        # Read the content back from GCS
+        content = gcs_utils.read_from_gcs(uri)
+        self.assertEqual(content, expected_content)

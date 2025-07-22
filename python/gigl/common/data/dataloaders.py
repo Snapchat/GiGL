@@ -2,7 +2,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
 import psutil
 import tensorflow as tf
@@ -87,13 +87,13 @@ def _concatenate_features_by_names(
 
     Args:
         feature_key_to_tf_tensor (Dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
-        feature_keys (List[str]): A list of feature names specifying the order in which tensors should be concatenated.
+        feature_keys (list[str]): A list of feature names specifying the order in which tensors should be concatenated.
 
     Returns:
         tf.Tensor: A concatenated tensor of the features in the specified order.
     """
 
-    features: List[tf.Tensor] = []
+    features: list[tf.Tensor] = []
 
     for feature_key in feature_keys:
         tensor = feature_key_to_tf_tensor[feature_key]
@@ -169,7 +169,7 @@ class TFRecordDataLoader:
             tfrecord_pattern (str): Regex pattern to match for loading serialized tfrecords from uri prefix
 
         Returns:
-            List[Uri]: The list of file Uris for the current partition.
+            list[Uri]: The list of file Uris for the current partition.
         """
         file_loader = FileLoader()
         uris = sorted(

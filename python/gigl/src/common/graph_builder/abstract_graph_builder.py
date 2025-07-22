@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections import defaultdict
-from typing import Dict, Generic, List, Optional, TypeVar
+from typing import Dict, Generic, Optional, TypeVar
 
 import torch
 
@@ -38,8 +38,8 @@ class GraphBuilder(Generic[TGraph]):
         """
         self.subgraph_node_id_counter: Dict[NodeType, int] = defaultdict(int)
         self.global_node_to_subgraph_node_map: Dict[Node, Node] = {}
-        self.ordered_edges: Dict[EdgeType, List[Edge]] = defaultdict(list)
-        self.ordered_nodes: Dict[NodeType, List[Node]] = defaultdict(list)
+        self.ordered_edges: Dict[EdgeType, list[Edge]] = defaultdict(list)
+        self.ordered_nodes: Dict[NodeType, list[Node]] = defaultdict(list)
         self.subgraph_node_features_dict: Dict[Node, torch.Tensor] = {}
         self.subgraph_edge_feature_dict: Dict[Edge, Optional[torch.Tensor]] = {}
 
@@ -149,11 +149,11 @@ class GraphBuilder(Generic[TGraph]):
 
         return self
 
-    def register_edge_types(self, edge_types: List[EdgeType]) -> GraphBuilder:
+    def register_edge_types(self, edge_types: list[EdgeType]) -> GraphBuilder:
         """Registers edge types
 
         Args:
-            edge_types (List[EdgeType])
+            edge_types (list[EdgeType])
 
         Returns:
             GraphBuilder: returns self

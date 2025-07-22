@@ -75,6 +75,27 @@ jobs:
         command: |
           make run_all_e2e_tests
 
+  notebooks-e2e-test:
+    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
+    steps:
+    - name: Run Example Notebooks Tests
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Example Notebooks Test"
+        setup_gcloud: "true"
+        use_cloud_run: "true"
+        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        command: |
+          make notebooks_test
+
+
   lint-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
     runs-on: ubuntu-latest
