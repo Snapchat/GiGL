@@ -5,7 +5,7 @@ set -e
 DOWNLOAD_ONLY=false
 for arg in "$@"; do
     case $arg in
-         )
+        --download-only)
             DOWNLOAD_ONLY=true
             shift
             ;;
