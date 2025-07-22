@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import tensorflow as tf
 
@@ -51,8 +51,8 @@ logger = Logger()
 
 @dataclass
 class EdgeMetadataInfo:
-    feasible_adjacency_list_map: Dict[NodePbWrapper, list[EdgePbWrapper]]
-    edge_type_to_edge_to_features_map: Dict[EdgeType, Dict[EdgePbWrapper, list[float]]]
+    feasible_adjacency_list_map: dict[NodePbWrapper, list[EdgePbWrapper]]
+    edge_type_to_edge_to_features_map: dict[EdgeType, dict[EdgePbWrapper, list[float]]]
 
 
 @dataclass
@@ -67,7 +67,7 @@ class ExpectedGraphFromPreprocessor:
     - Edge metadata for negative user-defined label edges.
     """
 
-    node_type_to_node_to_features_map: Dict[NodeType, Dict[NodePbWrapper, list[float]]]
+    node_type_to_node_to_features_map: dict[NodeType, dict[NodePbWrapper, list[float]]]
     main_edge_info: EdgeMetadataInfo
     pos_edge_info: EdgeMetadataInfo
     neg_edge_info: EdgeMetadataInfo
@@ -76,7 +76,7 @@ class ExpectedGraphFromPreprocessor:
 def read_output_nablp_samples_from_subgraph_sampler(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
 ) -> Tuple[
-    Dict[NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]],
+    dict[NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]],
     list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
 ]:
     """
@@ -89,7 +89,7 @@ def read_output_nablp_samples_from_subgraph_sampler(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
     )
 
-    node_type_to_rooted_neighborhood_samples: Dict[
+    node_type_to_rooted_neighborhood_samples: dict[
         NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]
     ] = defaultdict(list)
     for (
@@ -152,7 +152,7 @@ def read_output_node_based_task_samples_from_subgraph_sampler(
 
 def _build_node_features_map(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Dict[NodeType, Dict[NodePbWrapper, list[float]]]:
+) -> dict[NodeType, dict[NodePbWrapper, list[float]]]:
     """
     Builds a map from NodeType to a map from NodePbWrapper to a list of features for that node, for all NodeTypes encountered in preprocessed output.
     """
@@ -161,8 +161,8 @@ def _build_node_features_map(
         gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
     )
 
-    node_type_to_node_to_features_map: Dict[
-        NodeType, Dict[NodePbWrapper, list[float]]
+    node_type_to_node_to_features_map: dict[
+        NodeType, dict[NodePbWrapper, list[float]]
     ] = {}
     for (
         condensed_node_type,
@@ -197,7 +197,7 @@ def _build_node_features_map(
 def _build_edge_features_map(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     edge_usage_type: EdgeUsageType = EdgeUsageType.MAIN,
-) -> Dict[EdgeType, Dict[EdgePbWrapper, list[float]]]:
+) -> dict[EdgeType, dict[EdgePbWrapper, list[float]]]:
     """
     Builds a map from EdgeType to a map from EdgePbWrapper to a list of features for that edge, for all EdgeTypes encountered in preprocessed output.
     """
@@ -206,8 +206,8 @@ def _build_edge_features_map(
         gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
     )
 
-    edge_type_to_edge_to_features_map: Dict[
-        EdgeType, Dict[EdgePbWrapper, list[float]]
+    edge_type_to_edge_to_features_map: dict[
+        EdgeType, dict[EdgePbWrapper, list[float]]
     ] = {}
     for (
         condensed_edge_type,
@@ -248,7 +248,7 @@ def _build_edge_features_map(
 def _build_feasible_adjacency_list_map(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     edge_usage_type: EdgeUsageType = EdgeUsageType.MAIN,
-) -> Dict[NodePbWrapper, list[EdgePbWrapper]]:
+) -> dict[NodePbWrapper, list[EdgePbWrapper]]:
     """
     Builds a map from NodePbWrapper to a list of EdgePbWrappers, representing the adjacency list for each src node,
     for all nodes encountered in Data Preprocessor output.  This will be used to test feasibility of edges which
@@ -260,7 +260,7 @@ def _build_feasible_adjacency_list_map(
     )
     graph_metadata_pb_wrapper = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    src_node_to_edge_map: Dict[NodePbWrapper, list[EdgePbWrapper]] = defaultdict(list)
+    src_node_to_edge_map: dict[NodePbWrapper, list[EdgePbWrapper]] = defaultdict(list)
 
     for (
         condensed_edge_type,
@@ -308,9 +308,9 @@ def _build_feasible_adjacency_list_map(
 
 
 def bidirectionalize_feasible_adjacency_list_map(
-    src_node_to_edge_map: Dict[NodePbWrapper, list[EdgePbWrapper]],
+    src_node_to_edge_map: dict[NodePbWrapper, list[EdgePbWrapper]],
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Dict[NodePbWrapper, list[EdgePbWrapper]]:
+) -> dict[NodePbWrapper, list[EdgePbWrapper]]:
     """
     Given an adjacency list map from NodePbWrapper to a list of EdgePbWrappers, this function
     returns a bidirectional adjacency list map applied to main graph edges.
@@ -328,7 +328,7 @@ def bidirectionalize_feasible_adjacency_list_map(
         not gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
     ), "Bidirectionalizing adjacency list map is only supported for homogeneous graphs."
 
-    bidirectional_adjacency_list_map: Dict[
+    bidirectional_adjacency_list_map: dict[
         NodePbWrapper, list[EdgePbWrapper]
     ] = defaultdict(list)
     for _, edge_pbws in src_node_to_edge_map.items():
@@ -347,9 +347,9 @@ def bidirectionalize_feasible_adjacency_list_map(
 
 
 def bidirectionalize_edge_type_to_edge_to_features_map(
-    edge_type_to_edge_to_features_map: Dict[EdgeType, Dict[EdgePbWrapper, list[float]]],
+    edge_type_to_edge_to_features_map: dict[EdgeType, dict[EdgePbWrapper, list[float]]],
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Dict[EdgeType, Dict[EdgePbWrapper, list[float]]]:
+) -> dict[EdgeType, dict[EdgePbWrapper, list[float]]]:
     """
     Given a map from EdgeType to a map from EdgePbWrapper to a list of features for that edge, this function
     returns a bidirectional map.
@@ -367,11 +367,11 @@ def bidirectionalize_edge_type_to_edge_to_features_map(
         not gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
     ), "Bidirectionalizing edge type to edge to features map is only supported for homogeneous graphs."
 
-    bidirectional_edge_type_to_edge_to_features_map: Dict[
-        EdgeType, Dict[EdgePbWrapper, list[float]]
+    bidirectional_edge_type_to_edge_to_features_map: dict[
+        EdgeType, dict[EdgePbWrapper, list[float]]
     ] = {}
     for edge_type, edge_to_features_map in edge_type_to_edge_to_features_map.items():
-        bidirectional_edge_to_features_map: Dict[EdgePbWrapper, list[float]] = {}
+        bidirectional_edge_to_features_map: dict[EdgePbWrapper, list[float]] = {}
         for edge_pbw, features in edge_to_features_map.items():
             bidirectional_edge_pbw = edge_pbw.flip_edge()
             bidirectional_edge_to_features_map[edge_pbw] = features

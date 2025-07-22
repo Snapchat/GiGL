@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -34,7 +34,7 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
         in_dim: int,
         hid_dim: int,
         out_dim: int,
-        conv_kwargs: Dict[str, Any] = {},
+        conv_kwargs: dict[str, Any] = {},
         edge_dim: Optional[int] = None,
         num_layers: int = DEFAULT_NUM_GNN_HOPS,
         activation: Callable = F.relu,
