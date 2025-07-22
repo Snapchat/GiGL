@@ -44,7 +44,7 @@ get_ver_hash:
 	$(eval GIT_COMMIT=$(shell git log -1 --pretty=format:"%H"))
 
 initialize_environment:
-	conda create -y -c conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools
+	conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools
 	@echo "If conda environment was successfully installed, ensure to activate it and run \`make install_dev_deps\` or \`make install_deps\` to complete setup"
 
 clean_environment:

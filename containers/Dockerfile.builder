@@ -41,7 +41,7 @@ ENV JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"
 
 # Create the environment:
 # TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y -c conda-forge --name gigl python=3.9 pip
+RUN conda create -y --override-channels --channel conda-forge --name gigl python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
 ENV PATH=/opt/conda/envs/gigl/bin:$PATH
