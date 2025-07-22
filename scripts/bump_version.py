@@ -126,11 +126,6 @@ def bump_version(
     cpu_image_name = f"{base_image_registry}/src-cpu:{new_version}"
     dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
 
-    push_src_images(
-        cuda_image_name=cuda_image_name,
-        cpu_image_name=cpu_image_name,
-        dataflow_image_name=dataflow_image_name,
-    )
     update_dep_vars_env(
         cuda_image_name=cuda_image_name,
         cpu_image_name=cpu_image_name,
