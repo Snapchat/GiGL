@@ -131,7 +131,7 @@ else
 fi
 
 
-conda install -c conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
+conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
 
 if [[ $DEV -eq 1 ]]
 then
