@@ -1,7 +1,16 @@
-# This config is used to run heterogeneous DBLP self-supervised training and inference using in memory GiGL SGS. This can be run with `make run_het_dblp_sup_test`.
+# ========
+# TaskMetadata:
+# Specifies the task we are going to perform on the graph.
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    # Specifying that we will perform node anchor based link prediction on edge of type: paper -> cites -> paper
+    supervisionEdgeTypes:
+    - dstNodeType: paper
+      relation: cites
+      srcNodeType: paper
 graphMetadata:
-  # We have 3 nodes types in the DBLP Dataset: author, paper, and term. We also have 3
-  # edge types: author -> paper, paper -> author, and term -> paper
+  # We have 3 nodes types in the MAG240M Dataset: paper, author, and institution. We also have 3
+  # edge types: paper -> cites -> paper, author -> writes -> paper, and institution -> affiliated -> author
   edgeTypes:
   - dstNodeType: paper
     relation: cites
@@ -16,57 +25,56 @@ graphMetadata:
   - paper
   - author
   - institution
-taskMetadata:
-  nodeAnchorBasedLinkPredictionTaskMetadata:
-    # We aim to predict paper -> paper links in the graph.
-    supervisionEdgeTypes:
-    - dstNodeType: paper
-      relation: cites
-      srcNodeType: paper
+# ========
+# SharedConfig:
+# Specifies some extra metadata about the graph structure management of orchestration.
+sharedConfig:
+  isGraphDirected: True
+  shouldSkipAutomaticTempAssetCleanup: true # Should we skip cleaning up the temporary assets after the run is complete?
+# ========
+# DatasetConfig:
+# Specifies information about the dataset, such as how to access it and how to process it
 datasetConfig:
   dataPreprocessorConfig:
     dataPreprocessorConfigClsPath: examples.MAG240M.preprocessor_config_heterogeneous.Mag240DataPreprocessorConfig
     # our implementation takes no runtime arguments; if provided these are passed to the constructor off dataPreprocessorConfigClsPath
     # dataPreprocessorArgs:
+# ========
+# TrainerConfig:
+# Specifies the training configuration. This includes the trainer command and the arguments to pass to it.
 trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "1000"
-    # The DBLP Dataset does not have specified labeled edges so we provide this field to indicate what
+    # The MAG240M dataset does not have specified labeled edges so we provide this field to indicate what
     # percentage of edges we should select as self-supervised labeled edges. Doing this randomly sets 5% as "labels".
     # Note that the current GiGL implementation does not remove these selected edges from the global set of edges, which may
     # have a slight negative impact on training specifically with self-supervised learning. This will improved on in the future.
     ssl_positive_label_percentage: "0.05"
-    # Example of a dictionary fanout which has different fanout-per-hop for each edge type. Currently, we assume that all anchor node types
-    # use the same fanout. If you want different anchor node types to have different fanouts, we encourage adding additional arguemnts here to parse
-    # fanouts for each anchor node type.
-    # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
-    num_neighbors: "[10, 10]"
-    main_batch_size: "256"
+    num_neighbors: "[10, 10]" # Performs a [10, 10] fanout for each edge type in the graph
+    main_batch_size: "256" # Reduce batch size if Cuda OOM
     random_batch_size: "256"
-    num_max_train_batches: "20000"
+    num_max_train_batches: "20000" # Increase this number to train for longer
     hid_dim: "256"
     out_dim: "256"
-    val_every_n_batch: "1000"
+    val_every_n_batch: "1000" # Decrease this number to do more frequent validation
     learning_rate: "0.005"
   command: python -m examples.link_prediction.heterogeneous_training
+# ========
+# InferencerConfig:
+# specifies the inference configuration. This includes the command and the arguments to pass to it
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
     log_every_n_batch: "50"
-    # Example of a dictionary fanout which has different fanout-per-hop for each edge type. Currently, we assume that all anchor node types
-    # use the same fanout. If you want different anchor node types to have different fanouts, we encourage adding additional arguemnts here to parse
-    # fanouts for each anchor node type.
-    # Note that edge types must be provided as a tuple[str, str, str] in format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE), as demonstrated below.
-    num_neighbors: "[10, 10]"
+    num_neighbors: "[10, 10]" # Performs a [10, 10] fanout for each edge type in the graph
     hid_dim: "256"
     out_dim: "256"
-  inferenceBatchSize: 256
+  inferenceBatchSize: 256 # Reduce batch size if Cuda OOM
   command: python -m examples.link_prediction.heterogeneous_inference
-sharedConfig:
-  shouldSkipAutomaticTempAssetCleanup: false
-  shouldSkipInference: false
-  # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines. This will soon be added for in-mem SGS GiGL pipelines.
-  shouldSkipModelEvaluation: true
+# ========
+# FeatureFlags:
+# any additional flags which we should specify for the training + inference job. We currently use this to
+# specify whether GLT should be used as the backend for in-memory subgraph sampling
 featureFlags:
   should_run_glt_backend: 'True'

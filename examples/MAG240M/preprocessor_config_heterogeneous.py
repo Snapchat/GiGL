@@ -96,13 +96,17 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         )
 
         self._feature_list = [f"feat_{i}" for i in range(NUM_PAPER_FEATURES)]
+
+        # Query used to compute the average of neighboring features when computing author and institution features
         self._average_feature_query = ",\n".join(
             [f"AVG({col}) AS {col}" for col in self._feature_list]
         )
 
-        self._node_tables: dict[NodeType, str] = {
-            self._paper_node_type: self._paper_table
-        }
+        # We store a mapping of each node type to their respective table URI. We initially only have the paper feature table from the `fetch_data.ipynb` notebook, the
+        # author and institution features will be computed in the `prepare_for_pipeline` step.
+        self._node_tables: dict[str, str] = {self._paper_node_type: self._paper_table}
+
+        # We store a mapping of each edge type to their respective table URI. We have all three edge tables from the `fetch_data.ipynb` notebook.
         self._edge_tables: dict[EdgeType, str] = {
             self._paper_cites_paper_edge_type: self._paper_cites_paper_table,
             self._author_writes_paper_edge_type: self._author_writes_paper_table,
@@ -117,7 +121,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         This function does not return anything. It can be overwritten to perform any operation needed
         before running the pipeline, such as gathering data for node and edge sources
 
-        Specifically, we use this function to take the raw MAG240M tables generated from fetch_data.ipynb and
+        Specifically, for the MAG240M dataset, we use this function to take the raw MAG240M tables generated from fetch_data.ipynb and
         prepare the following tables:
         - author node table: Computed author features taken as the average of the features of the 1-hop paper nodes
         - institution node table: Computed institution features taken as the average of the features of the 1-hop author nodes.
@@ -189,14 +193,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         output_dict: dict[NodeDataReference, NodeDataPreprocessingSpec] = {}
         node_data_reference: NodeDataReference
 
-        for node_type, table in zip(
-            [
-                self._paper_node_type,
-                self._author_node_type,
-                self._institution_node_type,
-            ],
-            [self._paper_table, self._author_table, self._institution_table],
-        ):
+        for node_type, table in self._node_tables.items():
             node_data_reference = BigqueryNodeDataReference(
                 reference_uri=table,
                 node_type=NodeType(node_type),
@@ -229,18 +226,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
     ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
         output_dict: dict[EdgeDataReference, EdgeDataPreprocessingSpec] = {}
 
-        for edge_type, table in zip(
-            [
-                self._paper_cites_paper_edge_type,
-                self._author_writes_paper_edge_type,
-                self._institution_affiliated_author_edge_type,
-            ],
-            [
-                self._paper_cites_paper_table,
-                self._author_writes_paper_table,
-                self._institution_affiliated_author_table,
-            ],
-        ):
+        for edge_type, table in self._edge_tables.items():
             if edge_type.src_node_type == edge_type.dst_node_type:
                 src_node_type = "src"
                 dst_node_type = "dst"
