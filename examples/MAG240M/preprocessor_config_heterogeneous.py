@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Dict
-
 from examples.MAG240M.common import NUM_PAPER_FEATURES
 from examples.MAG240M.queries import query_template_compute_average_features
 from google.cloud.bigquery.job import WriteDisposition
@@ -176,7 +174,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
     def get_nodes_preprocessing_spec(
         self,
-    ) -> Dict[NodeDataReference, NodeDataPreprocessingSpec]:
+    ) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
         # We specify where the input data is located using NodeDataReference
         # In this case, we are reading from BigQuery, thus make use off BigqueryNodeDataReference
 
@@ -216,7 +214,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
     def get_edges_preprocessing_spec(
         self,
-    ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+    ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
         output_dict: dict[EdgeDataReference, EdgeDataPreprocessingSpec] = {}
 
         for edge_type, table in zip(
