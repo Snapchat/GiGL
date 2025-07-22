@@ -22,6 +22,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import (
     MockedDatasetArtifactMetadata,
     get_mocked_dataset_artifact_metadata,
@@ -83,21 +84,59 @@ class DistributedDatasetTestCase(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "Test Building Dataset for tensor-based partitioning",
+                "Test building homogeneous Dataset for tensor-based partitioning",
                 partitioner_class=DistPartitioner,
+                mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+                expected_node_id_type=torch.Tensor,
+                expected_node_feature_dim=2,
+                expected_edge_feature_dim=2,
             ),
             param(
-                "Test Building Dataset for range-based partitioning",
+                "Test building homogeneous Dataset for range-based partitioning",
                 partitioner_class=DistRangePartitioner,
+                mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+                expected_node_id_type=torch.Tensor,
+                expected_node_feature_dim=2,
+                expected_edge_feature_dim=2,
+            ),
+            param(
+                "Test building heterogeneous dataset for tensor-based partitioning",
+                partitioner_class=DistPartitioner,
+                mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+                expected_node_id_type=dict,
+                expected_node_feature_dim={NodeType("user"): 2, NodeType("story"): 2},
+                expected_edge_feature_dim={
+                    EdgeType(NodeType("user"), Relation("to"), NodeType("story")): 2,
+                    EdgeType(NodeType("story"), Relation("to"), NodeType("user")): 2,
+                },
+            ),
+            param(
+                "Test building heterogeneous dataset for range-based partitioning",
+                partitioner_class=DistRangePartitioner,
+                mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+                expected_node_id_type=dict,
+                expected_node_feature_dim={NodeType("user"): 2, NodeType("story"): 2},
+                expected_edge_feature_dim={
+                    EdgeType(NodeType("user"), Relation("to"), NodeType("story")): 2,
+                    EdgeType(NodeType("story"), Relation("to"), NodeType("user")): 2,
+                },
             ),
         ]
     )
-    def test_build_dataset(self, _, partitioner_class: Type[DistPartitioner]):
+    def test_build_dataset(
+        self,
+        _,
+        partitioner_class: Type[DistPartitioner],
+        mocked_dataset_info: MockedDatasetInfo,
+        expected_node_id_type: Type,
+        expected_node_feature_dim: Union[int, dict[NodeType, torch.Tensor]],
+        expected_edge_feature_dim: Union[int, dict[EdgeType, torch.Tensor]],
+    ):
         port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
-            mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            mocked_dataset_info=mocked_dataset_info,
             should_load_tensors_in_parallel=True,
             partitioner_class=partitioner_class,
             _port=port,
@@ -106,7 +145,9 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertIsNone(dataset.train_node_ids)
         self.assertIsNone(dataset.val_node_ids)
         self.assertIsNone(dataset.test_node_ids)
-        self.assertIsInstance(dataset.node_ids, torch.Tensor)
+        self.assertIsInstance(dataset.node_ids, expected_node_id_type)
+        self.assertEqual(dataset.node_feature_dim, expected_node_feature_dim)
+        self.assertEqual(dataset.edge_feature_dim, expected_edge_feature_dim)
 
     def test_build_and_split_dataset_homogeneous(self):
         port = gigl.distributed.utils.get_free_port()

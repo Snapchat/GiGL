@@ -5,7 +5,7 @@ from typing import Optional, Union
 
 import torch
 from torch_geometric.data import Data, HeteroData
-from torch_geometric.typing import EdgeType
+from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
 from gigl.types.graph import is_label_edge_type
@@ -151,5 +151,76 @@ def strip_label_edges(data: HeteroData) -> HeteroData:
     for edge_type in label_edge_types:
         del data[edge_type]
         del data.num_sampled_edges[edge_type]
+
+    return data
+
+
+def set_missing_features(
+    data: Union[Data, HeteroData],
+    node_feature_dim: Optional[Union[int, dict[NodeType, int]]],
+    edge_feature_dim: Optional[Union[int, dict[EdgeType, int]]],
+    device: torch.device,
+    dtype: torch.dtype = torch.float32,
+) -> Union[Data, HeteroData]:
+    """
+    If a feature is missing from a produced Data or HeteroData object due to not fanning out to it, populates it with an empty tensor with the appropriate feature dim.
+    Note that PyG natively does this with their DistNeighborLoader for missing edge features + edge indices and missing node features.
+    However, native Graphlearn-for-PyTorch only does this for edge indices -- we should do this for node/edge features as well.
+
+    Args:
+        data (Union[Data, HeteroData]): Data or HeteroData object which we are setting the missing features for
+        node_feature_dim (Optional[Union[int, dict[NodeType, int]]]): Node feature dimension. Note that if heterogeneous, only node types with features should be provided.
+            Can be None in the homogeneous case if there are no node features
+        edge_feature_dim (Optional[Union[int, dict[EdgeType, int]]]): Edge feature dimension. Note that if heterogeneous, only edge types with features should be provided.
+            Can be None in the homogeneous case if there are no edge features
+        device (torch.device): Device to move the empty features to
+        dtype (torch.dtype): Dtype to set the empty features as. Defaults to torch.float32
+    """
+
+    if isinstance(data, Data):
+        if isinstance(node_feature_dim, dict):
+            raise ValueError(
+                f"Expected node feature dimension to be an int or None for homogeneous data, got {node_feature_dim} of type {type(node_feature_dim)}"
+            )
+        if isinstance(edge_feature_dim, dict):
+            raise ValueError(
+                f"Expected edge feature dimension to be an int or None for homogeneous data, got {edge_feature_dim} of type {type(edge_feature_dim)}"
+            )
+        if node_feature_dim and (not hasattr(data, "x") or data.x is None):
+            data.x = torch.empty((0, node_feature_dim), dtype=dtype).to(device)
+        if edge_feature_dim and (
+            not hasattr(data, "edge_attr") or data.edge_attr is None
+        ):
+            data.edge_attr = torch.empty((0, edge_feature_dim), dtype=dtype).to(device)
+
+    elif isinstance(data, HeteroData):
+        if isinstance(node_feature_dim, int):
+            raise ValueError(
+                f"Expected node feature dimension to be an dict or None for heterogeneous data, got {node_feature_dim} of type {type(node_feature_dim)}"
+            )
+        if isinstance(edge_feature_dim, int):
+            raise ValueError(
+                f"Expected edge feature dimension to be an dict or None for heterogeneous data, got {edge_feature_dim} of type {type(edge_feature_dim)}"
+            )
+
+        if node_feature_dim:
+            for node_type, feat_dim in node_feature_dim.items():
+                if not hasattr(data[node_type], "x") or data[node_type].x is None:
+                    data[node_type].x = torch.empty((0, feat_dim), dtype=dtype).to(
+                        device
+                    )
+        if edge_feature_dim:
+            for edge_type, feat_dim in edge_feature_dim.items():
+                if (
+                    not hasattr(data[edge_type], "edge_attr")
+                    or data[edge_type].edge_attr is None
+                ):
+                    data[edge_type].edge_attr = torch.empty(
+                        (0, feat_dim), dtype=dtype
+                    ).to(device)
+    else:
+        raise ValueError(
+            f"Expected provided data object to be of type `Data` or `HeteroData`, got {type(data)}"
+        )
 
     return data
