@@ -111,9 +111,11 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
-    - name: Build and Push CPU Base Image and Docker CPU Image
+    - name: Build and Push the builder image used by cloud build
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
+        # Download scala deps so they are avaialble for docker context to use
+        # See: Dockerfile.builder
         requirements/install_scala_deps.sh --download-only
         docker build -f ./containers/Dockerfile.builder  -t ${GIGL_BUILDER_IMAGE} .
         docker push ${GIGL_BUILDER_IMAGE}
