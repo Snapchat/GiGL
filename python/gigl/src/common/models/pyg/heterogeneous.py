@@ -95,7 +95,7 @@ class HGT(nn.Module):
         # The HGTConv layer requires that the edge index dictionary during forward is in the same order
         # as the edge types that the were provided to the model during initialization. Otherwise, we may run into
         # indexing errors with the HeteroLinear layer inside of the HGTConv.
-        if sorted(self._edge_types) != sorted(data.edge_index_dic.keys()):
+        if sorted(self._edge_types) != sorted(data.edge_index_dict.keys()):
             raise ValueError(
                 f"Found mismatching edge types between HGTConv initialized edge types {self._edge_types} and HeteroData edge types {sorted(data.edge_index_dict)}. These must be the same."
             )
