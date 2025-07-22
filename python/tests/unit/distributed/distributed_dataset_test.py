@@ -166,8 +166,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
     def test_build_and_split_dataset_homogeneous(self):
         port = gigl.distributed.utils.get_free_port()
         mocked_dataset_info = TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        print("mocked_dataset_info.node_feats", mocked_dataset_info.node_feats)
-
         train_nodes = torch.tensor([1000])
         val_nodes = torch.tensor([2000, 3000])
         test_nodes = torch.tensor([3000, 4000, 5000])
