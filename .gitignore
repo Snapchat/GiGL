@@ -36,6 +36,7 @@ python/gigl/deps/
 _autosummary/
 graphlearn_torch/
 graphlearn_torch.egg-info/
+graphlearn-for-pytorch/
 .git/
 
 # Ignore downloaded fossa files.

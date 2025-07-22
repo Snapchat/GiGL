@@ -62,6 +62,7 @@ examples/MAG240M/downloads/
 scripts/
 graphlearn_torch/
 graphlearn_torch.egg-info/
+graphlearn-for-pytorch/
 do_not_open_source
 
 # https://github.com/google-github-actions/auth/issues/497

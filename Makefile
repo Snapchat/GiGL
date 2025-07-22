@@ -37,6 +37,8 @@ GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # Thus, we only want to format the Markdown files that we explicitly include in our repo.
 MD_FILES:=$(shell if [ ! ${GIT_BRANCH} ]; then echo "."; else git ls-tree --name-only -r ${GIT_BRANCH} . | grep ".md"; fi;)
 
+FORCE_GLT_CPU=0 # Flag to force GLT to use CPU even if CUDA is available.
+
 
 get_ver_hash:
 	# Fetches the git commit hash and stores it in `$GIT_COMMIT`
@@ -72,7 +74,7 @@ check_if_valid_env:
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
-	bash ./requirements/install_py_deps.sh --dev
+	bash ./requirements/install_py_deps.sh --dev ${if $(FORCE_GLT_CPU),--force-glt-cpu,}
 	bash ./requirements/install_scala_deps.sh
 	pip install -e ./python/
 	pre-commit install --hook-type pre-commit --hook-type pre-push
@@ -81,7 +83,7 @@ install_dev_deps: check_if_valid_env
 # Production environments, if you are developing use `make install_dev_deps` instead
 install_deps:
 	gcloud auth configure-docker us-central1-docker.pkg.dev
-	bash ./requirements/install_py_deps.sh
+	bash ./requirements/install_py_deps.sh ${if $(FORCE_GLT_CPU),--force-glt-cpu,}
 	bash ./requirements/install_scala_deps.sh
 	pip install -e ./python/
 

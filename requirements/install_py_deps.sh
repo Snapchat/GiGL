@@ -5,6 +5,7 @@ set -e
 DEV=0  # Flag to install dev dependencies.
 PIP_ARGS="--no-deps"  # We don't want to install dependencies when installing packages from hashed requirements files.
 PIP_CREDENTIALS_MOUNTED=0  # When running this script in Docker environments, we may wish to mount pip credentials to install packages from a private repository.
+FORCE_GLT_CPU=0 # Flag to force GLT to use CPU even if CUDA is available.
 
 for arg in "$@"
 do
@@ -19,6 +20,10 @@ do
         ;;
     --mount-pip-credentials)
         PIP_CREDENTIALS_MOUNTED=1
+        shift
+        ;;
+    --force-glt-cpu)
+        FORCE_GLT_CPU=1
         shift
         ;;
     esac
@@ -110,7 +115,7 @@ then
         && git checkout 26fe3d4e050b081bc51a79dc9547f244f5d314da \
         && git submodule update --init \
         && bash install_dependencies.sh
-    if has_cuda_driver;
+    if has_cuda_driver && [[ $FORCE_GLT_CPU -eq 0 ]];
     then
         echo "Will use CUDA for GLT..."
         TORCH_CUDA_ARCH_LIST="7.5" WITH_CUDA="ON" python setup.py bdist_wheel
