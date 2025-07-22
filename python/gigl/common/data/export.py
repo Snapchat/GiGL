@@ -9,6 +9,7 @@ then we should look into if parquet or orc files are more performant in that mod
 import io
 import os
 import time
+from pathlib import Path
 from typing import Final, Optional, Sequence
 
 import fastavro
@@ -20,7 +21,7 @@ from google.cloud.bigquery.job import LoadJob
 from google.cloud.exceptions import GoogleCloudError
 from typing_extensions import Self
 
-from gigl.common import GcsUri, Uri
+from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
 from gigl.src.common.utils.file_loader import FileLoader
@@ -75,6 +76,8 @@ class EmbeddingExporter:
             export_dir (Uri): URI where the Avro files will be uploaded.
                                  If a GCS URI, this should be a fully qualified GCS path,
                                  e.g., 'gs://bucket_name/path/to/'.
+                                 If a local URI (e.g. /tmp/gigl/embeddings), then the directory
+                                 will be created when EmbeddingExporter is initialized.
             file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
                                          the file names will be like $file_prefix_shard_00000000.avro.
             min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
@@ -101,6 +104,14 @@ class EmbeddingExporter:
         self._file_utils = FileLoader()
         self._prefix = file_prefix
         self._min_shard_size_threshold_bytes = min_shard_size_threshold_bytes
+
+        if isinstance(
+            self._base_export_uri, LocalUri
+        ) and not self._file_utils.does_uri_exist(self._base_export_uri):
+            logger.info(
+                f"Creating local directory {self._base_export_uri.uri} for exporting embeddings."
+            )
+            Path(self._base_export_uri.uri).mkdir(parents=True, exist_ok=True)
 
     def add_embedding(
         self,
