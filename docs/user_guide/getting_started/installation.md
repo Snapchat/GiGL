@@ -43,45 +43,51 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
   3. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
 
-  Once installed, ensure you can run multiarch docker builds by running following command:
+      Once installed, ensure you can run multiarch docker builds by running following command:
 
-  Linux:
-  ```bash
-  docker buildx create --driver=docker-container --use
-  sudo apt-get install qemu-user-static
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
+      Linux:
+      ```bash
+      docker buildx create --driver=docker-container --use
+      sudo apt-get install qemu-user-static
+      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+      ```
 
-  Mac:
-  ```bash
-  docker buildx create --driver=docker-container --use
-  brew install qemu
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
+      Mac:
+      ```bash
+      docker buildx create --driver=docker-container --use
+      brew install qemu
+      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+      ```
 
-  4. Ensure you have GNU MAKE v >= 4.4; if not, please upgrade version.
-  ```bash
-  make --version
-  ```
+  4. Ensure you have make installed.
 
-  **Install make on MAC:**
-  ```bash
-  brew install make
-  ```
+      ```bash
+      make --version
+      ```
 
-  Subsequently, you should be able to use `gmake` in all places where we use `make` since brew formula has installed GNU "make" as "gmake".
-  See: https://formulae.brew.sh/formula/make
+      **Install make on Linux:**
+      ```
+      apt-get update && apt-get upgrade -y && apt-get install -y cmake
+      ```
 
-  **Install make on Linux:**
-  ```
-  apt-get update && apt-get upgrade -y && apt-get install -y cmake
-  ```
+      **Install make on MAC:**
+      ```bash
+      brew install make
+      ```
 
-  5. Install [gcloud cli](https://cloud.google.com/sdk/docs/install):
-    - Make sure you are authenticated to use Google Cloud services: `gcloud init` +
-      `gcloud auth application-default login`.
-    - Make sure you are authenticated to pull Docker images: `gcloud auth configure-docker us-central1-docker.pkg.dev`.
+      Subsequently, you should be able to use `gmake` in all places where we use `make` since brew formula has installed GNU "make" as "gmake".
+      See: https://formulae.brew.sh/formula/make
 
+
+  5. Follow the glcoud cli install [instructions](https://cloud.google.com/sdk/docs/install)
+
+  6. Then, setup your gcloud environment:
+
+    ```bash
+    gcloud init # setup glcoud CLI
+    gcloud auth application-default login # Auth gcloud cli
+    gcloud auth configure-docker us-central1-docker.pkg.dev # Setup docker auth for GiGL images.
+    ```
 ````
 
 ## Install GiGL
@@ -89,6 +95,10 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 ### Install from source
 
 There are various ways to use GiGL. Firstly, clone the repo locally.
+
+```bash
+git clone https://github.com/Snapchat/GiGL.git
+```
 
 From the root directory:
 
@@ -142,6 +152,7 @@ Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
 pip install "gigl[torch25-cuda-121,transform]==0.0.2" \
   --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
   --extra-index-url=https://pypi.org/simple
+gigl-post-install
 ```
 
 Install GiGL + necessary tooling for Torch 2.5 + CPU
@@ -150,4 +161,10 @@ Install GiGL + necessary tooling for Torch 2.5 + CPU
 pip install "gigl[torch25-cpu,transform]==0.0.2" \
   --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
   --extra-index-url=https://pypi.org/simple
+gigl-post-install
+```
+
+```{note}
+`gigl-post-install` is needed to install GLT from source.
+Currently, building/using wheels for GLT is errorprone, thus we opt to install from source every time.
 ```

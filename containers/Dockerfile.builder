@@ -50,6 +50,7 @@ RUN conda init bash
 RUN echo "conda activate gigl" >> ~/.bashrc
 
 COPY requirements tools/gigl/requirements
+COPY python/gigl/scripts tools/gigl/python/gigl/scripts
 RUN pip install --upgrade pip
 RUN cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
 # TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
