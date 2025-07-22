@@ -3,7 +3,7 @@ substitutions:
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
-  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:59e780eeb5831d4ce75747262b8e57b46f3dc17a.24.1
+  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:148f1c215806a7feb36663180c6e200548a94da4.25.1
     entrypoint: /bin/bash
     args:
       - -c
@@ -24,7 +24,7 @@ steps:
         source ~/.profile
         docker buildx create --driver=docker-container --use
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-        gcloud auth configure-docker us-central1-docker.pkg.dev
+        gcloud auth configure-docker us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:148f1c215806a7feb36663180c6e200548a94da4.25.1
 
         # TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
         bash ./requirements/install_scala_deps.sh
