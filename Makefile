@@ -22,7 +22,7 @@ DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAM
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 
-PYTHON_DIRS:=examples python scripts tests
+PYTHON_DIRS:=examples python scripts testing
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -131,11 +131,11 @@ generate_dev_linux_cuda_hashed_requirements:
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
-	python tests/dep_vars_check.py
+	python testing/dep_vars_check.py
 
 
 assert_yaml_configs_parse:
-	python tests/assert_yaml_configs_parse.py -d .
+	python testing/assert_yaml_configs_parse.py -d .
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
@@ -194,7 +194,7 @@ integration_test:
 	)
 
 notebooks_test:
-	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m tests.notebooks_test
+	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m testing.notebooks_test
 
 mock_assets:
 	( cd python ; python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test)
