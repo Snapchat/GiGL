@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Post-install script for GIGL that runs install_glt.sh
+Once GiGL is installed w/ `pip install gigl`, this script can be executed by running:
+`gigl-post-install`
+
+This script is used to install the dependencies for GIGL.
+- Currently, it installs GLT by running install_glt.sh.
 """
 
-from typing import Optional
-
-import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 def run_command_and_stream_stdout(cmd: str) -> Optional[int]:
