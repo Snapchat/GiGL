@@ -108,8 +108,12 @@ jobs:
         ref: ${{ needs.create_release.outputs.release_branch_name }}
 
     - name: Release CPU src images
-      run: |
-        python -m scripts.release --release_type="cpu_src_images"
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: "python -m scripts.release --release_type='cpu_src_images'"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ secrets.gcp_project_id }}
+
 
 
 
@@ -128,8 +132,11 @@ jobs:
         ref: ${{ needs.create_release.outputs.release_branch_name }}
 
     - name: Release CUDA src images
-      run: |
-        python -m scripts.release --release_type="cuda_src_images"
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: "python -m scripts.release --release_type='cuda_src_images'"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ secrets.gcp_project_id }}
 
 
   release_dev_images:
@@ -147,8 +154,11 @@ jobs:
         ref: ${{ needs.create_release.outputs.release_branch_name }}
 
     - name: Release Dev images
-      run: |
-        python -m scripts.release --release_type="dev_images"
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: "python -m scripts.release --release_type='dev_images'"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ secrets.gcp_project_id }}
 
 
   release_kfp_pipeline:
@@ -166,8 +176,11 @@ jobs:
         ref: ${{ needs.create_release.outputs.release_branch_name }}
 
     - name: Release KFP pipeline
-      run: |
-        python -m scripts.release --release_type="kfp_pipeline"
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: "python -m scripts.release --release_type='kfp_pipeline'"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ secrets.gcp_project_id }}
 
   create_release_pr:
     needs:
