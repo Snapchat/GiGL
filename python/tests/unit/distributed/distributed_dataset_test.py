@@ -103,7 +103,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 "Test building heterogeneous dataset for tensor-based partitioning",
                 partitioner_class=DistPartitioner,
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-                expected_node_id_type=dict[NodeType, torch.Tensor],
+                expected_node_id_type=dict,
                 expected_node_feature_dim={NodeType("user"): 2, NodeType("story"): 2},
                 expected_edge_feature_dim={
                     EdgeType(NodeType("user"), Relation("to"), NodeType("story")): 2,
@@ -114,7 +114,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 "Test building heterogeneous dataset for range-based partitioning",
                 partitioner_class=DistRangePartitioner,
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-                expected_node_id_type=dict[NodeType, torch.Tensor],
+                expected_node_id_type=dict,
                 expected_node_feature_dim={NodeType("user"): 2, NodeType("story"): 2},
                 expected_edge_feature_dim={
                     EdgeType(NodeType("user"), Relation("to"), NodeType("story")): 2,

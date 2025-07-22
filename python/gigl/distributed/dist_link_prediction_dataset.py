@@ -237,7 +237,7 @@ class DistLinkPredictionDataset(DistDataset):
     def train_node_ids(
         self,
     ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
-        if self._num_train is None:
+        if not self._num_train:
             return None
         elif isinstance(self._num_train, int) and isinstance(
             self._node_ids, torch.Tensor
@@ -259,9 +259,9 @@ class DistLinkPredictionDataset(DistDataset):
     def val_node_ids(
         self,
     ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
-        if self._num_val is None:
+        if not self._num_val:
             return None
-        if self._num_train is None:
+        if not self._num_train:
             raise ValueError(
                 "num_train must be set if num_val is set. If you are using the constructor make sure all data is either homogeneous or heterogeneous. If you are using `build()` this is likely a bug, please report it."
             )
@@ -293,9 +293,9 @@ class DistLinkPredictionDataset(DistDataset):
     def test_node_ids(
         self,
     ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
-        if self._num_test is None:
+        if not self._num_test:
             return None
-        if self._num_train is None or self._num_val is None:
+        if not self._num_train or not self._num_val:
             raise ValueError(
                 "num_train and num_val must be set if num_test is set. If you are using the constructor make sure all data is either homogeneous or heterogeneous. If you are using `build()` this is likely a bug, please report it."
             )
