@@ -1,0 +1,19 @@
+FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/workbench-container:latest
+
+ENV MAMBA_ROOT_PREFIX=/opt/micromamba
+ENV ENVIRONMENT_NAME=gigl
+ENV PYTHON_VERSION=3.9
+RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
+
+SHELL ["micromamba", "run", "-n", "${ENVIRONMENT_NAME}", "/bin/bash", "-c"]
+
+RUN micromamba install -c conda-forge pip -y
+RUN pip install ipykernel
+RUN python -m ipykernel install --prefix /opt/micromamba/envs/${ENVIRONMENT_NAME} --name ${ENVIRONMENT_NAME} --display-name ${ENVIRONMENT_NAME}
+# Creation of a micromamba kernel automatically creates a python3 kernel
+# that must be removed if it's in conflict with the new kernel.
+RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/python3"
+
+# Copy the source into the container
+COPY . .
+RUN make install_dev_deps

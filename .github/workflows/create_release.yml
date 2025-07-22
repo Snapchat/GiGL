@@ -79,6 +79,16 @@ jobs:
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "New version: $NEW_VERSION"
 
+
+    - name: Build and Push Dev Container Image
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev
+        GIGL_DEV_CONTAINER_IMAGE=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gigl-base-images/gigl-dev-container:${{ steps.get_new_version.outputs.new_version }}
+        docker build -f ./containers/Dockerfile.dev_container -t ${GIGL_DEV_CONTAINER_IMAGE} .
+        docker push ${GIGL_DEV_CONTAINER_IMAGE}
+        echo "GIGL_DEV_CONTAINER_IMAGE=${GIGL_DEV_CONTAINER_IMAGE}" >> $GITHUB_OUTPUT
+        echo "Pushed Dev container image to ${GIGL_DEV_CONTAINER_IMAGE}"
+
     - name: Commit and Push Dep Vars
       uses: ./.github/actions/commit-and-push
       with:
