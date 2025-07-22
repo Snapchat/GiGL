@@ -26,13 +26,6 @@ steps:
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
 
-        # TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
-        bash ./requirements/install_scala_deps.sh
-        pip install -e ./python/
-
-        # Since more deps were installed we need to re-source the bashrc
-        source ~/.profile
-
         echo "Finished setting up environment."
         echo "========================="
         echo "Running command: ${_CMD}"

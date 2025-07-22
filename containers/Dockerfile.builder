@@ -49,10 +49,14 @@ ENV PATH=/opt/conda/envs/gigl/bin:$PATH
 RUN conda init bash
 RUN echo "conda activate gigl" >> ~/.bashrc
 
+# We copy the tools directory from the host machine to the container
+# to avoid re-downloading the dependencies as some of them require GCP credentials.
+# and, mounting GCP credentials to build time can be a pain and more prone to
+# accidental leaking of credentials.
+COPY tools tools/gigl/tools
 COPY requirements tools/gigl/requirements
+
 RUN pip install --upgrade pip
-RUN cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
-# TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
-# RUN cd tools/gigl && bash ./requirements/install_scala_deps.sh
+RUN cd tools/gigl && make install_dev_deps
 
 CMD [ "/bin/bash" ]
