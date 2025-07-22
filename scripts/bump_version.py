@@ -48,6 +48,7 @@ def update_dep_vars_env(
     cuda_image_name: str,
     cpu_image_name: str,
     dataflow_image_name: str,
+    dev_workbench_image_name: str,
 ) -> None:
     print(
         f"Updating dep_vars.env with {cuda_image_name}, {cpu_image_name}, {dataflow_image_name}"
@@ -57,20 +58,24 @@ def update_dep_vars_env(
     with open(dep_vars_env_path, "r") as f:
         content = f.read()
 
-    # Update the Docker image names with the new version
     content = re.sub(
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=([^:]+):.*",
-        f"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=\\1:{cuda_image_name}",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=.*",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=" + cuda_image_name,
         content,
     )
     content = re.sub(
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=([^:]+):.*",
-        f"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=\\1:{cpu_image_name}",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=.*",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=" + cpu_image_name,
         content,
     )
     content = re.sub(
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=([^:]+):.*",
-        f"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=\\1:{dataflow_image_name}",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=.*",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=" + dataflow_image_name,
+        content,
+    )
+    content = re.sub(
+        r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=.*",
+        r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=" + dev_workbench_image_name,
         content,
     )
 
@@ -90,7 +95,9 @@ def update_pyproject(version: str) -> None:
 def get_new_version(
     bump_type: Literal["major", "minor", "patch", "nightly"], curr_version: str
 ) -> str:
-    major, minor, patch = map(int, curr_version.split("."))
+    version_parts = curr_version.split(".")
+    # We may have dev suffixes, so we only unpack first three parts
+    major, minor, patch = int(version_parts[0]), int(version_parts[1]), int(version_parts[2])
     if bump_type == "major":
         major += 1
         minor, patch = 0, 0
@@ -101,7 +108,8 @@ def get_new_version(
         patch += 1
     new_version = f"{major}.{minor}.{patch}"
     if bump_type == "nightly":
-        new_version += f"-nightly.{datetime.datetime.now().strftime('%Y%m%d.%H%M%S')}"
+        # PEP 440 compliant
+        new_version += f".dev{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
     return new_version
 
 
@@ -125,24 +133,16 @@ def bump_version(
     cuda_image_name = f"{base_image_registry}/src-cuda:{new_version}"
     cpu_image_name = f"{base_image_registry}/src-cpu:{new_version}"
     dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
+    dev_workbench_image_name = f"{base_image_registry}/gigl-dev-workbench:{new_version}"
 
     update_dep_vars_env(
         cuda_image_name=cuda_image_name,
         cpu_image_name=cpu_image_name,
         dataflow_image_name=dataflow_image_name,
+        dev_workbench_image_name=dev_workbench_image_name,
     )
     update_version(version=new_version)
     update_pyproject(version=new_version)
-    kfp_orchestrator = KfpOrchestrator()
-    kfp_orchestrator.compile(
-        cuda_container_image=cuda_image_name,
-        cpu_container_image=cpu_image_name,
-        dataflow_container_image=dataflow_image_name,
-        dst_compiled_pipeline_path=GcsUri(
-            uri=f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/gigl-pipeline-{new_version}.yaml",
-        ),
-        tag=new_version,
-    )
 
     print(
         f"Bumped to GiGL Version: {new_version}! To release, raise a PR with these changes and after it is merged, tag main with the version and run make release_gigl."

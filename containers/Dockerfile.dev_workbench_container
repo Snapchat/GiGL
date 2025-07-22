@@ -16,5 +16,5 @@ RUN python -m ipykernel install --prefix /opt/micromamba/envs/${ENVIRONMENT_NAME
 RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/python3"
 
 # Copy the source into the container
-COPY . .
-RUN make install_dev_deps
+COPY . /gigl
+RUN cd /gigl && make install_dev_deps

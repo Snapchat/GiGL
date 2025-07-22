@@ -22,7 +22,7 @@ from gigl.common.constants import (
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
-    DEFAULT_GIGL_RELEASE_SRC_IMAGE_DEV,
+    DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE,
     DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
     DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
     DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG,
@@ -62,10 +62,10 @@ def release_cuda_src_images():
 def release_dev_images():
     build_and_push_image(
         base_image=None,
-        image_name=DEFAULT_GIGL_RELEASE_SRC_IMAGE_DEV,
-        dockerfile_name="Dockerfile.dev",
+        image_name=DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE,
+        dockerfile_name="Dockerfile.dev_workbench_container",
     )
-    print(f"Pushed Dev image to {DEFAULT_GIGL_RELEASE_SRC_IMAGE_DEV}")
+    print(f"Pushed Dev image to {DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}")
 
 
 def release_kfp_pipeline():
