@@ -9,18 +9,24 @@ from torch_geometric.typing import EdgeType
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
 )
 from gigl.types.graph import message_passing_to_positive_label
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
+_U2U_EDGE_TYPE = ("user", "to", "user")
 _U2I_EDGE_TYPE = ("user", "to", "item")
 _I2U_EDGE_TYPE = ("item", "to", "user")
 _LABELED_EDGE_TYPE = message_passing_to_positive_label(_U2I_EDGE_TYPE)
 
 
 class LoaderUtilsTest(unittest.TestCase):
+    def setUp(self):
+        self._device = torch.device("cpu")
+        return super().setUp()
+
     @parameterized.expand(
         [
             param(
@@ -211,3 +217,97 @@ class LoaderUtilsTest(unittest.TestCase):
         self.assertFalse(_LABELED_EDGE_TYPE in stripped_data.num_sampled_edges)
         self.assertTrue(_U2I_EDGE_TYPE in stripped_data.num_sampled_edges)
         self.assertTrue(_I2U_EDGE_TYPE in stripped_data.num_sampled_edges)
+
+    def test_homogeneous_set_missing_features(self):
+        # Ensure function can correctly populate fields for homogeneous case
+        data = Data()
+        data = set_missing_features(
+            data=data,
+            node_feature_dim=2,
+            edge_feature_dim=4,
+            device=self._device,
+            dtype=torch.float32,
+        )
+        assert_tensor_equality(
+            data.x, torch.empty((0, 2), device=self._device, dtype=torch.float32)
+        )
+        assert_tensor_equality(
+            data.edge_attr,
+            torch.empty((0, 4), device=self._device, dtype=torch.float32),
+        )
+
+        data = Data()
+        data.x = torch.ones((20, 2), dtype=torch.float32)
+        data = set_missing_features(
+            data=data,
+            node_feature_dim=2,
+            edge_feature_dim=4,
+            device=self._device,
+            dtype=torch.float32,
+        )
+        assert_tensor_equality(
+            data.x, torch.ones((20, 2), device=self._device, dtype=torch.float32)
+        )
+        assert_tensor_equality(
+            data.edge_attr,
+            torch.empty((0, 4), device=self._device, dtype=torch.float32),
+        )
+
+    def test_heterogeneous_set_missing_features(self):
+        # Ensure function can correctly populate fields for heterogeneous case
+
+        hetero_data = HeteroData()
+        hetero_data = set_missing_features(
+            data=hetero_data,
+            node_feature_dim={"user": 3, "item": 4},
+            edge_feature_dim={_U2U_EDGE_TYPE: 6, _I2U_EDGE_TYPE: 7},
+            device=self._device,
+            dtype=torch.float32,
+        )
+
+        assert_tensor_equality(
+            hetero_data["user"].x,
+            torch.empty((0, 3), device=self._device, dtype=torch.float32),
+        )
+        assert_tensor_equality(
+            hetero_data["item"].x,
+            torch.empty((0, 4), device=self._device, dtype=torch.float32),
+        )
+
+        assert_tensor_equality(
+            hetero_data[_U2U_EDGE_TYPE].edge_attr,
+            torch.empty((0, 6), device=self._device, dtype=torch.float32),
+        )
+        assert_tensor_equality(
+            hetero_data[_I2U_EDGE_TYPE].edge_attr,
+            torch.empty((0, 7), device=self._device, dtype=torch.float32),
+        )
+
+        hetero_data = HeteroData()
+        hetero_data["user"].x = torch.ones((30, 3), dtype=torch.float32)
+        hetero_data[_U2U_EDGE_TYPE].edge_attr = torch.ones((60, 6), dtype=torch.float32)
+        hetero_data = set_missing_features(
+            data=hetero_data,
+            node_feature_dim={"user": 3, "item": 4},
+            edge_feature_dim={_U2U_EDGE_TYPE: 6, _I2U_EDGE_TYPE: 7},
+            device=self._device,
+            dtype=torch.float32,
+        )
+
+        assert_tensor_equality(
+            hetero_data["user"].x,
+            torch.ones((30, 3), device=self._device, dtype=torch.float32),
+        )
+        assert_tensor_equality(
+            hetero_data["item"].x,
+            torch.empty((0, 4), device=self._device, dtype=torch.float32),
+        )
+
+        assert_tensor_equality(
+            hetero_data[_U2U_EDGE_TYPE].edge_attr,
+            torch.ones((60, 6), device=self._device, dtype=torch.float32),
+        )
+        assert_tensor_equality(
+            hetero_data[_I2U_EDGE_TYPE].edge_attr,
+            torch.empty((0, 7), device=self._device, dtype=torch.float32),
+        )

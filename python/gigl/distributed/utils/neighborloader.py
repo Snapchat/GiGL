@@ -186,9 +186,11 @@ def set_missing_features(
             raise ValueError(
                 f"Expected edge feature dimension to be an int or None for homogeneous data, got {edge_feature_dim} of type {type(edge_feature_dim)}"
             )
-        if node_feature_dim and not hasattr(data, "x"):
+        if node_feature_dim and (not hasattr(data, "x") or data.x is None):
             data.x = torch.empty((0, node_feature_dim), dtype=dtype).to(device)
-        if edge_feature_dim and not hasattr(data, "edge_attr"):
+        if edge_feature_dim and (
+            not hasattr(data, "edge_attr") or data.edge_attr is None
+        ):
             data.edge_attr = torch.empty((0, edge_feature_dim), dtype=dtype).to(device)
 
     elif isinstance(data, HeteroData):
@@ -203,13 +205,16 @@ def set_missing_features(
 
         if node_feature_dim:
             for node_type, feat_dim in node_feature_dim.items():
-                if not hasattr(data[node_type], "x"):
+                if not hasattr(data[node_type], "x") or data[node_type].x is None:
                     data[node_type].x = torch.empty((0, feat_dim), dtype=dtype).to(
                         device
                     )
         if edge_feature_dim:
             for edge_type, feat_dim in edge_feature_dim.items():
-                if not hasattr(data[node_type], "edge_attr"):
+                if (
+                    not hasattr(data[edge_type], "edge_attr")
+                    or data[edge_type].edge_attr is None
+                ):
                     data[edge_type].edge_attr = torch.empty(
                         (0, feat_dim), dtype=dtype
                     ).to(device)
