@@ -88,27 +88,27 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 partitioner_class=DistPartitioner,
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=torch.Tensor,
-                expected_node_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
-                expected_edge_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
+                expected_node_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
+                expected_edge_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
             ),
             param(
                 "Test building homogeneous Dataset for range-based partitioning",
                 partitioner_class=DistRangePartitioner,
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=torch.Tensor,
-                expected_node_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
-                expected_edge_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
+                expected_node_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
+                expected_edge_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
             ),
             param(
                 "Test building heterogeneous dataset for tensor-based partitioning",
                 partitioner_class=DistPartitioner,
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=dict,
-                expected_node_feature_dim={
+                expected_node_feature_info={
                     NodeType("user"): 2,
                     NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
                 },
-                expected_edge_feature_dim={
+                expected_edge_feature_info={
                     EdgeType(
                         NodeType("user"), Relation("to"), NodeType("story")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
@@ -122,11 +122,11 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 partitioner_class=DistRangePartitioner,
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=dict,
-                expected_node_feature_dim={
+                expected_node_feature_info={
                     NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
                     NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
                 },
-                expected_edge_feature_dim={
+                expected_edge_feature_info={
                     EdgeType(
                         NodeType("user"), Relation("to"), NodeType("story")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
