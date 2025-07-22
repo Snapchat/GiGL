@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import Dict, List, Type, cast
+from typing import Type, cast
 
 from gigl.common import Uri, UriFactory
 from gigl.src.common.types.pb_wrappers.types import DatasetMetadataPb, TrainingSamplePb
 from snapchat.research.gbml import dataset_metadata_pb2, training_samples_schema_pb2
 
-DATASET_TO_TRAINING_SAMPLE_TYPE: Dict[
+DATASET_TO_TRAINING_SAMPLE_TYPE: dict[
     Type[DatasetMetadataPb], Type[TrainingSamplePb]
 ] = {
     dataset_metadata_pb2.SupervisedNodeClassificationDataset: training_samples_schema_pb2.SupervisedNodeClassificationSample,
@@ -51,7 +51,7 @@ class DatasetMetadataPbWrapper:
         ]
         return training_sample_type
 
-    def get_output_paths(self) -> List[Uri]:
+    def get_output_paths(self) -> list[Uri]:
         """
         Returns a list of output paths referenced by the output metadata.
         :return:

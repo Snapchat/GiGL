@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Optional
 
 import torch
 
@@ -23,10 +23,10 @@ class InputBatch:
 @dataclass
 class BatchEmbeddings:
     query_embeddings: torch.FloatTensor
-    repeated_query_embeddings: Dict[CondensedEdgeType, torch.FloatTensor]
-    pos_embeddings: Dict[CondensedEdgeType, torch.FloatTensor]
-    hard_neg_embeddings: Dict[CondensedEdgeType, torch.FloatTensor]
-    random_neg_embeddings: Dict[CondensedNodeType, torch.FloatTensor]
+    repeated_query_embeddings: dict[CondensedEdgeType, torch.FloatTensor]
+    pos_embeddings: dict[CondensedEdgeType, torch.FloatTensor]
+    hard_neg_embeddings: dict[CondensedEdgeType, torch.FloatTensor]
+    random_neg_embeddings: dict[CondensedNodeType, torch.FloatTensor]
 
 
 # Returns scores for a single anchor node
@@ -53,5 +53,5 @@ class BatchCombinedScores:
 class NodeAnchorBasedLinkPredictionTaskInputs:
     input_batch: InputBatch
     batch_embeddings: Optional[BatchEmbeddings]
-    batch_scores: List[Dict[CondensedEdgeType, BatchScores]]
-    batch_combined_scores: Dict[CondensedEdgeType, BatchCombinedScores]
+    batch_scores: list[dict[CondensedEdgeType, BatchScores]]
+    batch_combined_scores: dict[CondensedEdgeType, BatchCombinedScores]

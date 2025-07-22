@@ -1,5 +1,5 @@
 import tempfile
-from typing import OrderedDict
+from collections import OrderedDict
 
 import torch
 

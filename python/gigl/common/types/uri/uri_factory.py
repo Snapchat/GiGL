@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Type, Union
+from typing import Type, Union
 
 from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.types.uri.http_uri import HttpUri
@@ -25,7 +25,7 @@ class UriFactory:
         Returns:
             Uri: A created Uri object based on the given input.
         """
-        uri_types: List[Type[Uri]] = [GcsUri, HttpUri, LocalUri]
+        uri_types: list[Type[Uri]] = [GcsUri, HttpUri, LocalUri]
         for subcls in uri_types:
             if subcls.is_valid(uri=uri, raise_exception=False):
                 return subcls(uri=uri)

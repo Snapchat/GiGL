@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Protocol, Set
+from typing import Protocol, Set
 
 import torch
 
@@ -12,14 +12,14 @@ class GbmlGraphDataProtocol(Protocol):
     @property
     def edge_types_to_be_registered(
         self,
-    ) -> List[EdgeType]:
+    ) -> list[EdgeType]:
         """Maintains a list of EdgeTypes associated with this graph data.
 
         Used in conjunction with GraphBuilder, to preserve EdgeTypes when combining
         multiple GbmlGraphDataProtocol objects together.
 
         Returns:
-            List[EdgeType]
+            list[EdgeType]
 
         """
         ...
@@ -36,18 +36,18 @@ class GbmlGraphDataProtocol(Protocol):
         these graphs data formats.
 
         Returns:
-            Dict[Node, Node]
+            dict[Node, Node]
         """
         ...
 
     @global_node_to_subgraph_node_mapping.setter
     def global_node_to_subgraph_node_mapping(
-        self, global_node_to_subgraph_node_mapping: Dict[Node, Node]
+        self, global_node_to_subgraph_node_mapping: dict[Node, Node]
     ) -> None:
         """See global_node_to_subgraph_node_mapping
 
         Args:
-            global_node_to_subgraph_node_mapping (Dict[Node, Node])
+            global_node_to_subgraph_node_mapping (dict[Node, Node])
         """
         ...
 

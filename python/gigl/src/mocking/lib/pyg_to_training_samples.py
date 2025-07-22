@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch_geometric.transforms as T
@@ -67,8 +67,8 @@ def build_pyg_heterodata_from_mocked_dataset_info(
 def _build_graph_pb_wrapper_from_hetero_data(
     hetero_data: HeteroData, graph_metadata_pb_wrapper: GraphMetadataPbWrapper
 ) -> GraphPbWrapper:
-    khop_subgraph_edges: List[graph_schema_pb2.Edge] = list()
-    khop_subgraph_nodes: List[graph_schema_pb2.Node] = list()
+    khop_subgraph_edges: list[graph_schema_pb2.Edge] = list()
+    khop_subgraph_nodes: list[graph_schema_pb2.Node] = list()
 
     for pyg_edge_type in hetero_data.edge_types:
         edge_type_metadata = hetero_data[pyg_edge_type]
@@ -156,7 +156,7 @@ def build_k_hop_subgraphs_from_pyg_heterodata(
     root_node_idxs: Optional[torch.Tensor] = None,
     num_hops: int = DEFAULT_NUM_HOPS_FOR_DATASETS,
     num_neighbors: int = DEFAULT_NUM_NODES_PER_HOP,
-) -> Dict[NodeId, GraphPbWrapper]:
+) -> dict[NodeId, GraphPbWrapper]:
     """
     Given inputs, return a map of each root node of type `root_node_type` and index in `root_node_idxs'
     to GraphPbWrappers which describe the `num_hops` surrounding subgraph.
@@ -178,7 +178,7 @@ def build_k_hop_subgraphs_from_pyg_heterodata(
         - 1,  # use all available CPUs except one, for this task.
     )
 
-    k_hop_subgraphs: Dict[NodeId, GraphPbWrapper] = dict()
+    k_hop_subgraphs: dict[NodeId, GraphPbWrapper] = dict()
 
     sample: HeteroData
     for root_node_idx, sample in zip(root_node_idxs.tolist(), loader):
@@ -207,9 +207,9 @@ def _get_random_negative_samples_for_pos_edges(
 
 
 def _build_rooted_node_neighborhood_samples_from_subgraphs(
-    subgraph_dict: Dict[NodeId, GraphPbWrapper], condensed_node_type: CondensedNodeType
-) -> List[training_samples_schema_pb2.RootedNodeNeighborhood]:
-    samples: List[training_samples_schema_pb2.RootedNodeNeighborhood] = list()
+    subgraph_dict: dict[NodeId, GraphPbWrapper], condensed_node_type: CondensedNodeType
+) -> list[training_samples_schema_pb2.RootedNodeNeighborhood]:
+    samples: list[training_samples_schema_pb2.RootedNodeNeighborhood] = list()
 
     for root_node_id, subgraph in subgraph_dict.items():
         sample = training_samples_schema_pb2.RootedNodeNeighborhood(
@@ -229,8 +229,8 @@ def build_supervised_node_classification_samples_from_pyg_heterodata(
     hetero_data: HeteroData,
     root_node_type: NodeType,
     graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
-) -> List[training_samples_schema_pb2.SupervisedNodeClassificationSample]:
-    samples: List[
+) -> list[training_samples_schema_pb2.SupervisedNodeClassificationSample]:
+    samples: list[
         training_samples_schema_pb2.SupervisedNodeClassificationSample
     ] = list()
 
@@ -276,9 +276,9 @@ def build_node_anchor_link_prediction_samples_from_pyg_heterodata(
     graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
     mocked_dataset_info: MockedDatasetInfo,
 ) -> Tuple[
-    List[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
-    List[training_samples_schema_pb2.RootedNodeNeighborhood],
-    List[training_samples_schema_pb2.RootedNodeNeighborhood],
+    list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
+    list[training_samples_schema_pb2.RootedNodeNeighborhood],
+    list[training_samples_schema_pb2.RootedNodeNeighborhood],
 ]:
     src_node_id_to_k_hop_subgraph = build_k_hop_subgraphs_from_pyg_heterodata(
         hetero_data=hetero_data,
@@ -393,16 +393,16 @@ def build_node_anchor_link_prediction_samples_from_pyg_heterodata(
         ):
             hard_neg_node_map[src].append(dst)
 
-    unsup_node_anchor_samples: List[
+    unsup_node_anchor_samples: list[
         training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
     ] = list()
 
     # Create UnsupNodeAnchor samples for each node with at least 1 positive edge.
     unique_nodes = list(pos_node_map.keys())
     for root_node_id in unique_nodes:
-        pos_edge_pbs: List[graph_schema_pb2.Edge] = list()
-        hard_neg_edge_pbs: List[graph_schema_pb2.Edge] = list()
-        subgraphs_to_merge: List[GraphPbWrapper] = list()
+        pos_edge_pbs: list[graph_schema_pb2.Edge] = list()
+        hard_neg_edge_pbs: list[graph_schema_pb2.Edge] = list()
+        subgraphs_to_merge: list[GraphPbWrapper] = list()
 
         root_node_pb = graph_schema_pb2.Node(
             node_id=root_node_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 import torch
 import torch_geometric.data
@@ -38,10 +38,10 @@ from snapchat.research.gbml import training_samples_schema_pb2
 class NodeAnchorBasedLinkPredictionBatch:
     @dataclass
     class BatchSupervisionEdgeData:
-        root_node_to_target_node_id: Dict[NodeId, torch.LongTensor] = field(
+        root_node_to_target_node_id: dict[NodeId, torch.LongTensor] = field(
             default_factory=dict
         )  # maps root nodes to target node for positive or negative edges
-        label_edge_features: Optional[Dict[NodeId, torch.FloatTensor]] = field(
+        label_edge_features: Optional[dict[NodeId, torch.FloatTensor]] = field(
             default_factory=dict
         )  # maps root nodes to edge features for or negative positive edges
 
@@ -51,10 +51,10 @@ class NodeAnchorBasedLinkPredictionBatch:
     root_node_indices: (
         torch.LongTensor
     )  # lists root node indices within the batch for whom to compute loss
-    pos_supervision_edge_data: Dict[CondensedEdgeType, BatchSupervisionEdgeData]
-    hard_neg_supervision_edge_data: Dict[CondensedEdgeType, BatchSupervisionEdgeData]
-    condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
-        CondensedNodeType, Dict[NodeId, NodeId]
+    pos_supervision_edge_data: dict[CondensedEdgeType, BatchSupervisionEdgeData]
+    hard_neg_supervision_edge_data: dict[CondensedEdgeType, BatchSupervisionEdgeData]
+    condensed_node_type_to_subgraph_id_to_global_node_id: dict[
+        CondensedNodeType, dict[NodeId, NodeId]
     ]  # for each condensed node type, maps subgraph node id to global node id
 
     @staticmethod
@@ -91,7 +91,7 @@ class NodeAnchorBasedLinkPredictionBatch:
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
-        samples: List[NodeAnchorBasedLinkPredictionSample],
+        samples: list[NodeAnchorBasedLinkPredictionSample],
     ) -> NodeAnchorBasedLinkPredictionBatch:
         """
         We coalesce the various sample subgraphs to build a single unified neighborhood, which we use for message
@@ -116,19 +116,19 @@ class NodeAnchorBasedLinkPredictionBatch:
             builder.add_graph_data(graph_data=graph_data)
         batch_graph_data = builder.build()
 
-        _batch_root_nodes: List[NodeId] = list()
-        pos_supervision_edge_data: Dict[
+        _batch_root_nodes: list[NodeId] = list()
+        pos_supervision_edge_data: dict[
             CondensedEdgeType,
             NodeAnchorBasedLinkPredictionBatch.BatchSupervisionEdgeData,
         ] = defaultdict(NodeAnchorBasedLinkPredictionBatch.BatchSupervisionEdgeData)
-        hard_neg_supervision_edge_data: Dict[
+        hard_neg_supervision_edge_data: dict[
             CondensedEdgeType,
             NodeAnchorBasedLinkPredictionBatch.BatchSupervisionEdgeData,
         ] = defaultdict(NodeAnchorBasedLinkPredictionBatch.BatchSupervisionEdgeData)
-        condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
-            CondensedNodeType, Dict[NodeId, NodeId]
+        condensed_node_type_to_subgraph_id_to_global_node_id: dict[
+            CondensedNodeType, dict[NodeId, NodeId]
         ] = defaultdict(dict)
-        node_mapping: Dict[
+        node_mapping: dict[
             Node, Node
         ] = batch_graph_data.global_node_to_subgraph_node_mapping
         for node_with_global_id, node_with_subgraph_id in node_mapping.items():
@@ -156,7 +156,7 @@ class NodeAnchorBasedLinkPredictionBatch:
                     ].dst_node_type
                 )
                 # Map each root node to its positive nodes (dst nodes of the positive edges).
-                _subgraph_pos_nodes: List[NodeId] = []
+                _subgraph_pos_nodes: list[NodeId] = []
                 for (
                     pos_node_id
                 ) in condensed_edge_type_to_supervision_edge_data.pos_nodes:
@@ -169,7 +169,7 @@ class NodeAnchorBasedLinkPredictionBatch:
                 )
 
                 # Map each root node to its hard negative edges (dst nodes of the hard negative edges).
-                _subgraph_hard_neg_nodes: List[NodeId] = []
+                _subgraph_hard_neg_nodes: list[NodeId] = []
                 for (
                     hard_neg_node_id
                 ) in condensed_edge_type_to_supervision_edge_data.hard_neg_nodes:

@@ -1,5 +1,5 @@
 from collections import Counter, abc
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -37,7 +37,7 @@ class DistNeighborLoader(DistLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
-        num_neighbors: Union[List[int], Dict[EdgeType, List[int]]],
+        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -62,7 +62,7 @@ class DistNeighborLoader(DistLoader):
 
         Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
-            num_neighbors (List[int] or Dict[Tuple[str, str, str], List[int]]):
+            num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
@@ -202,25 +202,6 @@ class DistNeighborLoader(DistLoader):
                 )
             input_nodes = dataset.node_ids
 
-        if isinstance(num_neighbors, abc.Mapping):
-            # TODO(kmonte): We should enable this. We have two blockers:
-            # 1. We need to treat `EdgeType` as a proper tuple, not the GiGL`EdgeType`.
-            # 2. There are (likely) some GLT bugs around https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
-            # Where if num_neighbors is a dict then we index into it improperly.
-            if not isinstance(dataset.graph, abc.Mapping):
-                raise ValueError(
-                    "When num_neighbors is a dict, the dataset must be heterogeneous."
-                )
-            if num_neighbors.keys() != dataset.graph.keys():
-                raise ValueError(
-                    f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset.graph.keys()}"
-                )
-            hops = len(next(iter(num_neighbors.values())))
-            if not all(len(fanout) == hops for fanout in num_neighbors.values()):
-                raise ValueError(
-                    f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
-                )
-
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         self._is_labeled_heterogeneous = False
         if isinstance(input_nodes, torch.Tensor):
@@ -235,9 +216,6 @@ class DistNeighborLoader(DistLoader):
                 ):
                     node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
                     self._is_labeled_heterogeneous = True
-                    num_neighbors = patch_fanout_for_sampling(
-                        dataset.get_edge_types(), num_neighbors
-                    )
                 else:
                     raise ValueError(
                         f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
@@ -249,9 +227,10 @@ class DistNeighborLoader(DistLoader):
             assert isinstance(
                 dataset.node_ids, abc.Mapping
             ), "Dataset must be heterogeneous if provided input nodes are a tuple."
-            num_neighbors = patch_fanout_for_sampling(
-                dataset.get_edge_types(), num_neighbors
-            )
+
+        num_neighbors = patch_fanout_for_sampling(
+            dataset.get_edge_types(), num_neighbors
+        )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,

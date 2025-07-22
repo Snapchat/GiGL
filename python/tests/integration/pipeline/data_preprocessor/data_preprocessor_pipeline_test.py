@@ -1,7 +1,7 @@
 import platform
 import tempfile
 import unittest
-from typing import Dict, List, Optional
+from typing import Optional
 
 import numpy as np
 import tensorflow as tf
@@ -73,16 +73,16 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
         self.gcs_utils = GcsUtils()
         self.bq_utils = BqUtils()
         self.proto_utils = ProtoUtils()
-        self.__gcs_dirs_to_cleanup: List[GcsUri] = []
-        self.__applied_tasks_to_cleanup: List[AppliedTaskIdentifier] = []
+        self.__gcs_dirs_to_cleanup: list[GcsUri] = []
+        self.__applied_tasks_to_cleanup: list[AppliedTaskIdentifier] = []
 
     @staticmethod
     def __get_np_arrays_from_tfrecords(
         schema_path: GcsUri,
-        tfrecord_files: List[str],
+        tfrecord_files: list[str],
         # This is set larger than cora num nodes & edges so as to read the whole dataset in 1 go.
         max_batch_size=16384,
-    ) -> Dict[str, np.ndarray]:
+    ) -> dict[str, np.ndarray]:
         schema = tfdv.load_schema_text(schema_path.uri)
         feature_spec = tft.tf_metadata.schema_utils.schema_as_feature_spec(
             schema
@@ -164,12 +164,12 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
             + f"Source mock dataset info: {mocked_dataset_info}"
         )
 
-        condensed_node_type_to_node_type_map: Dict[
+        condensed_node_type_to_node_type_map: dict[
             CondensedNodeType, NodeType
         ] = (
             gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map
         )
-        condensed_edge_type_to_edge_type_map: Dict[
+        condensed_edge_type_to_edge_type_map: dict[
             CondensedEdgeType, EdgeType
         ] = (
             gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map
@@ -225,11 +225,11 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
                 ]
             )
 
-            expected_node_feature_names: List[str] = [
+            expected_node_feature_names: list[str] = [
                 get_feature_field_name(n=n)
                 for n in range(mocked_dataset_info.num_node_features[node_type])
             ]
-            expected_node_feats_indexed_by_feat_name: Dict[str, tf.Tensor] = {}
+            expected_node_feats_indexed_by_feat_name: dict[str, tf.Tensor] = {}
             for column_tensor, node_feat_name in zip(
                 mocked_dataset_info.node_feats[node_type].T, expected_node_feature_names
             ):
@@ -280,7 +280,7 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
                 f"{node_data_features_prefix.uri}*.tfrecord"
             )
             self.assertIsNotNone(node_tfrecords)
-            node_info: Dict[
+            node_info: dict[
                 str, np.ndarray
             ] = DataPreprocessorPipelineTest.__get_np_arrays_from_tfrecords(
                 schema_path=node_data_schema, tfrecord_files=node_tfrecords
@@ -323,8 +323,8 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
         dst_node_id_key: str,
         expected_num_edge_features: int,
         expected_num_edges: int,
-        expected_edge_feature_names: List[str],
-        expected_edge_feats_indexed_by_feat_name: Dict[str, tf.Tensor],
+        expected_edge_feature_names: list[str],
+        expected_edge_feats_indexed_by_feat_name: dict[str, tf.Tensor],
     ):
         logger.info(
             f"Analyzing {preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo.__name__}: "
@@ -360,7 +360,7 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
         # Check node data is same.
         edge_tfrecords = tf.io.gfile.glob(f"{edge_data_prefix.uri}*.tfrecord")
         self.assertIsNotNone(edge_tfrecords)
-        edge_info: Dict[
+        edge_info: dict[
             str, np.ndarray
         ] = DataPreprocessorPipelineTest.__get_np_arrays_from_tfrecords(
             schema_path=edge_data_schema, tfrecord_files=edge_tfrecords
@@ -414,7 +414,7 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
             f"assert_user_defined_edges_in_preprocessed_metadata_reflects_mocked_dataset_info for {edge_usage_type} edges"
         )
         user_defined_edge_index: Optional[
-            Dict[EdgeType, Dict[EdgeUsageType, torch.Tensor]]
+            dict[EdgeType, dict[EdgeUsageType, torch.Tensor]]
         ] = mocked_dataset_info.user_defined_edge_index
         src_node_id_key = edge_metadata_output_pb.src_node_id_key
         dst_node_id_key = edge_metadata_output_pb.dst_node_id_key
@@ -436,11 +436,11 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
                 ]
             )
 
-            expected_edge_feature_names: List[str] = [
+            expected_edge_feature_names: list[str] = [
                 get_feature_field_name(n=n)
                 for n in range(expected_num_user_def_edge_features_for_label_type)
             ]
-            expected_positive_edge_feats_indexed_by_feat_name: Dict[str, tf.Tensor] = {}
+            expected_positive_edge_feats_indexed_by_feat_name: dict[str, tf.Tensor] = {}
             if expected_num_user_def_edge_features_for_label_type > 0:
                 assert mocked_dataset_info.user_defined_edge_feats is not None
                 for column_tensor, edge_feat_name in zip(
@@ -513,11 +513,11 @@ class DataPreprocessorPipelineTest(unittest.TestCase):
             src_node_id_key = edge_metadata_output_pb.src_node_id_key
             dst_node_id_key = edge_metadata_output_pb.dst_node_id_key
 
-            expected_main_edge_feature_names: List[str] = [
+            expected_main_edge_feature_names: list[str] = [
                 get_feature_field_name(n=n)
                 for n in range(mocked_dataset_info.num_edge_features[edge_type])
             ]
-            expected_main_edge_feats_indexed_by_feat_name: Dict[str, tf.Tensor] = {}
+            expected_main_edge_feats_indexed_by_feat_name: dict[str, tf.Tensor] = {}
             if (
                 mocked_dataset_info.edge_feats is not None
                 and len(mocked_dataset_info.edge_feats) > 0

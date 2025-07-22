@@ -1,6 +1,6 @@
 import unittest
 from collections import abc
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 from parameterized import param, parameterized
 
@@ -24,7 +24,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 
 class TranslatorTestCase(unittest.TestCase):
     def setUp(self):
-        self._name_to_mocked_dataset_map: Dict[
+        self._name_to_mocked_dataset_map: dict[
             str, MockedDatasetArtifactMetadata
         ] = get_mocked_dataset_artifact_metadata()
 
@@ -33,14 +33,14 @@ class TranslatorTestCase(unittest.TestCase):
         entity_info: Optional[
             Union[
                 SerializedTFRecordInfo,
-                Dict[NodeType, SerializedTFRecordInfo],
-                Dict[EdgeType, SerializedTFRecordInfo],
-                Dict[NodeType, SerializedTFRecordInfo],
-                Dict[EdgeType, SerializedTFRecordInfo],
+                dict[NodeType, SerializedTFRecordInfo],
+                dict[EdgeType, SerializedTFRecordInfo],
+                dict[NodeType, SerializedTFRecordInfo],
+                dict[EdgeType, SerializedTFRecordInfo],
             ]
         ],
         is_heterogeneous: bool,
-        expected_entity_types: Union[List[EdgeType], List[NodeType]],
+        expected_entity_types: Union[list[EdgeType], list[NodeType]],
     ):
         """
         Checks that each item in the provided serialized graph metadata is correctly typed and, if heterogeneous, that edge types and node types are as expected.
@@ -48,14 +48,14 @@ class TranslatorTestCase(unittest.TestCase):
             entity_info: Optional[
                 Union[
                     SerializedTFRecordInfo,
-                    Dict[NodeType, SerializedTFRecordInfo],
-                    Dict[EdgeType, SerializedTFRecordInfo],
-                    Dict[NodeType, SerializedTFRecordInfo],
-                    Dict[EdgeType, SerializedTFRecordInfo],
+                    dict[NodeType, SerializedTFRecordInfo],
+                    dict[EdgeType, SerializedTFRecordInfo],
+                    dict[NodeType, SerializedTFRecordInfo],
+                    dict[EdgeType, SerializedTFRecordInfo],
                 ]
             ]: Entity information of which type correctness is being checked for. If heterogeneous, this is expected to be a dictionary.
             is_heterogeneous (bool): Whether the provided input data is heterogeneous or homogeneous
-            expected_entity_types(Union[List[EdgeType], List[NodeType]]): Expected node or edge type which we are checking against for heterogeneous inputs
+            expected_entity_types(Union[list[EdgeType], list[NodeType]]): Expected node or edge type which we are checking against for heterogeneous inputs
         """
         self.assertIsNotNone(entity_info)
         if is_heterogeneous:

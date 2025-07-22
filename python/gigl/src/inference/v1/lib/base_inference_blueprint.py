@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Generic, Iterable, List, Optional, TypeVar
+from typing import Callable, Generic, Iterable, Optional, TypeVar
 
 import apache_beam as beam
 from apache_beam import pvalue
@@ -74,8 +74,8 @@ class BaseInferenceBlueprint(
         ) -> Iterable[pvalue.TaggedOutput]:
             infer_batch_results = self._inferencer.infer_batch(batch=batch)
             for i, node in enumerate(batch.root_nodes):  # type: ignore
-                pred: Optional[List[int]] = None
-                emb: Optional[List[float]] = None
+                pred: Optional[list[int]] = None
+                emb: Optional[list[float]] = None
                 predictions = infer_batch_results.predictions
                 embeddings = infer_batch_results.embeddings
                 if predictions is not None:
@@ -145,10 +145,10 @@ class BaseInferenceBlueprint(
             return DEFAULT_PREDICTIONS_TABLE_SCHEMA
 
     @abstractmethod
-    def get_inference_data_tf_record_uri_prefixes(self) -> Dict[NodeType, List[Uri]]:
+    def get_inference_data_tf_record_uri_prefixes(self) -> dict[NodeType, list[Uri]]:
         """
         Returns:
-            Dict[NodeType, List[Uri]]: Dictionary of node type to the list of uri prefixes where to find tf record files
+            dict[NodeType, list[Uri]]: Dictionary of node type to the list of uri prefixes where to find tf record files
             that will be used for inference
         """
         raise NotImplementedError

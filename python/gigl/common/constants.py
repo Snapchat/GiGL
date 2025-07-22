@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Final
+from typing import Final
 
 # TODO: (svij) https://github.com/Snapchat/GiGL/issues/125
 # common -> gigl -> python (or root dir in Docker container)
@@ -19,7 +19,7 @@ PATH_BASE_IMAGES_VARIABLE_FILE: Final[Path] = Path.joinpath(
 ).absolute()
 
 
-def parse_makefile_vars(makefile_path: Path) -> Dict[str, str]:
+def parse_makefile_vars(makefile_path: Path) -> dict[str, str]:
     """
     Parse variables from a Makefile-like file.
 
@@ -27,9 +27,9 @@ def parse_makefile_vars(makefile_path: Path) -> Dict[str, str]:
         makefile_path (Path): The path to the Makefile-like file.
 
     Returns:
-        Dict[str, str]: A dictionary containing key-value pairs of variables defined in the file.
+        dict[str, str]: A dictionary containing key-value pairs of variables defined in the file.
     """
-    vars_dict: Dict[str, str] = {}
+    vars_dict: dict[str, str] = {}
     with open(makefile_path, "r") as f:
         for line in f.readlines():
             if line.strip().startswith("#") or not line.strip():
@@ -40,7 +40,7 @@ def parse_makefile_vars(makefile_path: Path) -> Dict[str, str]:
     return vars_dict
 
 
-_make_file_vars: Dict[str, str] = parse_makefile_vars(PATH_BASE_IMAGES_VARIABLE_FILE)
+_make_file_vars: dict[str, str] = parse_makefile_vars(PATH_BASE_IMAGES_VARIABLE_FILE)
 
 DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG: Final[str] = _make_file_vars[
     "DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG"

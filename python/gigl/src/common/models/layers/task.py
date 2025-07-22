@@ -1,6 +1,6 @@
 import copy
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Optional, Set, Tuple
 
 import torch
 import torch.nn as nn
@@ -51,7 +51,7 @@ class NodeAnchorBasedLinkPredictionBaseTask(ABC, nn.Module):
 
     @property
     @abstractmethod
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         raise NotImplementedError
 
     @property
@@ -78,7 +78,7 @@ class Softmax(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(loss_input=task_input.batch_scores, device=device)
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.batch_scores]
 
 
@@ -101,7 +101,7 @@ class Margin(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(loss_input=task_input.batch_scores, device=device)
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.batch_scores]
 
 
@@ -205,7 +205,7 @@ class Retrieval(NodeAnchorBasedLinkPredictionBaseTask):
         return running_loss, running_batch_size
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.batch_combined_scores, ModelResultType.batch_embeddings]
 
 
@@ -275,7 +275,7 @@ class GRACE(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(h1=h1, h2=h2, device=device)
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -344,7 +344,7 @@ class FeatureReconstruction(NodeAnchorBasedLinkPredictionBaseTask):
         )
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -414,7 +414,7 @@ class WhiteningDecorrelation(NodeAnchorBasedLinkPredictionBaseTask):
         return self.loss(h1=h1, h2=h2, N=augmented_embeddings_1.shape[0], device=device)
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -476,7 +476,7 @@ class GBT(NodeAnchorBasedLinkPredictionBaseTask):
         )
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -556,7 +556,7 @@ class BGRL(NodeAnchorBasedLinkPredictionBaseTask):
             param_k.data.mul_(mm).add_(param_q.data, alpha=1.0 - mm)
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -649,7 +649,7 @@ class TBGRL(NodeAnchorBasedLinkPredictionBaseTask):
             param_k.data.mul_(mm).add_(param_q.data, alpha=1.0 - mm)
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.input_batch]
 
 
@@ -692,20 +692,20 @@ class DirectAU(NodeAnchorBasedLinkPredictionBaseTask):
         return running_loss, 1
 
     @property
-    def result_types(self) -> List[ModelResultType]:
+    def result_types(self) -> list[ModelResultType]:
         return [ModelResultType.batch_embeddings]
 
 
 class NodeAnchorBasedLinkPredictionTasks:
     def __init__(self) -> None:
         self._task_to_fn_map = nn.ModuleDict()
-        self._task_to_weights_map: Dict[str, float] = {}
+        self._task_to_weights_map: dict[str, float] = {}
         self._result_types: Set[ModelResultType] = set()
 
     def _get_all_tasks(
         self,
-    ) -> List[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]]:
-        tasks_list: List[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]] = []
+    ) -> list[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]]:
+        tasks_list: list[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]] = []
         for task in list(self._task_to_weights_map.keys()):
             fn = self._task_to_fn_map[task]
             weight = self._task_to_weights_map[task]
@@ -726,9 +726,9 @@ class NodeAnchorBasedLinkPredictionTasks:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        loss_to_val_map: Dict[str, float] = {}
-        loss_to_batch_size_map: Dict[str, int] = {}
+    ) -> Tuple[torch.Tensor, dict[str, float]]:
+        loss_to_val_map: dict[str, float] = {}
+        loss_to_batch_size_map: dict[str, int] = {}
         for task, weight in self._get_all_tasks():
             loss_val, batch_size = task(
                 task_input=batch_results,
@@ -743,7 +743,7 @@ class NodeAnchorBasedLinkPredictionTasks:
             cur_loss = loss_to_val_map[loss_type]
             sample_wise_loss += cur_loss / loss_to_batch_size_map[loss_type]
         final_loss: torch.Tensor
-        final_loss_map: Dict[str, float]
+        final_loss_map: dict[str, float]
 
         final_loss = sample_wise_loss
         final_loss_map = {

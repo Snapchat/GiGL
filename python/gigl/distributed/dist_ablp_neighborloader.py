@@ -76,9 +76,9 @@ class DistABLPLoader(DistLoader):
         but will return a {py:class}`torch_geometric.data.Data` (homogeneous) object if the dataset is "labeled homogeneous".
 
         The following fields may also be present:
-        - `y_positive`: `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of positive
+        - `y_positive`: `dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of positive
                 label node ids.
-        - `y_negative`: (Optional) `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of negative
+        - `y_negative`: (Optional) `dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of negative
                 label node ids. This will only be present if the supervision edge type has negative labels.
 
 
@@ -110,7 +110,7 @@ class DistABLPLoader(DistLoader):
 
         Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
-            num_neighbors (list[int] or Dict[tuple[str, str, str], list[int]]):
+            num_neighbors (list[int] or dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
@@ -311,20 +311,9 @@ class DistABLPLoader(DistLoader):
             )
         )
 
-        # TODO(kmonte): stop setting fanout for positive/negative once GLT sampling is fixed.
         num_neighbors = patch_fanout_for_sampling(
             dataset.get_edge_types(), num_neighbors
         )
-
-        if num_neighbors.keys() != dataset.graph.keys():
-            raise ValueError(
-                f"num_neighbors must have all edge types in the graph, received: {num_neighbors.keys()} with for graph with edge types {dataset.graph.keys()}"
-            )
-        hops = len(next(iter(num_neighbors.values())))
-        if not all(len(fanout) == hops for fanout in num_neighbors.values()):
-            raise ValueError(
-                f"num_neighbors must be a dict of edge types with the same number of hops. Received: {num_neighbors}"
-            )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=anchor_node_ids,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
-from typing import Dict, List, Set, Union
+from typing import Set, Union
 
 import torch
 import torch_geometric.data
@@ -36,12 +36,12 @@ class RootedNodeNeighborhoodBatch:
     graph: Union[
         torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
     ]  # batch-coalesced graph data used for message passing
-    condensed_node_type_to_root_node_indices_map: Dict[
+    condensed_node_type_to_root_node_indices_map: dict[
         CondensedNodeType, torch.LongTensor
     ]  # maps condensed node type to root node indices within the batch for whom to compute loss
-    root_nodes: List[Node]
-    condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
-        CondensedNodeType, Dict[NodeId, NodeId]
+    root_nodes: list[Node]
+    condensed_node_type_to_subgraph_id_to_global_node_id: dict[
+        CondensedNodeType, dict[NodeId, NodeId]
     ]  # for each condensed node type, maps subgraph node id to global node id
 
     @staticmethod
@@ -79,7 +79,7 @@ class RootedNodeNeighborhoodBatch:
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
-        samples: List[Dict[NodeType, RootedNodeNeighborhoodSample]],
+        samples: list[dict[NodeType, RootedNodeNeighborhoodSample]],
     ) -> RootedNodeNeighborhoodBatch:
         """
         We coalesce the various sample subgraphs to build a single unified neighborhood, which we use for message
@@ -91,7 +91,7 @@ class RootedNodeNeighborhoodBatch:
         :return:
         """
         # TODO (mkolodner-sc) Investigate ways to customize batch size for each node type
-        ordered_root_nodes: List[Node] = []
+        ordered_root_nodes: list[Node] = []
         unique_node_types: Set[NodeType] = set()
         for node_type_to_sample_map in samples:
             for node_type, sample in node_type_to_sample_map.items():
@@ -106,12 +106,12 @@ class RootedNodeNeighborhoodBatch:
                 builder.add_graph_data(graph_data=graph_data)
         batch_graph_data = builder.build()
 
-        node_mapping: Dict[
+        node_mapping: dict[
             Node, Node
         ] = batch_graph_data.global_node_to_subgraph_node_mapping
 
-        condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
-            CondensedNodeType, Dict[NodeId, NodeId]
+        condensed_node_type_to_subgraph_id_to_global_node_id: dict[
+            CondensedNodeType, dict[NodeId, NodeId]
         ] = defaultdict(dict)
         for node_with_global_id, node_with_subgraph_id in node_mapping.items():
             condensed_node_type: CondensedNodeType = (
@@ -124,11 +124,11 @@ class RootedNodeNeighborhoodBatch:
             ] = node_with_global_id.id
 
         # We separate root node indices based on the node type of the root node
-        condensed_node_type_to_root_node_indices_map: Dict[
+        condensed_node_type_to_root_node_indices_map: dict[
             CondensedNodeType, torch.LongTensor
         ] = {}
         for node_type in unique_node_types:
-            root_node_indices_list: List[NodeId] = [
+            root_node_indices_list: list[NodeId] = [
                 node_mapping[ordered_root_node].id
                 for ordered_root_node in ordered_root_nodes
                 if ordered_root_node.type == node_type
@@ -159,14 +159,14 @@ class RootedNodeNeighborhoodBatch:
 
     @staticmethod
     def process_raw_pyg_samples_and_collate_fn(
-        batch: List[training_samples_schema_pb2.RootedNodeNeighborhood],
+        batch: list[training_samples_schema_pb2.RootedNodeNeighborhood],
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
     ) -> RootedNodeNeighborhoodBatch:
-        ordered_root_nodes: List[Node] = []
+        ordered_root_nodes: list[Node] = []
         unique_node_types: Set[NodeType] = set()
-        graph_samples: List[graph_schema_pb2.Graph] = []
+        graph_samples: list[graph_schema_pb2.Graph] = []
 
         for sample in batch:
             root_node = Node(
@@ -193,8 +193,8 @@ class RootedNodeNeighborhoodBatch:
 
         node_mapping = batch_graph_data.global_node_to_subgraph_node_mapping
 
-        condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
-            CondensedNodeType, Dict[NodeId, NodeId]
+        condensed_node_type_to_subgraph_id_to_global_node_id: dict[
+            CondensedNodeType, dict[NodeId, NodeId]
         ] = defaultdict(dict)
 
         for node_with_global_id, node_with_subgraph_id in node_mapping.items():
@@ -207,7 +207,7 @@ class RootedNodeNeighborhoodBatch:
                 node_with_subgraph_id.id
             ] = node_with_global_id.id
 
-        condensed_node_type_to_root_node_indices_map: Dict[
+        condensed_node_type_to_root_node_indices_map: dict[
             CondensedNodeType, torch.LongTensor
         ] = {
             graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map[
@@ -253,7 +253,7 @@ class RootedNodeNeighborhoodBatch:
         has 20 batches, but the random-negative dataloader only has 10.  This pacing issue would cause us to
         not be able to fetch random negatives for the last 10 main-sample batches, undesirably.
         """
-        iterable_dataset_map: Dict[
+        iterable_dataset_map: dict[
             NodeType,
             torch.utils.data.IterableDataset[RootedNodeNeighborhoodSample],
         ] = {}

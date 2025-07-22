@@ -6,16 +6,19 @@ import pathlib
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Optional
 
 import yaml
 
-from gigl.common import UriFactory
+from gigl.common import HttpUri, LocalUri, UriFactory
 from gigl.src.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
-TEMPLATE_SOURCE_RESOURCE_CONFIG = (
+LOCAL_DEV_TEMPLATE_RES_CONF = LocalUri(
     GIGL_ROOT_DIR / "deployment" / "configs" / "unittest_resource_config.yaml"
+)
+FALLBACK_TEMPLATE_RES_CONF = HttpUri(
+    uri="https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/deployment/configs/unittest_resource_config.yaml"
 )
 
 
@@ -28,8 +31,6 @@ class Param:
 
 
 class SupportedParams:
-    defaults: Dict[str, Param]
-
     def __init__(self):
         try:
             project = subprocess.check_output(
@@ -41,7 +42,7 @@ class SupportedParams:
                 e,
             )
             raise
-        self.defaults: Dict[str, Param] = {
+        self.defaults: dict[str, Param] = {
             "project": Param(
                 default=project,
                 description="GCP Project name that you are planning on using",
@@ -192,9 +193,20 @@ if __name__ == "__main__":
     )
     print("======================================================")
 
-    print(
-        f"We will use `{TEMPLATE_SOURCE_RESOURCE_CONFIG}` as the template for your resource config YAML file."
-    )
+    resource_config_path: str
+    file_loader = FileLoader()
+    if file_loader.does_uri_exist(uri=LOCAL_DEV_TEMPLATE_RES_CONF):
+        print(
+            f"Using local development template resource config: {LOCAL_DEV_TEMPLATE_RES_CONF}"
+        )
+        resource_config_path = LOCAL_DEV_TEMPLATE_RES_CONF.uri
+    else:
+        print(f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF}")
+        tmp_file = file_loader.load_to_temp_file(
+            file_uri_src=FALLBACK_TEMPLATE_RES_CONF
+        )
+        print(f"Downloaded fallback template resource config to {tmp_file.name}")
+        resource_config_path = tmp_file.name
 
     supported_params = SupportedParams()
     parser = argparse.ArgumentParser(
@@ -209,7 +221,7 @@ if __name__ == "__main__":
         parser.add_argument(f"--{key}", type=str, help=help_text)
     args = parser.parse_args()
 
-    values: Dict[str, str] = {}
+    values: dict[str, str] = {}
     for key, param in supported_params.defaults.items():
         # Check if value is provided in command line arguments
         if getattr(args, key):
@@ -279,7 +291,7 @@ if __name__ == "__main__":
     for key, value in update_fields_dict.items():
         print(f"  {key}: {value}")
 
-    with open(TEMPLATE_SOURCE_RESOURCE_CONFIG, "r") as file:
+    with open(resource_config_path, "r") as file:
         config = yaml.safe_load(file)
 
     # Update the YAML content

@@ -1,5 +1,3 @@
-from typing import Dict, List
-
 from gigl.common.logger import Logger
 from gigl.src.applied_tasks.test_tasks.academic import (
     get_pyg_cora_dataset,
@@ -45,7 +43,7 @@ class PygTrainingTest(unittest.TestCase):
         data = dataset[0]
 
         self.data = data.to(self.device)
-        self.node_types: List[NodeType] = [NodeType("test_node_type")]
+        self.node_types: list[NodeType] = [NodeType("test_node_type")]
         model = GCN(self.data.x.shape[1], 16, dataset.num_classes)
         self.model = model.to(device)
         logger.info(self.model)
@@ -116,7 +114,7 @@ class PygTrainingTest(unittest.TestCase):
 
         # put model in train mode
         self.lp_model.train()
-        out: Dict[NodeType, torch.Tensor] = self.lp_model(
+        out: dict[NodeType, torch.Tensor] = self.lp_model(
             features, self.node_types, self.device
         )
         encoder_output: torch.Tensor = list(out.values())[0]

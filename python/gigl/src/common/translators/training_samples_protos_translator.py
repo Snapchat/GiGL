@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 
 import torch
 
@@ -22,7 +22,7 @@ logger = Logger()
 class SupervisedNodeClassificationSample(NamedTuple):
     x: GbmlGraphDataProtocol  # TODO(nshah-sc): rename to subgraph to clarify this is a graph object, not features.
     root_node: Node
-    y: List[training_samples_schema_pb2.Label]
+    y: list[training_samples_schema_pb2.Label]
 
 
 # TODO: (mkolodner-sc) Rename due to overlapping name with training_samples_schema_proto message
@@ -30,8 +30,8 @@ class SupervisedNodeClassificationSample(NamedTuple):
 class NodeAnchorBasedLinkPredictionSample:
     @dataclass
     class SampleSupervisionEdgeData:
-        pos_nodes: List[NodeId]  # target nodes for pos edges
-        hard_neg_nodes: List[NodeId]  # target nodes for hard neg edges
+        pos_nodes: list[NodeId]  # target nodes for pos edges
+        hard_neg_nodes: list[NodeId]  # target nodes for hard neg edges
         pos_edge_features: Optional[torch.FloatTensor]  # features for pos edges
         hard_neg_edge_features: Optional[
             torch.FloatTensor
@@ -40,7 +40,7 @@ class NodeAnchorBasedLinkPredictionSample:
     root_node: Node  # root node for this sample
     subgraph: GbmlGraphDataProtocol  # subgraph with features used for message passing
     # mapping of edge type to positive and negative nodes and edge features
-    condensed_edge_type_to_supervision_edge_data: Dict[
+    condensed_edge_type_to_supervision_edge_data: dict[
         CondensedEdgeType, SampleSupervisionEdgeData
     ]
 
@@ -53,11 +53,11 @@ class RootedNodeNeighborhoodSample(NamedTuple):
 class TrainingSamplesProtosTranslator:
     @staticmethod
     def training_samples_from_SupervisedNodeClassificationSamplePb(
-        samples: List[training_samples_schema_pb2.SupervisedNodeClassificationSample],
+        samples: list[training_samples_schema_pb2.SupervisedNodeClassificationSample],
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         builder: GraphBuilder,
-    ) -> List[SupervisedNodeClassificationSample]:
-        training_classification_samples: List[SupervisedNodeClassificationSample] = []
+    ) -> list[SupervisedNodeClassificationSample]:
+        training_classification_samples: list[SupervisedNodeClassificationSample] = []
         for sample in samples:
             graph_data: GbmlGraphDataProtocol = (
                 GbmlProtosTranslator.graph_data_from_GraphPb(
@@ -80,26 +80,26 @@ class TrainingSamplesProtosTranslator:
 
     @staticmethod
     def training_samples_from_NodeAnchorBasedLinkPredictionSamplePb(
-        samples: List[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
+        samples: list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
         builder: GraphBuilder,
-    ) -> List[NodeAnchorBasedLinkPredictionSample]:
-        training_samples: List[NodeAnchorBasedLinkPredictionSample] = []
+    ) -> list[NodeAnchorBasedLinkPredictionSample]:
+        training_samples: list[NodeAnchorBasedLinkPredictionSample] = []
         for sample in samples:
-            condensed_supervision_edge_type_to_pos_nodes: Dict[
-                CondensedEdgeType, List[NodeId]
+            condensed_supervision_edge_type_to_pos_nodes: dict[
+                CondensedEdgeType, list[NodeId]
             ] = defaultdict(list)
-            condensed_supervision_edge_type_to_hard_neg_nodes: Dict[
-                CondensedEdgeType, List[NodeId]
+            condensed_supervision_edge_type_to_hard_neg_nodes: dict[
+                CondensedEdgeType, list[NodeId]
             ] = defaultdict(list)
-            condensed_supervision_edge_type_to_pos_edge_feats: Dict[
-                CondensedEdgeType, List[torch.FloatTensor]
+            condensed_supervision_edge_type_to_pos_edge_feats: dict[
+                CondensedEdgeType, list[torch.FloatTensor]
             ] = defaultdict(list)
-            condensed_supervision_edge_type_to_hard_neg_edge_feats: Dict[
-                CondensedEdgeType, List[torch.FloatTensor]
+            condensed_supervision_edge_type_to_hard_neg_edge_feats: dict[
+                CondensedEdgeType, list[torch.FloatTensor]
             ] = defaultdict(list)
-            condensed_edge_type_to_supervision_edge_data: Dict[
+            condensed_edge_type_to_supervision_edge_data: dict[
                 CondensedEdgeType,
                 NodeAnchorBasedLinkPredictionSample.SampleSupervisionEdgeData,
             ] = {}
@@ -222,11 +222,11 @@ class TrainingSamplesProtosTranslator:
 
     @staticmethod
     def training_samples_from_RootedNodeNeighborhoodPb(
-        samples: List[training_samples_schema_pb2.RootedNodeNeighborhood],
+        samples: list[training_samples_schema_pb2.RootedNodeNeighborhood],
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         builder: GraphBuilder,
-    ) -> List[RootedNodeNeighborhoodSample]:
-        training_samples: List[RootedNodeNeighborhoodSample] = []
+    ) -> list[RootedNodeNeighborhoodSample]:
+        training_samples: list[RootedNodeNeighborhoodSample] = []
         for sample in samples:
             graph_data: GbmlGraphDataProtocol = (
                 GbmlProtosTranslator.graph_data_from_GraphPb(

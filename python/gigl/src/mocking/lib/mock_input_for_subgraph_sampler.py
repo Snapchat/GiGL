@@ -1,6 +1,6 @@
 import tempfile
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Optional
 
 import tensorflow as tf
 import torch
@@ -36,7 +36,7 @@ logger = Logger()
 class _PreprocessMetadata:
     features_uri: GcsUri
     schema_uri: GcsUri
-    feature_cols: List[str]
+    feature_cols: list[str]
 
 
 @dataclass
@@ -84,7 +84,7 @@ def _generate_preprocessed_node_tfrecord_data(
     node_features: torch.Tensor,
     node_labels: Optional[torch.Tensor],
 ) -> _NodePreprocessMetadata:
-    feature_names: List[str] = [
+    feature_names: list[str] = [
         get_feature_field_name(n=i) for i in range(num_node_features)
     ]
     feature_spec_dict = {
@@ -108,7 +108,7 @@ def _generate_preprocessed_node_tfrecord_data(
     id2tfe_encoder = _InstanceDictToTFExample(feature_spec=feature_spec_dict)
 
     tfrecords = []
-    instance_dict_feats: Dict[str, torch.Tensor]
+    instance_dict_feats: dict[str, torch.Tensor]
     for node_id, node_feature_values in enumerate(node_features):
         instance_dict_feats = {data.node_id_column_name: torch.LongTensor([node_id])}
         instance_dict_feats.update(
@@ -171,7 +171,7 @@ def _generate_preprocessed_edge_tfrecord_data(
     edge_features: Optional[torch.Tensor],
     edge_usage_type: EdgeUsageType,
 ) -> _EdgePreprocessMetadata:
-    feature_names: List[str] = [
+    feature_names: list[str] = [
         get_feature_field_name(n=i) for i in range(num_edge_features)
     ]
     feature_spec_dict = {
@@ -260,7 +260,7 @@ def generate_preprocessed_tfrecord_data(
     node_labels_by_node_type = mocked_dataset_info.node_labels
     node_types = mocked_dataset_info.node_types
 
-    condensed_node_type_to_preprocessed_metadata: Dict[
+    condensed_node_type_to_preprocessed_metadata: dict[
         CondensedNodeType,
         preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput,
     ] = dict()
@@ -304,7 +304,7 @@ def generate_preprocessed_tfrecord_data(
     edge_features_by_edge_type = mocked_dataset_info.edge_feats
     edge_index_by_edge_type = mocked_dataset_info.edge_index
     edge_types = mocked_dataset_info.edge_types
-    condensed_edge_type_to_preprocessed_metadata: Dict[
+    condensed_edge_type_to_preprocessed_metadata: dict[
         CondensedEdgeType,
         preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataOutput,
     ] = dict()

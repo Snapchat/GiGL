@@ -22,7 +22,7 @@ You can run this example in a full pipeline with `make run_het_dblp_sup_test` fr
 import argparse
 import gc
 import time
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 import torch
 import torch.distributed
@@ -47,6 +47,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
+from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
@@ -64,11 +65,13 @@ def _inference_process(
     embedding_gcs_path: GcsUri,
     model_state_dict_uri: GcsUri,
     inference_batch_size: int,
+    hid_dim: int,
+    out_dim: int,
     dataset: DistLinkPredictionDataset,
-    inferencer_args: Dict[str, str],
+    inferencer_args: dict[str, str],
     inference_node_type: NodeType,
-    node_type_to_feature_dim: Dict[NodeType, int],
-    edge_type_to_feature_dim: Dict[EdgeType, int],
+    node_type_to_feature_dim: dict[NodeType, int],
+    edge_type_to_feature_dim: dict[EdgeType, int],
 ):
     """
     This function is spawned by multiple processes per machine and is responsible for:
@@ -86,18 +89,25 @@ def _inference_process(
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
+        hid_dim (int): Hidden dimension of the model
+        out_dim (int): Output dimension of the model
         dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
-        inferencer_args (Dict[str, str]): Additional arguments for inferencer
+        inferencer_args (dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for in current inference process. This is used to
             tag the embeddings written to GCS.
-        node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
-        edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
+        node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension per node type for the model
+        edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension per edge type for the model
     """
-    fanout_per_hop = int(inferencer_args.get("fanout_per_hop", "10"))
-    # This fanout is defaulted to match the fanout provided in the DBLP E2E Config:
-    # `python/gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml`
-    # Users can feel free to parse this argument from `inferencer_args`
-    num_neighbors: List[int] = [fanout_per_hop, fanout_per_hop]
+
+    # Parses the fanout as a string.
+    # For the heterogeneous case, the fanouts can be specified as a string of a list of integers, such as "[10, 10]", which will apply this fanout
+    # to each edge type in the graph, or as string of format dict[(tuple[str, str, str])), list[int]] which will specify fanouts per edge type.
+    # In the case of the latter, the keys should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE).
+    # For the default example, we make a decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`.
+    # To see an example of a 'fanout' with different behaviors per edge type, refer to `examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
+
+    fanout = inferencer_args.get("num_neighbors", "[10, 10]")
+    num_neighbors = parse_fanout(fanout)
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -136,7 +146,7 @@ def _inference_process(
 
     # Get the node ids on the current machine for the current node type
     node_type_to_input_node_ids: Optional[
-        Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     ] = dataset.node_ids
     assert isinstance(
         node_type_to_input_node_ids, dict
@@ -165,6 +175,8 @@ def _inference_process(
     model: LinkPredictionGNN = init_example_gigl_heterogeneous_model(
         node_type_to_feature_dim=node_type_to_feature_dim,
         edge_type_to_feature_dim=edge_type_to_feature_dim,
+        hid_dim=hid_dim,
+        out_dim=out_dim,
         device=device,
         state_dict=model_state_dict,
     )
@@ -318,14 +330,14 @@ def _run_example_inference(
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    node_type_to_feature_dim: Dict[NodeType, int] = {
+    node_type_to_feature_dim: dict[NodeType, int] = {
         graph_metadata.condensed_node_type_to_node_type_map[
             condensed_node_type
         ]: node_feature_dim
         for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
     }
 
-    edge_type_to_feature_dim: Dict[EdgeType, int] = {
+    edge_type_to_feature_dim: dict[EdgeType, int] = {
         graph_metadata.condensed_edge_type_to_edge_type_map[
             condensed_edge_type
         ]: edge_feature_dim
@@ -339,6 +351,9 @@ def _run_example_inference(
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
     inference_batch_size = gbml_config_pb_wrapper.inferencer_config.inference_batch_size
+
+    hid_dim = int(inferencer_args.get("hid_dim", "16"))
+    out_dim = int(inferencer_args.get("out_dim", "16"))
 
     if torch.cuda.is_available():
         default_num_inference_processes_per_machine = torch.cuda.device_count()
@@ -401,6 +416,8 @@ def _run_example_inference(
                 embedding_output_gcs_folder,  # embedding_gcs_path
                 model_uri,  # model_state_dict_uri
                 inference_batch_size,  # inference_batch_size
+                hid_dim,  # hid_dim
+                out_dim,  # out_dim
                 dataset,  # dataset
                 inferencer_args,  # inferencer_args
                 inference_node_type,  # inference_node_type

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import torch
 from torch_geometric.data.hetero_data import HeteroData
@@ -31,7 +31,7 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
     @property
     def edge_types_to_be_registered(
         self,
-    ) -> List[EdgeType]:
+    ) -> list[EdgeType]:
         edge_types_to_be_registered = []
         if hasattr(self, "_edge_store_dict"):
             edge_types_to_be_registered = [
@@ -121,7 +121,7 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
         if not hasattr(self, "x_dict"):
             return FrozenDict({})
 
-        global_node_to_features_map: Dict[Node, torch.Tensor] = {}
+        global_node_to_features_map: dict[Node, torch.Tensor] = {}
         for self_node_type, all_node_features_for_node_type in self.x_dict.items():
             for subgraph_node_id, node_features in enumerate(
                 all_node_features_for_node_type
@@ -139,7 +139,7 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
         return FrozenDict(global_node_to_features_map)
 
     def get_global_edge_features_dict(self) -> FrozenDict[Edge, torch.Tensor]:
-        global_edge_to_features_map: Dict[Edge, torch.Tensor] = {}
+        global_edge_to_features_map: dict[Edge, torch.Tensor] = {}
 
         is_graph_data_in_global_space: bool = (
             not self.subgraph_node_to_global_node_mapping

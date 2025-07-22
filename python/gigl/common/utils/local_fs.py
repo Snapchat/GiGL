@@ -4,7 +4,7 @@ import os
 import pathlib
 import re
 import shutil
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Optional
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
@@ -84,7 +84,7 @@ def list_at_path(
     regex: Optional[str] = None,
     file_system_entity: Optional[FileSystemEntity] = None,
     names_only: bool = False,
-) -> List[LocalUri]:
+) -> list[LocalUri]:
     """
     List all files and directories in the given local path.
 
@@ -95,7 +95,7 @@ def list_at_path(
         names_only (bool): If True, return only the base names of the files and directories. Defaults to False. e.g /path/to/file.txt -> file.txt
 
     Returns:
-        List[LocalUri]: A list of local URIs for the files and directories in the given path.
+        list[LocalUri]: A list of local URIs for the files and directories in the given path.
     """
     children = os.listdir(local_path.uri)
     entity_filter: Callable[[str], bool]
@@ -181,14 +181,14 @@ def create_empty_file_if_none_exists(local_path: LocalUri) -> None:
 
 
 def copy_files(
-    local_source_to_local_dst_path_map: Dict[LocalUri, LocalUri],
+    local_source_to_local_dst_path_map: dict[LocalUri, LocalUri],
     should_overwrite: Optional[bool] = False,
 ) -> None:
     """
     Copy files from source paths to destination paths.
 
     Args:
-        local_source_to_local_dst_path_map (Dict[LocalUri, LocalUri]): A dictionary mapping source paths to destination paths.
+        local_source_to_local_dst_path_map (dict[LocalUri, LocalUri]): A dictionary mapping source paths to destination paths.
         should_overwrite (Optional[bool]): If True, overwrite existing files at the destination paths. Defaults to False.
 
     Returns:
@@ -211,14 +211,14 @@ def copy_files(
 
 
 def create_file_symlinks(
-    local_source_to_link_path_map: Dict[LocalUri, LocalUri],
+    local_source_to_link_path_map: dict[LocalUri, LocalUri],
     should_overwrite: Optional[bool] = False,
 ) -> None:
     """
     Create symlinks between source paths and link paths.
 
     Args:
-        local_source_to_link_path_map (Dict[LocalUri, LocalUri]): A dictionary mapping source paths to link paths.
+        local_source_to_link_path_map (dict[LocalUri, LocalUri]): A dictionary mapping source paths to link paths.
         should_overwrite (Optional[bool]): If True, overwrite existing links at the link paths. Defaults to False.
 
     Returns:

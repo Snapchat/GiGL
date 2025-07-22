@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import GcsUri, HttpUri
@@ -28,8 +28,8 @@ class TransformedFeaturesInfo:
     identifier_output: Optional[
         Union[NodeOutputIdentifier, EdgeOutputIdentifier]
     ] = None
-    features_outputs: Optional[List[str]] = None
-    label_outputs: Optional[List[str]] = None
+    features_outputs: Optional[list[str]] = None
+    label_outputs: Optional[list[str]] = None
     feature_dim_output: Optional[int] = None
     custom_identifier: Optional[str] = None
 

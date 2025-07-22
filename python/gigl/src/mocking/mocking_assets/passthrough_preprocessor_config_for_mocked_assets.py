@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any
 
 import gigl.src.mocking.lib.constants as test_tasks_constants
 from gigl.common.logger import Logger
@@ -49,8 +49,8 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
 
     def get_nodes_preprocessing_spec(
         self,
-    ) -> Dict[NodeDataReference, NodeDataPreprocessingSpec]:
-        node_data_ref_to_preprocessing_specs: Dict[
+    ) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
+        node_data_ref_to_preprocessing_specs: dict[
             NodeDataReference, NodeDataPreprocessingSpec
         ] = dict()
 
@@ -67,7 +67,7 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
                 reference_uri=nodes_bq_table_name,
                 node_type=node_type,
             )
-            node_feature_fields: List[str] = [
+            node_feature_fields: list[str] = [
                 get_feature_field_name(n=i)
                 for i in range(self.__mocked_dataset.num_node_features[node_type])
             ]
@@ -110,8 +110,8 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
 
     def get_edges_preprocessing_spec(
         self,
-    ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
-        edge_data_ref_to_preprocessing_specs: Dict[
+    ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+        edge_data_ref_to_preprocessing_specs: dict[
             EdgeDataReference, EdgeDataPreprocessingSpec
         ] = dict()
         for edge_type in self.__mocked_dataset.edge_types:
@@ -136,7 +136,7 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
                 edge_usage_type=EdgeUsageType.MAIN,
             )
 
-            default_edge_feature_fields: List[str] = [
+            default_edge_feature_fields: list[str] = [
                 get_feature_field_name(n=i)
                 for i in range(self.__mocked_dataset.num_edge_features[edge_type])
             ]
@@ -189,7 +189,7 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
                         edge_type=edge_type,
                         edge_usage_type=edge_usage_type,
                     )
-                    user_defined_edges_feature_fields: List[str] = [
+                    user_defined_edges_feature_fields: list[str] = [
                         get_feature_field_name(n=i)
                         for i in range(
                             self.__mocked_dataset.num_user_def_edge_features[edge_type][

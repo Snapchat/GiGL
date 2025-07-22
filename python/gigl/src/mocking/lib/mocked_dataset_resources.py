@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Optional
 
 import torch
 
@@ -21,15 +21,15 @@ class MockedDatasetInfo:
     # TODO: (svij) Deprecate MockedDatasetInfo in favor of pyg.HeteroData
 
     @property
-    def node_types(self) -> List[NodeType]:
+    def node_types(self) -> list[NodeType]:
         return list(self.node_feats.keys())
 
     @property
-    def edge_types(self) -> List[EdgeType]:
+    def edge_types(self) -> list[EdgeType]:
         return list(self.edge_index.keys())
 
     @property
-    def num_nodes(self) -> Dict[NodeType, int]:
+    def num_nodes(self) -> dict[NodeType, int]:
         return {
             node_type: node_feat.shape[0]
             for node_type, node_feat in self.node_feats.items()
@@ -65,13 +65,13 @@ class MockedDatasetInfo:
         return num_edges
 
     @property
-    def num_node_features(self) -> Dict[NodeType, int]:
+    def num_node_features(self) -> dict[NodeType, int]:
         return {
             node_type: feats.shape[1] for node_type, feats in self.node_feats.items()
         }
 
     @property
-    def num_node_distinct_labels(self) -> Dict[NodeType, int]:
+    def num_node_distinct_labels(self) -> dict[NodeType, int]:
         if not self.node_labels:
             return {}
 
@@ -81,7 +81,7 @@ class MockedDatasetInfo:
         }
 
     @property
-    def num_edge_features(self) -> Dict[EdgeType, int]:
+    def num_edge_features(self) -> dict[EdgeType, int]:
         if self.edge_feats:
             return {
                 edge_type: feats.shape[1]
@@ -91,7 +91,7 @@ class MockedDatasetInfo:
             return {edge_type: 0 for edge_type in self.edge_types}
 
     @property
-    def num_user_def_edge_features(self) -> Dict[EdgeType, Dict[EdgeUsageType, int]]:
+    def num_user_def_edge_features(self) -> dict[EdgeType, dict[EdgeUsageType, int]]:
         num_user_def_edge_feats = {}
         if self.user_defined_edge_feats:
             for edge_type, udl_edge_feats in self.user_defined_edge_feats.items():
@@ -141,10 +141,10 @@ class MockedDatasetInfo:
 
     name: str
     task_metadata_type: TaskMetadataType
-    edge_index: Dict[EdgeType, torch.Tensor]
-    node_feats: Dict[NodeType, torch.Tensor]
-    edge_feats: Optional[Dict[EdgeType, torch.Tensor]] = None
-    node_labels: Optional[Dict[NodeType, torch.Tensor]] = None
+    edge_index: dict[EdgeType, torch.Tensor]
+    node_feats: dict[NodeType, torch.Tensor]
+    edge_feats: Optional[dict[EdgeType, torch.Tensor]] = None
+    node_labels: Optional[dict[NodeType, torch.Tensor]] = None
     sample_node_type: Optional[NodeType] = None
     # TODO (tzhao-sc): currently only supporting 1 supervision edge type, we would need
     #      to extend this to support multiple supervision edge types for HGS stage 2
@@ -154,9 +154,9 @@ class MockedDatasetInfo:
     node_id_column_name: str = "node_id"
     node_label_column_name: str = "node_label"
     user_defined_edge_index: Optional[
-        Dict[EdgeType, Dict[EdgeUsageType, torch.Tensor]]
+        dict[EdgeType, dict[EdgeUsageType, torch.Tensor]]
     ] = None
     user_defined_edge_feats: Optional[
-        Dict[EdgeType, Dict[EdgeUsageType, torch.Tensor]]
+        dict[EdgeType, dict[EdgeUsageType, torch.Tensor]]
     ] = None
     version: Optional[str] = None

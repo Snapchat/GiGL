@@ -2,7 +2,7 @@ import logging
 import os
 import pathlib
 from datetime import datetime
-from typing import Any, Dict, MutableMapping, Optional
+from typing import Any, MutableMapping, Optional
 
 from google.cloud import logging as google_cloud_logging
 
@@ -16,7 +16,7 @@ class Logger(logging.LoggerAdapter):
         logger (Optional[logging.Logger]): A custom logger to use. If not provided, the default logger will be created.
         name (Optional[str]): The name to be used for the logger. By default uses "root".
         log_to_file (bool): If True, logs will be written to a file. If False, logs will be written to the console.
-        extra (Optional[Dict[str, Any]]): Extra information to be added to the log message.
+        extra (Optional[dict[str, Any]]): Extra information to be added to the log message.
     """
 
     def __init__(
@@ -24,7 +24,7 @@ class Logger(logging.LoggerAdapter):
         logger: Optional[logging.Logger] = None,
         name: Optional[str] = None,
         log_to_file: bool = False,
-        extra: Optional[Dict[str, Any]] = None,
+        extra: Optional[dict[str, Any]] = None,
     ):
         if logger is None:
             logger = logging.getLogger(name)

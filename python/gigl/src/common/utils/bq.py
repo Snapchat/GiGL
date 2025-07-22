@@ -1,7 +1,7 @@
 import datetime
 import itertools
 import re
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Iterable, Optional, Tuple, Union
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
@@ -76,7 +76,7 @@ class BqUtils:
         return dataset_id
 
     def create_or_empty_bq_table(
-        self, bq_path: str, schema: Optional[List[bigquery.SchemaField]] = None
+        self, bq_path: str, schema: Optional[list[bigquery.SchemaField]] = None
     ) -> None:
         bq_path = self.format_bq_path(bq_path)
         split_bq_path = bq_path.split(".")
@@ -102,7 +102,7 @@ class BqUtils:
     def count_number_of_rows_in_bq_table(
         self,
         bq_table: str,
-        labels: Dict[str, str] = {},
+        labels: dict[str, str] = {},
     ) -> int:
         bq_table = bq_table.replace(":", ".")
         ROW_COUNTING_QUERY = f"""
@@ -123,7 +123,7 @@ class BqUtils:
     def run_query(
         self,
         query,
-        labels: Dict[str, str],
+        labels: dict[str, str],
         **job_config_args,
     ) -> RowIterator:
         logger.info(f"Running query: {query}")
@@ -270,7 +270,7 @@ class BqUtils:
 
     def list_matching_tables(
         self, bq_dataset_path: str, table_match_string: str
-    ) -> List[str]:
+    ) -> list[str]:
         bq_dataset_path = BqUtils.format_bq_path(bq_dataset_path)
         tables = self.__bq_client.list_tables(bq_dataset_path)
         matching_tables = list()
@@ -304,7 +304,7 @@ class BqUtils:
         table_match_string: str,
         start_date: str,
         end_date: str,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         start_date and end_date are in the format of 'YYYYMMDD'
         table_match_string is a regex string to match table names
@@ -339,7 +339,7 @@ class BqUtils:
         except Exception as e:
             logger.exception(f"Failed to delete table '{bq_table_path}' due to \n {e}")
 
-    def fetch_bq_table_schema(self, bq_table: str) -> Dict[str, bigquery.SchemaField]:
+    def fetch_bq_table_schema(self, bq_table: str) -> dict[str, bigquery.SchemaField]:
         """
         Create a dictionary representation for SchemaFields from BigQuery table.
         """
@@ -379,7 +379,7 @@ class BqUtils:
     def load_rows_to_bq(
         self,
         bq_path: str,
-        schema: List[bigquery.SchemaField],
+        schema: list[bigquery.SchemaField],
         rows: Iterable[Tuple],
     ) -> None:
         first_item = next(iter(rows), None)

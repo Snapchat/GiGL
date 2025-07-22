@@ -1,7 +1,7 @@
 import argparse
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 import gigl.src.common.constants.resource_config as resource_config_constants
 from gigl.common import GcsUri, UriFactory
@@ -114,7 +114,7 @@ class GiglResourceConfigWrapper:
         self,
         component: Optional[GiGLComponents] = None,
         replacement_key: str = "COMPONENT",
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """
         Returns a dictionary of resource labels that can be used to tag resources in GCP.
         Users may also provide a custom suffix to replace in the resource labels which defaults to "COMPONENT".
@@ -126,7 +126,7 @@ class GiglResourceConfigWrapper:
             replacement_key (str): The key to replace in the resource labels.
 
         Returns:
-            Dict[str, str]: The resource labels with the component replaced by the shortened cost label.
+            dict[str, str]: The resource labels with the component replaced by the shortened cost label.
         """
         labels = dict(self.shared_resource_config.resource_labels)
 
@@ -149,8 +149,8 @@ class GiglResourceConfigWrapper:
     def get_resource_labels_formatted_for_dataflow(
         self,
         component: Optional[GiGLComponents] = None,
-    ) -> List[str]:
-        labels: List[str] = []
+    ) -> list[str]:
+        labels: list[str] = []
         for key, val in self.get_resource_labels(component=component).items():
             labels.append(f"{key}={val}")
         return labels
