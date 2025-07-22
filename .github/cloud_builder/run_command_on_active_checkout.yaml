@@ -24,7 +24,7 @@ steps:
         source ~/.profile
         docker buildx create --driver=docker-container --use
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-        gcloud auth configure-docker us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:f2d287eebbc5df17636913cafa12c07323013339.31.1
+        gcloud auth configure-docker us-central1-docker.pkg.dev
 
         echo "Finished setting up environment."
         echo "========================="
