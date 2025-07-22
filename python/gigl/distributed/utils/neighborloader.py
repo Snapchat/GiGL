@@ -162,12 +162,14 @@ def set_missing_features(
     node_feature_dim: Optional[Union[int, dict[NodeType, int]]],
     edge_feature_dim: Optional[Union[int, dict[EdgeType, int]]],
     device: torch.device,
-    dtype: torch.dtype = torch.float32,
 ) -> _GraphType:
     """
-    If a feature is missing from a produced Data or HeteroData object due to not fanning out to it, populates it with an empty tensor with the appropriate feature dim.
+    If a feature is missing from a produced Data or HeteroData object due to not fanning out to it, populates it in-place with an empty tensor
+    with the appropriate feature dim.
     Note that PyG natively does this with their DistNeighborLoader for missing edge features + edge indices and missing node features.
     However, native Graphlearn-for-PyTorch only does this for edge indices -- we should do this for node/edge features as well.
+
+    # TODO (mkolodner-sc): Migrate this utility to GLT once we fork their repo
 
     Args:
         data (_GraphType): Data or HeteroData object which we are setting the missing features for
@@ -176,7 +178,6 @@ def set_missing_features(
         edge_feature_dim (Optional[Union[int, dict[EdgeType, int]]]): Edge feature dimension. Note that if heterogeneous, only edge types with features should be provided.
             Can be None in the homogeneous case if there are no edge features
         device (torch.device): Device to move the empty features to
-        dtype (torch.dtype): Dtype to set the empty features as. Defaults to torch.float32
     Returns:
         _GraphType: Data or HeteroData type with the updated feature fields
     """
@@ -190,12 +191,13 @@ def set_missing_features(
             raise ValueError(
                 f"Expected edge feature dimension to be an int or None for homogeneous data, got {edge_feature_dim} of type {type(edge_feature_dim)}"
             )
-        if node_feature_dim and (not hasattr(data, "x") or data.x is None):
-            data.x = torch.empty((0, node_feature_dim), dtype=dtype).to(device)
-        if edge_feature_dim and (
-            not hasattr(data, "edge_attr") or data.edge_attr is None
-        ):
-            data.edge_attr = torch.empty((0, edge_feature_dim), dtype=dtype).to(device)
+        # For homogeneous case, the Data object will always have the x or edge_attr fields -- we should check if it is None to see if it set
+        if node_feature_dim and data.x is None:
+            data.x = torch.empty((0, node_feature_dim), dtype=torch.float32).to(device)
+        if edge_feature_dim and data.edge_attr is None:
+            data.edge_attr = torch.empty((0, edge_feature_dim), dtype=torch.float32).to(
+                device
+            )
 
     elif isinstance(data, HeteroData):
         if isinstance(node_feature_dim, int):
@@ -206,21 +208,19 @@ def set_missing_features(
             raise ValueError(
                 f"Expected edge feature dimension to be an dict or None for heterogeneous data, got {edge_feature_dim} of type {type(edge_feature_dim)}"
             )
-
+        # For heterogeneous case, the HeteroData object will never have the x or edge attr for a given entity type, even if we set it to None,
+        # thus we should check if it hasattr to see they are present
         if node_feature_dim:
             for node_type, feat_dim in node_feature_dim.items():
-                if not hasattr(data[node_type], "x") or data[node_type].x is None:
-                    data[node_type].x = torch.empty((0, feat_dim), dtype=dtype).to(
-                        device
-                    )
+                if not hasattr(data[node_type], "x"):
+                    data[node_type].x = torch.empty(
+                        (0, feat_dim), dtype=torch.float32
+                    ).to(device)
         if edge_feature_dim:
             for edge_type, feat_dim in edge_feature_dim.items():
-                if (
-                    not hasattr(data[edge_type], "edge_attr")
-                    or data[edge_type].edge_attr is None
-                ):
+                if not hasattr(data[edge_type], "edge_attr"):
                     data[edge_type].edge_attr = torch.empty(
-                        (0, feat_dim), dtype=dtype
+                        (0, feat_dim), dtype=torch.float32
                     ).to(device)
     else:
         raise ValueError(
