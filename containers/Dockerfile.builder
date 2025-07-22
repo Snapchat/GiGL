@@ -57,6 +57,7 @@ COPY tools tools/gigl/tools
 COPY requirements tools/gigl/requirements
 
 RUN pip install --upgrade pip
-RUN cd tools/gigl && make install_dev_deps
+RUN cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
+RUN cd tools/gigl && bash ./requirements/install_scala_deps.sh
 
 CMD [ "/bin/bash" ]
