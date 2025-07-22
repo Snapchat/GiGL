@@ -51,11 +51,11 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
     def __init__(self):
         super().__init__()
 
-        self.resource_config: GiglResourceConfigWrapper = get_resource_config()
+        self._resource_config: GiglResourceConfigWrapper = get_resource_config()
 
         """
         For this experiment we will use the heterogeneous MAG240M dataset with the `paper`, `author`, and `institution` node types and the `paper_cite_paper`,
-        `author_writes_paper`, and `author_affiliated_institution_table` edge types.
+        `author_writes_paper`, and `institution_affiliated_author` edge types.
 
         |  Node Type  | # raw nodes | # raw features |                           Notes                          |
         |-------------| ----------- | -------------- | ---------------------------------------------------------|
@@ -63,42 +63,51 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         | Author      | 122_383_112 | 768            |  Average of neighboring paper features                   |
         | Institution | 25_721      | 768            |  Average of neighboring author features                  |
         """
-        self.institution_affiliated_author_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_author_affiliated_with_institution"
-        self.author_writes_paper_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_author_writes_paper"
-        self.paper_cites_paper_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper_cites_paper"
+        self._institution_affiliated_author_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_author_affiliated_with_institution"
+        self._author_writes_paper_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_author_writes_paper"
+        self._paper_cites_paper_table = "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper_cites_paper"
 
-        self.paper_table = (
+        self._paper_table = (
             "external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper"
         )
 
         # We specify the node types and edge types for the heterogeneous graph;
         # Note: These types should match what is specified in task_config.yaml
-        self.paper_node_type = "paper"
-        self.author_node_type = "author"
-        self.institution_node_type = "institution"
+        self._paper_node_type = "paper"
+        self._author_node_type = "author"
+        self._institution_node_type = "institution"
 
-        self.paper_cites_paper_edge_type = EdgeType(
-            NodeType(self.paper_node_type),
+        self._paper_cites_paper_edge_type = EdgeType(
+            NodeType(self._paper_node_type),
             Relation("cites"),
-            NodeType(self.paper_node_type),
+            NodeType(self._paper_node_type),
         )
 
-        self.author_writes_paper_edge_type = EdgeType(
-            NodeType(self.author_node_type),
+        self._author_writes_paper_edge_type = EdgeType(
+            NodeType(self._author_node_type),
             Relation("writes"),
-            NodeType(self.paper_node_type),
+            NodeType(self._paper_node_type),
         )
 
-        self.institution_affiliated_author_edge_type = EdgeType(
-            NodeType(self.institution_node_type),
+        self._institution_affiliated_author_edge_type = EdgeType(
+            NodeType(self._institution_node_type),
             Relation("affiliated"),
-            NodeType(self.author_node_type),
+            NodeType(self._author_node_type),
         )
 
-        self.feature_list = [f"feat_{i}" for i in range(NUM_PAPER_FEATURES)]
-        self.average_feature_query = ",\n".join(
-            [f"AVG({col}) AS {col}" for col in self.feature_list]
+        self._feature_list = [f"feat_{i}" for i in range(NUM_PAPER_FEATURES)]
+        self._average_feature_query = ",\n".join(
+            [f"AVG({col}) AS {col}" for col in self._feature_list]
         )
+
+        self._node_tables: dict[NodeType, str] = {
+            self._paper_node_type: self._paper_table
+        }
+        self._edge_tables: dict[EdgeType, str] = {
+            self._paper_cites_paper_edge_type: self._paper_cites_paper_table,
+            self._author_writes_paper_edge_type: self._author_writes_paper_table,
+            self._institution_affiliated_author_edge_type: self._institution_affiliated_author_table,
+        }
 
     def prepare_for_pipeline(
         self, applied_task_identifier: AppliedTaskIdentifier
@@ -110,14 +119,10 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
         Specifically, we use this function to take the raw MAG240M tables generated from fetch_data.ipynb and
         prepare the following tables:
-        - dst_casted_homogeneous_edge_table: edge table where both author writes paper and paper cites paper tables are combined
-            into a single edge type. See info in __init__ for more details on the the node ids.
-        - dst_casted_homogeneous_node_table: node table where both author and paper nodes are combined into a single node type.
-            See info in __init__ for more details on the the node ids and the features in this table.
+        - author node table: Computed author features taken as the average of the features of the 1-hop paper nodes
+        - institution node table: Computed institution features taken as the average of the features of the 1-hop author nodes.
 
-        Note this is where we also use BQ to concat the raw node degree as an input feature for all the nodes. We also
-        zero pad a 768 dim input feature for the author nodes - as discussed in __init__.
-
+        Note that the author feature table is required to be generated first prior to generating the features for institution feature table.
 
         :param applied_task_identifier: A unique identifier for the task being run. This is usually the job name if orchestrating
             through GiGL's orchestration logic.
@@ -127,49 +132,52 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         logger.info(
             f"Preparing for pipeline with applied task identifier: {applied_task_identifier}",
         )
-        bq_utils = BqUtils(project=self.resource_config.project)
+        bq_utils = BqUtils(project=self._resource_config.project)
 
-        self.author_table = (
-            f"{self.resource_config.project}.{self.resource_config.temp_assets_bq_dataset_name}."
+        author_table = (
+            f"{self._resource_config.project}.{self._resource_config.temp_assets_bq_dataset_name}."
             + f"{applied_task_identifier}_author_feature_table"
         )
-        self.institution_table = (
-            f"{self.resource_config.project}.{self.resource_config.temp_assets_bq_dataset_name}."
+        institution_table = (
+            f"{self._resource_config.project}.{self._resource_config.temp_assets_bq_dataset_name}."
             + f"{applied_task_identifier}_institution_feature_table"
         )
 
+        self._node_tables[self._author_node_type] = author_table
+        self._node_tables[self._institution_node_type] = institution_table
+
         average_author_query = query_template_compute_average_features.format(
-            feature_table=self.paper_table,
-            edge_table=self.author_writes_paper_table,
-            join_identifier=self.paper_node_type,
-            group_by_identifier=self.author_node_type,
-            average_feature_query=self.average_feature_query,
+            feature_table=self._paper_table,
+            edge_table=self._author_writes_paper_table,
+            join_identifier=self._paper_node_type,
+            group_by_identifier=self._author_node_type,
+            average_feature_query=self._average_feature_query,
         )
         bq_utils.run_query(
             query=average_author_query,
             labels={},
-            destination=self.author_table,
+            destination=author_table,
             write_disposition=WriteDisposition.WRITE_TRUNCATE,
         )
 
         average_institution_query = query_template_compute_average_features.format(
-            feature_table=self.author_table,
-            edge_table=self.institution_affiliated_author_table,
-            join_identifier=self.author_node_type,
-            group_by_identifier=self.institution_node_type,
-            average_feature_query=self.average_feature_query,
+            feature_table=author_table,
+            edge_table=self._institution_affiliated_author_table,
+            join_identifier=self._author_node_type,
+            group_by_identifier=self._institution_node_type,
+            average_feature_query=self._average_feature_query,
         )
 
         bq_utils.run_query(
             query=average_institution_query,
             labels={},
-            destination=self.institution_table,
+            destination=institution_table,
             write_disposition=WriteDisposition.WRITE_TRUNCATE,
         )
 
         logger.info(
             f"Preparation for pipeline with applied task identifier: {applied_task_identifier} is complete"
-            + f"Generated the following tables: {self.author_table}, {self.institution_table}",
+            + f"Generated the following tables: {author_table}, {institution_table}",
         )
 
     def get_nodes_preprocessing_spec(
@@ -182,8 +190,12 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         node_data_reference: NodeDataReference
 
         for node_type, table in zip(
-            [self.paper_node_type, self.author_node_type, self.institution_node_type],
-            [self.paper_table, self.author_table, self.institution_table],
+            [
+                self._paper_node_type,
+                self._author_node_type,
+                self._institution_node_type,
+            ],
+            [self._paper_table, self._author_table, self._institution_table],
         ):
             node_data_reference = BigqueryNodeDataReference(
                 reference_uri=table,
@@ -196,7 +208,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
             # that will be read from the NodeDataReference - which in this case is BQ.
             feature_spec_fn = build_ingestion_feature_spec_fn(
                 fixed_int_fields=[node_type],
-                fixed_float_fields=self.feature_list,
+                fixed_float_fields=self._feature_list,
             )
 
             # We don't need any special preprocessing for the node features.
@@ -208,7 +220,7 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
                 feature_spec_fn=feature_spec_fn,
                 preprocessing_fn=preprocessing_fn,
                 identifier_output=node_output_id,
-                features_outputs=self.feature_list,
+                features_outputs=self._feature_list,
             )
         return output_dict
 
@@ -219,14 +231,14 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
 
         for edge_type, table in zip(
             [
-                self.paper_cites_paper_edge_type,
-                self.author_writes_paper_edge_type,
-                self.institution_affiliated_author_edge_type,
+                self._paper_cites_paper_edge_type,
+                self._author_writes_paper_edge_type,
+                self._institution_affiliated_author_edge_type,
             ],
             [
-                self.paper_cites_paper_table,
-                self.author_writes_paper_table,
-                self.institution_affiliated_author_table,
+                self._paper_cites_paper_table,
+                self._author_writes_paper_table,
+                self._institution_affiliated_author_table,
             ],
         ):
             if edge_type.src_node_type == edge_type.dst_node_type:
