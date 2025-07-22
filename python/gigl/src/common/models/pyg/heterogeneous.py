@@ -44,8 +44,8 @@ class HGT(nn.Module):
         **kwargs,
     ):
         super().__init__()
-        node_types = list(node_type_to_feat_dim_map.keys())
-        edge_types = list(edge_type_to_feat_dim_map.keys())
+        self._node_types = list(node_type_to_feat_dim_map.keys())
+        self._edge_types = list(edge_type_to_feat_dim_map.keys())
         self.lin_dict = torch.nn.ModuleDict()
         for node_type, in_dim in node_type_to_feat_dim_map.items():
             self.lin_dict[node_type] = Linear(in_channels=in_dim, out_channels=hid_dim)
@@ -55,7 +55,7 @@ class HGT(nn.Module):
             conv = HGTConv(
                 in_channels=hid_dim,
                 out_channels=hid_dim,
-                metadata=(node_types, edge_types),
+                metadata=(self._node_types, self._edge_types),
                 heads=num_heads,
             )
             self.convs.append(conv)
@@ -92,6 +92,17 @@ class HGT(nn.Module):
                 for node_type, x in node_type_to_features_dict.items()
             }
 
+        # The HGTConv layer requires that the edge index dictionary during forward is in the same order
+        # as the edge types that the were provided to the model during initialization. Otherwise, we may run into
+        # indexing errors with the HeteroLinear layer inside of the HGTConv.
+        if sorted(self._edge_types) != sorted(data.edge_index_dic.keys()):
+            raise ValueError(
+                f"Found mismatching edge types between HGTConv initialized edge types {self._edge_types} and HeteroData edge types {sorted(data.edge_index_dict)}. These must be the same."
+            )
+        edge_index_dict = {
+            edge_type: data.edge_index_dict[edge_type] for edge_type in self._edge_types
+        }
+
         node_type_to_features_dict = {
             node_type: self.lin_dict[node_type](x).relu_()
             for node_type, x in node_type_to_features_dict.items()
@@ -99,7 +110,7 @@ class HGT(nn.Module):
 
         for conv in self.convs:
             node_type_to_features_dict = conv(
-                node_type_to_features_dict, data.edge_index_dict
+                node_type_to_features_dict, edge_index_dict
             )
 
         node_typed_embeddings: Dict[NodeType, torch.Tensor] = {}
