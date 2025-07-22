@@ -21,7 +21,7 @@ ENV PATH=${CONDA_DIR}/bin:$PATH
 
 # Create the conda env environment:
 # TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y -c conda-forge --name gnn python=3.9 pip
+RUN conda create -y --override-channels --channel conda-forge --name gnn python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
 ENV PATH=${CONDA_DIR}/envs/gnn/bin:$PATH
