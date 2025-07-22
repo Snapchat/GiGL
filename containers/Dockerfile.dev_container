@@ -1,3 +1,4 @@
+# https://cloud.google.com/vertex-ai/docs/workbench/instances/create-custom-container#create-container
 FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/workbench-container:latest
 
 ENV MAMBA_ROOT_PREFIX=/opt/micromamba

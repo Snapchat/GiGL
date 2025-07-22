@@ -78,4 +78,7 @@ DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU: Final[str] = _make_file_vars[
 DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU: Final[str] = _make_file_vars[
     "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU"
 ]
+DEFAULT_GIGL_RELEASE_SRC_IMAGE_DEV: Final[str] = _make_file_vars[
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DEV"
+]
 # ===============================================================================================

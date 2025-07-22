@@ -141,7 +141,9 @@ def build_and_push_image(
         )
         if result_push.returncode != 0:
             print(result_push.stdout.decode())
-            raise RuntimeError(f"Docker push failed with exit code {result_push.returncode}")
+            raise RuntimeError(
+                f"Docker push failed with exit code {result_push.returncode}"
+            )
 
 
 if __name__ == "__main__":

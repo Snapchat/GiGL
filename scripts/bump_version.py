@@ -4,14 +4,14 @@ This script can be used to:
 - Bump the version of GiGL, and subsequently release the src images and KFP pipeline
 
 Example Usage:
-Bump patch version and release resources:
-python scripts/versioning_and_release.py --bump_type patch --project gigl-public-ci
+Bump patch version:
+python scripts/bump_version.py --bump_type patch --project gigl-public-ci
 
-Bump the nightly version and release resources:
-python scripts/versioning_and_release.py --bump_type nightly --project gigl-public-ci
+Bump the nightly version:
+python scripts/bump_version.py --bump_type nightly --project gigl-public-ci
 
 Get current version:
-python scripts/versioning_and_release.py --get_current_version
+python scripts/bump_version.py --get_current_version
 """
 
 import argparse
@@ -20,16 +20,9 @@ import re
 from typing import Literal, Optional
 
 from gigl.common import GcsUri
-from gigl.common.constants import (
-    DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
-    DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
-    GIGL_ROOT_DIR,
-    PATH_GIGL_PKG_INIT_FILE,
-)
+from gigl.common.constants import GIGL_ROOT_DIR, PATH_GIGL_PKG_INIT_FILE
 from gigl.env.dep_constants import GIGL_PUBLIC_BUCKET_NAME
 from gigl.orchestration.kubeflow.runner import KfpOrchestrator
-
-from .build_and_push_docker_image import build_and_push_image
 
 
 def get_current_version() -> Optional[str]:
@@ -94,32 +87,6 @@ def update_pyproject(version: str) -> None:
         f.write(content)
 
 
-def push_src_images(
-    cuda_image_name: str,
-    cpu_image_name: str,
-    dataflow_image_name: str,
-) -> None:
-    print(f"Building and pushing CUDA image to {cuda_image_name}")
-    build_and_push_image(
-        base_image=DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
-        image_name=cuda_image_name,
-        dockerfile_name="Dockerfile.src",
-    )
-    print(f"Building and pushing CPU image to {cpu_image_name}")
-    build_and_push_image(
-        base_image=DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
-        image_name=cpu_image_name,
-        dockerfile_name="Dockerfile.src",
-    )
-    print(f"Building and pushing Dataflow image to {dataflow_image_name}")
-    build_and_push_image(
-        base_image=DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
-        image_name=dataflow_image_name,
-        dockerfile_name="Dockerfile.dataflow.src",
-        multi_arch=True,
-    )
-
-
 def get_new_version(
     bump_type: Literal["major", "minor", "patch", "nightly"], curr_version: str
 ) -> str:
@@ -138,7 +105,7 @@ def get_new_version(
     return new_version
 
 
-def bump_version_and_release_resources(
+def bump_version(
     bump_type: Literal["major", "minor", "patch", "nightly"],
     project: str,
     version_override: Optional[str] = None,
@@ -188,7 +155,7 @@ def bump_version_and_release_resources(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Custom arguments for version bump")
+    parser = argparse.ArgumentParser(description="Bump the version of GiGL")
     parser.add_argument(
         "--bump_type",
         help="Specify major, minor, or patch release",
@@ -217,7 +184,7 @@ if __name__ == "__main__":
         print(get_current_version())
         exit(0)
 
-    bump_version_and_release_resources(
+    bump_version(
         bump_type=args.bump_type,
         project=args.project,
         version_override=args.version_override,

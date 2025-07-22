@@ -29,6 +29,10 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
+    outputs:
+      current_version: ${{ steps.get_version.outputs.current_version }}
+      new_version: ${{ steps.get_new_version.outputs.new_version }}
+      release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
 
     steps:
     - name: Checkout code
@@ -53,7 +57,7 @@ jobs:
     - name: Get current version
       id: get_version
       run: |
-        CURRENT_VERSION=$(python -m scripts.versioning_and_release --get_current_version)
+        CURRENT_VERSION=$(python -m scripts.bump_version --get_current_version)
         echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         echo "Current version: $CURRENT_VERSION"
 
@@ -68,46 +72,133 @@ jobs:
 
     - name: Run versioning and release
       run: |
-        python -m scripts.versioning_and_release \
+        python -m scripts.bump_version \
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
           --project ${{ secrets.GCP_PROJECT_ID }}
 
     - name: Get new version
       id: get_new_version
       run: |
-        NEW_VERSION=$(python -m scripts.versioning_and_release --get_current_version)
+        NEW_VERSION=$(python -m scripts.bump_version --get_current_version)
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "New version: $NEW_VERSION"
-
-
-    - name: Build and Push Dev Container Image
-      run: |
-        gcloud auth configure-docker us-central1-docker.pkg.dev
-        GIGL_DEV_CONTAINER_IMAGE=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gigl-base-images/gigl-dev-container:${{ steps.get_new_version.outputs.new_version }}
-        docker build -f ./containers/Dockerfile.dev_container -t ${GIGL_DEV_CONTAINER_IMAGE} .
-        docker push ${GIGL_DEV_CONTAINER_IMAGE}
-        echo "GIGL_DEV_CONTAINER_IMAGE=${GIGL_DEV_CONTAINER_IMAGE}" >> $GITHUB_OUTPUT
-        echo "Pushed Dev container image to ${GIGL_DEV_CONTAINER_IMAGE}"
+        echo "release_branch_name=release/v${NEW_VERSION}" >> $GITHUB_OUTPUT
+        echo "Release branch name: release/v${NEW_VERSION}"
 
     - name: Commit and Push Dep Vars
       uses: ./.github/actions/commit-and-push
       with:
         commit_message: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        to_new_branch_named: "release/v${{ steps.get_new_version.outputs.new_version }}"
+        to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
+
+  release_cpu_src_images:
+    needs: create_release
+    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.create_release.outputs.release_branch_name }}
+
+    - name: Release CPU src images
+      run: |
+        python -m scripts.release --release_type="cpu_src_images"
+
+
+
+  release_cuda_src_images:
+    needs: create_release
+    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.create_release.outputs.release_branch_name }}
+
+    - name: Release CUDA src images
+      run: |
+        python -m scripts.release --release_type="cuda_src_images"
+
+
+  release_dev_images:
+    needs: create_release
+    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.create_release.outputs.release_branch_name }}
+
+    - name: Release Dev images
+      run: |
+        python -m scripts.release --release_type="dev_images"
+
+
+  release_kfp_pipeline:
+    needs: create_release
+    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.create_release.outputs.release_branch_name }}
+
+    - name: Release KFP pipeline
+      run: |
+        python -m scripts.release --release_type="kfp_pipeline"
+
+  create_release_pr:
+    needs:
+      - create_release
+      - release_cpu_src_images
+      - release_cuda_src_images
+      - release_dev_images
+      - release_kfp_pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.create_release.outputs.release_branch_name }}
 
     - name: Create a new PR
       shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh pr create --title "Release v${{ steps.get_new_version.outputs.new_version }}" \
-        --body "## Release v${{ steps.get_new_version.outputs.new_version }}
+        gh pr create --title "Release v${{ needs.create_release.outputs.new_version }}" \
+        --body "## Release v${{ needs.create_release.outputs.new_version }}
 
-        This PR contains the version bump from \`${{ steps.get_version.outputs.current_version }}\` to \`${{ steps.get_new_version.outputs.new_version }}\`.
+        This PR contains the version bump from \`${{ needs.create_release.outputs.current_version }}\` to \`${{ needs.create_release.outputs.new_version }}\`.
 
-        **Bump Type:** ${{ steps.set_vars.outputs.bump_type }}
+        **Bump Type:** ${{ needs.create_release.outputs.bump_type }}
         **GCP Project:** ${{ secrets.GCP_PROJECT_ID }}
         **Trigger:** ${{ github.event_name }}
 
@@ -123,22 +214,22 @@ jobs:
 
         ---
         *This PR was automatically created by the Create Release workflow.*" \
-        --base main --head release/v${{ steps.get_new_version.outputs.new_version }}
+        --base main --head ${{ needs.create_release.outputs.release_branch_name }}
 
-        PR_URL=$(gh pr view release/v${{ steps.get_new_version.outputs.new_version }} --json url --jq '.url')
+        PR_URL=$(gh pr view ${{ needs.create_release.outputs.release_branch_name }} --json url --jq '.url')
         echo "::notice title=PR URL::$PR_URL"
 
 
     - name: Create version tag
       run: |
-        git tag "v${{ steps.get_new_version.outputs.new_version }}"
-        git push origin "v${{ steps.get_new_version.outputs.new_version }}"
+        git tag "v${{ needs.create_release.outputs.new_version }}"
+        git push origin "v${{ needs.create_release.outputs.new_version }}"
 
 
     - name: Output release information
       run: |
-        echo "::notice title=Release PR Created::Release branch created: release/v${{ steps.get_new_version.outputs.new_version }}"
-        echo "::notice title=New Version::v${{ steps.get_new_version.outputs.new_version }}"
-        echo "::notice title=Version Tag::v${{ steps.get_new_version.outputs.new_version }}"
-        echo "::notice title=Bump Type::${{ steps.set_vars.outputs.bump_type }}"
+        echo "::notice title=Release PR Created::Release branch created: ${{ needs.create_release.outputs.release_branch_name }}"
+        echo "::notice title=New Version::v${{ needs.create_release.outputs.new_version }}"
+        echo "::notice title=Version Tag::v${{ needs.create_release.outputs.new_version }}"
+        echo "::notice title=Bump Type::${{ inputs.bump_type }}"
         echo "::notice title=Trigger::${{ github.event_name }}"
