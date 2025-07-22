@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
 import tensorflow as tf
@@ -16,7 +16,7 @@ TFTensorDict = Dict[str, common_types.TensorType]
 FeatureSpecDict = Dict[str, common_types.FeatureSpecType]
 FeatureIndexDict = Dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
 FeatureSchemaDict = Dict[str, Feature]
-FeatureVocabDict = Dict[str, List[str]]
+FeatureVocabDict = Dict[str, list[str]]
 
 
 # Only these 3 dtypes are supported in TFTransform
@@ -70,8 +70,8 @@ class NodeDataPreprocessingSpec(NamedTuple):
     preprocessing_fn: Callable[[TFTensorDict], TFTensorDict]
     identifier_output: NodeOutputIdentifier
     pretrained_tft_model_uri: Optional[Uri] = None
-    features_outputs: Optional[List[str]] = None
-    labels_outputs: Optional[List[str]] = None
+    features_outputs: Optional[list[str]] = None
+    labels_outputs: Optional[list[str]] = None
 
     def __repr__(self) -> str:
         return f"""NodeDataPreprocessingSpec(
@@ -94,8 +94,8 @@ class EdgeDataPreprocessingSpec(NamedTuple):
     preprocessing_fn: Callable[[TFTensorDict], TFTensorDict]
     identifier_output: EdgeOutputIdentifier
     pretrained_tft_model_uri: Optional[Uri] = None
-    features_outputs: Optional[List[str]] = None
-    labels_outputs: Optional[List[str]] = None
+    features_outputs: Optional[list[str]] = None
+    labels_outputs: Optional[list[str]] = None
 
     def __repr__(self) -> str:
         return f"""EdgeDataPreprocessingSpec(

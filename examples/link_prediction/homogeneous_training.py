@@ -32,7 +32,6 @@ import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data
 
 import gigl.distributed.utils
@@ -47,6 +46,7 @@ from gigl.distributed import (
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_available_device
 from gigl.module.loss import RetrievalLoss
+from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.types.graph import to_homogeneous
@@ -154,7 +154,7 @@ def _setup_dataloaders(
 
 
 def _compute_loss(
-    model: DistributedDataParallel,
+    model: LinkPredictionGNN,
     main_data: Data,
     random_negative_data: Data,
     loss_fn: RetrievalLoss,
@@ -163,7 +163,7 @@ def _compute_loss(
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
-        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
+        model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
         main_data (Data): The batch of data containing query nodes, positive nodes, and hard negative nodes
         random_negative_data (Data): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
@@ -205,7 +205,7 @@ def _compute_loss(
 
     # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
 
-    repeated_candidate_scores = model.module.decode(
+    repeated_candidate_scores = model.decode(
         query_embeddings=repeated_query_embeddings,
         candidate_embeddings=torch.cat(
             [
@@ -256,6 +256,8 @@ def _training_process(
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
+    hid_dim: int,
+    out_dim: int,
     sampling_worker_shared_channel_size: str,
     process_start_gap_seconds: int,
     log_every_n_batch: int,
@@ -283,6 +285,8 @@ def _training_process(
         sampling_workers_per_process (int): Number of sampling workers per training process
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes
         random_batch_size (int): Batch size for random negative dataloader
+        hid_dim (int): Hidden dimension of the model
+        out_dim (int): Output dimension of the model
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
         process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
             field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
@@ -359,20 +363,23 @@ def _training_process(
         val_main_loader_iter = InfiniteIterator(val_main_loader)
         val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
 
-        model = DistributedDataParallel(
-            init_example_gigl_homogeneous_model(
-                node_feature_dim=node_feature_dim,
-                edge_feature_dim=edge_feature_dim,
-                device=device,
-            ),
-            device_ids=[device] if torch.cuda.is_available() else None,
+        model = init_example_gigl_homogeneous_model(
+            node_feature_dim=node_feature_dim,
+            edge_feature_dim=edge_feature_dim,
+            hid_dim=hid_dim,
+            out_dim=out_dim,
+            device=device,
+            wrap_with_ddp=True,  # We initialize the model for DDP
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
         )
 
         optimizer = torch.optim.AdamW(
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
         # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
@@ -465,17 +472,20 @@ def _training_process(
         val_random_negative_loader.shutdown()
     else:
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
-        model = DistributedDataParallel(
-            init_example_gigl_homogeneous_model(
-                node_feature_dim=node_feature_dim,
-                edge_feature_dim=edge_feature_dim,
-                device=device,
-                state_dict=state_dict,
-            ),
-            device_ids=[device],
+        model = init_example_gigl_homogeneous_model(
+            node_feature_dim=node_feature_dim,
+            edge_feature_dim=edge_feature_dim,
+            hid_dim=hid_dim,
+            out_dim=out_dim,
+            device=device,
+            wrap_with_ddp=True,  # We initialize the model for DDP
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
+            state_dict=state_dict,  # We load the model state dict for testing
         )
         logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model.module}"
+            f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
     logger.info(f"---Rank {rank} started testing")
@@ -525,14 +535,16 @@ def _training_process(
         logger.info(
             f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
         )
-        save_state_dict(model=model, save_to_path_uri=model_uri)
+        # We unwrap the model from DDP to save it
+        # We do this so we can use the model without DDP later, e.g. for inference.
+        save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
 
     torch.distributed.destroy_process_group()
 
 
 @torch.inference_mode()
 def _run_validation_loops(
-    model: DistributedDataParallel,
+    model: LinkPredictionGNN,
     main_loader: Iterator[Data],
     random_negative_loader: Iterator[Data],
     loss_fn: RetrievalLoss,
@@ -544,7 +556,7 @@ def _run_validation_loops(
     Runs validation using the provided models and dataloaders.
     This function is shared for both validation while training and testing after training has completed.
     Args:
-        model (DistributedDataParallel): DDP-wrapped torch model for training and testing
+        model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
         main_loader (Iterator[Data]): Dataloader for loading main batch data with query and labeled nodes
         random_negative_loader (Iterator[Data]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
@@ -655,8 +667,11 @@ def _run_example_training(
         trainer_args.get("sampling_workers_per_process", "4")
     )
 
-    main_batch_size = int(trainer_args.get("main_batch_size", 16))
-    random_batch_size = int(trainer_args.get("random_batch_size", 16))
+    main_batch_size = int(trainer_args.get("main_batch_size", "16"))
+    random_batch_size = int(trainer_args.get("random_batch_size", "16"))
+
+    hid_dim = int(trainer_args.get("hid_dim", "16"))
+    out_dim = int(trainer_args.get("out_dim", "16"))
 
     # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
     # is the place to store pre-fetched data, so if it is too small then prefetching is limited, causing sampling slowdown. This parameter is a string
@@ -681,6 +696,8 @@ def _run_example_training(
         sampling_workers_per_process={sampling_workers_per_process}, \
         main_batch_size={main_batch_size}, \
         random_batch_size={random_batch_size}, \
+        hid_dim={hid_dim}, \
+        out_dim={out_dim}, \
         sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, \
         process_start_gap_seconds={process_start_gap_seconds}, \
         log_every_n_batch={log_every_n_batch}, \
@@ -749,6 +766,8 @@ def _run_example_training(
             sampling_workers_per_process,  # sampling_workers_per_process
             main_batch_size,  # main_batch_size
             random_batch_size,  # random_batch_size
+            hid_dim,  # hid_dim
+            out_dim,  # out_dim
             sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
             process_start_gap_seconds,  # process_start_gap_seconds
             log_every_n_batch,  # log_every_n_batch

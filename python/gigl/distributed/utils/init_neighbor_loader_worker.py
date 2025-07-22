@@ -2,9 +2,9 @@ import time
 from functools import lru_cache
 from typing import Optional
 
-import graphlearn_torch as glt
 import psutil
 import torch
+from graphlearn_torch.distributed import init_rpc, init_worker_group
 
 from gigl.common.logger import Logger
 
@@ -30,10 +30,12 @@ def get_process_group_name(process_rank: int) -> str:
 # That way the "side-effects" of the call are only executed once.
 @lru_cache(maxsize=1)
 def init_neighbor_loader_worker(
+    master_ip_address: str,
     local_process_rank: int,
     local_process_world_size: int,
-    machine_rank: int,
-    machine_world_size: int,
+    rank: int,
+    world_size: int,
+    master_worker_port: int,
     device: torch.device,
     should_use_cpu_workers: bool = False,
     num_cpu_threads: Optional[int] = None,
@@ -43,10 +45,12 @@ def init_neighbor_loader_worker(
     Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
     the memory overhead and CPU contention. Returns the torch device which current worker is assigned to.
     Args:
+        master_ip_address (str): Master IP Address to manage processes
         local_process_rank (int): Process number on the current machine
         local_process_world_size (int): Total number of processes on the current machine
-        machine_rank (int): Rank of current machine
-        machine_world_size (int): Total number of machines
+        rank (int): Rank of current machine
+        world_size (int): Total number of machines
+        master_worker_port (int): Master port to use for communicating between workers during training or inference
         device (torch.device): The device where you want to load the data onto - i.e. where is your model?
         should_use_cpu_workers (bool): Whether we should do CPU training or inference.
         num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training or inference.
@@ -54,6 +58,8 @@ def init_neighbor_loader_worker(
         process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales, it is recommended to set
             this value to be between 60 and 120 seconds -- otherwise multiple processes may attempt to initialize dataloaders at overlapping timesß,
             which can cause CPU memory OOM.
+    Returns:
+        torch.device: Device which current worker is assigned to
     """
 
     global _is_cpu_env_initialized
@@ -64,12 +70,10 @@ def init_neighbor_loader_worker(
     # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
     # to smooth the memory usage. The definition of group is discussed below.
     logger.info(
-        f"---Machine {machine_rank} local process number {local_process_rank} preparing to sleep for {process_start_gap_seconds * local_process_rank} seconds"
+        f"---Machine {rank} local process number {local_process_rank} preparing to sleep for {process_start_gap_seconds * local_process_rank} seconds"
     )
     time.sleep(process_start_gap_seconds * local_process_rank)
-    logger.info(
-        f"---Machine {machine_rank} local process number {local_process_rank} started"
-    )
+    logger.info(f"---Machine {rank} local process number {local_process_rank} started")
     if not should_use_cpu_workers:
         assert (
             torch.cuda.device_count() > 0
@@ -137,28 +141,46 @@ def init_neighbor_loader_worker(
         torch.cuda.set_device(device)
         torch.cuda.empty_cache()
         logger.info(
-            f"Machine {machine_rank} local rank {local_process_rank} uses device {torch.cuda.current_device()} by default"
+            f"Machine {rank} local rank {local_process_rank} uses device {torch.cuda.current_device()} by default"
         )
 
-    # Only initialize the worker group if it is not already set up
-    if glt.distributed.get_context() is None:
-        # Group of workers. Each process is a worker. Each
-        # worker will initiate one model and at least one data loader. Each data loader
-        # will spawn several sampling processes (a.k.a. sampling workers).
-        # Instead of combining all workers into one group, we define N groups where
-        # N is the number of processes on each machine. Specifically, we have
-        # Group 0: (Machine 0, process 0), (Machine 1, process 0),..., (Machine M, process 0)
-        # Group 1: (Machine 0, process 1), (Machine 1, process 1),..., (Machine M, process 1)
-        # ...
-        # Group N-1: (Machine 0, process N-1), (Machine 1, process N-1),..., (Machine M, process N-1)
-        # We do this as we want to start different groups in different times to smooth
-        # the spike of memory usage as mentioned above.
-        group_name = get_process_group_name(local_process_rank)
-        logger.info(
-            f"Init worker group with: world_size={machine_world_size}, rank={machine_rank}, group_name={group_name}, "
-        )
-        glt.distributed.init_worker_group(
-            world_size=machine_world_size,
-            rank=machine_rank,
-            group_name=group_name,
-        )
+    # Group of workers. Each process is a worker. Each
+    # worker will initiate one model and at least one data loader. Each data loader
+    # will spawn several sampling processes (a.k.a. sampling workers).
+    # Instead of combining all workers into one group, we define N groups where
+    # N is the number of processes on each machine. Specifically, we have
+    # Group 0: (Machine 0, process 0), (Machine 1, process 0),..., (Machine M, process 0)
+    # Group 1: (Machine 0, process 1), (Machine 1, process 1),..., (Machine M, process 1)
+    # ...
+    # Group N-1: (Machine 0, process N-1), (Machine 1, process N-1),..., (Machine M, process N-1)
+    # We do this as we want to start different groups in different times to smooth
+    # the spike of memory usage as mentioned above.
+
+    group_name = get_process_group_name(local_process_rank)
+    logger.info(
+        f"Init worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
+    )
+    init_worker_group(
+        world_size=world_size,
+        rank=rank,
+        group_name=group_name,
+    )
+
+    # Initialize the communication channel across all workers in one group, so
+    # that we could add barrier and wait all workers to finish before quitting.
+    # Note that all sampling workers across all processeses in one group need to
+    # be connected for graph sampling. Thus, a worker needs to wait others even
+    # if it finishes, as quiting process will shutdown the correpsonding sampling
+    # workers, and break the connection with other sampling workers.
+    # Note that different process groups are independent of each other. Therefore,
+    # they have to use different master ports.
+    logger.info(
+        f"Initing worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
+    )
+    init_rpc(
+        master_addr=master_ip_address,
+        master_port=master_worker_port,
+        rpc_timeout=600,
+    )
+
+    logger.info(f"Group {group_name} with rpc is initiated")
