@@ -121,7 +121,7 @@ The instructions below are in development and are not recommended. We are workin
 1. Create a python environment
 
 ```bash
-conda create -y -c conda-forge --name gigl python=3.9
+conda create -y --override-channels --channel conda-forge --name gigl python=3.9
 conda activate gigl
 ```
 

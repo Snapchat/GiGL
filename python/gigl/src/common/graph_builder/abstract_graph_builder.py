@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections import defaultdict
-from typing import Dict, Generic, Optional, TypeVar
+from typing import Generic, Optional, TypeVar
 
 import torch
 
@@ -36,12 +36,12 @@ class GraphBuilder(Generic[TGraph]):
         Unregisters / resets all registered nodes and edges.
         "Reinitialized the class to a clean state"
         """
-        self.subgraph_node_id_counter: Dict[NodeType, int] = defaultdict(int)
-        self.global_node_to_subgraph_node_map: Dict[Node, Node] = {}
-        self.ordered_edges: Dict[EdgeType, list[Edge]] = defaultdict(list)
-        self.ordered_nodes: Dict[NodeType, list[Node]] = defaultdict(list)
-        self.subgraph_node_features_dict: Dict[Node, torch.Tensor] = {}
-        self.subgraph_edge_feature_dict: Dict[Edge, Optional[torch.Tensor]] = {}
+        self.subgraph_node_id_counter: dict[NodeType, int] = defaultdict(int)
+        self.global_node_to_subgraph_node_map: dict[Node, Node] = {}
+        self.ordered_edges: dict[EdgeType, list[Edge]] = defaultdict(list)
+        self.ordered_nodes: dict[NodeType, list[Node]] = defaultdict(list)
+        self.subgraph_node_features_dict: dict[Node, torch.Tensor] = {}
+        self.subgraph_edge_feature_dict: dict[Edge, Optional[torch.Tensor]] = {}
 
         self.should_register_node_features: Optional[bool] = None
         self.should_register_edge_features: Optional[bool] = None

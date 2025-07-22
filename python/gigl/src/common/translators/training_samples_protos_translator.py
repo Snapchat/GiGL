@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, NamedTuple, Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 
 import torch
 
@@ -40,7 +40,7 @@ class NodeAnchorBasedLinkPredictionSample:
     root_node: Node  # root node for this sample
     subgraph: GbmlGraphDataProtocol  # subgraph with features used for message passing
     # mapping of edge type to positive and negative nodes and edge features
-    condensed_edge_type_to_supervision_edge_data: Dict[
+    condensed_edge_type_to_supervision_edge_data: dict[
         CondensedEdgeType, SampleSupervisionEdgeData
     ]
 
@@ -87,19 +87,19 @@ class TrainingSamplesProtosTranslator:
     ) -> list[NodeAnchorBasedLinkPredictionSample]:
         training_samples: list[NodeAnchorBasedLinkPredictionSample] = []
         for sample in samples:
-            condensed_supervision_edge_type_to_pos_nodes: Dict[
+            condensed_supervision_edge_type_to_pos_nodes: dict[
                 CondensedEdgeType, list[NodeId]
             ] = defaultdict(list)
-            condensed_supervision_edge_type_to_hard_neg_nodes: Dict[
+            condensed_supervision_edge_type_to_hard_neg_nodes: dict[
                 CondensedEdgeType, list[NodeId]
             ] = defaultdict(list)
-            condensed_supervision_edge_type_to_pos_edge_feats: Dict[
+            condensed_supervision_edge_type_to_pos_edge_feats: dict[
                 CondensedEdgeType, list[torch.FloatTensor]
             ] = defaultdict(list)
-            condensed_supervision_edge_type_to_hard_neg_edge_feats: Dict[
+            condensed_supervision_edge_type_to_hard_neg_edge_feats: dict[
                 CondensedEdgeType, list[torch.FloatTensor]
             ] = defaultdict(list)
-            condensed_edge_type_to_supervision_edge_data: Dict[
+            condensed_edge_type_to_supervision_edge_data: dict[
                 CondensedEdgeType,
                 NodeAnchorBasedLinkPredictionSample.SampleSupervisionEdgeData,
             ] = {}
