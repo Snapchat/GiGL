@@ -92,10 +92,14 @@ class HGT(nn.Module):
                 for node_type, x in node_type_to_features_dict.items()
             }
 
-        # The HGTConv layer requires that the edge index dictionary during forward is in the same order
-        # as the edge types that the were provided to the model during initialization. Otherwise, we may run into
-        # indexing errors with the HeteroLinear layer inside of the HGTConv.
-        if sorted(self._edge_types) != sorted(data.edge_index_dic.keys()):
+        # When we initialize a HGTConv layer, we provide some edge types, which it uses to create an offset mapping for
+        # each edge type. When we forward some data.edge_index_dict through this layer, we require that the edge types
+        # there have the same order as the edge types in the constructor, otherwise the offsets will be off. For large graphs,
+        # this will lead to indexing errors during segmented matrix multiplication. For smaller graphs, segmented matrix
+        # multiplication is not used (based on some heuristic in PyG) and we don't observe this error. However, the indices
+        # are still wrong and likely lead to incorrect forward passes, hurting the model performance.
+
+        if sorted(self._edge_types) != sorted(data.edge_index_dict.keys()):
             raise ValueError(
                 f"Found mismatching edge types between HGTConv initialized edge types {self._edge_types} and HeteroData edge types {sorted(data.edge_index_dict)}. These must be the same."
             )
