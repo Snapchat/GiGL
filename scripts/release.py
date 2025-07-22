@@ -63,7 +63,7 @@ def release_dev_images():
     build_and_push_image(
         base_image=None,
         image_name=DEFAULT_GIGL_RELEASE_SRC_IMAGE_DEV,
-        dockerfile_name="Dockerfile.dev",
+        dockerfile_name="Dockerfile.dev_workbench_container",
     )
     print(f"Pushed Dev image to {DEFAULT_GIGL_RELEASE_SRC_IMAGE_DEV}")
 
