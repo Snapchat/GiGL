@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import torch
 import torch_geometric.data
@@ -44,9 +44,8 @@ class HGT(nn.Module):
         **kwargs,
     ):
         super().__init__()
-        self._node_type_to_feat_dim_map = node_type_to_feat_dim_map
         node_types = list(node_type_to_feat_dim_map.keys())
-        edge_types = sorted(list(edge_type_to_feat_dim_map.keys()))
+        edge_types = list(edge_type_to_feat_dim_map.keys())
         self.lin_dict = torch.nn.ModuleDict()
         for node_type, in_dim in node_type_to_feat_dim_map.items():
             self.lin_dict[node_type] = Linear(in_channels=in_dim, out_channels=hid_dim)
@@ -72,27 +71,18 @@ class HGT(nn.Module):
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
-        output_node_types: List[NodeType],
+        output_node_types: list[NodeType],
         device: torch.device,
     ) -> Dict[NodeType, torch.Tensor]:
         """
         Runs the forward pass of the module
         Args:
             data (torch_geometric.data.hetero_data.HeteroData): Input HeteroData object.
-            output_node_types (List[NodeType]): List of node types for which to return the output embeddings.
+            output_node_types (list[NodeType]): List of node types for which to return the output embeddings.
         Returns:
             Dict[NodeType, torch.Tensor]: Dictionary with node types as keys and output tensors as values.
         """
-
-        for node_type, feat_dim in self._node_type_to_feat_dim_map.items():
-            if node_type not in data.x_dict:
-                data[node_type].x = torch.empty((0, feat_dim), dtype=torch.float32).to(
-                    device
-                )
-
         node_type_to_features_dict = data.x_dict
-
-        edge_index_dict = {edge_type: data.edge_index_dict[edge_type] for edge_type in sorted(data.edge_index_dict)}
 
         if self.feature_embedding_layers:
             node_type_to_features_dict = {
@@ -109,7 +99,7 @@ class HGT(nn.Module):
 
         for conv in self.convs:
             node_type_to_features_dict = conv(
-                node_type_to_features_dict, edge_index_dict
+                node_type_to_features_dict, data.edge_index_dict
             )
 
         node_typed_embeddings: Dict[NodeType, torch.Tensor] = {}
@@ -214,7 +204,7 @@ class SimpleHGN(nn.Module):
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
-        output_node_types: List[NodeType],
+        output_node_types: list[NodeType],
         device: torch.device,
     ) -> Dict[NodeType, torch.Tensor]:
         # Align dimensions across all node-types and all edge-types, resp.
