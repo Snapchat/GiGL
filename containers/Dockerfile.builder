@@ -54,6 +54,7 @@ RUN echo "conda activate gigl" >> ~/.bashrc
 # and, mounting GCP credentials to build time can be a pain and more prone to
 # accidental leaking of credentials.
 COPY tools tools/gigl/tools
+COPY dep_vars.env tools/gigl/dep_vars.env
 COPY requirements tools/gigl/requirements
 
 RUN pip install --upgrade pip
