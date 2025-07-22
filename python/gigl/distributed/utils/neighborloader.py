@@ -1,7 +1,7 @@
 """Utils for Neighbor loaders."""
 from collections import abc
 from copy import deepcopy
-from typing import Optional, Union
+from typing import Optional, TypeVar, Union
 
 import torch
 from torch_geometric.data import Data, HeteroData
@@ -11,6 +11,8 @@ from gigl.common.logger import Logger
 from gigl.types.graph import is_label_edge_type
 
 logger = Logger()
+
+_GraphType = TypeVar("_GraphType", Data, HeteroData)
 
 
 def patch_fanout_for_sampling(
@@ -156,25 +158,27 @@ def strip_label_edges(data: HeteroData) -> HeteroData:
 
 
 def set_missing_features(
-    data: Union[Data, HeteroData],
+    data: _GraphType,
     node_feature_dim: Optional[Union[int, dict[NodeType, int]]],
     edge_feature_dim: Optional[Union[int, dict[EdgeType, int]]],
     device: torch.device,
     dtype: torch.dtype = torch.float32,
-) -> Union[Data, HeteroData]:
+) -> _GraphType:
     """
     If a feature is missing from a produced Data or HeteroData object due to not fanning out to it, populates it with an empty tensor with the appropriate feature dim.
     Note that PyG natively does this with their DistNeighborLoader for missing edge features + edge indices and missing node features.
     However, native Graphlearn-for-PyTorch only does this for edge indices -- we should do this for node/edge features as well.
 
     Args:
-        data (Union[Data, HeteroData]): Data or HeteroData object which we are setting the missing features for
+        data (_GraphType): Data or HeteroData object which we are setting the missing features for
         node_feature_dim (Optional[Union[int, dict[NodeType, int]]]): Node feature dimension. Note that if heterogeneous, only node types with features should be provided.
             Can be None in the homogeneous case if there are no node features
         edge_feature_dim (Optional[Union[int, dict[EdgeType, int]]]): Edge feature dimension. Note that if heterogeneous, only edge types with features should be provided.
             Can be None in the homogeneous case if there are no edge features
         device (torch.device): Device to move the empty features to
         dtype (torch.dtype): Dtype to set the empty features as. Defaults to torch.float32
+    Returns:
+        _GraphType: Data or HeteroData type with the updated feature fields
     """
 
     if isinstance(data, Data):
