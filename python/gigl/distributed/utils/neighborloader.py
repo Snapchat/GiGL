@@ -166,8 +166,13 @@ def set_missing_features(
     """
     If a feature is missing from a produced Data or HeteroData object due to not fanning out to it, populates it in-place with an empty tensor
     with the appropriate feature dim.
-    Note that PyG natively does this with their DistNeighborLoader for missing edge features + edge indices and missing node features.
-    However, native Graphlearn-for-PyTorch only does this for edge indices -- we should do this for node/edge features as well.
+    Note that PyG natively does this with their DistNeighborLoader for missing edge features + edge indices and missing node features:
+    https://pytorch-geometric.readthedocs.io/en/2.4.0/_modules/torch_geometric/sampler/neighbor_sampler.html#NeighborSampler
+
+    However, native Graphlearn-for-PyTorch only does this for edge indices:
+    https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/sampler/base.py#L294-L301
+
+    so we should do this our sampled node/edge features as well
 
     # TODO (mkolodner-sc): Migrate this utility to GLT once we fork their repo
 

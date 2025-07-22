@@ -331,6 +331,30 @@ class LoaderUtilsTest(unittest.TestCase):
             torch.zeros((0, 7), device=self._device, dtype=self._feature_dtype),
         )
 
+    def test_set_missing_features_no_feats(self):
+        data = set_missing_features(
+            data=Data(),
+            node_feature_dim=None,
+            edge_feature_dim=None,
+            device=self._device,
+        )
+        self.assertIsNone(data.x)
+        self.assertIsNone(data.edge_attr)
+
+        hetero_data = HeteroData()
+        hetero_data["user", "to", "item"] = torch.tensor([[0, 1], [1, 2]])
+
+        hetero_data = set_missing_features(
+            data=HeteroData(),
+            node_feature_dim=None,
+            edge_feature_dim=None,
+            device=self._device,
+        )
+        self.assertFalse(hasattr(hetero_data["user"], "x"))
+        self.assertFalse(hasattr(hetero_data["item"], "x"))
+        self.assertFalse(hasattr(hetero_data["user"], "edge_attr"))
+        self.assertFalse(hasattr(hetero_data["item"], "edge_attr"))
+
     def test_set_missing_features_failure(self):
         with self.assertRaises(ValueError):
             set_missing_features(
