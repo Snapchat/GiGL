@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Final
+from typing import Final
 
 import torch
 
@@ -33,11 +33,11 @@ MOCKED_HETEROGENEOUS_EDGE_TYPES: Final[list[EdgeType]] = sorted(
     [USER_TO_USER_EDGE_TYPE, USER_TO_ITEM_EDGE_TYPE]
 )
 
-NODE_TYPE_TO_FEATURE_DIMENSION_MAP: Final[Dict[NodeType, int]] = {
+NODE_TYPE_TO_FEATURE_DIMENSION_MAP: Final[dict[NodeType, int]] = {
     USER_NODE_TYPE: 2,
     ITEM_NODE_TYPE: 1,
 }
-EDGE_TYPE_TO_FEATURE_DIMENSION_MAP: Final[Dict[EdgeType, int]] = {
+EDGE_TYPE_TO_FEATURE_DIMENSION_MAP: Final[dict[EdgeType, int]] = {
     USER_TO_USER_EDGE_TYPE: 2,
     USER_TO_ITEM_EDGE_TYPE: 1,
 }
@@ -150,25 +150,25 @@ class TestGraphData:
     """
 
     # Node id tensor for mocked data
-    node_ids: Dict[NodeType, torch.Tensor]
+    node_ids: dict[NodeType, torch.Tensor]
 
     # Edge index tensor for mocked data
-    edge_index: Dict[EdgeType, torch.Tensor]
+    edge_index: dict[EdgeType, torch.Tensor]
 
     # Node feature tensor for mocked data
-    node_features: Dict[NodeType, torch.Tensor]
+    node_features: dict[NodeType, torch.Tensor]
 
     # Edge feature tensor for mocked data
-    edge_features: Dict[EdgeType, torch.Tensor]
+    edge_features: dict[EdgeType, torch.Tensor]
 
     # Positive edge label tensor for mocked data
-    positive_labels: Dict[EdgeType, torch.Tensor]
+    positive_labels: dict[EdgeType, torch.Tensor]
 
     # Input negative edge label tensor to partitioner for mocked data
-    negative_labels: Dict[EdgeType, torch.Tensor]
+    negative_labels: dict[EdgeType, torch.Tensor]
 
 
-RANK_TO_MOCKED_GRAPH: Final[Dict[int, TestGraphData]] = {
+RANK_TO_MOCKED_GRAPH: Final[dict[int, TestGraphData]] = {
     0: TestGraphData(
         node_ids={
             USER_NODE_TYPE: MOCKED_USER_NODES_IDS_ON_RANK_ZERO,
@@ -221,7 +221,7 @@ RANK_TO_MOCKED_GRAPH: Final[Dict[int, TestGraphData]] = {
     ),
 }
 
-RANK_TO_NODE_TYPE_TYPE_TO_NUM_NODES: Final[Dict[int, Dict[NodeType, int]]] = {
+RANK_TO_NODE_TYPE_TYPE_TO_NUM_NODES: Final[dict[int, dict[NodeType, int]]] = {
     rank: {
         USER_NODE_TYPE: test_graph_data.node_ids[USER_NODE_TYPE].size(0),
         ITEM_NODE_TYPE: test_graph_data.node_ids[ITEM_NODE_TYPE].size(0),

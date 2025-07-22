@@ -1,7 +1,7 @@
 import datetime
 import itertools
 import re
-from typing import Dict, Iterable, Optional, Tuple, Union
+from typing import Iterable, Optional, Tuple, Union
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
@@ -102,7 +102,7 @@ class BqUtils:
     def count_number_of_rows_in_bq_table(
         self,
         bq_table: str,
-        labels: Dict[str, str] = {},
+        labels: dict[str, str] = {},
     ) -> int:
         bq_table = bq_table.replace(":", ".")
         ROW_COUNTING_QUERY = f"""
@@ -123,7 +123,7 @@ class BqUtils:
     def run_query(
         self,
         query,
-        labels: Dict[str, str],
+        labels: dict[str, str],
         **job_config_args,
     ) -> RowIterator:
         logger.info(f"Running query: {query}")
@@ -339,7 +339,7 @@ class BqUtils:
         except Exception as e:
             logger.exception(f"Failed to delete table '{bq_table_path}' due to \n {e}")
 
-    def fetch_bq_table_schema(self, bq_table: str) -> Dict[str, bigquery.SchemaField]:
+    def fetch_bq_table_schema(self, bq_table: str) -> dict[str, bigquery.SchemaField]:
         """
         Create a dictionary representation for SchemaFields from BigQuery table.
         """

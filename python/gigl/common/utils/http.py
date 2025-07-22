@@ -1,6 +1,5 @@
 import pathlib
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict
 
 import requests
 
@@ -37,12 +36,12 @@ class HttpUtils:
             f.write(response.content)
 
     @staticmethod
-    def download_files_from_http(http_to_local_path_map: Dict[HttpUri, LocalUri]):
+    def download_files_from_http(http_to_local_path_map: dict[HttpUri, LocalUri]):
         """
         Downloads a list of files from an HTTP(S) URL to a list of local file paths.
 
         Args:
-            http_to_local_path_map (Dict[HttpUri, LocalUri]): A dictionary mapping HTTP(S) URLs to local file paths.
+            http_to_local_path_map (dict[HttpUri, LocalUri]): A dictionary mapping HTTP(S) URLs to local file paths.
         """
         with ThreadPoolExecutor() as executor:
             results = executor.map(
