@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -20,13 +20,13 @@ class FeatureEmbeddingLayer(nn.Module):
 
     def __init__(
         self,
-        features_to_embed: Dict[str, int],
+        features_to_embed: dict[str, int],
         feature_schema: FeatureSchema,
         feature_dim: int,
         aggregation: str = "mean",
         oov_idx: Optional[int] = None,
         padding_idx: Optional[int] = None,
-        feature_padding_value_map: Optional[Dict[str, str]] = None,
+        feature_padding_value_map: Optional[dict[str, str]] = None,
     ):
         """
         Feature Embedding layer takes in all input features, pass specified features through nn.Embedding layer,

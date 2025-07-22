@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Optional
 
 from google.cloud.bigquery.table import RowIterator
 
@@ -14,7 +14,7 @@ class BQGraphValidator:
         edge_table: str,
         src_node_column_name: str,
         dst_node_column_name: str,
-        query_labels: Dict[str, str] = {},
+        query_labels: dict[str, str] = {},
         bq_gcp_project: Optional[str] = None,
     ) -> bool:
         """
@@ -25,7 +25,7 @@ class BQGraphValidator:
             edge_table (str): The edge table to validate
             src_node_column_name (str): The column name in the table that contains the source node ids
             dst_node_column_name (str): The column name in the table that contains the destination node ids
-            query_labels (Dict[str, str], optional): Cloud Provider Labels to add to the Query. Defaults to {}.
+            query_labels (dict[str, str], optional): Cloud Provider Labels to add to the Query. Defaults to {}.
             bq_gcp_project (Optional[str], optional): The GCP project to run the query in. If None the BQ
                 client will usse the default project inferred from the environment. Defaults to None.
 
