@@ -237,7 +237,7 @@ class DistLinkPredictionDataset(DistDataset):
     def train_node_ids(
         self,
     ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
-        if not self._num_train:
+        if self._num_train is None:
             return None
         elif isinstance(self._num_train, int) and isinstance(
             self._node_ids, torch.Tensor
@@ -259,9 +259,9 @@ class DistLinkPredictionDataset(DistDataset):
     def val_node_ids(
         self,
     ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
-        if not self._num_val:
+        if self._num_val is None:
             return None
-        if not self._num_train:
+        if self._num_train is None:
             raise ValueError(
                 "num_train must be set if num_val is set. If you are using the constructor make sure all data is either homogeneous or heterogeneous. If you are using `build()` this is likely a bug, please report it."
             )
@@ -293,9 +293,9 @@ class DistLinkPredictionDataset(DistDataset):
     def test_node_ids(
         self,
     ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
-        if not self._num_test:
+        if self._num_test is None:
             return None
-        if not self._num_train or not self._num_val:
+        if self._num_train is None or self._num_val is None:
             raise ValueError(
                 "num_train and num_val must be set if num_test is set. If you are using the constructor make sure all data is either homogeneous or heterogeneous. If you are using `build()` this is likely a bug, please report it."
             )
@@ -635,9 +635,9 @@ class DistLinkPredictionDataset(DistDataset):
                 else:
                     raise ValueError(f"We should not get here, whoops!")
             self._node_ids = node_ids_by_node_type
-            self._num_train = num_train_by_node_type
-            self._num_val = num_val_by_node_type
-            self._num_test = num_test_by_node_type
+            self._num_train = num_train_by_node_type if splits is not None else None
+            self._num_val = num_val_by_node_type if splits is not None else None
+            self._num_test = num_test_by_node_type if splits is not None else None
 
         logger.info(
             f"Rank {self._rank} finished building dataset class from partitioned graph in {time.time() - start_time:.2f} seconds. Waiting for other ranks to finish ..."
