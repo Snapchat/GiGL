@@ -35,6 +35,7 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 
 ## Additional Resources
 
+- GiGL KDD '25 tutorial page: [Homepage](https://github.com/Snapchat/GiGL/blob/main/examples/tutorial/KDD_2025/README.md)
 - GiGL KDD ADS track paper: [Paper link](https://arxiv.org/abs/2502.15054)
 - GiGL library source code: [GitHub](https://github.com/Snapchat/GiGL/tree/main)
 - GiGL documentation: [Read the Docs](https://snapchat.github.io/GiGL/index.html)
