@@ -8,7 +8,7 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
-from gigl.types.graph import is_label_edge_type
+from gigl.types.graph import FeatureInfo, is_label_edge_type
 
 logger = Logger()
 
@@ -159,8 +159,8 @@ def strip_label_edges(data: HeteroData) -> HeteroData:
 
 def set_missing_features(
     data: _GraphType,
-    node_feature_dim: Optional[Union[int, dict[NodeType, int]]],
-    edge_feature_dim: Optional[Union[int, dict[EdgeType, int]]],
+    node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
+    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
     device: torch.device,
 ) -> _GraphType:
     """
@@ -178,55 +178,56 @@ def set_missing_features(
 
     Args:
         data (_GraphType): Data or HeteroData object which we are setting the missing features for
-        node_feature_dim (Optional[Union[int, dict[NodeType, int]]]): Node feature dimension. Note that if heterogeneous, only node types with features should be provided.
-            Can be None in the homogeneous case if there are no node features
-        edge_feature_dim (Optional[Union[int, dict[EdgeType, int]]]): Edge feature dimension. Note that if heterogeneous, only edge types with features should be provided.
-            Can be None in the homogeneous case if there are no edge features
+        node_feature_info (Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]): Node feature dimension and data type.
+            Note that if heterogeneous, only node types with features should be provided. Can be None in the homogeneous case if there are no node features
+        edge_feature_info (Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]): Edge feature dimension and data type.
+            Note that if heterogeneous, only edge types with features should be provided. Can be None in the homogeneous case if there are no edge features
         device (torch.device): Device to move the empty features to
     Returns:
         _GraphType: Data or HeteroData type with the updated feature fields
     """
-
     if isinstance(data, Data):
-        if isinstance(node_feature_dim, dict):
+        if isinstance(node_feature_info, dict):
             raise ValueError(
-                f"Expected node feature dimension to be an int or None for homogeneous data, got {node_feature_dim} of type {type(node_feature_dim)}"
+                f"Expected node feature dimension to be a FeatureInfo or None for homogeneous data, got {node_feature_info} of type {type(node_feature_info)}"
             )
-        if isinstance(edge_feature_dim, dict):
+        if isinstance(edge_feature_info, dict):
             raise ValueError(
-                f"Expected edge feature dimension to be an int or None for homogeneous data, got {edge_feature_dim} of type {type(edge_feature_dim)}"
+                f"Expected edge feature dimension to be an int or None for homogeneous data, got {edge_feature_info} of type {type(edge_feature_info)}"
             )
         # For homogeneous case, the Data object will always have the x or edge_attr fields -- we should check if it is None to see if it set
-        if node_feature_dim and data.x is None:
-            data.x = torch.empty((0, node_feature_dim), dtype=torch.float32).to(device)
-        if edge_feature_dim and data.edge_attr is None:
-            data.edge_attr = torch.empty((0, edge_feature_dim), dtype=torch.float32).to(
-                device
+        if node_feature_info and data.x is None:
+            data.x = torch.empty(
+                (0, node_feature_info.dim), dtype=node_feature_info.dtype, device=device
+            )
+        if edge_feature_info and data.edge_attr is None:
+            data.edge_attr = torch.empty(
+                (0, edge_feature_info.dim), dtype=edge_feature_info.dtype, device=device
             )
 
     elif isinstance(data, HeteroData):
-        if isinstance(node_feature_dim, int):
+        if isinstance(node_feature_info, FeatureInfo):
             raise ValueError(
-                f"Expected node feature dimension to be an dict or None for heterogeneous data, got {node_feature_dim} of type {type(node_feature_dim)}"
+                f"Expected node feature dimension to be an dict or None for heterogeneous data, got {node_feature_info} of type {type(node_feature_info)}"
             )
-        if isinstance(edge_feature_dim, int):
+        if isinstance(edge_feature_info, FeatureInfo):
             raise ValueError(
-                f"Expected edge feature dimension to be an dict or None for heterogeneous data, got {edge_feature_dim} of type {type(edge_feature_dim)}"
+                f"Expected edge feature dimension to be an dict or None for heterogeneous data, got {edge_feature_info} of type {type(edge_feature_info)}"
             )
-        # For heterogeneous case, the HeteroData object will never have the x or edge attr for a given entity type, even if we set it to None,
+        # For heterogeneous case, the HeteroData object will never have the x or edge attr for a given entity type if doesn't exist, even if we set it to None,
         # thus we should check if it hasattr to see they are present
-        if node_feature_dim:
-            for node_type, feat_dim in node_feature_dim.items():
+        if node_feature_info:
+            for node_type, feature_info in node_feature_info.items():
                 if not hasattr(data[node_type], "x"):
                     data[node_type].x = torch.empty(
-                        (0, feat_dim), dtype=torch.float32
-                    ).to(device)
-        if edge_feature_dim:
-            for edge_type, feat_dim in edge_feature_dim.items():
+                        (0, feature_info.dim), dtype=feature_info.dtype, device=device
+                    )
+        if edge_feature_info:
+            for edge_type, feature_info in edge_feature_info.items():
                 if not hasattr(data[edge_type], "edge_attr"):
                     data[edge_type].edge_attr = torch.empty(
-                        (0, feat_dim), dtype=torch.float32
-                    ).to(device)
+                        (0, feature_info.dim), dtype=feature_info.dtype, device=device
+                    )
     else:
         raise ValueError(
             f"Expected provided data object to be of type `Data` or `HeteroData`, got {type(data)}"

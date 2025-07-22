@@ -32,7 +32,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
     TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeatureInfo
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -88,26 +88,33 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 partitioner_class=DistPartitioner,
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=torch.Tensor,
-                expected_node_feature_dim=2,
-                expected_edge_feature_dim=2,
+                expected_node_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
+                expected_edge_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
             ),
             param(
                 "Test building homogeneous Dataset for range-based partitioning",
                 partitioner_class=DistRangePartitioner,
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=torch.Tensor,
-                expected_node_feature_dim=2,
-                expected_edge_feature_dim=2,
+                expected_node_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
+                expected_edge_feature_dim=FeatureInfo(dim=2, dtype=torch.float32),
             ),
             param(
                 "Test building heterogeneous dataset for tensor-based partitioning",
                 partitioner_class=DistPartitioner,
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=dict,
-                expected_node_feature_dim={NodeType("user"): 2, NodeType("story"): 2},
+                expected_node_feature_dim={
+                    NodeType("user"): 2,
+                    NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
+                },
                 expected_edge_feature_dim={
-                    EdgeType(NodeType("user"), Relation("to"), NodeType("story")): 2,
-                    EdgeType(NodeType("story"), Relation("to"), NodeType("user")): 2,
+                    EdgeType(
+                        NodeType("user"), Relation("to"), NodeType("story")
+                    ): FeatureInfo(dim=2, dtype=torch.float32),
+                    EdgeType(
+                        NodeType("story"), Relation("to"), NodeType("user")
+                    ): FeatureInfo(dim=2, dtype=torch.float32),
                 },
             ),
             param(
@@ -115,10 +122,17 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 partitioner_class=DistRangePartitioner,
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=dict,
-                expected_node_feature_dim={NodeType("user"): 2, NodeType("story"): 2},
+                expected_node_feature_dim={
+                    NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
+                    NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
+                },
                 expected_edge_feature_dim={
-                    EdgeType(NodeType("user"), Relation("to"), NodeType("story")): 2,
-                    EdgeType(NodeType("story"), Relation("to"), NodeType("user")): 2,
+                    EdgeType(
+                        NodeType("user"), Relation("to"), NodeType("story")
+                    ): FeatureInfo(dim=2, dtype=torch.float32),
+                    EdgeType(
+                        NodeType("story"), Relation("to"), NodeType("user")
+                    ): FeatureInfo(dim=2, dtype=torch.float32),
                 },
             ),
         ]
@@ -129,8 +143,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
         partitioner_class: Type[DistPartitioner],
         mocked_dataset_info: MockedDatasetInfo,
         expected_node_id_type: Type,
-        expected_node_feature_dim: Union[int, dict[NodeType, torch.Tensor]],
-        expected_edge_feature_dim: Union[int, dict[EdgeType, torch.Tensor]],
+        expected_node_feature_info: Union[FeatureInfo, dict[NodeType, FeatureInfo]],
+        expected_edge_feature_info: Union[FeatureInfo, dict[EdgeType, FeatureInfo]],
     ):
         port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
@@ -146,8 +160,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertIsNone(dataset.val_node_ids)
         self.assertIsNone(dataset.test_node_ids)
         self.assertIsInstance(dataset.node_ids, expected_node_id_type)
-        self.assertEqual(dataset.node_feature_dim, expected_node_feature_dim)
-        self.assertEqual(dataset.edge_feature_dim, expected_edge_feature_dim)
+        self.assertEqual(dataset.node_feature_info, expected_node_feature_info)
+        self.assertEqual(dataset.edge_feature_info, expected_edge_feature_info)
 
     def test_build_and_split_dataset_homogeneous(self):
         port = gigl.distributed.utils.get_free_port()

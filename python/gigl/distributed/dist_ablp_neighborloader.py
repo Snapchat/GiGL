@@ -322,9 +322,8 @@ class DistABLPLoader(DistLoader):
             local_process_world_size=local_world_size,
         )
 
-        self._node_feature_dim = dataset.node_feature_dim
-
-        self._edge_feature_dim = dataset.edge_feature_dim
+        self._node_feature_info = dataset.node_feature_info
+        self._edge_feature_info = dataset.edge_feature_info
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
@@ -582,8 +581,8 @@ class DistABLPLoader(DistLoader):
         data = super()._collate_fn(msg)
         data = set_missing_features(
             data=data,
-            node_feature_dim=self._node_feature_dim,
-            edge_feature_dim=self._edge_feature_dim,
+            node_feature_info=self._node_feature_info,
+            edge_feature_info=self._edge_feature_info,
             device=self.to_device,
         )
         if isinstance(data, HeteroData):
