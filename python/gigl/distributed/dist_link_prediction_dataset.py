@@ -240,12 +240,18 @@ class DistLinkPredictionDataset(DistDataset):
     def node_feature_info(
         self,
     ) -> Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]:
+        """
+        Contains information about the dimension and dtype for the node features in the graph
+        """
         return self._node_feature_info
 
     @property
     def edge_feature_info(
         self,
     ) -> Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]:
+        """
+        Contains information about the dimension and dtype for the edge features in the graph
+        """
         return self._edge_feature_info
 
     @property
@@ -662,9 +668,10 @@ class DistLinkPredictionDataset(DistDataset):
                 else:
                     raise ValueError(f"We should not get here, whoops!")
             self._node_ids = node_ids_by_node_type
-            self._num_train = num_train_by_node_type if splits is not None else None
-            self._num_val = num_val_by_node_type if splits is not None else None
-            self._num_test = num_test_by_node_type if splits is not None else None
+            if splits is not None:
+                self._num_train = num_train_by_node_type
+                self._num_val = num_val_by_node_type
+                self._num_test = num_test_by_node_type
 
         logger.info(
             f"Rank {self._rank} finished building dataset class from partitioned graph in {time.time() - start_time:.2f} seconds. Waiting for other ranks to finish ..."
