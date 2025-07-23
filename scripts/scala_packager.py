@@ -46,16 +46,20 @@ class ScalaPackager:
         scala_folder_path = (
             pathlib.Path(__file__).parent.resolve().parent / scala_folder_name
         )
-        build_scala_jar_command = (
-            f"cd {scala_folder_path} && sbt {component.value}/assembly"
-        )
+
+        # Both the `bash -c``and `if [-f ~/.profile ]; then . source ~/.profile; fi;`
+        # are needed so this can run in juypter notebooks on jupyterlab.
+        # Without this, the sbt command will not be found.
+        # I'm not sure why, but jupyterlab will launch new processes as `sh` which doesn't
+        # have the right path. *and* just running bash does not set the path!
+        build_scala_jar_command = f"bash -c ' if [ -f ~/.profile ]; then . source ~/.profile; fi; cd {scala_folder_path} && sbt {component.value}/assembly'"
         logger.info(
             f"Building jar for {component.name} with: {build_scala_jar_command}"
         )
         process = subprocess.Popen(
             build_scala_jar_command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             shell=True,
         )
 
