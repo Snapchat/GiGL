@@ -56,7 +56,7 @@ RUN echo "conda activate gigl" >> ~/.bashrc
 COPY tools tools/gigl/tools
 COPY dep_vars.env tools/gigl/dep_vars.env
 COPY requirements tools/gigl/requirements
-
+COPY python/gigl/scripts tools/gigl/python/gigl/scripts
 RUN pip install --upgrade pip
 RUN cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
 RUN cd tools/gigl && bash ./requirements/install_scala_deps.sh
