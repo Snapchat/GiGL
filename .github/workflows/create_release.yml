@@ -21,72 +21,73 @@ on:
 
 jobs:
   # First job: Bump version and create release branch
-  # bump_version:
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #     pull-requests: write
-  #     id-token: write
-  #   outputs:
-  #     current_version: ${{ steps.get_version.outputs.current_version }}
-  #     new_version: ${{ steps.get_new_version.outputs.new_version }}
-  #     release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
+  bump_version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    outputs:
+      current_version: ${{ steps.get_version.outputs.current_version }}
+      new_version: ${{ steps.get_new_version.outputs.new_version }}
+      release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
 
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-  #   - name: Setup Machine for bumping version
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
-  #     with:
-  #       setup_gcloud: "true"
-  #       install_dev_deps: "true"
-  #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+    - name: Setup Machine for bumping version
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      with:
+        setup_gcloud: "true"
+        install_dev_deps: "true"
+        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
-  #   # Capture current version before bumping
-  #   - name: Get current version
-  #     id: get_version
-  #     run: |
-  #       CURRENT_VERSION=$(python -m scripts.bump_version --get_current_version)
-  #       echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-  #       echo "Current version: $CURRENT_VERSION"
+    # Capture current version before bumping
+    - name: Get current version
+      id: get_version
+      run: |
+        CURRENT_VERSION=$(python -m scripts.bump_version --get_current_version)
+        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
 
-  #   # Determine bump type based on trigger method
-  #   - name: Set workflow variables
-  #     id: set_vars
-  #     run: |
-  #       if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-  #         echo "bump_type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
-  #       else
-  #         echo "bump_type=nightly" >> $GITHUB_OUTPUT
-  #       fi
+    # Determine bump type based on trigger method
+    - name: Set workflow variables
+      id: set_vars
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "bump_type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+        else
+          echo "bump_type=nightly" >> $GITHUB_OUTPUT
+        fi
 
-  #   # Perform the version bump
-  #   - name: Bump version
-  #     run: |
-  #       python -m scripts.bump_version \
-  #         --bump_type ${{ steps.set_vars.outputs.bump_type }} \
-  #         --project ${{ secrets.GCP_PROJECT_ID }}
+    # Perform the version bump
+    - name: Bump version
+      run: |
+        python -m scripts.bump_version \
+          --bump_type ${{ steps.set_vars.outputs.bump_type }} \
+          --project ${{ secrets.GCP_PROJECT_ID }}
 
-  #   # Capture new version and create release branch name
-  #   - name: Get new version
-  #     id: get_new_version
-  #     run: |
-  #       NEW_VERSION=$(python -m scripts.bump_version --get_current_version)
-  #       echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-  #       echo "New version: $NEW_VERSION"
-  #       echo "release_branch_name=release/v${NEW_VERSION}" >> $GITHUB_OUTPUT
-  #       echo "Release branch name: release/v${NEW_VERSION}"
+    # Capture new version and create release branch name
+    - name: Get new version
+      id: get_new_version
+      run: |
+        NEW_VERSION=$(python -m scripts.bump_version --get_current_version)
+        RELEASE_BRANCH_NAME="release/v${NEW_VERSION}"
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "release_branch_name=$RELEASE_BRANCH_NAME" >> $GITHUB_OUTPUT
+        echo "New version: $NEW_VERSION"
+        echo "Release branch name: $RELEASE_BRANCH_NAME"
 
-  #   # Commit version changes to new release branch
-  #   - name: Commit and push version bump
-  #     uses: ./.github/actions/commit-and-push
-  #     with:
-  #       commit_message: "[AUTOMATED] Bumped version to v${{ steps.get_new_version.outputs.new_version }}"
-  #       github_token: ${{ secrets.GITHUB_TOKEN }}
-  #       to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
+    # Commit version changes to new release branch
+    - name: Commit and push version bump
+      uses: ./.github/actions/commit-and-push
+      with:
+        commit_message: "[AUTOMATED] Bumped version to v${{ steps.get_new_version.outputs.new_version }}"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
 
   release_gigl_kfp_pipeline:
@@ -120,150 +121,18 @@ jobs:
             DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA \
             DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU \
             DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU \
-            compiled_pipeline_path="gs://gigl-public/releases/gigl-pipeline-2.yaml" \
+            compiled_pipeline_path=\$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH \
             compile_gigl_kubeflow_pipeline
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
-  # # Build and release CPU source images
-  # release_cpu_src_images:
-  #   needs: bump_version
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #     pull-requests: write
-  #     id-token: write
-
-  #   steps:
-  #   - name: Checkout release branch
-  #     uses: actions/checkout@v4
-  #     with:
-  #       ref: ${{ needs.bump_version.outputs.release_branch_name }}
-
-  #   - name: Setup Machine for release
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
-  #     with:
-  #       setup_gcloud: "true"
-  #       install_dev_deps: "false"
-  #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
-  #   - name: Release CPU src images
-  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
-  #     with:
-  #       cmd: "python -m scripts.release --release_type='cpu_src_images'"
-  #       service_account:  ${{ secrets.gcp_service_account_email }}
-  #       project:  ${{ secrets.gcp_project_id }}
-
-
-  # # Build and release CUDA source images
-  # release_cuda_src_images:
-  #   needs: bump_version
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #     pull-requests: write
-  #     id-token: write
-
-  #   steps:
-  #   - name: Checkout release branch
-  #     uses: actions/checkout@v4
-  #     with:
-  #       ref: ${{ needs.bump_version.outputs.release_branch_name }}
-  #   - name: Setup Machine for release
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
-  #     with:
-  #       setup_gcloud: "true"
-  #       install_dev_deps: "false"
-  #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
-  #   - name: Release CUDA src images
-  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
-  #     with:
-  #       cmd: "python -m scripts.release --release_type='cuda_src_images'"
-  #       service_account:  ${{ secrets.gcp_service_account_email }}
-  #       project:  ${{ secrets.gcp_project_id }}
-
-
-  # # Build and release development container images
-  # release_dev_images:
-  #   needs: bump_version
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #     pull-requests: write
-  #     id-token: write
-
-  #   steps:
-  #   - name: Checkout release branch
-  #     uses: actions/checkout@v4
-  #     with:
-  #       ref: ${{ needs.bump_version.outputs.release_branch_name }}
-
-  #   - name: Setup Machine for release
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
-  #     with:
-  #       setup_gcloud: "true"
-  #       install_dev_deps: "false"
-  #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
-  #   - name: Release Dev images
-  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
-  #     with:
-  #       cmd: |
-  #         # TODO: (svij) Enable https://github.com/Snapchat/GiGL/pull/199
-  #         # bash ./requirements/install_scala_deps.sh --download-only
-  #         python -m scripts.release --release_type='dev_images'
-  #       service_account:  ${{ secrets.gcp_service_account_email }}
-  #       project:  ${{ secrets.gcp_project_id }}
-
-
-  # # Release Kubeflow Pipeline components
-  # release_kfp_pipeline:
-  #   needs: bump_version
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #     pull-requests: write
-  #     id-token: write
-
-  #   steps:
-  #   - name: Checkout release branch
-  #     uses: actions/checkout@v4
-  #     with:
-  #       ref: ${{ needs.bump_version.outputs.release_branch_name }}
-
-  #   - name: Setup Machine for release
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
-  #     with:
-  #       setup_gcloud: "true"
-  #       install_dev_deps: "false"
-  #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
-  #   - name: Release KFP pipeline
-  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
-  #     with:
-  #       cmd: "python -m scripts.release --release_type='kfp_pipeline'"
-  #       service_account:  ${{ secrets.gcp_service_account_email }}
-  #       project:  ${{ secrets.gcp_project_id }}
-
-  # # TODO: (svij) Release the wheel
+  # TODO: (svij) Also release the dev image
+  # TODO: (svij) Move release of the wheel workflow from release.yml to here
 
   # Final job: Create PR and tag after all releases complete
   create_release_pr:
     needs:
       - release_gigl_kfp_pipeline
-      # - release_cpu_src_images
-      # - release_cuda_src_images
-      # - release_dev_images
-      # - release_kfp_pipeline
     runs-on: ubuntu-latest
     permissions:
       contents: write

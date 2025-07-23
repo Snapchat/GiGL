@@ -81,4 +81,7 @@ DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU: Final[str] = _make_file_vars[
 DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE: Final[str] = _make_file_vars[
     "DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE"
 ]
+DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH: Final[str] = _make_file_vars[
+    "DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH"
+]
 # ===============================================================================================

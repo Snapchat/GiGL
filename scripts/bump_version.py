@@ -20,6 +20,7 @@ import re
 from typing import Literal, Optional
 
 from gigl.common.constants import GIGL_ROOT_DIR, PATH_GIGL_PKG_INIT_FILE
+from gigl.env.dep_constants import GIGL_PUBLIC_BUCKET_NAME
 
 
 def get_current_version() -> Optional[str]:
@@ -46,6 +47,7 @@ def update_dep_vars_env(
     cpu_image_name: str,
     dataflow_image_name: str,
     dev_workbench_image_name: str,
+    kfp_pipeline_path: str,
 ) -> None:
     print(
         f"Updating dep_vars.env with {cuda_image_name}, {cpu_image_name}, {dataflow_image_name}"
@@ -73,6 +75,11 @@ def update_dep_vars_env(
     content = re.sub(
         r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=.*",
         r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=" + dev_workbench_image_name,
+        content,
+    )
+    content = re.sub(
+        r"DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH=.*",
+        r"DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH=" + kfp_pipeline_path,
         content,
     )
 
@@ -135,12 +142,14 @@ def bump_version(
     cpu_image_name = f"{base_image_registry}/src-cpu:{new_version}"
     dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
     dev_workbench_image_name = f"{base_image_registry}/gigl-dev-workbench:{new_version}"
+    kfp_pipeline_path = f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/gigl-pipeline-{new_version}.yaml"
 
     update_dep_vars_env(
         cuda_image_name=cuda_image_name,
         cpu_image_name=cpu_image_name,
         dataflow_image_name=dataflow_image_name,
         dev_workbench_image_name=dev_workbench_image_name,
+        kfp_pipeline_path=kfp_pipeline_path,
     )
     update_version(version=new_version)
     update_pyproject(version=new_version)
