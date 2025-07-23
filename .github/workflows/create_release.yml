@@ -2,11 +2,9 @@ name: Create Release
 
 # This workflow can be triggered in two ways:
 # 1. Manual dispatch: Choose bump type and project
-# 2. Push to main/release branches: Automatically uses nightly build
+# 2. TODO: (svij)Cron trigger: Nightly build
 
 on:
-  # TODO: ADD CRON TRIGGER FOR NIGHTLY RELEASES
-  # Workflow dispatch is used for actual releases
   workflow_dispatch:
     inputs:
       bump_type:
@@ -19,7 +17,7 @@ on:
           - minor
           - patch
           - nightly
-  push: # TODO: remove before merging. For testing purposes.
+  push: # TODO: (svij) remove before merging. For testing purposes.
 
 jobs:
   # First job: Bump version and create release branch
