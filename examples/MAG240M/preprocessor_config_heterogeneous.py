@@ -38,7 +38,8 @@ logger = Logger()
 class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
     """
     Any data preprocessor config needs to inherit from DataPreprocessorConfig and implement the necessary methods:
-    - prepare_for_pipeline: This method is called at the very start of the pipeline. Can be used to prepare any data
+    - prepare_for_pipeline: This method is called at the very start of the pipeline. Can be used to prepare any data,
+    such as running BigQuery queries, or kicking of dataflow pipelines etc. to generate node/edge feature tables.
         We will use this to prepare relevant node and edge BQ tables from raw MAG240M tables that we have created using
         fetch_data.ipynb
     - get_nodes_preprocessing_spec: This method returns a dictionary of NodeDataReference to NodeDataPreprocessingSpec
@@ -54,10 +55,10 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         self._resource_config: GiglResourceConfigWrapper = get_resource_config()
 
         """
-        For this experiment we will use the heterogeneous MAG240M dataset with the `paper`, `author`, and `institution` node types and the `paper_cite_paper`,
+        For this experiment we will use the heterogeneous MAG240M dataset with the `paper`, `author`, and `institution` node types, and the `paper_cite_paper`,
         `author_writes_paper`, and `institution_affiliated_author` edge types.
 
-        |  Node Type  | # raw nodes | # raw features |                           Notes                          |
+        |  Node Type  | # raw nodes | # raw features |                         Features                         |
         |-------------| ----------- | -------------- | ---------------------------------------------------------|
         | Paper       | 121_751_666 | 768            |  Provided MAG240M features from RoBERTa sentence decoder |
         | Author      | 122_383_112 | 768            |  Average of neighboring paper features                   |
