@@ -153,32 +153,35 @@ jobs:
 
     # Create PR to merge release branch back to main
     - name: Create a new PR
-      # Nightly releases are not released to GitHub
-      # TODO: (svij) Uncomment this when nightly releases are ready
-      # if: ${{ inputs.bump_type != 'nightly' }}
       shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         gh pr create --title "Release v${{ needs.bump_version.outputs.new_version }}" \
-        --body " This PR bumps the version from \`${{ needs.bump_version.outputs.current_version }}\` to \`${{ needs.bump_version.outputs.new_version }}\`.
-        --- \
-        The version tag was created here: https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }} \
-        Please create a new release on GitHub from this tag. \
-        --- \
-        --- \
+        --body "## Release v${{ needs.bump_version.outputs.new_version }}
+
+        This updates and releases GiG version from \`${{ needs.bump_version.outputs.current_version }}\` to \`${{ needs.bump_version.outputs.new_version }}\`.
+
+        ### Info:
+        - **Bump Type:** ${{ needs.bump_version.outputs.bump_type }}
+        - **Trigger:** ${{ github.event_name }}
+        - The version tag was created here: https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}.
+        - See `dep_vars.env` for the released paths to KFP pipeline, and docker images.
+        ### What's Next:
+        Please create a new release from the [tag](https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}).
+
+        ---
         *This PR was automatically created by the Create Release workflow.*" \
-        --base main --head ${{ needs.bump_version.outputs.release_branch_name }}
+        --base main --head release/v${{ needs.bump_version.outputs.new_version }}
 
-        PR_URL=$(gh pr view ${{ needs.bump_version.outputs.release_branch_name }} --json url --jq '.url')
+        PR_URL=$(gh pr view release/v${{ needs.bump_version.outputs.new_version }} --json url --jq '.url')
         echo "::notice title=PR URL::$PR_URL"
-
 
     # Display summary information about the release
     - name: Output release information
       run: |
-        echo "::notice title=Release PR Created::Release branch created: ${{ needs.bump_version.outputs.release_branch_name }}"
+        echo "::notice title=Release PR Created::Release PR created: ${{ needs.bump_version.outputs.release_branch_name }}"
         echo "::notice title=New Version::v${{ needs.bump_version.outputs.new_version }}"
         echo "::notice title=Version Tag::v${{ needs.bump_version.outputs.new_version }}"
-        echo "::notice title=Bump Type::${{ inputs.bump_type }}"
+        echo "::notice title=Bump Type::${{ needs.bump_version.outputs.bump_type }}"
         echo "::notice title=Trigger::${{ github.event_name }}"
