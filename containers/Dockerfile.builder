@@ -53,12 +53,12 @@ RUN echo "conda activate gigl" >> ~/.bashrc
 # to avoid re-downloading the dependencies as some of them require GCP credentials.
 # and, mounting GCP credentials to build time can be a pain and more prone to
 # accidental leaking of credentials.
-COPY tools tools/gigl/tools
-COPY dep_vars.env tools/gigl/dep_vars.env
-COPY requirements tools/gigl/requirements
-COPY python/gigl/scripts tools/gigl/python/gigl/scripts
+COPY tools gigl_deps/tools
+COPY dep_vars.env gigl_deps/dep_vars.env
+COPY requirements gigl_deps/requirements
+COPY python/gigl/scripts gigl_deps/python/gigl/scripts
 RUN pip install --upgrade pip
-RUN cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
-RUN cd tools/gigl && bash ./requirements/install_scala_deps.sh
+RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
+RUN cd gigl_deps && bash ./requirements/install_scala_deps.sh
 
 CMD [ "/bin/bash" ]
