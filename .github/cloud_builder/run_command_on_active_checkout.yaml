@@ -27,6 +27,8 @@ steps:
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Install GiGL
         pip install -e ./python/
+        # symlink necessary tooling saved in the builder image
+        ln -s /tools/gigl/tools/ ./tools/
 
         echo "Finished setting up environment."
         echo "========================="

@@ -116,8 +116,12 @@ rm "$SCALAPB_0_11_11_LOCAL_PATH"
 unzip -o "$SCALAPB_0_11_14_LOCAL_PATH" -d "$TOOLS_SCALAPBC_DIR"
 rm "$SCALAPB_0_11_14_LOCAL_PATH"
 
+# Remove SparkR, as it contains GPL licensed code - even though Spark is Apache licensed
+# We don't use this anyways.
+rm -rf "$TOOLS_SCALA_DIR/spark-3.1.3-bin-hadoop3.2/R"
+rm -rf "$TOOLS_SCALA_DIR/spark-3.5.0-bin-hadoop3/R"
+
 # if running into the following error when running unittest locally
 # `java.lang.NoClassDefFoundError: Could not initialize class org.apache.spark.storage.StorageUtils$`
 # export JAVA_OPTS='--add-exports java.base/sun.nio.ch=ALL-UNNAMED'
-
 echo "Finished Scala environment installation"
