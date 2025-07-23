@@ -22,6 +22,7 @@ on:
   push: # TODO: remove before merging. For testing purposes.
 
 jobs:
+  # First job: Bump version and create release branch
   bump_version:
     runs-on: ubuntu-latest
     permissions:
@@ -46,6 +47,7 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
+    # Capture current version before bumping
     - name: Get current version
       id: get_version
       run: |
@@ -53,6 +55,7 @@ jobs:
         echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         echo "Current version: $CURRENT_VERSION"
 
+    # Determine bump type based on trigger method
     - name: Set workflow variables
       id: set_vars
       run: |
@@ -62,12 +65,14 @@ jobs:
           echo "bump_type=nightly" >> $GITHUB_OUTPUT
         fi
 
+    # Perform the version bump
     - name: Bump version
       run: |
         python -m scripts.bump_version \
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
           --project ${{ secrets.GCP_PROJECT_ID }}
 
+    # Capture new version and create release branch name
     - name: Get new version
       id: get_new_version
       run: |
@@ -77,6 +82,7 @@ jobs:
         echo "release_branch_name=release/v${NEW_VERSION}" >> $GITHUB_OUTPUT
         echo "Release branch name: release/v${NEW_VERSION}"
 
+    # Commit version changes to new release branch
     - name: Commit and push version bump
       uses: ./.github/actions/commit-and-push
       with:
@@ -85,6 +91,7 @@ jobs:
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
 
+  # Build and release CPU source images
   release_cpu_src_images:
     needs: bump_version
     runs-on: ubuntu-latest
@@ -116,8 +123,7 @@ jobs:
         project:  ${{ secrets.gcp_project_id }}
 
 
-
-
+  # Build and release CUDA source images
   release_cuda_src_images:
     needs: bump_version
     runs-on: ubuntu-latest
@@ -148,6 +154,7 @@ jobs:
         project:  ${{ secrets.gcp_project_id }}
 
 
+  # Build and release development container images
   release_dev_images:
     needs: bump_version
     runs-on: ubuntu-latest
@@ -182,6 +189,7 @@ jobs:
         project:  ${{ secrets.gcp_project_id }}
 
 
+  # Release Kubeflow Pipeline components
   release_kfp_pipeline:
     needs: bump_version
     runs-on: ubuntu-latest
@@ -214,6 +222,7 @@ jobs:
 
   # TODO: (svij) Release the wheel
 
+  # Final job: Create PR and tag after all releases complete
   create_release_pr:
     needs:
       - release_cpu_src_images
@@ -232,11 +241,13 @@ jobs:
       with:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
+    # Create and push version tag
     - name: Create version tag
       run: |
         git tag "v${{ needs.bump_version.outputs.new_version }}"
         git push origin "v${{ needs.bump_version.outputs.new_version }}"
 
+    # Create PR to merge release branch back to main
     - name: Create a new PR
       # Nightly releases are not released to GitHub
       # TODO: (svij) Uncomment this when nightly releases are ready
@@ -259,6 +270,7 @@ jobs:
         echo "::notice title=PR URL::$PR_URL"
 
 
+    # Display summary information about the release
     - name: Output release information
       run: |
         echo "::notice title=Release PR Created::Release branch created: ${{ needs.bump_version.outputs.release_branch_name }}"
