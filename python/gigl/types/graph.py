@@ -91,6 +91,14 @@ class PartitionOutput:
     ]
 
 
+@dataclass(frozen=True)
+class FeatureInfo:
+    """Data class containing information about the feature dimension and feature data type for a particular feature"""
+
+    dim: int
+    dtype: torch.dtype
+
+
 def _get_label_edges(
     labeled_edge_index: torch.Tensor,
     edge_dir: Literal["in", "out"],
