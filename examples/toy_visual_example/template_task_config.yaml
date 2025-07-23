@@ -47,7 +47,7 @@ trainerConfig:
     val_every_num_batches: '10'
     num_val_batches: '10'
     num_test_batches: '10'
-    early_stop_patience: '4'
+    early_stop_patience: '1'
     main_sample_batch_size: '4'
     random_negative_sample_batch_size: '2'
     random_negative_sample_batch_size_for_evaluation: '2'
