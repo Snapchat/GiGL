@@ -9,8 +9,7 @@ ARG PYTHON_VERSION="3.9"
 RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
 
 ENV PATH=/opt/micromamba/envs/${ENVIRONMENT_NAME}/bin:$PATH
-# RUN micromamba init bash
-# RUN echo "conda activate ${ENVIRONMENT_NAME}" >> ~/.bashrc
+
 RUN micromamba install -c conda-forge pip -y
 RUN pip install ipykernel
 
@@ -23,7 +22,7 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 # Point `conda` to `micromamba` as our install scripts still use conda
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
-COPY . .
-RUN make install_dev_deps
+COPY . /home/jupyter/gigl
+RUN cd /home/jupyter/gigl && make install_dev_deps
 
 CMD ["/run_jupyter.sh"]

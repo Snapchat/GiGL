@@ -5,6 +5,8 @@ name: Create Release
 # 2. Push to main/release branches: Automatically uses nightly build
 
 on:
+  # TODO: ADD CRON TRIGGER FOR NIGHTLY RELEASES
+  # Workflow dispatch is used for actual releases
   workflow_dispatch:
     inputs:
       bump_type:
@@ -17,13 +19,10 @@ on:
           - minor
           - patch
           - nightly
-  push:
-    # branches:
-    #   - main
-    #   - 'release/*'
+  push: # TODO: remove before merging. For testing purposes.
 
 jobs:
-  create_release:
+  bump_version:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -38,7 +37,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup Machine for release
+    - name: Setup Machine for bumping version
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
@@ -46,13 +45,6 @@ jobs:
         gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
-    # - name: Setup Docker Buildx
-    #   run: |
-    #     docker buildx create --driver=docker-container --use
-    #     sudo apt-get install qemu-user-static
-    #     docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-    #     gcloud auth configure-docker us-central1-docker.pkg.dev
 
     - name: Get current version
       id: get_version
@@ -70,7 +62,7 @@ jobs:
           echo "bump_type=nightly" >> $GITHUB_OUTPUT
         fi
 
-    - name: Run versioning and release
+    - name: Bump version
       run: |
         python -m scripts.bump_version \
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
@@ -85,16 +77,16 @@ jobs:
         echo "release_branch_name=release/v${NEW_VERSION}" >> $GITHUB_OUTPUT
         echo "Release branch name: release/v${NEW_VERSION}"
 
-    - name: Commit and Push Dep Vars
+    - name: Commit and push version bump
       uses: ./.github/actions/commit-and-push
       with:
-        commit_message: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
+        commit_message: "[AUTOMATED] Bumped version to v${{ steps.get_new_version.outputs.new_version }}"
         github_token: ${{ secrets.GITHUB_TOKEN }}
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
 
   release_cpu_src_images:
-    needs: create_release
+    needs: bump_version
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -102,10 +94,10 @@ jobs:
       id-token: write
 
     steps:
-    - name: Checkout code
+    - name: Checkout release branch
       uses: actions/checkout@v4
       with:
-        ref: ${{ needs.create_release.outputs.release_branch_name }}
+        ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
     - name: Setup Machine for release
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
@@ -127,7 +119,7 @@ jobs:
 
 
   release_cuda_src_images:
-    needs: create_release
+    needs: bump_version
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -135,10 +127,10 @@ jobs:
       id-token: write
 
     steps:
-    - name: Checkout code
+    - name: Checkout release branch
       uses: actions/checkout@v4
       with:
-        ref: ${{ needs.create_release.outputs.release_branch_name }}
+        ref: ${{ needs.bump_version.outputs.release_branch_name }}
     - name: Setup Machine for release
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
@@ -157,7 +149,7 @@ jobs:
 
 
   release_dev_images:
-    needs: create_release
+    needs: bump_version
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -165,10 +157,10 @@ jobs:
       id-token: write
 
     steps:
-    - name: Checkout code
+    - name: Checkout release branch
       uses: actions/checkout@v4
       with:
-        ref: ${{ needs.create_release.outputs.release_branch_name }}
+        ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
     - name: Setup Machine for release
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
@@ -182,13 +174,16 @@ jobs:
     - name: Release Dev images
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
-        cmd: "python -m scripts.release --release_type='dev_images'"
+        cmd: |
+          # TODO: (svij) Enable https://github.com/Snapchat/GiGL/pull/199
+          # bash ./requirements/install_scala_deps.sh --download-only
+          python -m scripts.release --release_type='dev_images'
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
 
   release_kfp_pipeline:
-    needs: create_release
+    needs: bump_version
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -196,10 +191,10 @@ jobs:
       id-token: write
 
     steps:
-    - name: Checkout code
+    - name: Checkout release branch
       uses: actions/checkout@v4
       with:
-        ref: ${{ needs.create_release.outputs.release_branch_name }}
+        ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
     - name: Setup Machine for release
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
@@ -217,9 +212,10 @@ jobs:
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
+  # TODO: (svij) Release the wheel
+
   create_release_pr:
     needs:
-      - create_release
       - release_cpu_src_images
       - release_cuda_src_images
       - release_dev_images
@@ -231,53 +227,42 @@ jobs:
       id-token: write
 
     steps:
-    - name: Checkout code
+    - name: Checkout release branch
       uses: actions/checkout@v4
       with:
-        ref: ${{ needs.create_release.outputs.release_branch_name }}
+        ref: ${{ needs.bump_version.outputs.release_branch_name }}
+
+    - name: Create version tag
+      run: |
+        git tag "v${{ needs.bump_version.outputs.new_version }}"
+        git push origin "v${{ needs.bump_version.outputs.new_version }}"
 
     - name: Create a new PR
+      # Nightly releases are not released to GitHub
+      # TODO: (svij) Uncomment this when nightly releases are ready
+      # if: ${{ inputs.bump_type != 'nightly' }}
       shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh pr create --title "Release v${{ needs.create_release.outputs.new_version }}" \
-        --body "## Release v${{ needs.create_release.outputs.new_version }}
-
-        This PR contains the version bump from \`${{ needs.create_release.outputs.current_version }}\` to \`${{ needs.create_release.outputs.new_version }}\`.
-
-        **Bump Type:** ${{ needs.create_release.outputs.bump_type }}
-        **GCP Project:** ${{ secrets.GCP_PROJECT_ID }}
-        **Trigger:** ${{ github.event_name }}
-
-        ### Changes Made:
-        - Updated version in \`python/gigl/__init__.py\`
-        - Updated version in \`python/pyproject.toml\`
-        - Updated Docker image references in \`dep_vars.env\`
-        - Built and pushed new Docker images for CUDA, CPU, and Dataflow
-        - Compiled and uploaded KFP pipeline to GCS
-
-        ### What's Next:
-        Please create a new release from this branch in the [GitHub Releases](https://github.com/snapchat/gigl/releases) page.
-
-        ---
+        gh pr create --title "Release v${{ needs.bump_version.outputs.new_version }}" \
+        --body " This PR bumps the version from \`${{ needs.bump_version.outputs.current_version }}\` to \`${{ needs.bump_version.outputs.new_version }}\`.
+        --- \
+        The version tag was created here: https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }} \
+        Please create a new release on GitHub from this tag. \
+        --- \
+        --- \
         *This PR was automatically created by the Create Release workflow.*" \
-        --base main --head ${{ needs.create_release.outputs.release_branch_name }}
+        --base main --head ${{ needs.bump_version.outputs.release_branch_name }}
 
-        PR_URL=$(gh pr view ${{ needs.create_release.outputs.release_branch_name }} --json url --jq '.url')
+        PR_URL=$(gh pr view ${{ needs.bump_version.outputs.release_branch_name }} --json url --jq '.url')
         echo "::notice title=PR URL::$PR_URL"
-
-
-    - name: Create version tag
-      run: |
-        git tag "v${{ needs.create_release.outputs.new_version }}"
-        git push origin "v${{ needs.create_release.outputs.new_version }}"
 
 
     - name: Output release information
       run: |
-        echo "::notice title=Release PR Created::Release branch created: ${{ needs.create_release.outputs.release_branch_name }}"
-        echo "::notice title=New Version::v${{ needs.create_release.outputs.new_version }}"
-        echo "::notice title=Version Tag::v${{ needs.create_release.outputs.new_version }}"
+        echo "::notice title=Release PR Created::Release branch created: ${{ needs.bump_version.outputs.release_branch_name }}"
+        echo "::notice title=New Version::v${{ needs.bump_version.outputs.new_version }}"
+        echo "::notice title=Version Tag::v${{ needs.bump_version.outputs.new_version }}"
         echo "::notice title=Bump Type::${{ inputs.bump_type }}"
         echo "::notice title=Trigger::${{ github.event_name }}"
