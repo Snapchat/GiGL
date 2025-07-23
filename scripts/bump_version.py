@@ -19,10 +19,7 @@ import datetime
 import re
 from typing import Literal, Optional
 
-from gigl.common import GcsUri
 from gigl.common.constants import GIGL_ROOT_DIR, PATH_GIGL_PKG_INIT_FILE
-from gigl.env.dep_constants import GIGL_PUBLIC_BUCKET_NAME
-from gigl.orchestration.kubeflow.runner import KfpOrchestrator
 
 
 def get_current_version() -> Optional[str]:
@@ -97,7 +94,11 @@ def get_new_version(
 ) -> str:
     version_parts = curr_version.split(".")
     # We may have dev suffixes, so we only unpack first three parts
-    major, minor, patch = int(version_parts[0]), int(version_parts[1]), int(version_parts[2])
+    major, minor, patch = (
+        int(version_parts[0]),
+        int(version_parts[1]),
+        int(version_parts[2]),
+    )
     if bump_type == "major":
         major += 1
         minor, patch = 0, 0
