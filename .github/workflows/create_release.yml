@@ -91,7 +91,7 @@ jobs:
 
 
   release_gigl_kfp_pipeline:
-    # needs: bump_version
+    needs: bump_version
     runs-on: ubuntu-latest
     permissions:
       contents: write
