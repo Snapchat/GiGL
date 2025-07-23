@@ -31,6 +31,7 @@ jobs:
       current_version: ${{ steps.get_version.outputs.current_version }}
       new_version: ${{ steps.get_new_version.outputs.new_version }}
       release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
+      bump_type: ${{ steps.set_vars.outputs.bump_type }}
 
     steps:
     - name: Checkout code
@@ -132,6 +133,7 @@ jobs:
   # Final job: Create PR and tag after all releases complete
   create_release_pr:
     needs:
+      - bump_version
       - release_gigl_kfp_pipeline
     runs-on: ubuntu-latest
     permissions:
