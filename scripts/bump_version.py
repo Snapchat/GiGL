@@ -23,11 +23,6 @@ import re
 from typing import Literal, Optional
 
 from gigl.common.constants import (
-    DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE,
-    DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH,
-    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
-    DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
     GIGL_ROOT_DIR,
     PATH_GIGL_PKG_INIT_FILE,
 )
@@ -51,16 +46,6 @@ def update_version(version: str) -> None:
     )
     with open(PATH_GIGL_PKG_INIT_FILE, "w") as f:
         f.write(updated_content)
-
-
-def get_release_version_labels() -> dict[str, str]:
-    return {
-        "cuda_image": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
-        "cpu_image": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-        "dataflow_image": DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
-        "dev_workbench_image": DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE,
-        "kfp_pipeline": DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH,
-    }
 
 
 def update_dep_vars_env(
@@ -203,11 +188,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Instead of bumping the version, get the current version",
     )
-    parser.add_argument(
-        "--get_release_version_labels",
-        action="store_true",
-        help="Instead of bumping the version, get the version labels",
-    )
+
     parser.add_argument(
         "--version_override",
         type=str,
@@ -218,14 +199,6 @@ if __name__ == "__main__":
 
     if args.get_current_version:
         print(get_current_version())
-        exit(0)
-
-    if args.get_release_version_labels:
-        print(
-            "\n".join(
-                "{}: {}".format(k, v) for k, v in get_release_version_labels().items()
-            )
-        )
         exit(0)
 
     assert args.project, "Project is required to bump the version"
