@@ -17,7 +17,6 @@ on:
           - minor
           - patch
           - nightly
-  push: # TODO: (svij) remove before merging. For testing purposes.
 
 jobs:
   # First job: Bump version and create release branch
