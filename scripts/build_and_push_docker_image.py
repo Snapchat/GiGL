@@ -130,7 +130,7 @@ def build_and_push_image(
         build_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
     )
     if result.returncode != 0:
-        print(result.stdout.decode())
+        logger.info(result.stdout.decode())
         raise RuntimeError(f"Docker build failed with exit code {result.returncode}")
 
     # Push image if it's not a multi-arch build (multi-arch images are pushed in the build step)
@@ -140,7 +140,7 @@ def build_and_push_image(
             push_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
         if result_push.returncode != 0:
-            print(result_push.stdout.decode())
+            logger.info(result_push.stdout.decode())
             raise RuntimeError(
                 f"Docker push failed with exit code {result_push.returncode}"
             )

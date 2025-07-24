@@ -1,7 +1,10 @@
 """
 This script can be used to:
 - Get the current version of GiGL
-- Bump the version of GiGL, and subsequently release the src images and KFP pipeline
+- Bump the version labels of GiGL
+Note: This does not release the src images and KFP pipeline, it only updates the version labels.
+The usage of bump_version.py, and the overall release process of the src images and KFP pipeline
+is handled by the create_release.yml workflow.
 
 Example Usage:
 Bump patch version:
@@ -19,7 +22,15 @@ import datetime
 import re
 from typing import Literal, Optional
 
-from gigl.common.constants import GIGL_ROOT_DIR, PATH_GIGL_PKG_INIT_FILE
+from gigl.common.constants import (
+    DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE,
+    DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
+    GIGL_ROOT_DIR,
+    PATH_GIGL_PKG_INIT_FILE,
+)
 from gigl.env.dep_constants import GIGL_PUBLIC_BUCKET_NAME
 
 
@@ -42,6 +53,16 @@ def update_version(version: str) -> None:
         f.write(updated_content)
 
 
+def get_release_version_labels() -> dict[str, str]:
+    return {
+        "cuda_image": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+        "cpu_image": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+        "dataflow_image": DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
+        "dev_workbench_image": DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE,
+        "kfp_pipeline": DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH,
+    }
+
+
 def update_dep_vars_env(
     cuda_image_name: str,
     cpu_image_name: str,
@@ -50,7 +71,12 @@ def update_dep_vars_env(
     kfp_pipeline_path: str,
 ) -> None:
     print(
-        f"Updating dep_vars.env with {cuda_image_name}, {cpu_image_name}, {dataflow_image_name}"
+        f"Updating dep_vars.env with: "
+        + f"cuda_image: {cuda_image_name}, "
+        + f"cpu_image: {cpu_image_name}, "
+        + f"dataflow_image: {dataflow_image_name}, "
+        + f"dev_workbench_image: {dev_workbench_image_name}, "
+        + f"kfp_pipeline: {kfp_pipeline_path}"
     )
 
     dep_vars_env_path = f"{GIGL_ROOT_DIR}/dep_vars.env"
@@ -142,7 +168,9 @@ def bump_version(
     cpu_image_name = f"{base_image_registry}/src-cpu:{new_version}"
     dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
     dev_workbench_image_name = f"{base_image_registry}/gigl-dev-workbench:{new_version}"
-    kfp_pipeline_path = f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/gigl-pipeline-{new_version}.yaml"
+    kfp_pipeline_path = (
+        f"gs://{GIGL_PUBLIC_BUCKET_NAME}/pipelines/gigl-pipeline-{new_version}.yaml"
+    )
 
     update_dep_vars_env(
         cuda_image_name=cuda_image_name,
@@ -178,6 +206,11 @@ if __name__ == "__main__":
         help="Instead of bumping the version, get the current version",
     )
     parser.add_argument(
+        "--get_release_version_labels",
+        action="store_true",
+        help="Instead of bumping the version, get the version labels",
+    )
+    parser.add_argument(
         "--version_override",
         type=str,
         help="Override the version to be bumped",
@@ -188,6 +221,16 @@ if __name__ == "__main__":
     if args.get_current_version:
         print(get_current_version())
         exit(0)
+
+    if args.get_release_version_labels:
+        print(
+            "\n".join(
+                "{}: {}".format(k, v) for k, v in get_release_version_labels().items()
+            )
+        )
+        exit(0)
+
+    assert args.project, "Project is required to bump the version"
 
     bump_version(
         bump_type=args.bump_type,
