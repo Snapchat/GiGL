@@ -24,8 +24,7 @@ RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
 WORKDIR /home/jupyter/gigl
 COPY . .
-RUN echo "DEBUG: SVIJ_2" && ls -al
-RUN make install_dev_deps
+RUN make install_deps
 
 # Add coursier (cs) to the path
 ENV PATH="$PATH:/root/.local/share/coursier/bin"
