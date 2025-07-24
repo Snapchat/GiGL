@@ -22,10 +22,13 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 # Point `conda` to `micromamba` as our install scripts still use conda
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
-COPY . /home/jupyter/gigl
-RUN cd /home/jupyter/gigl && make install_dev_deps
+WORKDIR /home/jupyter/gigl
+COPY . .
+RUN echo "DEBUG: SVIJ_2" && ls -al
+RUN make install_dev_deps
 
 # Add coursier (cs) to the path
 ENV PATH="$PATH:/root/.local/share/coursier/bin"
+
 
 CMD ["/run_jupyter.sh"]
