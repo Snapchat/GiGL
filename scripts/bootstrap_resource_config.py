@@ -271,9 +271,6 @@ if __name__ == "__main__":
         ).strip()
         or default_resource_config_dest_path
     )
-    assert destination_file_path and destination_file_path.startswith(
-        "gs://"
-    ), "Destination file path must be a GCS path starting with 'gs://'"
 
     print("=======================================================")
     print(f"Will now create the resource config file @ {destination_file_path}.")
