@@ -4,7 +4,7 @@ This script can be used to:
 - Bump the version labels of GiGL
 Note: This does not release the src images and KFP pipeline, it only updates the version labels.
 The usage of bump_version.py, and the overall release process of the src images and KFP pipeline
-is handled by the create_release.yml workflow.
+is handled by the .github/workflows/create_release.yml workflow.
 
 Example Usage:
 Bump patch version:
@@ -169,7 +169,7 @@ def bump_version(
     dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
     dev_workbench_image_name = f"{base_image_registry}/gigl-dev-workbench:{new_version}"
     kfp_pipeline_path = (
-        f"gs://{GIGL_PUBLIC_BUCKET_NAME}/pipelines/gigl-pipeline-{new_version}.yaml"
+        f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/pipelines/gigl-pipeline-{new_version}.yaml"
     )
 
     update_dep_vars_env(

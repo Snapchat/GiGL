@@ -93,7 +93,7 @@ jobs:
 
     # Commit version changes to new release branch
     - name: Commit and push version bump
-      uses: ./.github/actions/commit-and-push
+      uses: snapchat/gigl/.github/actions/commit-and-push@main
       with:
         commit_message: "[AUTOMATED] Bumped version to v${{ steps.get_new_version.outputs.new_version }}"
         github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -178,9 +178,7 @@ jobs:
         - **Trigger:** ${{ github.event_name }}
         - The version tag was created here: https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}.
         - The following version labels were updated:
-          ```
-          ${{ needs.bump_version.outputs.release_version_labels }}
-          ```
+        ${{ needs.bump_version.outputs.release_version_labels }}
         ### What's Next:
         Please create a new release from the [tag](https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}).
 
