@@ -126,14 +126,26 @@ def build_and_push_image(
     build_command.append(root_dir.as_posix())
 
     logger.info(f"Running command: {' '.join(build_command)}")
-    subprocess.run(
-        build_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+    result = subprocess.run(
+        build_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
     )
+    if result.returncode != 0:
+        logger.info(result.stdout.decode())
+        logger.error(f"Command failed: {' '.join(build_command)}")
+        raise RuntimeError(f"Docker build failed with exit code {result.returncode}")
 
     # Push image if it's not a multi-arch build (multi-arch images are pushed in the build step)
     if not multi_arch:
         push_command = ["docker", "push", image_name]
-        subprocess.run(push_command, check=True)
+        result_push = subprocess.run(
+            push_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+        if result_push.returncode != 0:
+            logger.info(result_push.stdout.decode())
+            logger.error(f"Command failed: {' '.join(push_command)}")
+            raise RuntimeError(
+                f"Docker push failed with exit code {result_push.returncode}"
+            )
 
 
 if __name__ == "__main__":
