@@ -91,7 +91,7 @@ def build_and_push_dev_workbench_image(
     build_and_push_image(
         base_image=None,
         image_name=image_name,
-        dockerfile_name="Dockerfile.dev_workbench_container",
+        dockerfile_name="Dockerfile.gigl_workbench_container",
         multi_arch=False,
     )
 

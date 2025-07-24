@@ -32,7 +32,7 @@ steps:
         # See: containers/Dockerfile.builder.
         # We cannot just symlink as that causes issues when trying to build the
         # dev workbench image i.e. symlinked sub dirs are not copied over.
-        # See: containers/Dockerfile.dev_workbench_container
+        # See: containers/Dockerfile.gigl_workbench_container
         cp -rf /gigl_deps/tools/ tools
 
         echo "Finished setting up environment."
