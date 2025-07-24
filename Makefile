@@ -17,10 +17,12 @@ GIGL_DOCKER_ARTIFACT_REGISTRY?=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-b
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu-dataflow
 DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
 DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
+DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?:=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?:=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?:=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?:=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=examples python scripts testing
 PY_TEST_FILES?="*_test.py"
@@ -249,6 +251,9 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	# You may be able to utilize git comment `/make_cuda_hashed_req` to help you build the cuda hashed req as well
 	# See ci.yaml or type in `/help` in your PR for more info.
 	@echo "All Docker images compiled and pushed"
+
+push_dev_workbench_docker_image:
+	@python -m scripts.build_and_push_docker_image --predefined_type dev_workbench --image_name ${DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG}
 
 
 # Generic make target to run e2e tests. Used by other make targets to run e2e tests.

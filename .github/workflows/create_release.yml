@@ -17,6 +17,7 @@ on:
           - minor
           - patch
           - nightly
+  push:
 
 jobs:
   # First job: Bump version and create release branch
@@ -31,6 +32,11 @@ jobs:
       new_version: ${{ steps.get_new_version.outputs.new_version }}
       release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
       bump_type: ${{ steps.set_vars.outputs.bump_type }}
+      gigl_release_src_image_cuda: ${{ steps.get_new_version.outputs.gigl_release_src_image_cuda }}
+      gigl_release_src_image_cpu: ${{ steps.get_new_version.outputs.gigl_release_src_image_cpu }}
+      gigl_release_src_image_dataflow_cpu: ${{ steps.get_new_version.outputs.gigl_release_src_image_dataflow_cpu }}
+      gigl_release_kfp_pipeline_path: ${{ steps.get_new_version.outputs.gigl_release_kfp_pipeline_path }}
+      gigl_release_dev_workbench_image: ${{ steps.get_new_version.outputs.gigl_release_dev_workbench_image }}
 
     steps:
     - name: Checkout code
@@ -78,9 +84,15 @@ jobs:
         RELEASE_BRANCH_NAME="release/v${NEW_VERSION}"
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "release_branch_name=$RELEASE_BRANCH_NAME" >> $GITHUB_OUTPUT
-
         echo "New version: $NEW_VERSION"
         echo "Release branch name: $RELEASE_BRANCH_NAME"
+
+        source dep_vars.env
+        echo "gigl_release_src_image_cuda=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA" >> $GITHUB_OUTPUT
+        echo "gigl_release_src_image_cpu=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU" >> $GITHUB_OUTPUT
+        echo "gigl_release_src_image_dataflow_cpu=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU" >> $GITHUB_OUTPUT
+        echo "gigl_release_kfp_pipeline_path=\$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH" >> $GITHUB_OUTPUT
+        echo "gigl_release_dev_workbench_image=\$DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE" >> $GITHUB_OUTPUT
 
     # Commit version changes to new release branch
     - name: Commit and push version bump
@@ -91,7 +103,42 @@ jobs:
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
 
-  release_gigl_kfp_pipeline:
+  # release_gigl_kfp_pipeline:
+  #   needs: bump_version
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: write
+  #     pull-requests: write
+  #     id-token: write
+
+  #   steps:
+  #   - name: Checkout release branch
+  #     uses: actions/checkout@v4
+  #     with:
+  #       ref: ${{ needs.bump_version.outputs.release_branch_name }}
+
+  #   - name: Setup Machine for release
+  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
+  #     with:
+  #       setup_gcloud: "true"
+  #       install_dev_deps: "false"
+  #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+  #   - name: Release GiGL KFP pipeline
+  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+  #     with:
+  #       cmd: |
+  #           DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_dataflow_cpu }} \
+  #           DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cuda }} \
+  #           DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cpu }} \
+  #           compiled_pipeline_path=\${{ needs.bump_version.outputs.gigl_release_kfp_pipeline_path }} \
+  #           compile_gigl_kubeflow_pipeline
+  #       service_account:  ${{ secrets.gcp_service_account_email }}
+  #       project:  ${{ secrets.gcp_project_id }}
+
+  release_dev_workbench_image:
     needs: bump_version
     runs-on: ubuntu-latest
     permissions:
@@ -105,36 +152,23 @@ jobs:
       with:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
-    - name: Setup Machine for release
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
-      with:
-        setup_gcloud: "true"
-        install_dev_deps: "false"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
-    - name: Release GiGL KFP pipeline
+    - name: Release Dev Workbench Image
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         cmd: |
-          source dep_vars.env && make \
-            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA \
-            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU \
-            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU \
-            compiled_pipeline_path=\$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH \
-            compile_gigl_kubeflow_pipeline
+          python -m scripts.build_and_push_docker_image --predefined_type dev_workbench --image_name ${{ needs.bump_version.outputs.gigl_release_dev_workbench_image }}
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
+
   # TODO: (svij) Also release the dev image
-  # TODO: (svij) Move release of the wheel workflow from release.yml to here
 
   # Final job: Create PR and tag after all releases complete
   create_release_pr:
     needs:
       - bump_version
-      - release_gigl_kfp_pipeline
+      # - release_gigl_kfp_pipeline
+      - release_dev_workbench_image
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -170,7 +204,12 @@ jobs:
         - The version tag was created here: https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}.
         ### What's Next:
         Please create a new release from the [tag](https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}).
-
+        - The following version labels were updated:
+          - src_image_cuda: `${{ needs.bump_version.outputs.gigl_release_src_image_cuda }}`
+          - src_image_cpu: `${{ needs.bump_version.outputs.gigl_release_src_image_cpu }}`
+          - src_image_dataflow_cpu: `${{ needs.bump_version.outputs.gigl_release_src_image_dataflow_cpu }}`
+          - kfp_pipeline_path: `${{ needs.bump_version.outputs.gigl_release_kfp_pipeline_path }}`
+          - dev_workbench_image: `${{ needs.bump_version.outputs.gigl_release_dev_workbench_image }}`
         ---
         *This PR was automatically created by the Create Release workflow.*" \
         --base main --head release/v${{ needs.bump_version.outputs.new_version }}
