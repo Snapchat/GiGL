@@ -28,9 +28,12 @@ steps:
         # Install GiGL
         pip install -e ./python/
         # The builder operates in its own user dir, usually /workspace,
-        # so we need to symlink the gigl tools dir to the current cloud_builder's user dir
-        # See: Dockerfile.builder
-        ln -s /gigl_deps/tools/ tools
+        # so we need to copy the gigl tools dir to the current cloud_builder's user dir.
+        # See: containers/Dockerfile.builder.
+        # We cannot just symlink as that causes issues when trying to build the
+        # dev workbench image i.e. symlinked sub dirs are not copied over.
+        # See: containers/Dockerfile.dev_workbench_container
+        cp -rf /gigl_deps/tools/ tools
 
         echo "Finished setting up environment."
         echo "========================="
