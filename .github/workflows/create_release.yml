@@ -88,11 +88,11 @@ jobs:
         echo "Release branch name: $RELEASE_BRANCH_NAME"
 
         source dep_vars.env
-        echo "gigl_release_src_image_cuda=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA" >> $GITHUB_OUTPUT
-        echo "gigl_release_src_image_cpu=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU" >> $GITHUB_OUTPUT
-        echo "gigl_release_src_image_dataflow_cpu=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU" >> $GITHUB_OUTPUT
-        echo "gigl_release_kfp_pipeline_path=\$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH" >> $GITHUB_OUTPUT
-        echo "gigl_release_dev_workbench_image=\$DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE" >> $GITHUB_OUTPUT
+        echo "gigl_release_src_image_cuda=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA" >> $GITHUB_OUTPUT
+        echo "gigl_release_src_image_cpu=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU" >> $GITHUB_OUTPUT
+        echo "gigl_release_src_image_dataflow_cpu=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU" >> $GITHUB_OUTPUT
+        echo "gigl_release_kfp_pipeline_path=$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH" >> $GITHUB_OUTPUT
+        echo "gigl_release_dev_workbench_image=$DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE" >> $GITHUB_OUTPUT
 
     # Commit version changes to new release branch
     - name: Commit and push version bump
@@ -165,7 +165,9 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         cmd: |
-          python -m scripts.build_and_push_docker_image --predefined_type dev_workbench --image_name ${{ needs.bump_version.outputs.gigl_release_dev_workbench_image }}
+          python -m scripts.build_and_push_docker_image \
+            --predefined_type="dev_workbench" \
+            --image_name="${{ needs.bump_version.outputs.gigl_release_dev_workbench_image }}"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
