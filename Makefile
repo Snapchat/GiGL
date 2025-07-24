@@ -253,7 +253,7 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	@echo "All Docker images compiled and pushed"
 
 push_dev_workbench_docker_image:
-	@python -m scripts.build_and_push_docker_image --predefined_type dev_workbench --image_name ${DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG}
+	@python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 
 # Generic make target to run e2e tests. Used by other make targets to run e2e tests.
