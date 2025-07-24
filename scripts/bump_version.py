@@ -22,10 +22,7 @@ import datetime
 import re
 from typing import Literal, Optional
 
-from gigl.common.constants import (
-    GIGL_ROOT_DIR,
-    PATH_GIGL_PKG_INIT_FILE,
-)
+from gigl.common.constants import GIGL_ROOT_DIR, PATH_GIGL_PKG_INIT_FILE
 from gigl.env.dep_constants import GIGL_PUBLIC_BUCKET_NAME
 
 
