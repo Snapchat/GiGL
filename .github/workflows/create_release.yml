@@ -171,6 +171,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         cmd: |
+          bash ./requirements/install_scala_deps.sh --download-only
           make push_dev_workbench_docker_image
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
