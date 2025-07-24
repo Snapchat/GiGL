@@ -31,7 +31,7 @@ sharedConfig:
 # Specifies information about the dataset, such as how to access it and how to process it
 datasetConfig:
   dataPreprocessorConfig:
-    dataPreprocessorConfigClsPath: examples.tutorial.KDD_2025.preprocessor_config_heterogeneous.ToyDataPreprocessorConfig
+    dataPreprocessorConfigClsPath: examples.tutorial.KDD_2025.preprocessor_config.ToyDataPreprocessorConfig
     # our implementation takes no runtime arguments; if provided these are passed to the constructor off dataPreprocessorConfigClsPath
     # dataPreprocessorArgs:
 # ========
