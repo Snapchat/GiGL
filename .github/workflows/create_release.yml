@@ -152,6 +152,15 @@ jobs:
       with:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
+    - name: Setup Machine for workbench image release
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      with:
+        setup_gcloud: "true"
+        install_dev_deps: "false"
+        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
     - name: Release Dev Workbench Image
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
