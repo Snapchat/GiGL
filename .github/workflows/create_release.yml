@@ -109,40 +109,40 @@ jobs:
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
 
-  # release_gigl_kfp_pipeline:
-  #   needs: bump_version
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #     pull-requests: write
-  #     id-token: write
+  release_gigl_kfp_pipeline:
+    needs: bump_version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
 
-  #   steps:
-  #   - name: Checkout release branch
-  #     uses: actions/checkout@v4
-  #     with:
-  #       ref: ${{ needs.bump_version.outputs.release_branch_name }}
+    steps:
+    - name: Checkout release branch
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
-  #   - name: Setup Machine for release
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
-  #     with:
-  #       setup_gcloud: "true"
-  #       install_dev_deps: "false"
-  #       gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
-  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+    - name: Setup Machine for release
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      with:
+        setup_gcloud: "true"
+        install_dev_deps: "false"
+        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
-  #   - name: Release GiGL KFP pipeline
-  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
-  #     with:
-  #       cmd: |
-  #           DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_dataflow_cpu }} \
-  #           DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cuda }} \
-  #           DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cpu }} \
-  #           compiled_pipeline_path=\${{ needs.bump_version.outputs.gigl_release_kfp_pipeline_path }} \
-  #           compile_gigl_kubeflow_pipeline
-  #       service_account:  ${{ secrets.gcp_service_account_email }}
-  #       project:  ${{ secrets.gcp_project_id }}
+    - name: Release GiGL KFP pipeline
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: |
+            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_dataflow_cpu }} \
+            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cuda }} \
+            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cpu }} \
+            compiled_pipeline_path=\${{ needs.bump_version.outputs.gigl_release_kfp_pipeline_path }} \
+            compile_gigl_kubeflow_pipeline
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ secrets.gcp_project_id }}
 
   release_dev_workbench_image:
     needs: bump_version
@@ -183,7 +183,7 @@ jobs:
   create_release_pr:
     needs:
       - bump_version
-      # - release_gigl_kfp_pipeline
+      - release_gigl_kfp_pipeline
       - release_dev_workbench_image
     runs-on: ubuntu-latest
     permissions:

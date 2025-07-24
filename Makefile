@@ -252,9 +252,7 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	# See ci.yaml or type in `/help` in your PR for more info.
 	@echo "All Docker images compiled and pushed"
 
-push_dev_workbench_docker_image:
-	echo "DEBUG: SVIJ"
-	ls -al
+push_dev_workbench_docker_image: compile_jars
 	@python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 
