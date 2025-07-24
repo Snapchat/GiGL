@@ -3,7 +3,7 @@ substitutions:
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
-  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:59e780eeb5831d4ce75747262b8e57b46f3dc17a.24.1
+  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:63cb24986b4af3d368e9a9b1ba205e06c43b37d0.34.1
     entrypoint: /bin/bash
     args:
       - -c
@@ -25,13 +25,12 @@ steps:
         docker buildx create --driver=docker-container --use
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
-
-        # TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
-        bash ./requirements/install_scala_deps.sh
+        # Install GiGL
         pip install -e ./python/
-
-        # Since more deps were installed we need to re-source the bashrc
-        source ~/.profile
+        # The builder operates in its own user dir, usually /workspace,
+        # so we need to symlink the gigl tools dir to the current cloud_builder's user dir
+        # See: Dockerfile.builder
+        ln -s /gigl_deps/tools/ tools
 
         echo "Finished setting up environment."
         echo "========================="

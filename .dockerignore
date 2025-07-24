@@ -33,7 +33,6 @@ miniconda/
 
 # ==================== Project tools & devcontainers
 .devcontainer
-tools/
 project/boot/
 project/plugins/project/
 project/target/
