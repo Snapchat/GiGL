@@ -168,9 +168,7 @@ def bump_version(
     cpu_image_name = f"{base_image_registry}/src-cpu:{new_version}"
     dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
     dev_workbench_image_name = f"{base_image_registry}/gigl-dev-workbench:{new_version}"
-    kfp_pipeline_path = (
-        f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/pipelines/gigl-pipeline-{new_version}.yaml"
-    )
+    kfp_pipeline_path = f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/pipelines/gigl-pipeline-{new_version}.yaml"
 
     update_dep_vars_env(
         cuda_image_name=cuda_image_name,

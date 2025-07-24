@@ -32,7 +32,7 @@ jobs:
       new_version: ${{ steps.get_new_version.outputs.new_version }}
       release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
       bump_type: ${{ steps.set_vars.outputs.bump_type }}
-      release_version_labels: ${{ steps.get_release_version_labels.outputs.release_version_labels }}
+      release_version_labels: ${{ steps.set_vars.outputs.release_version_labels }}
 
     steps:
     - name: Checkout code
