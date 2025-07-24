@@ -81,7 +81,12 @@ jobs:
         RELEASE_BRANCH_NAME="release/v${NEW_VERSION}"
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "release_branch_name=$RELEASE_BRANCH_NAME" >> $GITHUB_OUTPUT
-        echo "release_version_labels=$RELEASE_VERSION_LABELS" >> $GITHUB_OUTPUT
+        {
+          echo 'release_version_labels<<EOF'
+          echo $RELEASE_VERSION_LABELS
+          echo EOF
+        } >> "$GITHUB_OUTPUT"
+
         echo "New version: $NEW_VERSION"
         echo "Release branch name: $RELEASE_BRANCH_NAME"
         echo "Release version labels: $RELEASE_VERSION_LABELS"
