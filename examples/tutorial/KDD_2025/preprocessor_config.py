@@ -105,12 +105,12 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
                 node_type=NodeType(node_type),
             )
 
-            node_output_id = NodeOutputIdentifier(node_type)
+            node_output_id = NodeOutputIdentifier("node_id")
 
             # The ingestion feature spec function is used to specify the input columns and their types
             # that will be read from the NodeDataReference - which in this case is BQ.
             feature_spec_fn = build_ingestion_feature_spec_fn(
-                fixed_int_fields=[node_type],
+                fixed_int_fields=["node_id"],
                 fixed_float_fields=self._float_feature_list,
             )
 
@@ -133,8 +133,8 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         output_dict: dict[EdgeDataReference, EdgeDataPreprocessingSpec] = {}
 
         for edge_type, table in self._edge_tables.items():
-            src_node_type = edge_type.src_node_type
-            dst_node_type = edge_type.dst_node_type
+            src_node_type = "src"
+            dst_node_type = "dst"
 
             edge_ref = BigqueryEdgeDataReference(
                 reference_uri=table,
