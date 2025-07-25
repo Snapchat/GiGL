@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-
+set -x
 
 DEV=0  # Flag to install dev dependencies.
 PIP_ARGS="--no-deps"  # We don't want to install dependencies when installing packages from hashed requirements files.
