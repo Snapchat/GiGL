@@ -1,6 +1,6 @@
 import os
 import unittest
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass, field
 from unittest import mock
 from uuid import uuid4
@@ -102,9 +102,9 @@ class TestExampleNotebooks(unittest.TestCase):
 
     def test_notebooks(self):
         futures: dict[str, Future[None]] = {}
-        # We use a ThreadPoolExecutor to run notebooks in parallel.
+        # We use a ProcessPoolExecutor to run notebooks in parallel.
         # If we don't do this then the tests will be much slower.
-        with ThreadPoolExecutor() as executor:
+        with ProcessPoolExecutor() as executor:
             for notebook in self._notebooks:
                 futures[notebook.name] = executor.submit(_run_notebook, notebook)
 
