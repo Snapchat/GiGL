@@ -24,8 +24,11 @@ graphMetadata:
   - story
 inferencerConfig:
   # unused
-  inferencerArgs: {}
-  inferencerClsPath: unused
+  inferencerArgs:
+    # Commands also get passed into main
+    # Use the torch distributed env variables set up by VAI.
+    local_saved_model: "False"
+  command: python -m examples.tutorial.KDD_2025.heterogeneous_inference
 sharedConfig:
   datasetMetadata:
     nodeAnchorBasedLinkPredictionDataset:
@@ -71,4 +74,7 @@ trainerConfig:
     ssl_positive_label_percentage: ".7"
     num_val: "0.3"
     num_test: "0.3"
-  trainerClsPath: unused
+    # Commands also get passed into main
+    # Use the torch distributed env variables set up by VAI.
+    local_saved_model: "False"
+  command: python -m examples.tutorial.KDD_2025.heterogeneous_training
