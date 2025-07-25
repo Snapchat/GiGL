@@ -87,9 +87,9 @@ class TestExampleNotebooks(unittest.TestCase):
                     GIGL_ROOT_DIR
                     / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
                 ),
-                env_overrides={
-                    "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
-                },
+                # env_overrides={
+                #     "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
+                # },
             ),
             _NoteBookTestConfig(
                 "kdd_2025_heterogeneous",
