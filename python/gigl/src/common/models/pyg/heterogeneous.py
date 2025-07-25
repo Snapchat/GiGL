@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
 import torch_geometric.data
@@ -21,8 +21,8 @@ class HGT(nn.Module):
     This implementation is based on the example of:
     https://github.com/pyg-team/pytorch_geometric/blob/master/examples/hetero/hgt_dblp.py
     Args:
-        node_type_to_feat_dim_map (Dict[NodeType, int]): Dictionary mapping node types to their input dimensions.
-        edge_type_to_feat_dim_map (Dict[EdgeType, int]): Dictionary mapping node types to their feature dimensions.
+        node_type_to_feat_dim_map (dict[NodeType, int]): Dictionary mapping node types to their input dimensions.
+        edge_type_to_feat_dim_map (dict[EdgeType, int]): Dictionary mapping node types to their feature dimensions.
         hid_dim (int): Hidden dimension size.
         out_dim (int, optional): Output dimension size. Defaults to 128.
         num_layers (int, optional): Number of layers. Defaults to 2.
@@ -31,21 +31,21 @@ class HGT(nn.Module):
 
     def __init__(
         self,
-        node_type_to_feat_dim_map: Dict[NodeType, int],
-        edge_type_to_feat_dim_map: Dict[EdgeType, int],
+        node_type_to_feat_dim_map: dict[NodeType, int],
+        edge_type_to_feat_dim_map: dict[EdgeType, int],
         hid_dim: int,
         out_dim: int = 128,
         num_layers: int = 2,
         num_heads: int = 2,
         should_l2_normalize_embedding_layer_output: bool = False,
         feature_embedding_layers: Optional[
-            Dict[NodeType, FeatureEmbeddingLayer]
+            dict[NodeType, FeatureEmbeddingLayer]
         ] = None,
         **kwargs,
     ):
         super().__init__()
-        node_types = list(node_type_to_feat_dim_map.keys())
-        edge_types = list(edge_type_to_feat_dim_map.keys())
+        self._node_types = list(node_type_to_feat_dim_map.keys())
+        self._edge_types = list(edge_type_to_feat_dim_map.keys())
         self.lin_dict = torch.nn.ModuleDict()
         for node_type, in_dim in node_type_to_feat_dim_map.items():
             self.lin_dict[node_type] = Linear(in_channels=in_dim, out_channels=hid_dim)
@@ -55,7 +55,7 @@ class HGT(nn.Module):
             conv = HGTConv(
                 in_channels=hid_dim,
                 out_channels=hid_dim,
-                metadata=(node_types, edge_types),
+                metadata=(self._node_types, self._edge_types),
                 heads=num_heads,
             )
             self.convs.append(conv)
@@ -73,14 +73,14 @@ class HGT(nn.Module):
         data: torch_geometric.data.hetero_data.HeteroData,
         output_node_types: list[NodeType],
         device: torch.device,
-    ) -> Dict[NodeType, torch.Tensor]:
+    ) -> dict[NodeType, torch.Tensor]:
         """
         Runs the forward pass of the module
         Args:
             data (torch_geometric.data.hetero_data.HeteroData): Input HeteroData object.
             output_node_types (list[NodeType]): List of node types for which to return the output embeddings.
         Returns:
-            Dict[NodeType, torch.Tensor]: Dictionary with node types as keys and output tensors as values.
+            dict[NodeType, torch.Tensor]: Dictionary with node types as keys and output tensors as values.
         """
         node_type_to_features_dict = data.x_dict
 
@@ -92,6 +92,21 @@ class HGT(nn.Module):
                 for node_type, x in node_type_to_features_dict.items()
             }
 
+        # When we initialize a HGTConv layer, we provide some edge types, which it uses to create an offset mapping for
+        # each edge type. When we forward some data.edge_index_dict through this layer, we require that the edge types
+        # there have the same order as the edge types in the constructor, otherwise the offsets will be off. For large graphs,
+        # this will lead to indexing errors during segmented matrix multiplication. For smaller graphs, segmented matrix
+        # multiplication is not used (based on some heuristic in PyG) and we don't observe this error. However, the indices
+        # are still wrong and likely lead to incorrect forward passes, hurting the model performance.
+
+        if sorted(self._edge_types) != sorted(data.edge_index_dict.keys()):
+            raise ValueError(
+                f"Found mismatching edge types between HGTConv initialized edge types {self._edge_types} and HeteroData edge types {sorted(data.edge_index_dict)}. These must be the same."
+            )
+        edge_index_dict = {
+            edge_type: data.edge_index_dict[edge_type] for edge_type in self._edge_types
+        }
+
         node_type_to_features_dict = {
             node_type: self.lin_dict[node_type](x).relu_()
             for node_type, x in node_type_to_features_dict.items()
@@ -99,10 +114,10 @@ class HGT(nn.Module):
 
         for conv in self.convs:
             node_type_to_features_dict = conv(
-                node_type_to_features_dict, data.edge_index_dict
+                node_type_to_features_dict, edge_index_dict
             )
 
-        node_typed_embeddings: Dict[NodeType, torch.Tensor] = {}
+        node_typed_embeddings: dict[NodeType, torch.Tensor] = {}
 
         for node_type in output_node_types:
             node_typed_embeddings[node_type] = (
@@ -122,8 +137,8 @@ class HGT(nn.Module):
 class SimpleHGN(nn.Module):
     def __init__(
         self,
-        node_type_to_feat_dim_map: Dict[NodeType, int],
-        edge_type_to_feat_dim_map: Dict[EdgeType, int],
+        node_type_to_feat_dim_map: dict[NodeType, int],
+        edge_type_to_feat_dim_map: dict[EdgeType, int],
         node_hid_dim: int,
         edge_hid_dim: int,
         edge_type_dim: int,
@@ -141,8 +156,8 @@ class SimpleHGN(nn.Module):
         SimpleHGN layer from the paper: https://arxiv.org/pdf/2112.14936
 
         Args:
-            node_type_to_feat_dim_map (Dict[NodeType, int]): Dictionary mapping node types to their input dimensions.
-            edge_type_to_feat_dim_map (Dict[EdgeType, int]): Dictionary mapping edge types to their feature dimensions.
+            node_type_to_feat_dim_map (dict[NodeType, int]): Dictionary mapping node types to their input dimensions.
+            edge_type_to_feat_dim_map (dict[EdgeType, int]): Dictionary mapping edge types to their feature dimensions.
             node_hid_dim (int): Hidden dimension size for node features.
             edge_hid_dim (int): Hidden dimension size for edge features.
             edge_type_dim (int): Hidden dimension size for edge types.
@@ -206,7 +221,7 @@ class SimpleHGN(nn.Module):
         data: torch_geometric.data.hetero_data.HeteroData,
         output_node_types: list[NodeType],
         device: torch.device,
-    ) -> Dict[NodeType, torch.Tensor]:
+    ) -> dict[NodeType, torch.Tensor]:
         # Align dimensions across all node-types and all edge-types, resp.
         x_dict = {
             node_type: self.node_type_lin_dict[node_type](x)

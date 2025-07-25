@@ -1,5 +1,5 @@
 from collections import abc
-from typing import Dict, Optional, TypeVar, Union
+from typing import Optional, TypeVar, Union
 
 import torch
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
@@ -12,8 +12,8 @@ def share_memory(
         Union[
             torch.Tensor,
             PartitionBook,
-            Dict[_KeyType, torch.Tensor],
-            Dict[_KeyType, PartitionBook],
+            dict[_KeyType, torch.Tensor],
+            dict[_KeyType, PartitionBook],
         ]
     ],
 ) -> None:
@@ -29,7 +29,7 @@ def share_memory(
     since the size of this tensor is very small, being equal in length to the number of machines.
 
     Args:
-        entity (Optional[Union[torch.Tensor, PartitionBook, Dict[_KeyType, torch.Tensor], Dict[_KeyType, PartitionBook]]]):
+        entity (Optional[Union[torch.Tensor, PartitionBook, dict[_KeyType, torch.Tensor], dict[_KeyType, PartitionBook]]]):
             Homogeneous or heterogeneous entity of tensors which is being moved to shared memory
     """
 

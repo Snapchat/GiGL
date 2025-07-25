@@ -41,7 +41,7 @@ ENV JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"
 
 # Create the environment:
 # TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y -c conda-forge --name gigl python=3.9 pip
+RUN conda create -y --override-channels --channel conda-forge --name gigl python=3.9 pip
 
 # Update path so any call for python executables in the built image defaults to using the gnn conda environment
 ENV PATH=/opt/conda/envs/gigl/bin:$PATH
@@ -49,10 +49,16 @@ ENV PATH=/opt/conda/envs/gigl/bin:$PATH
 RUN conda init bash
 RUN echo "conda activate gigl" >> ~/.bashrc
 
-COPY requirements tools/gigl/requirements
+# We copy the tools directory from the host machine to the container
+# to avoid re-downloading the dependencies as some of them require GCP credentials.
+# and, mounting GCP credentials to build time can be a pain and more prone to
+# accidental leaking of credentials.
+COPY tools gigl_deps/tools
+COPY dep_vars.env gigl_deps/dep_vars.env
+COPY requirements gigl_deps/requirements
+COPY python/gigl/scripts gigl_deps/python/gigl/scripts
 RUN pip install --upgrade pip
-RUN cd tools/gigl && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
-# TODO: (svij) Enable install_scala_deps.sh to inside Docker image build
-# RUN cd tools/gigl && bash ./requirements/install_scala_deps.sh
+RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
+RUN cd gigl_deps && bash ./requirements/install_scala_deps.sh
 
 CMD [ "/bin/bash" ]

@@ -1,47 +1,97 @@
+"""
+This script can be used to:
+- Get the current version of GiGL
+- Bump the version labels of GiGL
+Note: This does not release the src images and KFP pipeline, it only updates the version labels.
+The usage of bump_version.py, and the overall release process of the src images and KFP pipeline
+is handled by the .github/workflows/create_release.yml workflow.
+
+Example Usage:
+Bump patch version:
+python scripts/bump_version.py --bump_type patch --project gigl-public-ci
+
+Bump the nightly version:
+python scripts/bump_version.py --bump_type nightly --project gigl-public-ci
+
+Get current version:
+python scripts/bump_version.py --get_current_version
+"""
+
 import argparse
+import datetime
 import re
-from typing import Optional
+from typing import Literal, Optional
 
-from gigl.common.constants import (
-    DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
-    DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
-    GIGL_ROOT_DIR,
-    PATH_GIGL_PKG_INIT_FILE,
-)
-from gigl.env.pipelines_config import get_resource_config
-
-from .build_and_push_docker_image import build_and_push_image
+from gigl.common.constants import GIGL_ROOT_DIR, PATH_GIGL_PKG_INIT_FILE
+from gigl.env.dep_constants import GIGL_PUBLIC_BUCKET_NAME
 
 
-def get_current_version(filename: str) -> Optional[str]:
-    with open(filename, "r") as f:
+def get_current_version() -> Optional[str]:
+    with open(PATH_GIGL_PKG_INIT_FILE, "r") as f:
         content = f.read()
-        match = re.search(r'__version__ = "([\d\.]+)"', content)
+        match = re.search(r'__version__ = "(.*?)"', content)
         if match:
             return match.group(1)
     return None
 
 
-def update_version(filename: str, version: str) -> None:
-    with open(filename, "r") as f:
+def update_version(version: str) -> None:
+    with open(PATH_GIGL_PKG_INIT_FILE, "r") as f:
         content = f.read()
     updated_content = re.sub(
-        r'__version__ = "([\d\.]+)"', f'__version__ = "{version}"', content
+        r'__version__ = "(.*?)"', f'__version__ = "{version}"', content
     )
-    with open(filename, "w") as f:
+    with open(PATH_GIGL_PKG_INIT_FILE, "w") as f:
         f.write(updated_content)
 
 
-def update_dep_constants(version: str) -> None:
-    path = f"{GIGL_ROOT_DIR}/python/gigl/env/dep_constants.py"
-    with open(path, "r") as f:
-        content = f.read()
-    content = re.sub(r"gigl_src_cuda:[\d\.]+", f"gigl_src_cuda:{version}", content)
-    content = re.sub(r"gigl_src_cpu:[\d\.]+", f"gigl_src_cpu:{version}", content)
-    content = re.sub(
-        r"gigl_src_dataflow:[\d\.]+", f"gigl_src_dataflow:{version}", content
+def update_dep_vars_env(
+    cuda_image_name: str,
+    cpu_image_name: str,
+    dataflow_image_name: str,
+    dev_workbench_image_name: str,
+    kfp_pipeline_path: str,
+) -> None:
+    print(
+        f"Updating dep_vars.env with: "
+        + f"cuda_image: {cuda_image_name}, "
+        + f"cpu_image: {cpu_image_name}, "
+        + f"dataflow_image: {dataflow_image_name}, "
+        + f"dev_workbench_image: {dev_workbench_image_name}, "
+        + f"kfp_pipeline: {kfp_pipeline_path}"
     )
-    with open(path, "w") as f:
+
+    dep_vars_env_path = f"{GIGL_ROOT_DIR}/dep_vars.env"
+    with open(dep_vars_env_path, "r") as f:
+        content = f.read()
+
+    content = re.sub(
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=.*",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=" + cuda_image_name,
+        content,
+    )
+    content = re.sub(
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=.*",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=" + cpu_image_name,
+        content,
+    )
+    content = re.sub(
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=.*",
+        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=" + dataflow_image_name,
+        content,
+    )
+    content = re.sub(
+        r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=.*",
+        r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=" + dev_workbench_image_name,
+        content,
+    )
+    content = re.sub(
+        r"DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH=.*",
+        r"DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH=" + kfp_pipeline_path,
+        content,
+    )
+
+    with open(dep_vars_env_path, "w") as f:
         f.write(content)
 
 
@@ -54,49 +104,62 @@ def update_pyproject(version: str) -> None:
         f.write(content)
 
 
-def bump_version(
-    bump_type: str, cuda_image_name: str, cpu_image_name: str, dataflow_image_name: str
-) -> None:
-    version: Optional[str] = get_current_version(filename=str(PATH_GIGL_PKG_INIT_FILE))
-    if version is None:
-        raise ValueError("Current version not found")
-
-    major, minor, patch = map(int, version.split("."))
+def get_new_version(
+    bump_type: Literal["major", "minor", "patch", "nightly"], curr_version: str
+) -> str:
+    version_parts = curr_version.split(".")
+    # We may have dev suffixes, so we only unpack first three parts
+    major, minor, patch = (
+        int(version_parts[0]),
+        int(version_parts[1]),
+        int(version_parts[2]),
+    )
     if bump_type == "major":
         major += 1
         minor, patch = 0, 0
     elif bump_type == "minor":
         minor += 1
         patch = 0
-    else:
+    elif bump_type == "patch":
         patch += 1
-
     new_version = f"{major}.{minor}.{patch}"
+    if bump_type == "nightly":
+        # PEP 440 compliant
+        new_version += f".dev{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    return new_version
+
+
+def bump_version(
+    bump_type: Literal["major", "minor", "patch", "nightly"],
+    project: str,
+    version_override: Optional[str] = None,
+) -> None:
+    version: Optional[str] = get_current_version()
+    if version is None:
+        raise ValueError("Current version not found")
+
+    new_version: str
+    if version_override:
+        new_version = version_override
+    else:
+        new_version = get_new_version(bump_type=bump_type, curr_version=version)
 
     print(f"Bumping GiGL to version {new_version}")
-    cuda_image = f"{cuda_image_name}:{new_version}"
-    cpu_image = f"{cpu_image_name}:{new_version}"
-    dataflow_image = f"{dataflow_image_name}:{new_version}"
+    base_image_registry = f"us-central1-docker.pkg.dev/{project}/public-gigl"
+    cuda_image_name = f"{base_image_registry}/src-cuda:{new_version}"
+    cpu_image_name = f"{base_image_registry}/src-cpu:{new_version}"
+    dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
+    dev_workbench_image_name = f"{base_image_registry}/gigl-dev-workbench:{new_version}"
+    kfp_pipeline_path = f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/pipelines/gigl-pipeline-{new_version}.yaml"
 
-    build_and_push_image(
-        base_image=DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
-        image_name=cuda_image,
-        dockerfile_name="Dockerfile.src",
+    update_dep_vars_env(
+        cuda_image_name=cuda_image_name,
+        cpu_image_name=cpu_image_name,
+        dataflow_image_name=dataflow_image_name,
+        dev_workbench_image_name=dev_workbench_image_name,
+        kfp_pipeline_path=kfp_pipeline_path,
     )
-    build_and_push_image(
-        base_image=DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
-        image_name=cpu_image,
-        dockerfile_name="Dockerfile.src",
-    )
-    build_and_push_image(
-        base_image=DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
-        image_name=dataflow_image,
-        dockerfile_name="Dockerfile.dataflow.src",
-        multi_arch=True,
-    )
-
-    update_version(filename=str(PATH_GIGL_PKG_INIT_FILE), version=new_version)
-    update_dep_constants(version=new_version)
+    update_version(version=new_version)
     update_pyproject(version=new_version)
 
     print(
@@ -105,48 +168,40 @@ def bump_version(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Custom arguments for version bump")
-    parser.add_argument("--bump_type", help="Specify major, minor, or patch release")
+    parser = argparse.ArgumentParser(description="Bump the version of GiGL")
     parser.add_argument(
-        "--resource_config_uri",
+        "--bump_type",
+        help="Specify major, minor, or patch release",
+        choices=["major", "minor", "patch", "nightly"],
+        default="nightly",
+    )
+    parser.add_argument(
+        "--project",
         type=str,
-        help="Runtime argument for resource and env specifications of each component",
-        required=True,
+        help="GCP project id",
     )
     parser.add_argument(
-        "--cuda_image_name",
-        help="Specify custom name for cuda gigl base image",
+        "--get_current_version",
+        action="store_true",
+        help="Instead of bumping the version, get the current version",
     )
+
     parser.add_argument(
-        "--cpu_image_name",
-        help="Specify custom name for cpu gigl base image",
+        "--version_override",
+        type=str,
+        help="Override the version to be bumped",
     )
-    parser.add_argument(
-        "--dataflow_image_name",
-        help="Specify custom name for dataflow gigl base image",
-    )
+
     args = parser.parse_args()
 
-    resource_config = get_resource_config(args.resource_config_uri)
-    project = resource_config.project
+    if args.get_current_version:
+        print(get_current_version())
+        exit(0)
 
-    cuda_image_name = (
-        args.cuda_image_name or f"gcr.io/{project}/gigl_src_images/gigl_src_cuda"
-    )
-    cpu_image_name = (
-        args.cpu_image_name or f"gcr.io/{project}/gigl_src_images/gigl_src_cpu"
-    )
-    dataflow_image_name = (
-        args.dataflow_image_name
-        or f"gcr.io/{project}/gigl_src_images/gigl_src_dataflow"
-    )
+    assert args.project, "Project is required to bump the version"
 
-    try:
-        bump_version(
-            bump_type=args.bump_type,
-            cuda_image_name=args.cuda_image_name,
-            cpu_image_name=args.cpu_image_name,
-            dataflow_image_name=args.dataflow_image_name,
-        )
-    except RuntimeError as e:
-        print(f"Error: {e}")
+    bump_version(
+        bump_type=args.bump_type,
+        project=args.project,
+        version_override=args.version_override,
+    )

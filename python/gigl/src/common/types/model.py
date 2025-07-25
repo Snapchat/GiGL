@@ -1,5 +1,6 @@
+from collections import OrderedDict
 from enum import Enum
-from typing import Optional, OrderedDict, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 import torch
 

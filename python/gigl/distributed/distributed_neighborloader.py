@@ -1,5 +1,5 @@
 from collections import Counter, abc
-from typing import Dict, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -16,6 +16,7 @@ from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionData
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
 )
@@ -37,7 +38,7 @@ class DistNeighborLoader(DistLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
-        num_neighbors: Union[list[int], Dict[EdgeType, list[int]]],
+        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -62,7 +63,7 @@ class DistNeighborLoader(DistLoader):
 
         Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
-            num_neighbors (list[int] or Dict[Tuple[str, str, str], list[int]]):
+            num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
@@ -238,6 +239,9 @@ class DistNeighborLoader(DistLoader):
             local_process_world_size=local_world_size,
         )
 
+        self._node_feature_info = dataset.node_feature_info
+        self._edge_feature_info = dataset.edge_feature_info
+
         input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
@@ -325,9 +329,14 @@ class DistNeighborLoader(DistLoader):
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
+        data = set_missing_features(
+            data=data,
+            node_feature_info=self._node_feature_info,
+            edge_feature_info=self._edge_feature_info,
+            device=self.to_device,
+        )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
-
         if self._is_labeled_heterogeneous:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
         return data

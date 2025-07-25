@@ -33,7 +33,6 @@ miniconda/
 
 # ==================== Project tools & devcontainers
 .devcontainer
-tools/
 project/boot/
 project/plugins/project/
 project/target/
@@ -63,6 +62,8 @@ scripts/
 graphlearn_torch/
 graphlearn_torch.egg-info/
 do_not_open_source
+.github/
+.ipynb_checkpoints/
 
 # https://github.com/google-github-actions/auth/issues/497
 gha-creds-*.json

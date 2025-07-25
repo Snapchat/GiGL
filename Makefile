@@ -17,12 +17,14 @@ GIGL_DOCKER_ARTIFACT_REGISTRY?=us-central1-docker.pkg.dev/${GIGL_PROJECT}/gigl-b
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu-dataflow
 DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
 DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
+DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
+DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
+DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
-PYTHON_DIRS:=examples python shared scripts testing
+PYTHON_DIRS:=examples python scripts testing
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -44,7 +46,7 @@ get_ver_hash:
 	$(eval GIT_COMMIT=$(shell git log -1 --pretty=format:"%H"))
 
 initialize_environment:
-	conda create -y -c conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools
+	conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools
 	@echo "If conda environment was successfully installed, ensure to activate it and run \`make install_dev_deps\` or \`make install_deps\` to complete setup"
 
 clean_environment:
@@ -131,15 +133,15 @@ generate_dev_linux_cuda_hashed_requirements:
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
-	python shared/tests/dep_vars_check.py
+	python testing/dep_vars_check.py
 
 
 assert_yaml_configs_parse:
-	python scripts/assert_yaml_configs_parse.py -d .
+	python testing/assert_yaml_configs_parse.py -d .
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
-# By default, runs all tests under python/testing/unit.
+# By default, runs all tests under python/tests/unit.
 # See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
 unit_test_py: clean_build_files_py type_check
 	( cd python ; \
@@ -182,7 +184,7 @@ check_format: check_format_py check_format_scala check_format_md
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
-# By default, runs all tests under python/testing/integration.
+# By default, runs all tests under python/tests/integration.
 # See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
 integration_test:
 	( \
@@ -249,6 +251,9 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	# You may be able to utilize git comment `/make_cuda_hashed_req` to help you build the cuda hashed req as well
 	# See ci.yaml or type in `/help` in your PR for more info.
 	@echo "All Docker images compiled and pushed"
+
+push_dev_workbench_docker_image: compile_jars
+	@python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 
 # Generic make target to run e2e tests. Used by other make targets to run e2e tests.

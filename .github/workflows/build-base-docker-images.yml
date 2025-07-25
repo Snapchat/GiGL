@@ -48,7 +48,7 @@ jobs:
         gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        
+
     - name: Build and Push CUDA Base Image
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -76,7 +76,7 @@ jobs:
         gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        
+
     - name: Build and Push CPU Base Image and Docker CPU Image
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -110,10 +110,13 @@ jobs:
         gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        
-    - name: Build and Push CPU Base Image and Docker CPU Image
+
+    - name: Build and Push the builder image used by cloud build
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
+        # Download scala deps so they are avaialble for docker context to use
+        # See: Dockerfile.builder
+        bash ./requirements/install_scala_deps.sh --download-only
         docker build -f ./containers/Dockerfile.builder  -t ${GIGL_BUILDER_IMAGE} .
         docker push ${GIGL_BUILDER_IMAGE}
         echo "Pushed Builder image to ${GIGL_BUILDER_IMAGE}"
@@ -140,7 +143,7 @@ jobs:
           sed -i "s|^DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CUDA_IMAGE}|" dep_vars.env
           sed -i "s|^DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CPU_IMAGE}|" dep_vars.env
           sed -i "s|^DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=${GIGL_BASE_DATAFLOW_IMAGE}|" dep_vars.env
-          sed -i "s|us-central1-docker\.pkg\.dev.*|${GIGL_BUILDER_IMAGE}|" .github/cloud_builder/run_command_on_active_checkout.yaml
+          sed -i "s|name: us-central1-docker\.pkg\.dev.*|name: ${GIGL_BUILDER_IMAGE}|" .github/cloud_builder/run_command_on_active_checkout.yaml
 
     - name: Commit and Push Dep Vars
       uses: snapchat/gigl/.github/actions/commit-and-push@main

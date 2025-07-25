@@ -23,6 +23,7 @@ from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
+    set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
 )
@@ -76,9 +77,9 @@ class DistABLPLoader(DistLoader):
         but will return a {py:class}`torch_geometric.data.Data` (homogeneous) object if the dataset is "labeled homogeneous".
 
         The following fields may also be present:
-        - `y_positive`: `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of positive
+        - `y_positive`: `dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of positive
                 label node ids.
-        - `y_negative`: (Optional) `Dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of negative
+        - `y_negative`: (Optional) `dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of negative
                 label node ids. This will only be present if the supervision edge type has negative labels.
 
 
@@ -110,7 +111,7 @@ class DistABLPLoader(DistLoader):
 
         Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
-            num_neighbors (list[int] or Dict[tuple[str, str, str], list[int]]):
+            num_neighbors (list[int] or dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
@@ -320,6 +321,9 @@ class DistABLPLoader(DistLoader):
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
         )
+
+        self._node_feature_info = dataset.node_feature_info
+        self._edge_feature_info = dataset.edge_feature_info
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
@@ -575,6 +579,12 @@ class DistABLPLoader(DistLoader):
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         msg, positive_labels, negative_labels = self._get_labels(msg)
         data = super()._collate_fn(msg)
+        data = set_missing_features(
+            data=data,
+            node_feature_info=self._node_feature_info,
+            edge_feature_info=self._edge_feature_info,
+            device=self.to_device,
+        )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
         if not self._is_input_heterogeneous:
