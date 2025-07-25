@@ -73,7 +73,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
             self._story_node_type: self._story_table,
         }
 
-        # We store a mapping of each edge type to their respective table URI. We have all three edge tables from the `fetch_data.ipynb` notebook.
+        # We store a mapping of each edge type to their respective table URI.
         self._edge_tables: dict[EdgeType, str] = {
             self._user_to_story_edge_type: self._user_to_story_table,
             self._story_to_user_edge_type: self._story_to_user_table,
