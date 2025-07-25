@@ -28,6 +28,7 @@ class PredefinedImageType(Enum):
     CPU = "cpu"
     CUDA = "cuda"
     DATAFLOW = "dataflow"
+    DEV_WORKBENCH = "dev_workbench"
 
 
 def build_and_push_cpu_image(
@@ -76,6 +77,23 @@ def build_and_push_dataflow_image(
         image_name=image_name,
         dockerfile_name="Dockerfile.dataflow.src",
         multi_arch=True,
+    )
+
+
+def build_and_push_dev_workbench_image(
+    image_name: str,
+) -> None:
+    """
+    Builds and pushes a Dev Workbench Docker image.
+
+    Args:
+        image_name (str): The name of the Docker image to build and push.
+    """
+    build_and_push_image(
+        base_image=None,
+        image_name=image_name,
+        dockerfile_name="Dockerfile.gigl_workbench_container",
+        multi_arch=False,
     )
 
 
@@ -180,6 +198,8 @@ if __name__ == "__main__":
                 build_and_push_cuda_image(image_name=args.image_name)
             elif args.predefined_type == PredefinedImageType.DATAFLOW.value:
                 build_and_push_dataflow_image(image_name=args.image_name)
+            elif args.predefined_type == PredefinedImageType.DEV_WORKBENCH.value:
+                build_and_push_dev_workbench_image(image_name=args.image_name)
             else:
                 raise ValueError(f"Invalid predefined_type: {args.predefined_type}")
         else:

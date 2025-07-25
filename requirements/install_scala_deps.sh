@@ -7,6 +7,7 @@
 # - allAuthenticatedUsers read access, thus one needs to be authenticated w/ GCP to download the files.
 
 set -e
+set -x
 
 # Parse command line arguments
 DOWNLOAD_ONLY=false

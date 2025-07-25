@@ -1,0 +1,35 @@
+# https://cloud.google.com/vertex-ai/docs/workbench/instances/create-custom-container#create-container
+FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/workbench-container:latest
+
+SHELL ["/bin/bash", "-c"]
+
+ENV MAMBA_ROOT_PREFIX=/opt/micromamba
+ARG ENVIRONMENT_NAME="gigl"
+ARG PYTHON_VERSION="3.9"
+RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
+
+ENV PATH=/opt/micromamba/envs/${ENVIRONMENT_NAME}/bin:$PATH
+
+RUN micromamba install -c conda-forge pip -y
+RUN pip install ipykernel
+
+RUN python -m ipykernel install --prefix /opt/micromamba/envs/${ENVIRONMENT_NAME} --name ${ENVIRONMENT_NAME} --display-name ${ENVIRONMENT_NAME}
+# Creation of a micromamba kernel automatically creates a python3 kernel
+# that must be removed if it's in conflict with the new kernel.
+RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/python3"
+
+# Copy the source into the container
+# Point `conda` to `micromamba` as our install scripts still use conda
+RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
+
+WORKDIR /home/jupyter/gigl
+COPY . .
+RUN make install_deps
+
+# Add coursier (cs) to the path
+# Default cs paths can be found here:
+# https://get-coursier.io/docs/cli-install#installation-directory
+ENV PATH="$PATH:/root/.local/share/coursier/bin"
+
+
+CMD ["/run_jupyter.sh"]
