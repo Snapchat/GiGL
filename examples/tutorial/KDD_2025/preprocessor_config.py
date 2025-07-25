@@ -53,13 +53,13 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         self._user_node_type = "user"
         self._story_node_type = "story"
 
-        self._user_to_story_edge_type =  EdgeType(
+        self._user_to_story_edge_type = EdgeType(
             NodeType(self._user_node_type),
             Relation("to"),
             NodeType(self._story_node_type),
         )
 
-        self._story_to_user_edge_type =  EdgeType(
+        self._story_to_user_edge_type = EdgeType(
             NodeType(self._story_node_type),
             Relation("to"),
             NodeType(self._user_node_type),
@@ -68,12 +68,15 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         self._float_feature_list = ["f0", "f1"]
 
         # We store a mapping of each node type to their respective table URI.
-        self._node_tables: dict[str, str] = {self._user_node_type: self._user_table, self._story_node_type: self._story_table}
+        self._node_tables: dict[str, str] = {
+            self._user_node_type: self._user_table,
+            self._story_node_type: self._story_table,
+        }
 
         # We store a mapping of each edge type to their respective table URI. We have all three edge tables from the `fetch_data.ipynb` notebook.
         self._edge_tables: dict[EdgeType, str] = {
             self._user_to_story_edge_type: self._user_to_story_table,
-            self._story_to_user_edge_type: self._story_to_user_table
+            self._story_to_user_edge_type: self._story_to_user_table,
         }
 
     def prepare_for_pipeline(
@@ -88,7 +91,6 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
             through GiGL's orchestration logic.
         :return: None
         """
-        pass
 
     def get_nodes_preprocessing_spec(
         self,
