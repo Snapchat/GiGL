@@ -18,7 +18,12 @@ from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to
     EdgeType,
     NodeType,
 )
-from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
+from gigl.types.graph import (
+    FeatureInfo,
+    FeaturePartitionData,
+    GraphPartitionData,
+    PartitionOutput,
+)
 from gigl.utils.data_splitters import NodeAnchorLinkSplitter
 from gigl.utils.share_memory import share_memory
 
@@ -61,6 +66,12 @@ class DistLinkPredictionDataset(DistDataset):
         num_train: Optional[Union[int, dict[NodeType, int]]] = None,
         num_val: Optional[Union[int, dict[NodeType, int]]] = None,
         num_test: Optional[Union[int, dict[NodeType, int]]] = None,
+        node_feature_info: Optional[
+            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
+        ] = None,
+        edge_feature_info: Optional[
+            Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
+        ] = None,
     ) -> None:
         """
         Initializes the fields of the DistLinkPredictionDataset class. This function is called upon each serialization of the DistLinkPredictionDataset instance.
@@ -77,9 +88,13 @@ class DistLinkPredictionDataset(DistDataset):
             positive_edge_label (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Positive Edge Label Tensor
             negative_edge_label (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Negative Edge Label Tensor
             node_ids (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Node IDs on the current machine
-            num_train: (Optional[Mapping[NodeType, int]]): Number of training nodes on the current machine. Will be a dict if heterogeneous.
-            num_val: (Optional[Mapping[NodeType, int]]): Number of validation nodes on the current machine. Will be a dict if heterogeneous.
-            num_test: (Optional[Mapping[NodeType, int]]): Number of test nodes on the current machine. Will be a dict if heterogeneous.
+            num_train:  Optional[Union[int, dict[NodeType, int]]]): Number of training nodes on the current machine. Will be a dict if heterogeneous.
+            num_val: (Optional[Union[int, dict[NodeType, int]]]): Number of validation nodes on the current machine. Will be a dict if heterogeneous.
+            num_test: (Optional[Union[int, dict[NodeType, int]]]): Number of test nodes on the current machine. Will be a dict if heterogeneous.
+            node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Dimension of node features and its data type, will be a dict if heterogeneous.
+                Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
+            edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
+                Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -109,6 +124,10 @@ class DistLinkPredictionDataset(DistDataset):
         self._num_train = num_train
         self._num_val = num_val
         self._num_test = num_test
+
+        # These fields are added so we can extract the node and edge feature dimensions and data type in the dataloader without having to lazily initialize the features.
+        self._node_feature_info = node_feature_info
+        self._edge_feature_info = edge_feature_info
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -216,6 +235,24 @@ class DistLinkPredictionDataset(DistDataset):
     @property
     def node_ids(self) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
         return self._node_ids
+
+    @property
+    def node_feature_info(
+        self,
+    ) -> Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]:
+        """
+        Contains information about the dimension and dtype for the node features in the graph
+        """
+        return self._node_feature_info
+
+    @property
+    def edge_feature_info(
+        self,
+    ) -> Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]:
+        """
+        Contains information about the dimension and dtype for the edge features in the graph
+        """
+        return self._edge_feature_info
 
     @property
     def train_node_ids(
@@ -421,6 +458,10 @@ class DistLinkPredictionDataset(DistDataset):
                 id2idx=node_id2idx,
                 with_gpu=False,
             )
+            self._node_feature_info = FeatureInfo(
+                dim=partitioned_node_features.size(1),
+                dtype=partitioned_node_features.dtype,
+            )
             del partitioned_node_features, partitioned_node_feature_ids, node_id2idx
         elif isinstance(partition_output.partitioned_node_features, abc.Mapping):
             assert isinstance(partition_output.node_partition_book, abc.Mapping)
@@ -448,6 +489,13 @@ class DistLinkPredictionDataset(DistDataset):
                 id2idx=node_type_to_id2idx,
                 with_gpu=False,
             )
+            self._node_feature_info = {
+                node_type: FeatureInfo(
+                    dim=feature_partition_data.size(1),
+                    dtype=feature_partition_data.dtype,
+                )
+                for node_type, feature_partition_data in node_type_to_partitioned_node_features.items()
+            }
             del (
                 node_type_to_partitioned_node_features,
                 node_type_to_partitioned_node_feature_ids,
@@ -473,6 +521,10 @@ class DistLinkPredictionDataset(DistDataset):
                 edge_feature_data=partitioned_edge_features,
                 id2idx=edge_id2idx,
                 with_gpu=False,
+            )
+            self._edge_feature_info = FeatureInfo(
+                dim=partitioned_edge_features.size(1),
+                dtype=partitioned_edge_features.dtype,
             )
             del partitioned_edge_features, partition_edge_feat_ids, edge_id2idx
         elif (
@@ -510,6 +562,13 @@ class DistLinkPredictionDataset(DistDataset):
                 id2idx=edge_type_to_id2idx,
                 with_gpu=False,
             )
+            self._edge_feature_info = {
+                edge_type: FeatureInfo(
+                    dim=feature_partition_data.size(1),
+                    dtype=feature_partition_data.dtype,
+                )
+                for edge_type, feature_partition_data in edge_type_to_partitioned_edge_features.items()
+            }
             del (
                 edge_type_to_partitioned_edge_features,
                 edge_type_to_partitioned_edge_feature_ids,
@@ -609,9 +668,10 @@ class DistLinkPredictionDataset(DistDataset):
                 else:
                     raise ValueError(f"We should not get here, whoops!")
             self._node_ids = node_ids_by_node_type
-            self._num_train = num_train_by_node_type
-            self._num_val = num_val_by_node_type
-            self._num_test = num_test_by_node_type
+            if splits is not None:
+                self._num_train = num_train_by_node_type
+                self._num_val = num_val_by_node_type
+                self._num_test = num_test_by_node_type
 
         logger.info(
             f"Rank {self._rank} finished building dataset class from partitioned graph in {time.time() - start_time:.2f} seconds. Waiting for other ranks to finish ..."
@@ -626,14 +686,16 @@ class DistLinkPredictionDataset(DistDataset):
         Optional[Union[Graph, dict[EdgeType, Graph]]],
         Optional[Union[Feature, dict[NodeType, Feature]]],
         Optional[Union[Feature, dict[EdgeType, Feature]]],
+        Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]],
+        Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]],
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
         Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[int, dict[NodeType, int]]],
+        Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
+        Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
     ]:
         """
         Serializes the member variables of the DistLinkPredictionDatasetClass
@@ -648,9 +710,12 @@ class DistLinkPredictionDataset(DistDataset):
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Edge Partition Book Tensor
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Positive Edge Label Tensor
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Negative Edge Label Tensor
+            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Node Ids
             Optional[Union[int, dict[NodeType, int]]]: Number of training nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[int, dict[NodeType, int]]]: Number of validation nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
+            Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
+            Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -674,6 +739,8 @@ class DistLinkPredictionDataset(DistDataset):
             self._num_train,  # Additional field unique to DistLinkPredictionDataset class
             self._num_val,  # Additional field unique to DistLinkPredictionDataset class
             self._num_test,  # Additional field unique to DistLinkPredictionDataset class
+            self._node_feature_info,  # Additional field unique to DistLinkPredictionDataset class
+            self._edge_feature_info,  # Additional field unique to DistLinkPredictionDataset class
         )
         return ipc_handle
 
@@ -735,20 +802,38 @@ def _append_non_split_node_ids(
 
 def _rebuild_dist_link_prediction_dataset(
     ipc_handle: Tuple[
-        int,
-        int,
-        Literal["in", "out"],
-        Optional[Union[Graph, dict[EdgeType, Graph]]],
-        Optional[Union[Feature, dict[NodeType, Feature]]],
-        Optional[Union[Feature, dict[EdgeType, Feature]]],
-        Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]],
-        Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[int],
-        Optional[int],
-        Optional[int],
-        Optional[NodeType],
+        int,  # Rank on current machine
+        int,  # World size across machines
+        Literal["in", "out"],  # Edge Direction
+        Optional[Union[Graph, dict[EdgeType, Graph]]],  # Partitioned Graph Data
+        Optional[
+            Union[Feature, dict[NodeType, Feature]]
+        ],  # Partitioned Node Feature Data
+        Optional[
+            Union[Feature, dict[EdgeType, Feature]]
+        ],  # Partitioned Edge Feature Data
+        Optional[
+            Union[PartitionBook, dict[NodeType, PartitionBook]]
+        ],  # Node Partition Book Tensor
+        Optional[
+            Union[PartitionBook, dict[EdgeType, PartitionBook]]
+        ],  # Edge Partition Book Tensor
+        Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ],  # Positive Edge Label Tensor
+        Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ],  # Negative Edge Label Tensor
+        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],  # Node Ids
+        Optional[Union[int, dict[NodeType, int]]],  # Number of training nodes
+        Optional[Union[int, dict[NodeType, int]]],  # Number of val nodes
+        Optional[Union[int, dict[NodeType, int]]],  # Number of test nodes
+        Optional[
+            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
+        ],  # Node feature dim and its data type
+        Optional[
+            Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
+        ],  # Edge feature dim and its data type
     ]
 ):
     dataset = DistLinkPredictionDataset.from_ipc_handle(ipc_handle)
