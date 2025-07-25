@@ -46,13 +46,14 @@ PROJECT=$QWIK_LABS_PROJECT # Ex, qwiklabs-gcp-01-40f6ccb540f3
 QL_USER=$QWIK_LABS_USER # Ex, student-02-5e0049fb83ce
 
 python -m scripts.bootstrap_resource_config \
-  --project=$PROJECT \
+  --project="$PROJECT" \
   --gcp_service_account_email="gigl-dev@$PROJECT.iam.gserviceaccount.com" \
   --docker_artifact_registry_path="us-central1-docker.pkg.dev/$PROJECT/gigl-base-images" \
   --temp_assets_bq_dataset_name="gigl_temp_assets" \
   --embedding_bq_dataset_name="gigl_embeddings" \
   --temp_assets_bucket="gs://gigl_temp_assets_$QL_USER" \
-  --perm_assets_bucket="gs://gigl_perm_assets_$QL_USER"
+  --perm_assets_bucket="gs://gigl_perm_assets_$QL_USER" \
+  --template_resource_config_uri="/examples/tutorial/KDD_2025/resource_config.yaml"
 ```
 
 Accept the default region `us-central1` and output the resource config somewhere locally, like
