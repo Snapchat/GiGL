@@ -32,11 +32,6 @@ jobs:
       new_version: ${{ steps.get_new_version.outputs.new_version }}
       release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
       bump_type: ${{ steps.set_vars.outputs.bump_type }}
-      gigl_release_src_image_cuda: ${{ steps.get_new_version.outputs.gigl_release_src_image_cuda }}
-      gigl_release_src_image_cpu: ${{ steps.get_new_version.outputs.gigl_release_src_image_cpu }}
-      gigl_release_src_image_dataflow_cpu: ${{ steps.get_new_version.outputs.gigl_release_src_image_dataflow_cpu }}
-      gigl_release_kfp_pipeline_path: ${{ steps.get_new_version.outputs.gigl_release_kfp_pipeline_path }}
-      gigl_release_dev_workbench_image: ${{ steps.get_new_version.outputs.gigl_release_dev_workbench_image }}
 
     steps:
     - name: Checkout code
@@ -87,18 +82,6 @@ jobs:
         echo "New version: $NEW_VERSION"
         echo "Release branch name: $RELEASE_BRANCH_NAME"
 
-        source dep_vars.env
-        echo "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA"
-        echo "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU"
-        echo "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU"
-        echo "DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH=$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH"
-        echo "DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=$DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE"
-
-        echo "gigl_release_src_image_cuda=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA" >> $GITHUB_OUTPUT
-        echo "gigl_release_src_image_cpu=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU" >> $GITHUB_OUTPUT
-        echo "gigl_release_src_image_dataflow_cpu=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU" >> $GITHUB_OUTPUT
-        echo "gigl_release_kfp_pipeline_path=$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH" >> $GITHUB_OUTPUT
-        echo "gigl_release_dev_workbench_image=$DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE" >> $GITHUB_OUTPUT
 
     # Commit version changes to new release branch
     - name: Commit and push version bump
@@ -136,11 +119,11 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         cmd: |
-            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_dataflow_cpu }} \
-            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cuda }} \
-            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\${{ needs.bump_version.outputs.gigl_release_src_image_cpu }} \
-            compiled_pipeline_path=\${{ needs.bump_version.outputs.gigl_release_kfp_pipeline_path }} \
-            compile_gigl_kubeflow_pipeline
+            source dep_vars.env && make \
+            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA \
+            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU \
+            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU \
+            compiled_pipeline_path=\$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH \
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ secrets.gcp_project_id }}
 
@@ -220,12 +203,6 @@ jobs:
         - The version tag was created here: https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}.
         ### What's Next:
         Please create a new release from the [tag](https://github.com/Snapchat/GiGL/releases/tag/v${{ needs.bump_version.outputs.new_version }}).
-        - The following version labels were updated:
-          - src_image_cuda: `${{ needs.bump_version.outputs.gigl_release_src_image_cuda }}`
-          - src_image_cpu: `${{ needs.bump_version.outputs.gigl_release_src_image_cpu }}`
-          - src_image_dataflow_cpu: `${{ needs.bump_version.outputs.gigl_release_src_image_dataflow_cpu }}`
-          - kfp_pipeline_path: `${{ needs.bump_version.outputs.gigl_release_kfp_pipeline_path }}`
-          - dev_workbench_image: `${{ needs.bump_version.outputs.gigl_release_dev_workbench_image }}`
         ---
         *This PR was automatically created by the Create Release workflow.*" \
         --base main --head release/v${{ needs.bump_version.outputs.new_version }}
