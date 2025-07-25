@@ -1,3 +1,15 @@
+# Template config for an example heterogeneous graph.
+
+# Note that you should run this template config through the config_populator
+# component to generate a frozen config, which contains the required fields for where assets will be written. You can do this as
+# part of an E2E VAI pipeline or by calling the config populator directly by running:
+# python -m \
+#    gigl.src.config_populator.config_populator \
+#    --job_name="$JOB_NAME" \
+#    --template_uri="$TEMPLATE_TASK_CONFIG_PATH" \
+#    --resource_config_uri="$RESOURCE_CONFIG_PATH" \
+#    --output_file_path_frozen_gbml_config_uri="$FROZEN_TASK_CONFIG_POINTER_FILE_PATH"
+
 # ========
 # TaskMetadata:
 # Specifies the task we are going to perform on the graph.
