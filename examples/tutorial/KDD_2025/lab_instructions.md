@@ -27,7 +27,7 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 
 ## Lab Instructions
 
-1. Click **Start Lab** on the left side of the page. Wait about 4 minutes for the lab to be set up.
+1. Click **Start Lab** on the left side of the page. Wait for the lab to be set up.
 2. Right click on **Open Google Cloud Console** button and open in a incognito window.
 3. Use the top search bar to navigate to the **Workbench** page provided by **Vertex AI**.
 4. There should be an existing Workbench instance, open **Jupyterlab**.
