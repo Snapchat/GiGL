@@ -101,18 +101,21 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         output_dict: dict[NodeDataReference, NodeDataPreprocessingSpec] = {}
         node_data_reference: NodeDataReference
 
+        # Both of our node table use "node_id" for specifying the node identifier.
+        node_identifier = "node_id"
+
         for node_type, table in self._node_tables.items():
             node_data_reference = BigqueryNodeDataReference(
                 reference_uri=table,
                 node_type=NodeType(node_type),
             )
 
-            node_output_id = NodeOutputIdentifier("node_id")
+            node_output_id = NodeOutputIdentifier(node_identifier)
 
             # The ingestion feature spec function is used to specify the input columns and their types
             # that will be read from the NodeDataReference - which in this case is BQ.
             feature_spec_fn = build_ingestion_feature_spec_fn(
-                fixed_int_fields=["node_id"],
+                fixed_int_fields=[node_identifier],
                 fixed_float_fields=self._float_feature_list,
             )
 
@@ -134,10 +137,11 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
     ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
         output_dict: dict[EdgeDataReference, EdgeDataPreprocessingSpec] = {}
 
-        for edge_type, table in self._edge_tables.items():
-            src_node_type = "src"
-            dst_node_type = "dst"
+        # Both of our edge table uses src and dst for specifying the node ids for each edge.
+        src_node_identifier = "src"
+        dst_node_identifier = "dst"
 
+        for edge_type, table in self._edge_tables.items():
             edge_ref = BigqueryEdgeDataReference(
                 reference_uri=table,
                 edge_type=edge_type,
@@ -146,8 +150,8 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
 
             feature_spec_fn = build_ingestion_feature_spec_fn(
                 fixed_int_fields=[
-                    src_node_type,
-                    dst_node_type,
+                    src_node_identifier,
+                    dst_node_identifier,
                 ]
             )
 
@@ -156,8 +160,8 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
             # features through to the output features.
             preprocessing_fn = build_passthrough_transform_preprocessing_fn()
             edge_output_id = EdgeOutputIdentifier(
-                src_node=NodeOutputIdentifier(src_node_type),
-                dst_node=NodeOutputIdentifier(dst_node_type),
+                src_node=NodeOutputIdentifier(src_node_identifier),
+                dst_node=NodeOutputIdentifier(dst_node_identifier),
             )
 
             output_dict[edge_ref] = EdgeDataPreprocessingSpec(
