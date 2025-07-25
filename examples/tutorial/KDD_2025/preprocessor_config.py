@@ -50,21 +50,22 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         # We specify the node types and edge types for the heterogeneous graph;
         # Note: These types should match what is specified in task_config.yaml
 
-        self._user_node_type = "user"
-        self._story_node_type = "story"
+        self._user_node_type = NodeType("user")
+        self._story_node_type = NodeType("story")
 
         self._user_to_story_edge_type = EdgeType(
-            NodeType(self._user_node_type),
+            self._user_node_type,
             Relation("to"),
-            NodeType(self._story_node_type),
+            self._story_node_type,
         )
 
         self._story_to_user_edge_type = EdgeType(
-            NodeType(self._story_node_type),
+            self._story_node_type,
             Relation("to"),
-            NodeType(self._user_node_type),
+            self._user_node_type,
         )
 
+        # These features are taken from our node tables. Note that both the "user" and "story" node types use the same feature names.
         self._float_feature_list = ["f0", "f1"]
 
         # We store a mapping of each node type to their respective table URI.
@@ -87,10 +88,13 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         This function does not return anything. It can be overwritten to perform any operation needed
         before running the pipeline, such as gathering data for node and edge sources
 
-        :param applied_task_identifier: A unique identifier for the task being run. This is usually the job name if orchestrating
-            through GiGL's orchestration logic.
-        :return: None
+        Args:
+            applied_task_identifier (AppliedTaskIdentifier): A unique identifier for the task being run. This is usually
+                the job name if orchestratingthrough GiGL's orchestration logic.
+        Returns:
+            None
         """
+        return None
 
     def get_nodes_preprocessing_spec(
         self,
@@ -99,7 +103,6 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         # In this case, we are reading from BigQuery, thus make use off BigqueryNodeDataReference
 
         output_dict: dict[NodeDataReference, NodeDataPreprocessingSpec] = {}
-        node_data_reference: NodeDataReference
 
         # Both of our node table use "node_id" for specifying the node identifier.
         node_identifier = "node_id"
