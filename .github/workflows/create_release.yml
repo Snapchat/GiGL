@@ -41,7 +41,7 @@ jobs:
       with:
         setup_gcloud: "true"
         install_dev_deps: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
@@ -68,7 +68,7 @@ jobs:
       run: |
         python -m scripts.bump_version \
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
-          --project ${{ secrets.GCP_PROJECT_ID }}
+          --project ${{ vars.GCP_PROJECT_ID }}
 
     # Capture new version and create release branch name
     - name: Get new version
@@ -110,7 +110,7 @@ jobs:
       with:
         setup_gcloud: "true"
         install_dev_deps: "false"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
@@ -125,7 +125,7 @@ jobs:
             compiled_pipeline_path=\$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH \
             compile_gigl_kubeflow_pipeline
         service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
 
   release_dev_workbench_image:
     needs: bump_version
@@ -146,7 +146,7 @@ jobs:
       with:
         setup_gcloud: "true"
         install_dev_deps: "false"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
@@ -157,7 +157,7 @@ jobs:
           bash ./requirements/install_scala_deps.sh --download-only
           make push_dev_workbench_docker_image
         service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
 
 
   # TODO: (svij) Also release the dev image
