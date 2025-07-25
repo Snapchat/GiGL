@@ -17,7 +17,6 @@ on:
           - minor
           - patch
           - nightly
-  push:
 
 jobs:
   # First job: Bump version and create release branch
