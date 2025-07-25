@@ -87,9 +87,6 @@ class TestExampleNotebooks(unittest.TestCase):
                     GIGL_ROOT_DIR
                     / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
                 ),
-                # env_overrides={
-                #     "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
-                # },
             ),
             _NoteBookTestConfig(
                 "kdd_2025_heterogeneous",
@@ -104,6 +101,8 @@ class TestExampleNotebooks(unittest.TestCase):
         futures: dict[str, Future[None]] = {}
         # We use a ProcessPoolExecutor to run notebooks in parallel.
         # If we don't do this then the tests will be much slower.
+        # Use ProcessPoolExecutor instead of ThreadPoolExecutor so that
+        # we can isolate the sys.environ overrides for each notebook.
         with ProcessPoolExecutor() as executor:
             for notebook in self._notebooks:
                 futures[notebook.name] = executor.submit(_run_notebook, notebook)
