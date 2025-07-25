@@ -37,6 +37,7 @@ _autosummary/
 graphlearn_torch/
 graphlearn_torch.egg-info/
 .git/
+.ipynb_checkpoints/
 
 # Ignore downloaded fossa files.
 fossa

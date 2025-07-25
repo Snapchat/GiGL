@@ -27,6 +27,8 @@ COPY . .
 RUN make install_deps
 
 # Add coursier (cs) to the path
+# Default cs paths can be found here:
+# https://get-coursier.io/docs/cli-install#installation-directory
 ENV PATH="$PATH:/root/.local/share/coursier/bin"
 
 
