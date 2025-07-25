@@ -10,8 +10,8 @@ from apache_beam.options.pipeline_options import (
 )
 
 from gigl.common import UriFactory
+from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU
 from gigl.common.logger import Logger
-from gigl.env.dep_constants import GIGL_DATAFLOW_IMAGE
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants import gcs as gcs_constants
 from gigl.src.common.constants.components import GiGLComponents
@@ -67,7 +67,9 @@ def init_beam_pipeline_options(
     setup_options = options.view_as(SetupOptions)
     setup_options.sdk_location = "container"
     worker_options: WorkerOptions = options.view_as(WorkerOptions)
-    worker_options.sdk_container_image = custom_worker_image_uri or GIGL_DATAFLOW_IMAGE
+    worker_options.sdk_container_image = (
+        custom_worker_image_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU
+    )
 
     debug_options = options.view_as(DebugOptions)
     debug_options.experiments = debug_options.experiments or [
