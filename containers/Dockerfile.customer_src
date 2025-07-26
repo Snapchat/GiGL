@@ -1,0 +1,10 @@
+# This Dockerfile is used to build a container image that contains the source code for a customer.
+# It is a convenience Dockerfile that can be used to copy the entire working dir for a customer's repo
+# into the
+
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
+
+WORKDIR /gigl
+
+COPY . .

@@ -173,6 +173,7 @@ Homepage = "https://github.com/snapchat/gigl"
 
 [project.scripts]
 gigl-post-install = "gigl.scripts.post_install:main"
+gigl = "gigl.scripts.gigl_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages (["."] by default)
