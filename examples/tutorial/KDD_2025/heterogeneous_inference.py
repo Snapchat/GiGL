@@ -10,7 +10,7 @@ Example usage:
 Args:
     --task_config_uri: Path to the task config URI.
     --torch_process_group_init_method: Method to initialize the torch process group.
-    --process_count: Number of processes to spawn.  
+    --process_count: Number of processes to spawn.
     --embedding_output_uri: URI to save embeddings.
     --batch_size: Batch size for inference.
     --use_local_saved_model: Use a local saved model instead of a remote URI.

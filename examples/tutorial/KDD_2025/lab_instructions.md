@@ -33,6 +33,32 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 4. There should be an existing Workbench instance, open jupyterlab.
 5. Open the `GiGL` folder in the left sidebar. Navigate to the `examples/tutorial/KDD_2025` folder.
 
+## Setup Resource Config.
+
+The tutorial requires you to setup a [resource config](../../../docs/user_guide/config_guides/resource_config_guide.md)
+in order to launch jobs on GCP.
+
+You may run the below from GiGL root to generate an appropriate resource config. You may find the Project and User on
+the left hand panel on the qwiklabs page.
+
+```bash
+PROJECT=$QWIK_LABS_PROJECT # Ex, qwiklabs-gcp-01-40f6ccb540f3
+QL_USER=$QWIK_LABS_USER # Ex, student-02-5e0049fb83ce
+
+python -m scripts.bootstrap_resource_config \
+  --project="$PROJECT" \
+  --gcp_service_account_email="gigl-dev@$PROJECT.iam.gserviceaccount.com" \
+  --docker_artifact_registry_path="us-central1-docker.pkg.dev/$PROJECT/gigl-base-images" \
+  --temp_assets_bq_dataset_name="gigl_temp_assets" \
+  --embedding_bq_dataset_name="gigl_embeddings" \
+  --temp_assets_bucket="gs://gigl_temp_assets_$QL_USER" \
+  --perm_assets_bucket="gs://gigl_perm_assets_$QL_USER" \
+  --template_resource_config_uri="/examples/tutorial/KDD_2025/resource_config.yaml"
+```
+
+Accept the default region `us-central1` and output the resource config somewhere locally, like
+`examples/tutorial/KDD_2025/resource_config.yaml`.
+
 ## Additional Resources
 
 - GiGL KDD ADS track paper: [Paper link](https://arxiv.org/abs/2502.15054)
