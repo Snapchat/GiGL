@@ -159,11 +159,9 @@ def build_and_push_image(
         dockerfile_name (str): The name of the Dockerfile to use for the build.
         multi_arch (bool): Whether to build a multi-architecture Docker image. Defaults to False.
     """
-    if context_path is None:
-        logger.info("Using default context path")
-        root_dir = Path(__file__).resolve().parent.parent
-    else:
-        root_dir = Path(context_path)
+    root_dir = Path(__file__).resolve().parent.parent
+
+
     dockerfile_path = root_dir / "containers" / dockerfile_name
 
     if multi_arch:
@@ -192,7 +190,10 @@ def build_and_push_image(
     if base_image:
         build_command.extend(["--build-arg", f"BASE_IMAGE={base_image}"])
 
-    build_command.append(root_dir.as_posix())
+    if context_path is None:
+        build_command.append(root_dir.as_posix())
+    else:
+        build_command.append(context_path)
 
     logger.info(f"Running command: {' '.join(build_command)}")
     result = subprocess.run(
