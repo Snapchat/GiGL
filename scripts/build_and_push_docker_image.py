@@ -4,6 +4,7 @@ import sys
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+import datetime
 
 from gigl.common.constants import (
     DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
@@ -29,6 +30,51 @@ class PredefinedImageType(Enum):
     CUDA = "cuda"
     DATAFLOW = "dataflow"
     DEV_WORKBENCH = "dev_workbench"
+
+def build_and_push_customer_src_images(
+    context_path: str,
+    export_docker_artifact_registry: str,
+    base_image_cuda: str = DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
+    base_image_cpu: str = DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
+    base_image_dataflow: str = DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG,
+) -> tuple[str, str, str]:
+    """
+    Package user provided code located at context_path into docker images based on the base images provided.
+    The images are pushed to the export_docker_artifact_registry.
+
+    Args:
+        context_path (str): Root directory that will be copied into the docker images.
+        export_docker_artifact_registry (str): Docker artifact registry to push the images to.
+        base_image_cuda (str): Base image to use for the CUDA image.
+        base_image_cpu (str): Base image to use for the CPU image.
+        base_image_dataflow (str): Base image to use for the Dataflow image.
+    Returns:
+        tuple[str, str, str]: The names of cuda, cpu, and dataflow images.
+    """
+    tag = f"{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    export_cuda_image_name = f"{export_docker_artifact_registry}/src-cuda:{tag}"
+    export_cpu_image_name = f"{export_docker_artifact_registry}/src-cpu:{tag}"
+    export_dataflow_image_name = f"{export_docker_artifact_registry}/src-cpu-dataflow:{tag}"
+
+    build_and_push_image(
+        base_image=base_image_cuda,
+        image_name=export_cuda_image_name,
+        dockerfile_name="Dockerfile.customer_src",
+        context_path=context_path,
+    )
+    build_and_push_image(
+        base_image=base_image_cpu,
+        image_name=export_cpu_image_name,
+        dockerfile_name="Dockerfile.customer_src",
+        context_path=context_path,
+    )
+    build_and_push_image(
+        base_image=base_image_dataflow,
+        image_name=export_dataflow_image_name,
+        dockerfile_name="Dockerfile.customer_src",
+        context_path=context_path,
+    )
+    return export_cuda_image_name, export_cpu_image_name, export_dataflow_image_name
 
 
 def build_and_push_cpu_image(
@@ -102,6 +148,7 @@ def build_and_push_image(
     image_name: str,
     dockerfile_name: str,
     multi_arch: bool = False,
+    context_path: Optional[str] = None,
 ) -> None:
     """
     Builds and pushes a Docker image.
@@ -112,7 +159,11 @@ def build_and_push_image(
         dockerfile_name (str): The name of the Dockerfile to use for the build.
         multi_arch (bool): Whether to build a multi-architecture Docker image. Defaults to False.
     """
-    root_dir = Path(__file__).resolve().parent.parent
+    if context_path is None:
+        logger.info("Using default context path")
+        root_dir = Path(__file__).resolve().parent.parent
+    else:
+        root_dir = Path(context_path)
     dockerfile_path = root_dir / "containers" / dockerfile_name
 
     if multi_arch:

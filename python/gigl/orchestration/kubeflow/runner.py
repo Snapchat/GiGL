@@ -70,13 +70,14 @@ from enum import Enum
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.orchestration.kubeflow.kfp_orchestrator import (
-    DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
     KfpOrchestrator,
 )
 from gigl.orchestration.kubeflow.kfp_pipeline import SPECED_COMPONENTS
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA, DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU, DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU, DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH
+from scripts.build_and_push_docker_image import build_and_push_customer_src_images
 
 DEFAULT_JOB_NAME = f"gigl_run_at_{current_formatted_datetime()}"
 DEFAULT_START_AT = GiGLComponents.ConfigPopulator.value
@@ -86,6 +87,7 @@ class Action(Enum):
     RUN = "run"
     COMPILE = "compile"
     RUN_NO_COMPILE = "run_no_compile"
+
 
     @staticmethod
     def from_string(s: str) -> Action:
@@ -99,9 +101,6 @@ _REQUIRED_RUN_FLAGS = frozenset(
     [
         "task_config_uri",
         "resource_config_uri",
-        "container_image_cuda",
-        "container_image_cpu",
-        "container_image_dataflow",
     ]
 )
 _REQUIRED_RUN_NO_COMPILE_FLAGS = frozenset(
@@ -113,11 +112,40 @@ _REQUIRED_RUN_NO_COMPILE_FLAGS = frozenset(
 )
 _REQUIRED_COMPILE_FLAGS = frozenset(
     [
-        "container_image_cuda",
-        "container_image_cpu",
-        "container_image_dataflow",
+        "compiled_pipeline_path",
     ]
 )
+
+def _assert_required_flags(args: argparse.Namespace) -> None:
+    required_flags: frozenset[str]
+    if args.action == Action.RUN:
+        required_flags = _REQUIRED_RUN_FLAGS
+    elif args.action == Action.RUN_NO_COMPILE:
+        required_flags = _REQUIRED_RUN_NO_COMPILE_FLAGS
+    elif args.action == Action.COMPILE:
+        required_flags = _REQUIRED_COMPILE_FLAGS
+
+
+    missing_flags: list[str] = []
+    missing_values: list[str] = []
+    for flag in required_flags:
+        if not hasattr(args, flag):
+            missing_flags.append(flag)
+        elif len(getattr(args, flag)) == 0:
+            missing_values.append(flag)
+
+    if missing_flags:
+        raise ValueError(
+            f"Missing the following flags for a {args.action} command: {missing_flags}. "
+            + f"All required flags are: {list(required_flags)}."
+        )
+
+    if missing_values:
+        raise ValueError(
+            f"Missing values for the following flags for a {args.action} command: {missing_values}. "
+            + f"All required flags are: {list(required_flags)}."
+        )
+
 
 logger = Logger()
 
@@ -161,21 +189,30 @@ if __name__ == "__main__":
         description="Create the KF pipeline for GNN preprocessing/training/inference"
     )
     parser.add_argument(
-        "--container_image_cuda",
-        help="The docker image name and tag to use for cuda pipeline components ",
-    )
-    parser.add_argument(
-        "--container_image_cpu",
-        help="The docker image name and tag to use for cpu pipeline components ",
-    )
-    parser.add_argument(
-        "--container_image_dataflow",
-        help="The docker image name and tag to use for the worker harness in dataflow ",
+        "--action",
+        type=Action.from_string,
+        choices=list(Action),
+        required=True,
     )
     parser.add_argument(
         "--job_name",
         help="Runtime argument for running the pipeline. The name to give to the KFP job.",
         default=DEFAULT_JOB_NAME,
+    )
+    parser.add_argument(
+        "--container_image_cuda",
+        default=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+        help="The docker image name and tag to use for cuda pipeline components ",
+    )
+    parser.add_argument(
+        "--container_image_cpu",
+        default=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+        help="The docker image name and tag to use for cpu pipeline components ",
+    )
+    parser.add_argument(
+        "--container_image_dataflow",
+        default=DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
+        help="The docker image name and tag to use for the worker harness in dataflow ",
     )
     parser.add_argument(
         "--start_at",
@@ -197,12 +234,7 @@ if __name__ == "__main__":
         "--resource_config_uri",
         help="Runtine argument for resource and env specifications of each component",
     )
-    parser.add_argument(
-        "--action",
-        type=Action.from_string,
-        choices=list(Action),
-        required=True,
-    )
+
     parser.add_argument(
         "--wait",
         help="Wait for the pipeline run to finish",
@@ -212,16 +244,22 @@ if __name__ == "__main__":
         "--pipeline_tag", "-t", help="Tag for the pipeline definition", default=None
     )
     parser.add_argument(
+        "--extra_source_dir",
+        help="""The path to a local dir that will be built into new src docker images based off of
+        `container_image_cuda`, `container_image_cpu`, and `container_image_dataflow`""",
+        default=None,
+    )
+    parser.add_argument(
         "--compiled_pipeline_path",
         help="A custom URI that points to where you want the compiled pipeline is to be saved to."
         + "In the case you want to run an existing pipeline that you are not compiling, this is the path to the compiled pipeline.",
-        default=DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH.uri,
     )
     parser.add_argument(
         "--additional_job_args",
         action="append",  # Allow multiple occurrences of this argument
         default=[],
-        help="""Additional pipeline job arguments by component of form: "gigl_component.key=value,gigl_component.key_2=value_2"
+        help="""Additional pipeline job arguments by component of form:
+        "gigl_component.key=value,gigl_component.key_2=value_2"
         Example: --additional_job_args=subgraph_sampler.additional_spark35_jar_file_uris='gs://path/to/jar'
             --additional_job_args=split_generator.some_other_arg='value'
         This passes additional_spark35_jar_file_uris="gs://path/to/jar" to subgraph_sampler at compile time and
@@ -235,35 +273,25 @@ if __name__ == "__main__":
     parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
 
     # Assert correctness of args
-    required_flags: frozenset[str]
-    if args.action == Action.RUN:
-        required_flags = _REQUIRED_RUN_FLAGS
-    elif args.action == Action.RUN_NO_COMPILE:
-        required_flags = _REQUIRED_RUN_NO_COMPILE_FLAGS
-    elif args.action == Action.COMPILE:
-        required_flags = _REQUIRED_COMPILE_FLAGS
-
-    missing_flags: list[str] = []
-    missing_values: list[str] = []
-    for flag in required_flags:
-        if not hasattr(args, flag):
-            missing_flags.append(flag)
-        elif len(getattr(args, flag)) == 0:
-            missing_values.append(flag)
-
-    if missing_flags:
-        raise ValueError(
-            f"Missing the following flags for a {args.action} command: {missing_flags}. "
-            + f"All required flags are: {list(required_flags)}."
-        )
-
-    if missing_values:
-        raise ValueError(
-            f"Missing values for the following flags for a {args.action} command: {missing_values}. "
-            + f"All required flags are: {list(required_flags)}."
-        )
+    _assert_required_flags(args)
 
     compiled_pipeline_path = UriFactory.create_uri(args.compiled_pipeline_path)
+    cuda_container_image=args.container_image_cuda
+    cpu_container_image=args.container_image_cpu
+    dataflow_container_image=args.container_image_dataflow
+
+    if args.extra_source_dir:
+        # We need to rebuild the src docker images with the extra source dir
+        export_docker_artifact_registry = args.export_docker_artifact_registry
+
+        cuda_container_image, cpu_container_image, dataflow_container_image = build_and_push_customer_src_images(
+            base_image_cuda=cuda_container_image,
+            base_image_cpu=cpu_container_image,
+            base_image_dataflow=dataflow_container_image,
+            export_docker_artifact_registry=export_docker_artifact_registry,
+            context_path=args.extra_source_dir,
+        )
+
     if args.action in (Action.RUN, Action.RUN_NO_COMPILE):
         orchestrator = KfpOrchestrator()
 
@@ -273,9 +301,9 @@ if __name__ == "__main__":
 
         if args.action == Action.RUN:
             path = orchestrator.compile(
-                cuda_container_image=args.container_image_cuda,
-                cpu_container_image=args.container_image_cpu,
-                dataflow_container_image=args.container_image_dataflow,
+                cuda_container_image=cuda_container_image,
+                cpu_container_image=cpu_container_image,
+                dataflow_container_image=dataflow_container_image,
                 dst_compiled_pipeline_path=compiled_pipeline_path,
                 additional_job_args=parsed_additional_job_args,
                 tag=args.pipeline_tag,
@@ -298,9 +326,9 @@ if __name__ == "__main__":
 
     elif args.action == Action.COMPILE:
         pipeline_bundle_path = KfpOrchestrator.compile(
-            cuda_container_image=args.container_image_cuda,
-            cpu_container_image=args.container_image_cpu,
-            dataflow_container_image=args.container_image_dataflow,
+            cuda_container_image=cuda_container_image,
+            cpu_container_image=cpu_container_image,
+            dataflow_container_image=dataflow_container_image,
             dst_compiled_pipeline_path=compiled_pipeline_path,
             additional_job_args=parsed_additional_job_args,
             tag=args.pipeline_tag,
