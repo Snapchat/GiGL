@@ -255,6 +255,11 @@ if __name__ == "__main__":
         + "In the case you want to run an existing pipeline that you are not compiling, this is the path to the compiled pipeline.",
     )
     parser.add_argument(
+        "--export_docker_artifact_registry",
+        help="The docker artifact registry to push the customer src images to.",
+        default=None,
+    )
+    parser.add_argument(
         "--additional_job_args",
         action="append",  # Allow multiple occurrences of this argument
         default=[],
