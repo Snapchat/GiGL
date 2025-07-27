@@ -5,13 +5,15 @@ It initializes a model, loads the state from a saved URI, and performs inference
 It also exports the embeddings to a specified output URI, which can be a GCS bucket or a local directory.
 
 Example usage:
-    python examples/tutorial/KDD_2025/heterogeneous_inference.py
+    python -m examples.tutorial.KDD_2025.heterogeneous_inference
 
-Multi node inference is supported by via the --rank and --world_size arguments.
-If doing multi node inference, make sure to set the `--host` and `--port` arguments
-to the same values across all nodes.
-
-You may use the `--process_count` argument to control how many inference processes will be spawned, per machine.
+Args:
+    --task_config_uri: Path to the task config URI.
+    --torch_process_group_init_method: Method to initialize the torch process group.
+    --process_count: Number of processes to spawn.
+    --embedding_output_uri: URI to save embeddings.
+    --batch_size: Batch size for inference.
+    --use_local_saved_model: Use a local saved model instead of a remote URI.
 """
 import os
 
@@ -21,13 +23,14 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 import argparse
 import datetime
 from collections.abc import Mapping
+from distutils.util import strtobool
 from pathlib import Path
 
 import fastavro
 import pandas as pd
 import torch
 import torch.multiprocessing.spawn
-from examples.tutorial.KDD_2025.utils import init_model
+from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 
 from gigl.common import Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter
@@ -38,6 +41,7 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.utils import get_free_port
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri
 
 logger = Logger()
@@ -115,13 +119,9 @@ if __name__ == "__main__":
         help="Path to the task config URI.",
     )
     parser.add_argument(
-        "--host", type=str, default="localhost", help="Host for distributed inference."
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=get_free_port(),
-        help="Port for distributed communication",
+        "--torch_process_group_init_method",
+        type=str,
+        default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
         "--process_count", type=int, default=1, help="Number of processes to spawn"
@@ -133,33 +133,20 @@ if __name__ == "__main__":
         help="URI to save embeddings",
     )
     parser.add_argument(
-        "--saved_model_uri",
-        type=str,
-        default="/tmp/gigl/toy_hgt_model.pt",
-        help="URI of the saved model",
+        "--local_saved_model",
+        type=bool,
+        default=True,
+        help="Use a local saved model instead of a remote URI",
     )
     parser.add_argument(
         "--batch_size", type=int, default=4, help="Batch size for inference"
     )
-    parser.add_argument(
-        "--rank",
-        type=int,
-        default=0,
-        help="Rank of the process (for distributed training).",
-    )
-    parser.add_argument(
-        "--world_size",
-        type=int,
-        default=1,
-        help="Total number of nodes in the training cluster.",
-    )
 
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    logger.info(f"Using args: {args}, unknown args: {unknown}")
     torch.distributed.init_process_group(
         backend="gloo",  # Use the Gloo backend for CPU training.
-        init_method=f"tcp://{args.host}:{args.port}",
-        rank=args.rank,
-        world_size=args.world_size,
+        init_method=args.torch_process_group_init_method,
     )
     # Build the dataset from the task config URI
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
@@ -167,7 +154,13 @@ if __name__ == "__main__":
         task_config_uri,
         _tfrecord_uri_pattern=".*tfrecord",
     )
-
+    if strtobool(args.use_local_saved_model):
+        saved_model_uri = LOCAL_SAVED_MODEL_URI
+    else:
+        saved_model_uri = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+            UriFactory.create_uri(args.task_config_uri)
+        ).shared_config.trained_model_metadata.trained_model_uri
+    logger.info(f"Using saved model URI: {saved_model_uri}")
     # Spawn processes for distributed inference
     inference_port = get_free_port()
     torch.multiprocessing.spawn(
@@ -177,7 +170,7 @@ if __name__ == "__main__":
             inference_port,  # port
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
-            UriFactory.create_uri(args.saved_model_uri),  # saved_model_uri
+            saved_model_uri,  # saved_model_uri
             args.batch_size,  # batch_size
         ),
         nprocs=args.process_count,
@@ -203,7 +196,7 @@ if __name__ == "__main__":
     # node_type: str
     avro_data: list = []
     for avro_file in avro_files:
-        avro_data.extend(fastavro.reader(avro_file.open("rb")))  # type: ignore
+        avro_data.extend(fastavro.reader(avro_file.open("rb")))
     print(f"First data: {avro_data[0] if avro_data else 'No data found'}")
     df = pd.DataFrame.from_records(avro_data)
     logger.info(f"Dataframe {df}.")

@@ -29,7 +29,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
           setup_gcloud: "true"
-          gcp_project_id: ${{ secrets.gcp_project_id }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Unit Tests
@@ -41,7 +41,7 @@ jobs:
       with:
         cmd: "make unit_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-test:
     if: github.event_name == 'merge_group'
@@ -52,7 +52,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
           setup_gcloud: "true"
-          gcp_project_id: ${{ secrets.gcp_project_id }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Integration Tests
@@ -60,7 +60,7 @@ jobs:
       with:
         cmd: "make integration_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-e2e-test:
     if: github.event_name == 'merge_group'
@@ -71,7 +71,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
           setup_gcloud: "true"
-          gcp_project_id: ${{ secrets.gcp_project_id }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run E2E Tests
@@ -79,7 +79,7 @@ jobs:
       with:
         cmd: "make run_all_e2e_tests"
         service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-example-notebooks-test:
     if: github.event_name == 'merge_group'
@@ -90,7 +90,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
           setup_gcloud: "true"
-          gcp_project_id: ${{ secrets.gcp_project_id }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Example Notebook E2E Tests
@@ -98,7 +98,7 @@ jobs:
       with:
         cmd: "make notebooks_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-api-test:
     # if: github.event_name == 'merge_group'
@@ -129,7 +129,7 @@ jobs:
       with:
           install_dev_deps: "true"
           setup_gcloud: "true"
-          gcp_project_id: ${{ secrets.gcp_project_id }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Lint Tests
