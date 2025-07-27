@@ -68,15 +68,20 @@ from collections import defaultdict
 from enum import Enum
 
 from gigl.common import UriFactory
+from gigl.common.constants import (
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
+)
 from gigl.common.logger import Logger
 from gigl.orchestration.kubeflow.kfp_orchestrator import (
+    DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
     KfpOrchestrator,
 )
 from gigl.orchestration.kubeflow.kfp_pipeline import SPECED_COMPONENTS
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.time import current_formatted_datetime
-from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA, DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU, DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU, DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH
 from scripts.build_and_push_docker_image import build_and_push_customer_src_images
 
 DEFAULT_JOB_NAME = f"gigl_run_at_{current_formatted_datetime()}"
@@ -87,7 +92,6 @@ class Action(Enum):
     RUN = "run"
     COMPILE = "compile"
     RUN_NO_COMPILE = "run_no_compile"
-
 
     @staticmethod
     def from_string(s: str) -> Action:
@@ -116,6 +120,7 @@ _REQUIRED_COMPILE_FLAGS = frozenset(
     ]
 )
 
+
 def _assert_required_flags(args: argparse.Namespace) -> None:
     required_flags: frozenset[str]
     if args.action == Action.RUN:
@@ -124,7 +129,6 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
         required_flags = _REQUIRED_RUN_NO_COMPILE_FLAGS
     elif args.action == Action.COMPILE:
         required_flags = _REQUIRED_COMPILE_FLAGS
-
 
     missing_flags: list[str] = []
     missing_values: list[str] = []
@@ -280,16 +284,24 @@ if __name__ == "__main__":
     # Assert correctness of args
     _assert_required_flags(args)
 
-    compiled_pipeline_path = UriFactory.create_uri(args.compiled_pipeline_path)
-    cuda_container_image=args.container_image_cuda
-    cpu_container_image=args.container_image_cpu
-    dataflow_container_image=args.container_image_dataflow
+    if args.compiled_pipeline_path:
+        compiled_pipeline_path = UriFactory.create_uri(args.compiled_pipeline_path)
+    else:
+        compiled_pipeline_path = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH
+
+    cuda_container_image = args.container_image_cuda
+    cpu_container_image = args.container_image_cpu
+    dataflow_container_image = args.container_image_dataflow
 
     if args.extra_source_dir:
         # We need to rebuild the src docker images with the extra source dir
         export_docker_artifact_registry = args.export_docker_artifact_registry
 
-        cuda_container_image, cpu_container_image, dataflow_container_image = build_and_push_customer_src_images(
+        (
+            cuda_container_image,
+            cpu_container_image,
+            dataflow_container_image,
+        ) = build_and_push_customer_src_images(
             base_image_cuda=cuda_container_image,
             base_image_cpu=cpu_container_image,
             base_image_dataflow=dataflow_container_image,

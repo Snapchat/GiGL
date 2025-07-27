@@ -1,10 +1,10 @@
 import argparse
+import datetime
 import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
 from typing import Optional
-import datetime
 
 from gigl.common.constants import (
     DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
@@ -31,6 +31,7 @@ class PredefinedImageType(Enum):
     DATAFLOW = "dataflow"
     DEV_WORKBENCH = "dev_workbench"
 
+
 def build_and_push_customer_src_images(
     context_path: str,
     export_docker_artifact_registry: str,
@@ -54,7 +55,9 @@ def build_and_push_customer_src_images(
     tag = f"{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
     export_cuda_image_name = f"{export_docker_artifact_registry}/src-cuda:{tag}"
     export_cpu_image_name = f"{export_docker_artifact_registry}/src-cpu:{tag}"
-    export_dataflow_image_name = f"{export_docker_artifact_registry}/src-cpu-dataflow:{tag}"
+    export_dataflow_image_name = (
+        f"{export_docker_artifact_registry}/src-cpu-dataflow:{tag}"
+    )
 
     build_and_push_image(
         base_image=base_image_cuda,
@@ -160,7 +163,6 @@ def build_and_push_image(
         multi_arch (bool): Whether to build a multi-architecture Docker image. Defaults to False.
     """
     root_dir = Path(__file__).resolve().parent.parent
-
 
     dockerfile_path = root_dir / "containers" / dockerfile_name
 
