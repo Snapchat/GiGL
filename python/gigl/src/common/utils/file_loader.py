@@ -192,7 +192,7 @@ class FileLoader:
                     should_overwrite=True,
                 )
         else:
-            logger.warning(
+            logger.error(
                 f"Unsupported src/dst combo: {type(file_uri_src)} -> {type(file_uri_dst)}"
             )
             raise TypeError(self.__unsupported_uri_message)

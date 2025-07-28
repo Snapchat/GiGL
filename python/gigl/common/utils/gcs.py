@@ -366,7 +366,6 @@ class GcsUtils:
             gcs_path=src_gcs_blob
         )
         src_bucket = self.__storage_client.bucket(bucket_name=src_bucket_name)
-        src_bucket = self.__storage_client.bucket(bucket_name=src_bucket_name)
         dst_bucket_name, dst_blob_name = self.get_bucket_and_blob_path_from_gcs_path(
             gcs_path=dst_gcs_blob
         )

@@ -50,11 +50,30 @@ class GcsUtilsTest(unittest.TestCase):
             read_text = file.read()
             self.assertEqual(read_text, "This is a test")
 
+    def test_upload_from_str_overwrites(self):
+        gcs_utils = GcsUtils()
+        gcs_path = GcsUri.join(
+            self._scratch_gcs_path, "test_upload_from_str_overwrites/sample_text.txt"
+        )
+        gcs_utils.upload_from_string(gcs_path, "This is a test")
+        f = gcs_utils.download_file_from_gcs_to_temp_file(gcs_path)
+        with open(f.name) as file:
+            read_text = file.read()
+            self.assertEqual(read_text, "This is a test")
+
+        # Overwrite the content
+        gcs_utils.upload_from_string(gcs_path, "Updated test content")
+        f = gcs_utils.download_file_from_gcs_to_temp_file(gcs_path)
+        with open(f.name) as file:
+            read_text = file.read()
+            self.assertEqual(read_text, "Updated test content")
+
     def test_copy_from_gcs_to_gcs(self):
         gcs_utils = GcsUtils()
-        source_gcs_path = GcsUri(
-            f"gs://{dep_constants.GIGL_PUBLIC_BUCKET_NAME}/test_assets/sample_text.txt"
+        source_gcs_path = GcsUri.join(
+            self._scratch_gcs_path, "test_copy_from_gcs_to_gcs/sample_text.txt"
         )
+        gcs_utils.upload_from_string(source_gcs_path, "This is a test")
         destination_gcs_path = GcsUri.join(
             self._scratch_gcs_path, "test_copy_from_gcs_to_gcs/copied_sample_text.txt"
         )
@@ -65,24 +84,6 @@ class GcsUtilsTest(unittest.TestCase):
             read_text = file.read()
             self.assertEqual(read_text, "This is a test")
 
-    # TODO: (svij) Follow up PR to fix this test
-    # def test_upload_from_string(self):
-    #     # TODO, ensure cleanup and files dont conflict with each other if multiple tests simultaneously
-    #     test_str = "This is a test"
-    #     test_str_overwrite = "This is a test overwrite"
 
-    #     gcs_utils = GcsUtils()
-    #     gcs_path = GcsUri(
-    #         f"gs://{dep_constants.GIGL_PUBLIC_BUCKET_NAME}/test_assets/test_upload_from_string.txt"
-    #     )
-    #     gcs_utils.upload_from_string(gcs_path, test_str)
-    #     f = gcs_utils.download_file_from_gcs_to_temp_file(gcs_path)
-    #     with open(f.name) as file:
-    #         read_text = file.read()
-    #         self.assertEqual(read_text, test_str)
-
-    #     gcs_utils.upload_from_string(gcs_path, test_str_overwrite)
-    #     f = gcs_utils.download_file_from_gcs_to_temp_file(gcs_path)
-    #     with open(f.name) as file:
-    #         read_text = file.read()
-    #         self.assertEqual(read_text, test_str_overwrite)
+if __name__ == "__main__":
+    unittest.main()
