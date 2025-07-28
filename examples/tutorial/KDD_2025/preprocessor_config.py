@@ -36,14 +36,16 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         This is used to specify how to preprocess the edge data using a TFT preprocessing function
     """
 
-    def __init__(self):
+    # We use the __init__ function to define node types, edge types, and the node/edge tables that we will be feeding into the data preprocessor.
+    # The arguments to __init__ are provided through the DataPreprocessorArgs field in the task config
+    def __init__(self, bq_user_node_table_name: str, bq_story_node_table_name: str, bq_user_story_edge_table_name: str, bq_story_user_edge_table_name: str):
         super().__init__()
 
-        self._user_table = "external-snap-ci-github-gigl.public_gigl.toy_graph_heterogeneous_node_anchor_lp_user_nodes_2025-07-24--20-45-44-UTC"
-        self._story_table = "external-snap-ci-github-gigl.public_gigl.toy_graph_heterogeneous_node_anchor_lp_story_nodes_2025-07-24--20-45-44-UTC"
+        self._user_table = bq_user_node_table_name
+        self._story_table = bq_story_node_table_name
 
-        self._user_to_story_table = "external-snap-ci-github-gigl.public_gigl.toy_graph_heterogeneous_node_anchor_lp_user-to-story_edges_main_2025-07-24--20-45-44-UTC"
-        self._story_to_user_table = "external-snap-ci-github-gigl.public_gigl.toy_graph_heterogeneous_node_anchor_lp_story-to-user_edges_main_2025-07-24--20-45-44-UTC"
+        self._user_to_story_table = bq_user_story_edge_table_name
+        self._story_to_user_table = bq_story_user_edge_table_name
 
         # We specify the node types and edge types for the heterogeneous graph;
         # Note: These types should match what is specified in task_config.yaml
@@ -64,7 +66,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         )
 
         # These features are taken from our node tables. Note that both the "user" and "story" node types use the same feature names.
-        self._float_feature_list = ["f0", "f1"]
+        self._node_float_feature_list = ["f0", "f1"]
 
         # We store a mapping of each node type to their respective table URI.
         self._node_tables: dict[NodeType, str] = {
@@ -117,7 +119,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
             # that will be read from the NodeDataReference - which in this case is BQ.
             feature_spec_fn = build_ingestion_feature_spec_fn(
                 fixed_int_fields=[node_identifier],
-                fixed_float_fields=self._float_feature_list,
+                fixed_float_fields=self._node_float_feature_list,
             )
 
             # We don't need any special preprocessing for the node features.
@@ -129,7 +131,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
                 feature_spec_fn=feature_spec_fn,
                 preprocessing_fn=preprocessing_fn,
                 identifier_output=node_output_id,
-                features_outputs=self._float_feature_list,
+                features_outputs=self._node_float_feature_list,
             )
         return output_dict
 
