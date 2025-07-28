@@ -20,7 +20,7 @@ class Uri(object):
         self.__uri = self._token_to_string(uri)
 
     @staticmethod
-    def _token_to_string(token: Union[str, Path, "Uri"]) -> str:
+    def _token_to_string(token: _URI_LIKE) -> str:
         if isinstance(token, str):
             return token
         elif isinstance(token, Uri):
