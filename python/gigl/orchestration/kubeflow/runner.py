@@ -82,7 +82,7 @@ from gigl.orchestration.kubeflow.kfp_pipeline import SPECED_COMPONENTS
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.time import current_formatted_datetime
-from scripts.build_and_push_docker_image import build_and_push_customer_src_images
+from gigl.orchestration.build_and_push_docker_image import build_and_push_customer_src_images
 
 DEFAULT_JOB_NAME = f"gigl_run_at_{current_formatted_datetime()}"
 DEFAULT_START_AT = GiGLComponents.ConfigPopulator.value

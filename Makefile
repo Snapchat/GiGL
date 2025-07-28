@@ -237,13 +237,13 @@ remove_jars:
 	rm -rf python/deps/scala/subgraph_sampler/jars/*
 
 push_cpu_docker_image:
-	@python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}
+	@python -m gigl.orchestration.build_and_push_docker_image --predefined_type cpu --image_name ${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}
 
 push_cuda_docker_image:
-	@python -m scripts.build_and_push_docker_image --predefined_type cuda --image_name ${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}
+	@python -m gigl.orchestration.build_and_push_docker_image --predefined_type cuda --image_name ${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}
 
 push_dataflow_docker_image:
-	@python -m scripts.build_and_push_docker_image --predefined_type dataflow --image_name ${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG}
+	@python -m gigl.orchestration.build_and_push_docker_image --predefined_type dataflow --image_name ${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG}
 
 push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_dataflow_docker_image
 	# Dockerize the src code and push it to gcr.
@@ -257,7 +257,7 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	@echo "All Docker images compiled and pushed"
 
 push_dev_workbench_docker_image: compile_jars
-	@python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
+	@python -m gigl.orchestration.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 
 # Generic make target to run e2e tests. Used by other make targets to run e2e tests.
