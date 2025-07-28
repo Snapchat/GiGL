@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from gigl.common.logger import Logger
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
