@@ -13,4 +13,5 @@ run_api_test:
 		--task_config_uri=api_test_task_config.yaml \
 		--resource_config_uri=api_test_resource_config.yaml \
 		--extra_source_dir=testing/api_test/ \
-		--export_docker_artifact_registry=${DOCKER_ARTIFACT_REGISTRY}
+		--export_docker_artifact_registry=${DOCKER_ARTIFACT_REGISTRY} \
+		--wait
