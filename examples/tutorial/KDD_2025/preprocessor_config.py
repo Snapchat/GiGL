@@ -67,7 +67,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         self._float_feature_list = ["f0", "f1"]
 
         # We store a mapping of each node type to their respective table URI.
-        self._node_tables: dict[str, str] = {
+        self._node_tables: dict[NodeType, str] = {
             self._user_node_type: self._user_table,
             self._story_node_type: self._story_table,
         }
@@ -88,7 +88,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
 
         Args:
             applied_task_identifier (AppliedTaskIdentifier): A unique identifier for the task being run. This is usually
-                the job name if orchestratingthrough GiGL's orchestration logic.
+                the job name if orchestrating through GiGL's orchestration logic.
         Returns:
             None
         """
@@ -108,7 +108,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
         for node_type, table in self._node_tables.items():
             node_data_reference = BigqueryNodeDataReference(
                 reference_uri=table,
-                node_type=NodeType(node_type),
+                node_type=node_type,
             )
 
             node_output_id = NodeOutputIdentifier(node_identifier)

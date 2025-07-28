@@ -5,9 +5,8 @@ shared_resource_config:
   resource_labels:
   # We have a 63 character limit for cost_resource_group_tag.
 
-  # COMPONENT is one of {pre|sgs|spl|tra|inf|pos} standing for:
-  #   {Preprocessor | Subgraph Sampler | Split Generator | Trainer | Inference
-  #   | Post  Processor} so we can get more accurate cost measurements
+  # COMPONENT is one of {pre|tra|inf|pos} standing for:
+  #   {Preprocessor | Trainer | Inference | Post  Processor} so we can get more accurate cost measurements
   #   of each component. This will be automatically filled in code.
     cost_resource_group_tag: dev_experiments_COMPONENT
     cost_resource_group: gigl_platform

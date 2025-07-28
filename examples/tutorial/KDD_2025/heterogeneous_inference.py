@@ -115,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        default="examples/tutorial/KDD_2025/toy_graph_task_config.yaml",
+        default="examples/tutorial/KDD_2025/task_config.yaml",
         help="Path to the task config URI.",
     )
     parser.add_argument(
