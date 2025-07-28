@@ -163,41 +163,38 @@ class FileLoader:
         file_uri_dst: Uri,
         should_create_symlinks_if_possible: bool = True,
     ) -> None:
-        uri_map_schema = self.__get_uri_map_schema(uri_map={file_uri_src: file_uri_dst})
-        uri_map = {file_uri_src: file_uri_dst}
-
-        if uri_map_schema == (GcsUri, LocalUri):
+        if isinstance(file_uri_src, GcsUri) and isinstance(file_uri_dst, GcsUri):
+            self.__gcs_utils.copy_gcs_blob(file_uri_src, file_uri_dst)
+        elif isinstance(file_uri_src, GcsUri) and isinstance(file_uri_dst, LocalUri):
             self.__gcs_utils.download_file_from_gcs(
-                gcs_path=cast(GcsUri, file_uri_src),
-                dest_file_path=cast(LocalUri, file_uri_dst),
+                gcs_path=file_uri_src,
+                dest_file_path=file_uri_dst,
             )
-        elif uri_map_schema == (LocalUri, GcsUri):
+        elif isinstance(file_uri_src, HttpUri) and isinstance(file_uri_dst, LocalUri):
+            HttpUtils.download_files_from_http(
+                http_to_local_path_map={file_uri_src: file_uri_dst}
+            )
+        elif isinstance(file_uri_src, LocalUri) and isinstance(file_uri_dst, GcsUri):
             self.__gcs_utils.upload_files_to_gcs(
-                local_file_path_to_gcs_path_map=cast(dict[LocalUri, GcsUri], uri_map),
+                local_file_path_to_gcs_path_map={file_uri_src: file_uri_dst},
                 parallel=False,
             )
-        elif uri_map_schema == (LocalUri, LocalUri):
+        elif isinstance(file_uri_src, LocalUri) and isinstance(file_uri_dst, LocalUri):
             local_source_to_link_path_map = {file_uri_src: file_uri_dst}
             if should_create_symlinks_if_possible:
                 create_file_symlinks(
-                    local_source_to_link_path_map=cast(
-                        dict[LocalUri, LocalUri], local_source_to_link_path_map
-                    ),
+                    local_source_to_link_path_map=local_source_to_link_path_map,
                     should_overwrite=True,
                 )
             else:
                 copy_files(
-                    local_source_to_local_dst_path_map=cast(
-                        dict[LocalUri, LocalUri], local_source_to_link_path_map
-                    ),
+                    local_source_to_local_dst_path_map=local_source_to_link_path_map,
                     should_overwrite=True,
                 )
-        elif uri_map_schema == (HttpUri, LocalUri):
-            HttpUtils.download_files_from_http(
-                http_to_local_path_map=cast(dict[HttpUri, LocalUri], uri_map),
-            )
         else:
-            logger.warning(f"Unsupported uri_map_schema: {uri_map_schema}")
+            logger.error(
+                f"Unsupported src/dst combo: {type(file_uri_src)} -> {type(file_uri_dst)}"
+            )
             raise TypeError(self.__unsupported_uri_message)
 
     def load_from_filelike(self, uri: Uri, filelike: IO[AnyStr]) -> None:
