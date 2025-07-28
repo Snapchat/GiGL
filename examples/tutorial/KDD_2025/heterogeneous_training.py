@@ -5,7 +5,7 @@ Supports multi process/multi node training.
 Does not support GPU training.
 
 Run with:
-    python examples/tutorial/KDD_2025/heterogeneous_training.py
+    python -m examples.tutorial.KDD_2025.heterogeneous_training
 
 This example is meant to be run on the "toy graph" dataset,
 which is a small heterogeneous graph with two node types (user) and (story)
@@ -18,11 +18,13 @@ if using a different dataset, also update the following fields:
  - SUPERVISION_EDGE_TYPE
  and the metadata in the `init_model` function.
 
- Multi node training is supported by via the --rank and --world_size arguments.
- If doing multi node training, make sure to set the `--host` and `--port` arguments
- to the same values across all nodes.
-
- You may use the `--process_count` argument to control how many training processes will be spawned. per machine.
+Args:
+    --task_config_uri: Path to the task config URI.
+    --torch_process_group_init_method: Method to initialize the torch process group.
+    --process_count: Number of processes to spawn.
+    --batch_size: Batch size for training and validation.
+    --val_every: Run validation every N batches.
+    --use_local_saved_model: Use a local saved model instead of a remote URI.
 """
 import os
 
@@ -31,16 +33,16 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 
 import argparse
 from collections.abc import Iterable, Mapping
+from distutils.util import strtobool
 from typing import Literal
 
 import torch
-import torch.multiprocessing.spawn
-from examples.tutorial.KDD_2025.utils import init_model
+from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
+from gigl.common import UriFactory
 from gigl.common.logger import Logger
-from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.distributed import (
     DistABLPLoader,
     DistLinkPredictionDataset,
@@ -48,6 +50,7 @@ from gigl.distributed import (
 )
 from gigl.distributed.utils import get_free_port
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import save_state_dict
 from gigl.utils.iterator import InfiniteIterator
 
@@ -204,6 +207,11 @@ if __name__ == "__main__":
         help="Path to the task config URI.",
     )
     parser.add_argument(
+        "--torch_process_group_init_method",
+        type=str,
+        default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
+    )
+    parser.add_argument(
         "--process_count", type=int, default=1, help="Number of processes to spawn."
     )
     parser.add_argument(
@@ -216,55 +224,27 @@ if __name__ == "__main__":
         "--val_every", type=int, default=400, help="Run validation every N batches."
     )
     parser.add_argument(
-        "--saved_model_path",
-        type=str,
-        default="/tmp/gigl/toy_hgt_model.pt",
-        help="Path to save the trained model.",
-    )
-    parser.add_argument(
-        "--rank",
-        type=int,
-        default=0,
-        help="Rank of the process (for distributed training).",
-    )
-    parser.add_argument(
-        "--world_size",
-        type=int,
-        default=1,
-        help="Total number of nodes in the training cluster.",
-    )
-    parser.add_argument(
-        "--host", type=str, default="localhost", help="Host for distributed training."
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=get_free_port(),
-        help="Port for distributed training communication.",
+        "--use_local_saved_model",
+        default="True",
+        help="Use a local saved model instead of a remote URI",
     )
 
-    args = parser.parse_args()
-    logger.info(f"Using args: {args}")
+    args, unknown = parser.parse_known_args()
+    logger.info(f"Using args: {args}, unknown args: {unknown}")
     torch.distributed.init_process_group(
         backend="gloo",  # Use the Gloo backend for CPU training.
-        init_method=f"tcp://{args.host}:{args.port}",
-        rank=args.rank,
-        world_size=args.world_size,
+        init_method=args.torch_process_group_init_method,
     )
-
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=args.task_config_uri,
         is_inference=False,
         _tfrecord_uri_pattern=".*tfrecord",
     )
-    logger.info(
-        f"Splits: {dataset.train_node_ids=}, {dataset.val_node_ids=}, {dataset.test_node_ids=}"
-    )
     assert isinstance(dataset.train_node_ids, Mapping)
     for node_type, node_ids in dataset.train_node_ids.items():
         logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")
         max_training_batches = node_ids.size(0) // (
-            args.batch_size * args.world_size * args.process_count
+            args.batch_size * torch.distributed.get_world_size() * args.process_count
         )
     assert isinstance(dataset.val_node_ids, Mapping)
     for node_type, node_ids in dataset.val_node_ids.items():
@@ -275,6 +255,14 @@ if __name__ == "__main__":
     training_process_port = get_free_port()
     process_count = args.process_count
     logger.info(f"Will train for {max_training_batches} batches.")
+    if strtobool(args.use_local_saved_model):
+        saved_model_uri = LOCAL_SAVED_MODEL_URI
+    else:
+        saved_model_uri = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+            UriFactory.create_uri(args.task_config_uri)
+        ).shared_config.trained_model_metadata.trained_model_uri
+
+    logger.info(f"Using saved model URI: {saved_model_uri}")
     torch.multiprocessing.spawn(
         train,
         args=(
@@ -284,7 +272,7 @@ if __name__ == "__main__":
             max_training_batches,  # max_training_batches
             args.batch_size,  # batch_size
             args.val_every,  # val_every
-            args.saved_model_path,  # saved_model_path
+            saved_model_uri,  # saved_model_path
         ),
         nprocs=process_count,
     )

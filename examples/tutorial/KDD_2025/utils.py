@@ -13,3 +13,6 @@ def init_model(
         out_channels=16,  # This is the embedding size - just an example can be changed.
         metadata=metadata,
     )
+
+
+LOCAL_SAVED_MODEL_URI = "/tmp/gigl/toy_hgt_model.pt"

@@ -74,6 +74,10 @@ class SupportedParams:
                 default=None,
                 description="`perm_assets_bucket` - GCS Bucket for storing permanent assets i.e. `gs://YOUR_BUCKET_NAME`",
             ),
+            "template_resource_config_uri": Param(
+                default=None,
+                description="URI to the template resource config file to use for bootstrapping. If provided, will be used as the 'Base' for the resource config, with the appropriate fields overwritten by the values provided in this script.",
+            ),
         }
 
 
@@ -193,21 +197,6 @@ if __name__ == "__main__":
     )
     print("======================================================")
 
-    resource_config_path: str
-    file_loader = FileLoader()
-    if file_loader.does_uri_exist(uri=LOCAL_DEV_TEMPLATE_RES_CONF):
-        print(
-            f"Using local development template resource config: {LOCAL_DEV_TEMPLATE_RES_CONF}"
-        )
-        resource_config_path = LOCAL_DEV_TEMPLATE_RES_CONF.uri
-    else:
-        print(f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF}")
-        tmp_file = file_loader.load_to_temp_file(
-            file_uri_src=FALLBACK_TEMPLATE_RES_CONF
-        )
-        print(f"Downloaded fallback template resource config to {tmp_file.name}")
-        resource_config_path = tmp_file.name
-
     supported_params = SupportedParams()
     parser = argparse.ArgumentParser(
         description="Bootstrap GiGL resource config. All parameters can be provided as CLI args or interactively."
@@ -244,6 +233,25 @@ if __name__ == "__main__":
                 raise ValueError(
                     f"Missing required value for {key}. Please provide a value."
                 )
+    resource_config_path: str
+    file_loader = FileLoader()
+    if args.template_resource_config_uri:
+        print(
+            f"Using provided template resource config: {args.template_resource_config_uri}"
+        )
+        resource_config_path = args.template_resource_config_uri
+    elif file_loader.does_uri_exist(uri=LOCAL_DEV_TEMPLATE_RES_CONF):
+        print(
+            f"Using local development template resource config: {LOCAL_DEV_TEMPLATE_RES_CONF}"
+        )
+        resource_config_path = LOCAL_DEV_TEMPLATE_RES_CONF.uri
+    else:
+        print(f"Using fallback template resource config: {FALLBACK_TEMPLATE_RES_CONF}")
+        tmp_file = file_loader.load_to_temp_file(
+            file_uri_src=FALLBACK_TEMPLATE_RES_CONF
+        )
+        print(f"Downloaded fallback template resource config to {tmp_file.name}")
+        resource_config_path = tmp_file.name
 
     # Validate existence of resources
     assert_gcp_project_exists(values["project"])
@@ -271,9 +279,6 @@ if __name__ == "__main__":
         ).strip()
         or default_resource_config_dest_path
     )
-    assert destination_file_path and destination_file_path.startswith(
-        "gs://"
-    ), "Destination file path must be a GCS path starting with 'gs://'"
 
     print("=======================================================")
     print(f"Will now create the resource config file @ {destination_file_path}.")

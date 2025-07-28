@@ -31,7 +31,7 @@ jobs:
         # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
         # https://github.com/tensorflow/tensorflow/issues/57104
         use_cloud_run: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
@@ -50,7 +50,7 @@ jobs:
         descriptive_workflow_name: "Integration Test"
         setup_gcloud: "true"
         use_cloud_run: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
@@ -69,7 +69,7 @@ jobs:
         descriptive_workflow_name: "E2E Test"
         setup_gcloud: "true"
         use_cloud_run: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
@@ -89,7 +89,7 @@ jobs:
         descriptive_workflow_name: "Example Notebooks Test"
         setup_gcloud: "true"
         use_cloud_run: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
@@ -110,7 +110,7 @@ jobs:
         descriptive_workflow_name: "Lint Test"
         install_dev_deps: "true"
         setup_gcloud: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |

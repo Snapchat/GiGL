@@ -1,4 +1,3 @@
-# GiglResourceConfig for our unit tests.
 shared_resource_config:
   # Resource labels are just compute labels that should be attached to all compute resources spun up by GiGL.
   # So a practitioner can have a more fine grained understanding of resource utilization and cost of the resources in their GCP billing.
@@ -6,43 +5,42 @@ shared_resource_config:
   resource_labels:
   # We have a 63 character limit for cost_resource_group_tag.
 
-  # COMPONENT is one of {pre|tra|inf|pos} standing for:
-  #   {Preprocessor | Trainer | Inference | Post  Processor} so we can get more accurate cost measurements
+  # COMPONENT is one of {pre|sgs|spl|tra|inf|pos} standing for:
+  #   {Preprocessor | Subgraph Sampler | Split Generator | Trainer | Inference
+  #   | Post  Processor} so we can get more accurate cost measurements
   #   of each component. This will be automatically filled in code.
     cost_resource_group_tag: dev_experiments_COMPONENT
     cost_resource_group: gigl_platform
   common_compute_config:
-    project: "external-snap-ci-github-gigl"
-    region: "us-central1"
-    # For test, we use temp assets bucket and bq dataset since these assets should be short lived
-    # by default. Since, we are not using them for development.
-    temp_assets_bucket: "gs://gigl-cicd-temp"
-    temp_regional_assets_bucket: "gs://gigl-cicd-temp"
-    perm_assets_bucket: "gs://gigl-cicd-temp" # For testing, we don't persist models, configs, etc. - they should expire w/ TTL
-    temp_assets_bq_dataset_name: "gigl_temp_assets"
-    embedding_bq_dataset_name: "gigl_temp_assets"
-    gcp_service_account_email: "untrusted-external-github-gigl@external-snap-ci-github-gigl.iam.gserviceaccount.com"
+    project: "TODO: Update project name"
+    region: "TODO: Update region"
+    temp_assets_bucket: "TODO: Update temp_assets_bucket"
+    temp_regional_assets_bucket: "TODO: Update temp_regional_assets_bucket"
+    perm_assets_bucket: "TODO: Update perm_assets_bucket"
+    temp_assets_bq_dataset_name: "TODO: Update temp_assets_bq_dataset_name"
+    embedding_bq_dataset_name: "TODO: Update embedding_bq_dataset_name"
+    gcp_service_account_email: "TODO: Update gcp_service_account_email"
     dataflow_runner: "DataflowRunner"
 preprocessor_config:
   edge_preprocessor_config:
     num_workers: 1
-    max_num_workers: 4
+    max_num_workers: 2
     machine_type: "n2-standard-16"
     disk_size_gb: 300
   node_preprocessor_config:
     num_workers: 1
-    max_num_workers: 4
+    max_num_workers: 2
     machine_type: "n2-standard-16"
     disk_size_gb: 300
 trainer_resource_config:
   vertex_ai_trainer_config:
-    machine_type: n1-standard-16
-    gpu_type: NVIDIA_TESLA_T4
-    gpu_limit: 2
+    machine_type: "n1-highmem-8"
+    gpu_type: nvidia-tesla-p100  # set to `ACCELERATOR_TYPE_UNSPECIFIED` for cpu training
+    gpu_limit: 1  # set to 0 for cpu training
     num_replicas: 2
 inferencer_resource_config:
   vertex_ai_inferencer_config:
-    machine_type: n1-standard-16
-    gpu_type: NVIDIA_TESLA_T4
-    gpu_limit: 2
+    machine_type: "n1-highmem-8"
+    gpu_type: nvidia-tesla-p100  # set to `ACCELERATOR_TYPE_UNSPECIFIED` for cpu inference
+    gpu_limit: 1  # set to 0 for cpu inference
     num_replicas: 2
