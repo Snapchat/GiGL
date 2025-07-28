@@ -5,7 +5,9 @@ It initializes a model, loads the state from a saved URI, and performs inference
 It also exports the embeddings to a specified output URI, which can be a GCS bucket or a local directory.
 
 Example usage:
-    python -m examples.tutorial.KDD_2025.heterogeneous_inference
+    python -m examples.tutorial.KDD_2025.heterogeneous_inference --task_config_uri <path_to_frozen_task_config>
+
+To generate a frozen config from a template task config, see instructions at top of `examples/tutorial/KDD_2025/task_config.yaml`.
 
 Args:
     --task_config_uri: Path to the task config URI.
@@ -115,8 +117,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        default="examples/tutorial/KDD_2025/task_config.yaml",
-        help="Path to the task config URI.",
+        help="Path to the frozen task config URI.",
     )
     parser.add_argument(
         "--torch_process_group_init_method",

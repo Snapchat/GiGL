@@ -5,7 +5,10 @@ Supports multi process/multi node training.
 Does not support GPU training.
 
 Run with:
-    python -m examples.tutorial.KDD_2025.heterogeneous_training
+    python -m examples.tutorial.KDD_2025.heterogeneous_training --task_config_uri <path_to_frozen_task_config>
+
+To generate a frozen config from a template task config, see instructions at top of `examples/tutorial/KDD_2025/task_config.yaml`.
+
 
 This example is meant to be run on the "toy graph" dataset,
 which is a small heterogeneous graph with two node types (user) and (story)
@@ -203,8 +206,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        default="examples/tutorial/KDD_2025/task_config.yaml",
-        help="Path to the task config URI.",
+        help="Path to the frozen task config URI.",
     )
     parser.add_argument(
         "--torch_process_group_init_method",
