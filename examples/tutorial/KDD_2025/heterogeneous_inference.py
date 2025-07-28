@@ -139,9 +139,6 @@ if __name__ == "__main__":
         default="False",
         help="Use a local saved model instead of a remote URI",
     )
-    parser.add_argument(
-        "--batch_size", type=str, default="4", help="Batch size for inference"
-    )
 
     args, unknown = parser.parse_known_args()
     logger.info(f"Using args: {args}, unknown args: {unknown}")
@@ -151,6 +148,9 @@ if __name__ == "__main__":
     )
     # Build the dataset from the task config URI
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        task_config_uri
+    )
     dataset = build_dataset_from_task_config_uri(
         task_config_uri,
         _tfrecord_uri_pattern=".*tfrecord",
@@ -158,9 +158,9 @@ if __name__ == "__main__":
     if strtobool(args.use_local_saved_model):
         saved_model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-            UriFactory.create_uri(args.task_config_uri)
-        ).shared_config.trained_model_metadata.trained_model_uri
+        saved_model_uri = (
+            gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
+        )
     logger.info(f"Using saved model URI: {saved_model_uri}")
     # Spawn processes for distributed inference
     inference_port = get_free_port()
@@ -172,7 +172,7 @@ if __name__ == "__main__":
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
             UriFactory.create_uri(saved_model_uri),  # saved_model_uri
-            int(args.batch_size),  # batch_size
+            gbml_config_pb_wrapper.inferencer_config.inference_batch_size,  # batch_size
         ),
         nprocs=int(args.process_count),
         join=True,
