@@ -8,10 +8,10 @@ on:
         required: true
 env:
   DOCKER_BUILDKIT: 1
-  GIGL_BASE_CUDA_IMAGE: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/public-gigl/gigl-cuda-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
-  GIGL_BASE_CPU_IMAGE: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/public-gigl/gigl-cpu-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
-  GIGL_BASE_DATAFLOW_IMAGE: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/public-gigl/gigl-dataflow-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
-  GIGL_BUILDER_IMAGE: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gigl-base-images/gigl-builder:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
+  GIGL_BASE_CUDA_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cuda-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
+  GIGL_BASE_CPU_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cpu-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
+  GIGL_BASE_DATAFLOW_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-dataflow-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
+  GIGL_BUILDER_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gigl-base-images/gigl-builder:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
   WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
@@ -73,7 +73,7 @@ jobs:
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
@@ -107,7 +107,7 @@ jobs:
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
-        gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
