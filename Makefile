@@ -137,16 +137,7 @@ precondition_tests:
 
 
 run_api_test:
-	$(eval version:=$(shell python -c "import gigl; print(gigl.__version__.replace('.', '_'))"))
-	$(eval job_name:=api_test_on_${version}_${DATE})
-	python -m gigl.orchestration.kubeflow.runner \
-		--action=run \
-		--job_name=$(job_name) \
-		--start_at=config_populator \
-		--task_config_uri=testing/api_test/api_test_task_config.yaml \
-		--resource_config_uri=testing/api_test/api_test_resource_config.yaml \
-		--extra_source_dir=testing/api_test/ \
-		--export_docker_artifact_registry=${GIGL_DOCKER_ARTIFACT_REGISTRY}
+	cd testing/api_test && make run_api_test
 
 
 assert_yaml_configs_parse:
