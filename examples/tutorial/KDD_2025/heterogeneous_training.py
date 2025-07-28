@@ -214,20 +214,21 @@ if __name__ == "__main__":
         default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
-        "--process_count", type=int, default=1, help="Number of processes to spawn."
+        "--process_count", type=str, default="1", help="Number of processes to spawn."
     )
     parser.add_argument(
         "--batch_size",
-        type=int,
-        default=4,
+        type=str,
+        default="4",
         help="Batch size for training and validation.",
     )
     parser.add_argument(
-        "--val_every", type=int, default=400, help="Run validation every N batches."
+        "--val_every", type=str, default="400", help="Run validation every N batches."
     )
     parser.add_argument(
         "--use_local_saved_model",
-        default="True",
+        type=str,
+        default="False",
         help="Use a local saved model instead of a remote URI",
     )
 
@@ -243,10 +244,11 @@ if __name__ == "__main__":
         _tfrecord_uri_pattern=".*tfrecord",
     )
     assert isinstance(dataset.train_node_ids, Mapping)
+    process_count = int(args.process_count)
     for node_type, node_ids in dataset.train_node_ids.items():
         logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")
         max_training_batches = node_ids.size(0) // (
-            args.batch_size * torch.distributed.get_world_size() * args.process_count
+            int(args.batch_size) * torch.distributed.get_world_size() * process_count
         )
     assert isinstance(dataset.val_node_ids, Mapping)
     for node_type, node_ids in dataset.val_node_ids.items():
@@ -255,7 +257,6 @@ if __name__ == "__main__":
     for node_type, node_ids in dataset.test_node_ids.items():
         logger.info(f"Test node type {node_type} has {node_ids.size(0)} nodes.")
     training_process_port = get_free_port()
-    process_count = args.process_count
     logger.info(f"Will train for {max_training_batches} batches.")
     if strtobool(args.use_local_saved_model):
         saved_model_uri = LOCAL_SAVED_MODEL_URI
@@ -272,8 +273,8 @@ if __name__ == "__main__":
             training_process_port,  # port
             dataset,  # dataset
             max_training_batches,  # max_training_batches
-            args.batch_size,  # batch_size
-            args.val_every,  # val_every
+            int(args.batch_size),  # batch_size
+            int(args.val_every),  # val_every
             saved_model_uri,  # saved_model_path
         ),
         nprocs=process_count,

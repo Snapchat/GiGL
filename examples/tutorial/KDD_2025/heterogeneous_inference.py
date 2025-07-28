@@ -125,7 +125,7 @@ if __name__ == "__main__":
         default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
-        "--process_count", type=int, default=1, help="Number of processes to spawn"
+        "--process_count", type=str, default="1", help="Number of processes to spawn"
     )
     parser.add_argument(
         "--embedding_output_uri",
@@ -134,13 +134,13 @@ if __name__ == "__main__":
         help="URI to save embeddings",
     )
     parser.add_argument(
-        "--local_saved_model",
-        type=bool,
-        default=True,
+        "--use_local_saved_model",
+        type=str,
+        default="False",
         help="Use a local saved model instead of a remote URI",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=4, help="Batch size for inference"
+        "--batch_size", type=str, default="4", help="Batch size for inference"
     )
 
     args, unknown = parser.parse_known_args()
@@ -167,14 +167,14 @@ if __name__ == "__main__":
     torch.multiprocessing.spawn(
         inference,
         args=(
-            args.process_count,  # process_count
+            int(args.process_count),  # process_count
             inference_port,  # port
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
-            saved_model_uri,  # saved_model_uri
-            args.batch_size,  # batch_size
+            UriFactory.create_uri(saved_model_uri),  # saved_model_uri
+            int(args.batch_size),  # batch_size
         ),
-        nprocs=args.process_count,
+        nprocs=int(args.process_count),
         join=True,
     )
 

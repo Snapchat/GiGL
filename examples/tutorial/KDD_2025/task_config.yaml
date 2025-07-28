@@ -60,7 +60,6 @@ trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50"
-    local_saved_model: "False"  # Whether to use a local saved model instead of a remote URI.
     # These arguements are read by `build_dataset_from_task_config_uri`.
     ssl_positive_label_percentage: "0.7"
     num_val: "0.3"
@@ -73,7 +72,6 @@ inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
     log_every_n_batch: "50"
-    local_saved_model: "False" # Whether to use a local saved model instead of a remote URI.
   command: python -m examples.tutorial.KDD_2025.heterogeneous_inference
 # ========
 # FeatureFlags:
