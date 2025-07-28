@@ -166,10 +166,16 @@ class FileLoader:
         uri_map_schema = self.__get_uri_map_schema(uri_map={file_uri_src: file_uri_dst})
         uri_map = {file_uri_src: file_uri_dst}
 
-        if uri_map_schema == (GcsUri, LocalUri):
+        if uri_map_schema == (GcsUri, GcsUri):
+            self.__gcs_utils.copy_gcs_blob(file_uri_src, file_uri_dst)
+        elif uri_map_schema == (GcsUri, LocalUri):
             self.__gcs_utils.download_file_from_gcs(
                 gcs_path=cast(GcsUri, file_uri_src),
                 dest_file_path=cast(LocalUri, file_uri_dst),
+            )
+        elif uri_map_schema == (HttpUri, LocalUri):
+            HttpUtils.download_files_from_http(
+                http_to_local_path_map=cast(dict[HttpUri, LocalUri], uri_map),
             )
         elif uri_map_schema == (LocalUri, GcsUri):
             self.__gcs_utils.upload_files_to_gcs(
@@ -192,10 +198,6 @@ class FileLoader:
                     ),
                     should_overwrite=True,
                 )
-        elif uri_map_schema == (HttpUri, LocalUri):
-            HttpUtils.download_files_from_http(
-                http_to_local_path_map=cast(dict[HttpUri, LocalUri], uri_map),
-            )
         else:
             logger.warning(f"Unsupported uri_map_schema: {uri_map_schema}")
             raise TypeError(self.__unsupported_uri_message)
