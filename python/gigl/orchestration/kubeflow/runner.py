@@ -296,7 +296,6 @@ if __name__ == "__main__":
     if args.extra_source_dir:
         # We need to rebuild the src docker images with the extra source dir
         export_docker_artifact_registry = args.export_docker_artifact_registry
-
         (
             cuda_container_image,
             cpu_container_image,

@@ -52,6 +52,9 @@ def build_and_push_customer_src_images(
     Returns:
         tuple[str, str, str]: The names of cuda, cpu, and dataflow images.
     """
+    logger.info(f"Building and pushing customer src images to {export_docker_artifact_registry}")
+    logger.info(f"Using base images: {base_image_cuda}, {base_image_cpu}, {base_image_dataflow}")
+    logger.info(f"Using context path: {context_path}")
     tag = f"{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
     export_cuda_image_name = f"{export_docker_artifact_registry}/src-cuda:{tag}"
     export_cpu_image_name = f"{export_docker_artifact_registry}/src-cpu:{tag}"
@@ -59,24 +62,28 @@ def build_and_push_customer_src_images(
         f"{export_docker_artifact_registry}/src-cpu-dataflow:{tag}"
     )
 
+    logger.info(f"Building and pushing cuda image to {export_cuda_image_name}")
     build_and_push_image(
         base_image=base_image_cuda,
         image_name=export_cuda_image_name,
         dockerfile_name="Dockerfile.customer_src",
         context_path=context_path,
     )
+    logger.info(f"Building and pushing cpu image to {export_cpu_image_name}")
     build_and_push_image(
         base_image=base_image_cpu,
         image_name=export_cpu_image_name,
         dockerfile_name="Dockerfile.customer_src",
         context_path=context_path,
     )
+    logger.info(f"Building and pushing dataflow image to {export_dataflow_image_name}")
     build_and_push_image(
         base_image=base_image_dataflow,
         image_name=export_dataflow_image_name,
         dockerfile_name="Dockerfile.customer_src",
         context_path=context_path,
     )
+    logger.info(f"Done building and pushing customer src images")
     return export_cuda_image_name, export_cpu_image_name, export_dataflow_image_name
 
 

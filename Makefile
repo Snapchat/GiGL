@@ -4,7 +4,7 @@ SHELL := /bin/bash
 CONDA_ENV_NAME=gnn
 PYTHON_VERSION=3.9
 PIP_VERSION=25.0.1
-DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
+DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
