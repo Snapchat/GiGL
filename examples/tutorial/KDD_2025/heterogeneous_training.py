@@ -238,8 +238,12 @@ if __name__ == "__main__":
         backend="gloo",  # Use the Gloo backend for CPU training.
         init_method=args.torch_process_group_init_method,
     )
+    task_config_uri = UriFactory.create_uri(args.task_config_uri)
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        task_config_uri
+    )
     dataset = build_dataset_from_task_config_uri(
-        task_config_uri=args.task_config_uri,
+        task_config_uri=task_config_uri,
         is_inference=False,
         _tfrecord_uri_pattern=".*tfrecord",
     )
@@ -261,9 +265,9 @@ if __name__ == "__main__":
     if strtobool(args.use_local_saved_model):
         saved_model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-            UriFactory.create_uri(args.task_config_uri)
-        ).shared_config.trained_model_metadata.trained_model_uri
+        saved_model_uri = (
+            gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
+        )
 
     logger.info(f"Using saved model URI: {saved_model_uri}")
     torch.multiprocessing.spawn(
