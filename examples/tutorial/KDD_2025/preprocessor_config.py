@@ -38,7 +38,13 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
 
     # We use the __init__ function to define node types, edge types, and the node/edge tables that we will be feeding into the data preprocessor.
     # The arguments to __init__ are provided through the DataPreprocessorArgs field in the task config
-    def __init__(self, bq_user_node_table_name: str, bq_story_node_table_name: str, bq_user_story_edge_table_name: str, bq_story_user_edge_table_name: str):
+    def __init__(
+        self,
+        bq_user_node_table_name: str,
+        bq_story_node_table_name: str,
+        bq_user_story_edge_table_name: str,
+        bq_story_user_edge_table_name: str,
+    ):
         super().__init__()
 
         self._user_table = bq_user_node_table_name
