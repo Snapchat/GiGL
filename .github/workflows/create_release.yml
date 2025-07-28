@@ -119,9 +119,9 @@ jobs:
       with:
         cmd: |
             source dep_vars.env && make \
-            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA \
-            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU \
-            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU \
+            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU \
+            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA \
+            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU \
             compiled_pipeline_path=\$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH \
             compile_gigl_kubeflow_pipeline
         service_account:  ${{ secrets.gcp_service_account_email }}
