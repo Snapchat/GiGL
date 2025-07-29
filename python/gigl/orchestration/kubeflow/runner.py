@@ -66,6 +66,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from enum import Enum
+from pathlib import Path
 
 from gigl.common import UriFactory
 from gigl.common.constants import (
@@ -82,7 +83,7 @@ from gigl.orchestration.kubeflow.kfp_pipeline import SPECED_COMPONENTS
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.time import current_formatted_datetime
-from gigl.orchestration.build_and_push_docker_image import build_and_push_customer_src_images
+from gigl.orchestration.img_builder import build_and_push_customer_src_images
 
 DEFAULT_JOB_NAME = f"gigl_run_at_{current_formatted_datetime()}"
 DEFAULT_START_AT = GiGLComponents.ConfigPopulator.value
@@ -296,6 +297,7 @@ if __name__ == "__main__":
     if args.extra_source_dir:
         # We need to rebuild the src docker images with the extra source dir
         export_docker_artifact_registry = args.export_docker_artifact_registry
+        extra_source_dir_posix_path = Path(args.extra_source_dir).absolute().as_posix()
         (
             cuda_container_image,
             cpu_container_image,
@@ -305,7 +307,7 @@ if __name__ == "__main__":
             base_image_cpu=cpu_container_image,
             base_image_dataflow=dataflow_container_image,
             export_docker_artifact_registry=export_docker_artifact_registry,
-            context_path=args.extra_source_dir,
+            context_path=extra_source_dir_posix_path,
         )
 
     if args.action in (Action.RUN, Action.RUN_NO_COMPILE):
