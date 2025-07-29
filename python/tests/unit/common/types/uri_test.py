@@ -22,69 +22,27 @@ class UriTest(unittest.TestCase):
 
     @parameterized.expand(
         [
-            param(
-                "Local",
-                base=LocalUri("/foo/bar"),
-                join_with=["baz", "qux"],
-                expected=LocalUri("/foo/bar/baz/qux"),
-            ),
-            param(
-                "HTTP",
-                base=HttpUri("http://abc.com/xyz"),
-                join_with=["foo", "bar"],
-                expected=HttpUri("http://abc.com/xyz/foo/bar"),
-            ),
-            param(
-                "GCS",
-                base=GcsUri("gs://bucket/path/to"),
-                join_with=["file.txt"],
-                expected=GcsUri("gs://bucket/path/to/file.txt"),
-            ),
-            param(
-                "With Path",
-                base=LocalUri("/foo/bar"),
-                join_with=[Path("file.text")],
-                expected=LocalUri("/foo/bar/file.text"),
-            ),
+            (LocalUri("/foo/bar"), "baz", LocalUri("/foo/bar/baz")),
+            (HttpUri("http://abc.com/xyz"), "foo", HttpUri("http://abc.com/xyz/foo")),
+            (GcsUri("gs://bucket/"), "file.txt", GcsUri("gs://bucket/file.txt")),
+            (LocalUri("/foo/bar"), Path("file.text"), LocalUri("/foo/bar/file.text")),
         ]
     )
-    def test_join(self, _, base, join_with, expected):
-        joined = base.join(base, *join_with)
+    def test_join(self, base, join_with, expected):
+        joined = base.join(base, join_with)
         self.assertIsInstance(joined, type(base))
         self.assertEqual(expected, joined)
 
     @parameterized.expand(
         [
-            param(
-                "Local",
-                base=LocalUri("/foo/bar"),
-                join_with=["baz", "qux"],
-                expected=LocalUri("/foo/bar/baz/qux"),
-            ),
-            param(
-                "HTTP",
-                base=HttpUri("http://abc.com/xyz"),
-                join_with=["foo", "bar"],
-                expected=HttpUri("http://abc.com/xyz/foo/bar"),
-            ),
-            param(
-                "GCS",
-                base=GcsUri("gs://bucket/path/to"),
-                join_with=["file.txt"],
-                expected=GcsUri("gs://bucket/path/to/file.txt"),
-            ),
-            param(
-                "With Path",
-                base=LocalUri("/foo/bar"),
-                join_with=[Path("file.text")],
-                expected=LocalUri("/foo/bar/file.text"),
-            ),
+            (LocalUri("/foo/bar"), "baz", LocalUri("/foo/bar/baz")),
+            (HttpUri("http://abc.com/xyz"), "foo", HttpUri("http://abc.com/xyz/foo")),
+            (GcsUri("gs://bucket/"), "file.txt", GcsUri("gs://bucket/file.txt")),
+            (LocalUri("/foo/bar"), Path("file.text"), LocalUri("/foo/bar/file.text")),
         ]
     )
-    def test_div_join(self, _, base, join_with, expected):
-        joined = base
-        for j in join_with:
-            joined = joined / j
+    def test_div_join(self, base, join_with, expected):
+        joined = base / join_with
         self.assertIsInstance(joined, type(base))
         self.assertEqual(expected, joined)
 
