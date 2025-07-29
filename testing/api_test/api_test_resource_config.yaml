@@ -1,3 +1,4 @@
+# Based on https://github.com/Snapchat/GiGL/blob/v0.0.4/examples/link_prediction/configs/example_resource_config.yaml
 shared_resource_config:
   resource_labels:
     cost_resource_group_tag: dev_experiments_COMPONENT
@@ -35,13 +36,3 @@ inferencer_resource_config:
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 2
     num_replicas: 2
-# ======== Below are not used for GLT Inference
-subgraph_sampler_config:
-  machine_type: "n2d-highmem-32"
-  num_local_ssds: 4
-  num_replicas: 200
-split_generator_config:
-  machine_type: n2d-standard-16
-  num_local_ssds: 2
-  num_replicas: 256
-# ========== Above are not used for GLT Inference

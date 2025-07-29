@@ -1,3 +1,4 @@
+# Based on https://github.com/Snapchat/GiGL/blob/v0.0.4/examples/link_prediction/homogeneous_training.py
 """
 This file contains an example for how to run homogeneous training using live subgraph sampling powered by GraphLearn-for-PyTorch (GLT).
 While `run_example_training` is coupled with GiGL orchestration, the `_training_process` and `testing_process` functions are generic
@@ -9,7 +10,7 @@ trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50"
-  command: python -m examples.link_prediction.homogeneous_training
+  command: python -m api_test_training
 featureFlags:
   should_run_glt_backend: 'True'
 
