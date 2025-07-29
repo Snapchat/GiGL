@@ -14,7 +14,7 @@ logger = Logger()
 
 
 CUSTOMER_SRC_DOCKERFILE_PATH = (
-    Path(__file__).resolve() / "Dockerfile.customer_src"
+    Path(__file__).parent.resolve() / "Dockerfile.customer_src"
 ).as_posix()
 
 
