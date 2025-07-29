@@ -5,21 +5,21 @@ shared_resource_config:
   resource_labels:
   # We have a 63 character limit for cost_resource_group_tag.
 
-  # COMPONENT is one of {pre|sgs|spl|tra|inf|pos} standing for:
-  #   {Preprocessor | Subgraph Sampler | Split Generator | Trainer | Inference
-  #   | Post  Processor} so we can get more accurate cost measurements
+  # COMPONENT is one of {pre|tra|inf|pos} standing for:
+  #   {Preprocessor | Trainer | Inference | Post  Processor} so we can get more accurate cost measurements
   #   of each component. This will be automatically filled in code.
     cost_resource_group_tag: dev_experiments_COMPONENT
     cost_resource_group: gigl_platform
   common_compute_config:
-    project: "TODO: Update project name"
-    region: "TODO: Update region"
-    temp_assets_bucket: "TODO: Update temp_assets_bucket"
-    temp_regional_assets_bucket: "TODO: Update temp_regional_assets_bucket"
-    perm_assets_bucket: "TODO: Update perm_assets_bucket"
-    temp_assets_bq_dataset_name: "TODO: Update temp_assets_bq_dataset_name"
-    embedding_bq_dataset_name: "TODO: Update embedding_bq_dataset_name"
-    gcp_service_account_email: "TODO: Update gcp_service_account_email"
+    # TODO: Update these fields for the tutorial
+    project: "external-snap-ci-github-gigl"
+    region: "us-central1"
+    temp_assets_bucket: "gs://gigl-cicd-temp"
+    temp_regional_assets_bucket: "gs://gigl-cicd-temp"
+    perm_assets_bucket: "gs://gigl-cicd-temp"
+    temp_assets_bq_dataset_name: "gigl_temp_assets"
+    embedding_bq_dataset_name: "gigl_temp_assets"
+    gcp_service_account_email: "untrusted-external-github-gigl@external-snap-ci-github-gigl.iam.gserviceaccount.com"
     dataflow_runner: "DataflowRunner"
 preprocessor_config:
   edge_preprocessor_config:

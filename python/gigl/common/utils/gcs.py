@@ -361,6 +361,21 @@ class GcsUtils:
                 results
             )  # wait for all deletions to finish - also throws exceptions from threads, if any failed
 
+    def copy_gcs_blob(self, src_gcs_blob: GcsUri, dst_gcs_blob: GcsUri) -> None:
+        src_bucket_name, src_blob_name = self.get_bucket_and_blob_path_from_gcs_path(
+            gcs_path=src_gcs_blob
+        )
+        src_bucket = self.__storage_client.bucket(bucket_name=src_bucket_name)
+        dst_bucket_name, dst_blob_name = self.get_bucket_and_blob_path_from_gcs_path(
+            gcs_path=dst_gcs_blob
+        )
+        dst_bucket = self.__storage_client.bucket(bucket_name=dst_bucket_name)
+        src_bucket.copy_blob(
+            blob=src_bucket.blob(src_blob_name),
+            destination_bucket=dst_bucket,
+            new_name=dst_blob_name,
+        )
+
     def copy_gcs_path(self, src_gcs_path: GcsUri, dst_gcs_path: GcsUri):
         src_bucket_name, src_prefix = self.get_bucket_and_blob_path_from_gcs_path(
             gcs_path=src_gcs_path

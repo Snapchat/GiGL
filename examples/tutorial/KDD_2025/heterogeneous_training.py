@@ -5,7 +5,10 @@ Supports multi process/multi node training.
 Does not support GPU training.
 
 Run with:
-    python -m examples.tutorial.KDD_2025.heterogeneous_training
+    python -m examples.tutorial.KDD_2025.heterogeneous_training --task_config_uri <path_to_frozen_task_config>
+
+To generate a frozen config from a template task config, see instructions at top of `examples/tutorial/KDD_2025/task_config.yaml`.
+
 
 This example is meant to be run on the "toy graph" dataset,
 which is a small heterogeneous graph with two node types (user) and (story)
@@ -203,8 +206,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        default="examples/tutorial/KDD_2025/toy_graph_task_config.yaml",
-        help="Path to the task config URI.",
+        help="Path to the frozen task config URI.",
     )
     parser.add_argument(
         "--torch_process_group_init_method",
@@ -212,20 +214,21 @@ if __name__ == "__main__":
         default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
-        "--process_count", type=int, default=1, help="Number of processes to spawn."
+        "--process_count", type=str, default="1", help="Number of processes to spawn."
     )
     parser.add_argument(
         "--batch_size",
-        type=int,
-        default=4,
+        type=str,
+        default="4",
         help="Batch size for training and validation.",
     )
     parser.add_argument(
-        "--val_every", type=int, default=400, help="Run validation every N batches."
+        "--val_every", type=str, default="400", help="Run validation every N batches."
     )
     parser.add_argument(
         "--use_local_saved_model",
-        default="True",
+        type=str,
+        default="False",
         help="Use a local saved model instead of a remote URI",
     )
 
@@ -235,16 +238,21 @@ if __name__ == "__main__":
         backend="gloo",  # Use the Gloo backend for CPU training.
         init_method=args.torch_process_group_init_method,
     )
+    task_config_uri = UriFactory.create_uri(args.task_config_uri)
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        task_config_uri
+    )
     dataset = build_dataset_from_task_config_uri(
-        task_config_uri=args.task_config_uri,
+        task_config_uri=task_config_uri,
         is_inference=False,
         _tfrecord_uri_pattern=".*tfrecord",
     )
     assert isinstance(dataset.train_node_ids, Mapping)
+    process_count = int(args.process_count)
     for node_type, node_ids in dataset.train_node_ids.items():
         logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")
         max_training_batches = node_ids.size(0) // (
-            args.batch_size * torch.distributed.get_world_size() * args.process_count
+            int(args.batch_size) * torch.distributed.get_world_size() * process_count
         )
     assert isinstance(dataset.val_node_ids, Mapping)
     for node_type, node_ids in dataset.val_node_ids.items():
@@ -253,14 +261,13 @@ if __name__ == "__main__":
     for node_type, node_ids in dataset.test_node_ids.items():
         logger.info(f"Test node type {node_type} has {node_ids.size(0)} nodes.")
     training_process_port = get_free_port()
-    process_count = args.process_count
     logger.info(f"Will train for {max_training_batches} batches.")
     if strtobool(args.use_local_saved_model):
         saved_model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-            UriFactory.create_uri(args.task_config_uri)
-        ).shared_config.trained_model_metadata.trained_model_uri
+        saved_model_uri = (
+            gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
+        )
 
     logger.info(f"Using saved model URI: {saved_model_uri}")
     torch.multiprocessing.spawn(
@@ -270,8 +277,8 @@ if __name__ == "__main__":
             training_process_port,  # port
             dataset,  # dataset
             max_training_batches,  # max_training_batches
-            args.batch_size,  # batch_size
-            args.val_every,  # val_every
+            int(args.batch_size),  # batch_size
+            int(args.val_every),  # val_every
             saved_model_uri,  # saved_model_path
         ),
         nprocs=process_count,
