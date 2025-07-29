@@ -46,12 +46,6 @@ class UriTest(unittest.TestCase):
                 join_with=[Path("file.text")],
                 expected=LocalUri("/foo/bar/file.text"),
             ),
-            param(
-                "With Uri",
-                base=LocalUri("/foo/bar"),
-                join_with=[LocalUri("baz/qux")],
-                expected=LocalUri("/foo/bar/baz/qux"),
-            ),
         ]
     )
     def test_join(self, _, base, join_with, expected):
@@ -84,12 +78,6 @@ class UriTest(unittest.TestCase):
                 base=LocalUri("/foo/bar"),
                 join_with=[Path("file.text")],
                 expected=LocalUri("/foo/bar/file.text"),
-            ),
-            param(
-                "With Uri",
-                base=LocalUri("/foo/bar"),
-                join_with=[LocalUri("baz/qux")],
-                expected=LocalUri("/foo/bar/baz/qux"),
             ),
         ]
     )

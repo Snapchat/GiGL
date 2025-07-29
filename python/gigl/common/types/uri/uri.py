@@ -1,10 +1,10 @@
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from typing import Any, Union
 
 from typing_extensions import Self
-
-_URI_LIKE = Union[str, Path, "Uri"]
 
 
 class Uri(object):
@@ -29,6 +29,9 @@ class Uri(object):
             return str(token)
         return ""
 
+    # TODO(kmonte): You should not be able to join a Uri with a Uri of a different type.
+    # *or* join HTTP on HTTP or GCS on GCS.
+    # This is not backwards compatible, so come around to this later.
     @classmethod
     def join(cls, token: _URI_LIKE, *tokens: _URI_LIKE) -> Self:
         """
@@ -90,3 +93,6 @@ class Uri(object):
                 f"Cannot use '/' operator to join {type(self).__name__} with {type(other).__name__}"
             )
         return self.join(self, other)
+
+
+_URI_LIKE = Union[str, Path, Uri]
