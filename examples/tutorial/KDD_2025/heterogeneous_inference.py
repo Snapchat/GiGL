@@ -5,7 +5,9 @@ It initializes a model, loads the state from a saved URI, and performs inference
 It also exports the embeddings to a specified output URI, which can be a GCS bucket or a local directory.
 
 Example usage:
-    python -m examples.tutorial.KDD_2025.heterogeneous_inference
+    python -m examples.tutorial.KDD_2025.heterogeneous_inference --task_config_uri <path_to_frozen_task_config>
+
+To generate a frozen config from a template task config, see instructions at top of `examples/tutorial/KDD_2025/task_config.yaml`.
 
 Args:
     --task_config_uri: Path to the task config URI.
@@ -115,8 +117,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        default="examples/tutorial/KDD_2025/toy_graph_task_config.yaml",
-        help="Path to the task config URI.",
+        help="Path to the frozen task config URI.",
     )
     parser.add_argument(
         "--torch_process_group_init_method",
@@ -124,7 +125,7 @@ if __name__ == "__main__":
         default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
-        "--process_count", type=int, default=1, help="Number of processes to spawn"
+        "--process_count", type=str, default="1", help="Number of processes to spawn"
     )
     parser.add_argument(
         "--embedding_output_uri",
@@ -133,13 +134,10 @@ if __name__ == "__main__":
         help="URI to save embeddings",
     )
     parser.add_argument(
-        "--local_saved_model",
-        type=bool,
-        default=True,
+        "--use_local_saved_model",
+        type=str,
+        default="False",
         help="Use a local saved model instead of a remote URI",
-    )
-    parser.add_argument(
-        "--batch_size", type=int, default=4, help="Batch size for inference"
     )
 
     args, unknown = parser.parse_known_args()
@@ -150,6 +148,9 @@ if __name__ == "__main__":
     )
     # Build the dataset from the task config URI
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        task_config_uri
+    )
     dataset = build_dataset_from_task_config_uri(
         task_config_uri,
         _tfrecord_uri_pattern=".*tfrecord",
@@ -157,23 +158,23 @@ if __name__ == "__main__":
     if strtobool(args.use_local_saved_model):
         saved_model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-            UriFactory.create_uri(args.task_config_uri)
-        ).shared_config.trained_model_metadata.trained_model_uri
+        saved_model_uri = (
+            gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
+        )
     logger.info(f"Using saved model URI: {saved_model_uri}")
     # Spawn processes for distributed inference
     inference_port = get_free_port()
     torch.multiprocessing.spawn(
         inference,
         args=(
-            args.process_count,  # process_count
+            int(args.process_count),  # process_count
             inference_port,  # port
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
-            saved_model_uri,  # saved_model_uri
-            args.batch_size,  # batch_size
+            UriFactory.create_uri(saved_model_uri),  # saved_model_uri
+            gbml_config_pb_wrapper.inferencer_config.inference_batch_size,  # batch_size
         ),
-        nprocs=args.process_count,
+        nprocs=int(args.process_count),
         join=True,
     )
 
