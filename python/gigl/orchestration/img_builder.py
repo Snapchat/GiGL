@@ -1,8 +1,5 @@
-import argparse
 import datetime
 import subprocess
-import sys
-from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -16,7 +13,10 @@ from gigl.common.logger import Logger
 logger = Logger()
 
 
-CUSTOMER_SRC_DOCKERFILE_PATH = (Path(__file__).resolve() / "Dockerfile.customer_src").as_posix()
+CUSTOMER_SRC_DOCKERFILE_PATH = (
+    Path(__file__).resolve() / "Dockerfile.customer_src"
+).as_posix()
+
 
 def build_and_push_customer_src_images(
     context_path: str,
@@ -38,8 +38,12 @@ def build_and_push_customer_src_images(
     Returns:
         tuple[str, str, str]: The names of cuda, cpu, and dataflow images.
     """
-    logger.info(f"Building and pushing customer src images to {export_docker_artifact_registry}")
-    logger.info(f"Using base images: {base_image_cuda}, {base_image_cpu}, {base_image_dataflow}")
+    logger.info(
+        f"Building and pushing customer src images to {export_docker_artifact_registry}"
+    )
+    logger.info(
+        f"Using base images: {base_image_cuda}, {base_image_cpu}, {base_image_dataflow}"
+    )
     logger.info(f"Using context path: {context_path}")
     tag = f"{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
     export_cuda_image_name = f"{export_docker_artifact_registry}/src-cuda:{tag}"
@@ -71,8 +75,6 @@ def build_and_push_customer_src_images(
     )
     logger.info(f"Done building and pushing customer src images")
     return export_cuda_image_name, export_cpu_image_name, export_dataflow_image_name
-
-
 
 
 def build_and_push_image(

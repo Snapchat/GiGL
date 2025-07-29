@@ -3,7 +3,6 @@ import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from gigl.common.constants import (
     DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
@@ -17,7 +16,6 @@ logger = Logger()
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONTEXT_PATH: str = ROOT_DIR.as_posix()
-
 
 
 class PredefinedImageType(Enum):
@@ -85,7 +83,9 @@ def build_and_push_dataflow_image(
     Args:
         image_name (str): The name of the Docker image to build and push.
     """
-    dockerfile_path: str = (ROOT_DIR / "containers" / "Dockerfile.dataflow.src").as_posix()
+    dockerfile_path: str = (
+        ROOT_DIR / "containers" / "Dockerfile.dataflow.src"
+    ).as_posix()
 
     build_and_push_image(
         base_image=DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG,
@@ -105,7 +105,9 @@ def build_and_push_dev_workbench_image(
     Args:
         image_name (str): The name of the Docker image to build and push.
     """
-    dockerfile_path: str = (ROOT_DIR / "containers" / "Dockerfile.gigl_workbench_container").as_posix()
+    dockerfile_path: str = (
+        ROOT_DIR / "containers" / "Dockerfile.gigl_workbench_container"
+    ).as_posix()
 
     build_and_push_image(
         base_image=None,

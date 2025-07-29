@@ -75,6 +75,7 @@ from gigl.common.constants import (
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU,
 )
 from gigl.common.logger import Logger
+from gigl.orchestration.img_builder import build_and_push_customer_src_images
 from gigl.orchestration.kubeflow.kfp_orchestrator import (
     DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
     KfpOrchestrator,
@@ -83,7 +84,6 @@ from gigl.orchestration.kubeflow.kfp_pipeline import SPECED_COMPONENTS
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.time import current_formatted_datetime
-from gigl.orchestration.img_builder import build_and_push_customer_src_images
 
 DEFAULT_JOB_NAME = f"gigl_run_at_{current_formatted_datetime()}"
 DEFAULT_START_AT = GiGLComponents.ConfigPopulator.value
