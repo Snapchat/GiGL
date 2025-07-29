@@ -175,10 +175,18 @@ class FileLoaderTest(unittest.TestCase):
         gcs_file_path_dst: GcsUri = GcsUri.join(
             self.gcs_test_asset_directory, "test_gcs_to_gcs_dst.txt"
         )
-        with self.assertRaises(TypeError):
-            self.file_loader.load_files(
-                source_to_dest_file_uri_map={gcs_file_path_src: gcs_file_path_dst}
-            )
+        # First upload the source file
+        self.file_loader.load_from_filelike(
+            gcs_file_path_src, io.BytesIO(b"Hello, world!")
+        )
+        self.file_loader.load_files(
+            source_to_dest_file_uri_map={gcs_file_path_src: gcs_file_path_dst}
+        )
+
+        f = self.file_loader.load_to_temp_file(file_uri_src=gcs_file_path_dst)
+        with open(f.name, "r") as file:
+            read_text = file.read()
+            self.assertEqual(read_text, "Hello, world!")
 
     def test_local_to_local_dir(self):
         local_files = ["a.txt", "b.txt", "c.txt", "d.txt"]
