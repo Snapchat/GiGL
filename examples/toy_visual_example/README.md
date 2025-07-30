@@ -10,7 +10,7 @@ qwiklabs then you can directly use the below commands. If not, then you will nee
 the appropriate resources.
 
 ```bash
-PROJECT=$QWIK_LABS_PROJECT # Ex, qwiklabs-gcp-01-40f6ccb540f3
+PROJECT="$(gcloud config get-value project)" # Ex, qwiklabs-gcp-01-40f6ccb540f3
 QL_USER=$QWIK_LABS_USER # Ex, student-02-5e0049fb83ce
 
 python -m scripts.bootstrap_resource_config \

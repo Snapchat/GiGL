@@ -41,8 +41,10 @@ in order to launch jobs on GCP.
 You may run the below from GiGL root to generate an appropriate resource config. You may find the Project and User on
 the left hand panel on the qwiklabs page.
 
+NOTE: We infer PROJECT can be inferred automatically, you do not need to modify that.
+
 ```bash
-PROJECT=$QWIK_LABS_PROJECT # Ex, qwiklabs-gcp-01-40f6ccb540f3
+PROJECT="$(gcloud config get-value project)" # Ex, qwiklabs-gcp-01-40f6ccb540f3
 QL_USER=$QWIK_LABS_USER # Ex, student-02-5e0049fb83ce
 
 python -m scripts.bootstrap_resource_config \
@@ -56,8 +58,7 @@ python -m scripts.bootstrap_resource_config \
   --template_resource_config_uri="examples/tutorial/KDD_2025/resource_config.yaml"
 ```
 
-Accept the default region `us-central1` Accept the default region `us-central1` and use the default file output
-location.
+Accept the default region `us-central1` and use the default file output location.
 
 ## Additional Resources
 
