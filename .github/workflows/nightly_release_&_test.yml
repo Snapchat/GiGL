@@ -7,12 +7,9 @@ on:
     - cron: "0 19 * * *" # Run daily at 7pm UTC; 12am PST
 
 permissions:
-  # Needed for gcloud auth: https://github.com/google-github-actions/auth
-  id-token: 'write'
-  contents: 'read'
-  # Needed for commenting on PRs
-  pull-requests: 'write'
-  issues: 'write'
+  contents: write
+  pull-requests: write
+  id-token: write
 
 
 # Calls create_release w/ nightly and then run the api tests
