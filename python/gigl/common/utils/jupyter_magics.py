@@ -2,6 +2,7 @@ import math
 import os
 import pathlib
 from difflib import unified_diff
+from enum import Enum
 from typing import Optional, Type, Union
 
 import matplotlib.pyplot as plt
@@ -32,36 +33,55 @@ def change_working_dir_to_gigl_root():
 CHARCOAL = "#36454F"
 BLACK = "#000000"
 
+class GraphVisualizerLayoutMode(Enum):
+    HOMOGENEOUS = "homogeneous"
+    BIPARTITE = "bipartite"
+
+
 class GraphVisualizer:
     """
     Used to build and visualize graph which is user configured in a yaml file.
     """
 
-    # Fixed color palette — extend as needed
-    fixed_colors = [
-        "#e57373",  # red
-        "#64b5f6",  # blue
-        "#81c784",  # green
-        "#ffd54f",  # yellow
-        "#ba68c8",  # purple
-        "#4db6ac",  # teal
-        "#f06292",  # pink
-        "#a1887f",  # brown
-        "#ffb74d",  # orange
+    # Fixed node color palette — extend as needed
+    node_colors = [
+        "#E57373",  # red
+        "#64B5F6",  # blue
+        "#81C784",  # green
+        "#FFD54F",  # yellow
+        "#BA68C8",  # purple
+        "#4DB6AC",  # teal
+        "#F06292",  # pink
+        "#A1887F",  # brown
+        "#FFB74D",  # orange
+    ]
+
+    # Fixed edge color palette — best for white background
+    edge_colors = [
+        "#1565C0",  # medium blue
+        "#43A047",  # vivid green
+        "#E53935",  # vivid red
     ]
 
     @staticmethod
-    def assign_color(name: str) -> str:
-        """Assign a color to a name based on hash and a fixed palette."""
-        return GraphVisualizer.fixed_colors[
-            hash(name) % len(GraphVisualizer.fixed_colors)
+    def assign_node_color(name: str) -> str:
+        """Assign a node color to a name based on hash and a fixed palette."""
+        return GraphVisualizer.node_colors[
+            hash(name) % len(GraphVisualizer.node_colors)
         ]
 
     @staticmethod
-    def _create_type_grouped_layout(g, node_index_to_type, node_types, seed=42, layout_mode="bipartite"):
+    def assign_edge_color(name: str) -> str:
+        """Assign an edge color to a name based on hash and a fixed palette (optimized for white background)."""
+        return GraphVisualizer.edge_colors[
+            hash(name) % len(GraphVisualizer.edge_colors)
+        ]
+
+    @staticmethod
+    def _create_type_grouped_layout(g, node_index_to_type, node_types, seed=42, layout_mode=GraphVisualizerLayoutMode.BIPARTITE):
         """Create a layout based on the specified mode (bipartite or homogeneous)."""
 
-        if layout_mode == "homogeneous":
+        if layout_mode == GraphVisualizerLayoutMode.HOMOGENEOUS:
             print("Using homogeneous layout")
             # For homogeneous graphs, use layouts that work well for general graph structure
             num_nodes = len(g.nodes())
@@ -79,7 +99,7 @@ class GraphVisualizer:
                 k = max(2.0, num_nodes / 10.0)
                 return nx.spring_layout(g, seed=seed, k=k, iterations=150, scale=10)
 
-        else:  # layout_mode == "bipartite" (default)
+        elif layout_mode == GraphVisualizerLayoutMode.BIPARTITE:
             # Group nodes by their types for bipartite/heterogeneous layout
             type_to_nodes = {}
             for node in g.nodes():
@@ -104,7 +124,7 @@ class GraphVisualizer:
                 return nx.spring_layout(g, seed=seed, k=k, iterations=200, scale=8)
 
     @staticmethod
-    def visualize_graph(data: HeteroData, seed=42, layout_mode="bipartite"):
+    def visualize_graph(data: HeteroData, seed=42, layout_mode=GraphVisualizerLayoutMode.BIPARTITE):
         # Build a mapping from global node indices to node types BEFORE conversion
         node_index_to_type = {}
         current_index = 0
@@ -124,7 +144,7 @@ class GraphVisualizer:
         # Create node type to color mapping
         node_type_to_color = {}
         for node_type in data.node_types:
-            node_type_to_color[node_type] = GraphVisualizer.assign_color(node_type)
+            node_type_to_color[node_type] = GraphVisualizer.assign_node_color(node_type)
 
         # Assign colors based on the mapping we built
         node_colors = []
@@ -134,7 +154,7 @@ class GraphVisualizer:
 
             # Get color for this node type
             if node_type not in node_type_to_color:
-                node_type_to_color[node_type] = GraphVisualizer.assign_color(node_type)
+                node_type_to_color[node_type] = GraphVisualizer.assign_node_color(node_type)
 
             node_colors.append(node_type_to_color[node_type])
 
@@ -178,7 +198,7 @@ class GraphVisualizer:
 
             # Assign color to edge type
             if edge_type not in edge_type_to_color:
-                edge_type_to_color[edge_type] = GraphVisualizer.assign_color(edge_type)
+                edge_type_to_color[edge_type] = GraphVisualizer.assign_edge_color(edge_type)
 
             edge_colors.append(edge_type_to_color[edge_type])
 
@@ -194,7 +214,7 @@ class GraphVisualizer:
 
         # Draw edges - straight for homogeneous, curved for bipartite
         if g.edges() and edge_colors:
-            if layout_mode == "homogeneous":
+            if layout_mode == GraphVisualizerLayoutMode.HOMOGENEOUS:
                 # Straight edges for homogeneous graphs
                 nx.draw_networkx_edges(
                     g,
@@ -331,7 +351,7 @@ class GraphVisualizer:
             else:
                 node_border_colors.append("lightgrey")
                 node_border_widths.append(1)
-            node_color = GraphVisualizer.assign_color(str(node_id))
+            node_color = GraphVisualizer.assign_node_color(str(node_id))
             node_colors.append(node_color)
 
         plt.clf()
