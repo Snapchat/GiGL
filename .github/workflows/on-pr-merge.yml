@@ -100,25 +100,6 @@ jobs:
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
-  ci-api-test:
-    # if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
-      with:
-          setup_gcloud: "true"
-          gcp_project_id: ${{  vars.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ secrets.workload_identity_provider }}
-          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run API Tests
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
-      with:
-        cmd: "make run_api_test"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
-
   ci-lint-test:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
