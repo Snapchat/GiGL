@@ -1,3 +1,4 @@
+import math
 import os
 import pathlib
 from difflib import unified_diff
@@ -5,6 +6,7 @@ from typing import Optional, Type, Union
 
 import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
 import tensorflow as tf
 import torch_geometric.utils
 import yaml
@@ -27,6 +29,9 @@ def change_working_dir_to_gigl_root():
     print(f"Changed working directory to: {gigl_root_dir}")
 
 
+CHARCOAL = "#36454F"
+BLACK = "#000000"
+
 class GraphVisualizer:
     """
     Used to build and visualize graph which is user configured in a yaml file.
@@ -34,16 +39,15 @@ class GraphVisualizer:
 
     # Fixed color palette — extend as needed
     fixed_colors = [
-        "#1f77b4",  # blue
-        "#ff7f0e",  # orange
-        "#2ca02c",  # green
-        "#d62728",  # red
-        "#9467bd",  # purple
-        "#8c564b",  # brown
-        "#e377c2",  # pink
-        "#7f7f7f",  # gray
-        "#bcbd22",  # yellow-green
-        "#17becf",  # teal
+        "#e57373",  # red
+        "#64b5f6",  # blue
+        "#81c784",  # green
+        "#ffd54f",  # yellow
+        "#ba68c8",  # purple
+        "#4db6ac",  # teal
+        "#f06292",  # pink
+        "#a1887f",  # brown
+        "#ffb74d",  # orange
     ]
 
     @staticmethod
@@ -54,24 +58,165 @@ class GraphVisualizer:
         ]
 
     @staticmethod
-    def visualize_graph(data: HeteroData):
+    def _create_type_grouped_layout(g, node_index_to_type, node_types, seed=42):
+        """Create a layout that groups nodes of the same type together."""
+
+        # Group nodes by their types
+        type_to_nodes = {}
+        for node in g.nodes():
+            node_type = node_index_to_type.get(node, "unknown")
+            if node_type not in type_to_nodes:
+                type_to_nodes[node_type] = []
+            type_to_nodes[node_type].append(node)
+
+        num_types = len(type_to_nodes)
+
+        if num_types == 1:
+            # Single type - use circular layout with more spacing
+            return nx.circular_layout(g, scale=6)
+        elif num_types == 2:
+            # Two types - use bipartite layout with more spacing
+            types = list(type_to_nodes.keys())
+            first_type_nodes = set(type_to_nodes[types[0]])
+            return nx.bipartite_layout(g, first_type_nodes, scale=6)
+        else:
+            # Multiple types or fallback - use spring layout with much more spacing
+            k = max(3.0, len(g.nodes()) / 5.0)  # Dynamic spacing based on node count
+            return nx.spring_layout(g, seed=seed, k=k, iterations=200, scale=8)
+
+    @staticmethod
+    def visualize_graph(data: HeteroData, seed=42):
+        # Build a mapping from global node indices to node types BEFORE conversion
+        node_index_to_type = {}
+        current_index = 0
+
+        # HeteroData stores nodes by type - we need to map the global indices
+        # that NetworkX will use back to the original node types
+        for node_type in data.node_types:
+            if hasattr(data[node_type], 'num_nodes'):
+                num_nodes = data[node_type].num_nodes
+                for i in range(num_nodes):
+                    node_index_to_type[current_index] = node_type
+                    current_index += 1
+
+        # Convert to NetworkX
         g = torch_geometric.utils.to_networkx(data)
 
-        node_colors = [GraphVisualizer.assign_color(node) for node in g.nodes()]
+        # Create node type to color mapping
+        node_type_to_color = {}
+        for node_type in data.node_types:
+            node_type_to_color[node_type] = GraphVisualizer.assign_color(node_type)
 
-        # Generate a static layout
-        pos = nx.spring_layout(g, seed=42)
+        # Assign colors based on the mapping we built
+        node_colors = []
+
         for node in g.nodes():
-            g.nodes[node]["label"] = node
-        nx.draw(
+            node_type = node_index_to_type.get(node, "unknown")
+
+            # Get color for this node type
+            if node_type not in node_type_to_color:
+                node_type_to_color[node_type] = GraphVisualizer.assign_color(node_type)
+
+            node_colors.append(node_type_to_color[node_type])
+
+        # Create a larger figure for better node spacing
+        plt.figure(figsize=(10, 6))
+
+        # Generate a layout that groups nodes by type
+        pos = GraphVisualizer._create_type_grouped_layout(g, node_index_to_type, data.node_types, seed)
+
+        # Identify isolated nodes for special border styling
+        isolated_nodes = [node for node in g.nodes() if g.degree(node) == 0]
+
+        # Create border styling (thicker black border for isolated nodes)
+        node_edge_colors = [BLACK if node in isolated_nodes else CHARCOAL for node in g.nodes()]
+        node_line_widths = [3 if node in isolated_nodes else 1 for node in g.nodes()]
+
+        # Create edge type to color mapping
+        edge_type_to_color = {}
+        edge_colors = []
+
+        # Extract edge types from the original HeteroData
+        for edge in g.edges():
+            # Get node types for source and destination
+            src_node_type = node_index_to_type.get(edge[0], "unknown")
+            dst_node_type = node_index_to_type.get(edge[1], "unknown")
+
+            # Create edge type identifier
+            edge_type = f"{src_node_type} → {dst_node_type}"
+
+            # Look for a more specific edge type in HeteroData if available
+            if hasattr(data, 'edge_types') and data.edge_types:
+                for et in data.edge_types:
+                    if len(et) == 3:  # (src_type, relation, dst_type)
+                        if et[0] == src_node_type and et[2] == dst_node_type:
+                            edge_type = f"{et[0]} --{et[1]}--> {et[2]}"
+                            break
+                    elif isinstance(et, tuple) and len(et) == 2:  # Some formats might be (src, dst)
+                        if et[0] == src_node_type and et[1] == dst_node_type:
+                            edge_type = f"{et[0]} → {et[1]}"
+                            break
+
+            # Assign color to edge type
+            if edge_type not in edge_type_to_color:
+                edge_type_to_color[edge_type] = GraphVisualizer.assign_color(edge_type)
+
+            edge_colors.append(edge_type_to_color[edge_type])
+
+        # Draw nodes first
+        nx.draw_networkx_nodes(
             g,
             pos,
-            with_labels=True,
-            node_color=node_colors,
+            node_color=node_colors if node_colors else 'lightblue',  # type: ignore
+            edgecolors=node_edge_colors if node_edge_colors else CHARCOAL,  # type: ignore
+            linewidths=node_line_widths if node_line_widths else 1,  # type: ignore
             node_size=500,
+        )
+
+        # Draw edges with curves to reduce overlap
+        if g.edges() and edge_colors:
+            nx.draw_networkx_edges(
+                g,
+                pos,
+                edge_color=edge_colors,  # type: ignore
+                width=0.75,  # 75% of default edge width
+                alpha=0.8,   # Slightly transparent for better overlap visibility
+                connectionstyle="arc3,rad=0.1",  # Curved edges to reduce overlap
+            )
+
+        # Draw labels last so they appear on top
+        nx.draw_networkx_labels(
+            g,
+            pos,
             font_size=10,
             font_weight="bold",
         )
+
+        # Add a legend to show node type colors and edge types
+        legend_elements = []
+
+        # Add node types
+        if len(node_type_to_color) > 1:
+            for node_type in sorted(node_type_to_color.keys()):
+                legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                                 markerfacecolor=node_type_to_color[node_type],
+                                                 markersize=10, label=f'Node: {node_type}'))
+
+        # Add isolated node indicator
+        if isolated_nodes:
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='black',
+                                             markerfacecolor='white', markeredgewidth=3,
+                                             markersize=10, label='Isolated nodes'))
+
+        # Add edge types
+        if edge_type_to_color:
+            for edge_type in sorted(edge_type_to_color.keys()):
+                legend_elements.append(plt.Line2D([0], [0], color=edge_type_to_color[edge_type],
+                                                 linewidth=2, label=f'Edge: {edge_type}'))
+
+        if legend_elements:
+            plt.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.4, 1))
+
         plt.show()
 
     @staticmethod
