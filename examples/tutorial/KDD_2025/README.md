@@ -24,7 +24,7 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 ## Tutorial Schedule
 
 | Time (EDT) | Topic                                  | Presenter        | Materials |
-|------------|----------------------------------------|------------------|-----------|
+| ---------- | -------------------------------------- | ---------------- | --------- |
 | 1:00 PM    | Introduction                           | Neil Shah        | Slides    |
 | 1:10 PM    | GNNs and their Scale Challenges        | Neil Shah        | Slides    |
 | 1:25 PM    | Overview of GiGL                       | Yozen Liu        | Slides    |
@@ -60,7 +60,8 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **Provisioning Access to Large-Scale Graph Data:** We'll cover how to access and prepare large-scale graph datasets
   for use with GIGL.
 - **Training Logic Setup:** This part will focus on setting up the core logic for training and performing inference with
-  GNNs using GIGL. We will also walk through two different paradigms of subgraph sampling, e.g. **Tabularization** & **In-memory**.
+  GNNs using GIGL. We will also walk through two different paradigms of subgraph sampling, e.g. **Tabularization** &
+  **In-memory**.
 - **Configuration Setup:** We'll walk through configuring various parameters and settings within GIGL for optimal
   performance.
 - **End-to-End Pipeline Runs with Large-Scale Graph Data:** This section will involve running complete GNN pipelines on
