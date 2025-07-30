@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name            = "gigl"
 description     = "GIgantic Graph Learning Library"
 readme          = "README.md"
-version         = "0.0.5"
+version         = "0.0.6"
 requires-python = ">=3.9,<3.10" # Currently we only support python 3.9 as per deps setup below
 classifiers     = [
     "Programming Language :: Python",
@@ -38,6 +38,7 @@ dependencies = [
     "ipykernel==6.29.5",
     "ipython==8.18.1",
     "kfp~=2.5.0",
+    "matplotlib==3.6.3",
     "mmh3",
     "msgpack",
     "mypy-extensions",
@@ -137,7 +138,6 @@ dev = [
     "types-tqdm==4.67.0.20250513",
     "pandas-stubs==2.2.2.240807",
     "pyopenssl>=22.1.0 ; platform_system=='Linux'",
-    "matplotlib==3.6.3",
     "parameterized==0.9.0",
     "pre-commit==3.3.2",
     # Pillow is a transitive dependency of matplotlib, but the *newest* version of mpl (3.9.x) which support py 3.9
