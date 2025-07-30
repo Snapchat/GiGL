@@ -56,8 +56,8 @@ python -m scripts.bootstrap_resource_config \
   --template_resource_config_uri="examples/tutorial/KDD_2025/resource_config.yaml"
 ```
 
-Accept the default region `us-central1` and output the resource config somewhere locally, like
-`examples/tutorial/KDD_2025/resource_config.yaml`.
+Accept the default region `us-central1` Accept the default region `us-central1` and use the default file output
+location.
 
 ## Additional Resources
 

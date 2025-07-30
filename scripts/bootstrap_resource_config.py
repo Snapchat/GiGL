@@ -10,7 +10,7 @@ from typing import Optional
 
 import yaml
 
-from gigl.common import HttpUri, LocalUri, UriFactory
+from gigl.common import GcsUri, HttpUri, LocalUri, UriFactory
 from gigl.src.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -280,6 +280,12 @@ if __name__ == "__main__":
         or default_resource_config_dest_path
     )
 
+    file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
+    if not isinstance(file_uri_dest, GcsUri):
+        raise ValueError(
+            f"Destination file path must be a GCS URI starting with 'gs://'. Please provide a valid GCS path. Recived URI: {file_uri_dest.uri}"
+        )
+
     print("=======================================================")
     print(f"Will now create the resource config file @ {destination_file_path}.")
     print("Using the following values:")
@@ -311,7 +317,6 @@ if __name__ == "__main__":
 
     file_loader = FileLoader(project=values["project"])
     file_uri_src = UriFactory.create_uri(uri=tmp_file.name)
-    file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
     file_loader.load_file(file_uri_src=file_uri_src, file_uri_dst=file_uri_dest)
 
     print(f"Updated YAML file saved at '{destination_file_path}'")

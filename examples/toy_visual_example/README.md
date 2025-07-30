@@ -24,5 +24,4 @@ python -m scripts.bootstrap_resource_config \
   --template_resource_config_uri="examples/toy_visual_example/resource_config.yaml"
 ```
 
-Accept the default region `us-central1` and output the resource config somewhere locally, like
-`examples/toy_visual_example/resource_config.yaml`.
+Accept the default region `us-central1` and use the default file output location.
