@@ -16,8 +16,10 @@ permissions:
 jobs:
   create-release:
     uses: ./.github/workflows/create_release.yml
+    secrets: inherit
     with:
       bump_type: nightly
+
 
   api-test:
     needs: create-release
