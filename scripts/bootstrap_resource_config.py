@@ -275,7 +275,7 @@ if __name__ == "__main__":
 
     destination_file_path = (
         input(
-            f"Output path for resource config (default: {default_resource_config_dest_path}); can be GCS or Local path: "
+            f"Output path for resource config (default: {default_resource_config_dest_path}); Must be a GCS path starting with 'gs://': "
         ).strip()
         or default_resource_config_dest_path
     )
@@ -283,7 +283,7 @@ if __name__ == "__main__":
     file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
     if not isinstance(file_uri_dest, GcsUri):
         raise ValueError(
-            f"Destination file path must be a GCS URI starting with 'gs://'. Please provide a valid GCS path. Recived URI: {file_uri_dest.uri}"
+            f"Destination file path must be a GCS URI starting with 'gs://'. Please provide a valid GCS path. Recived URI: {file_uri_dest.uri}. We do this prevent leaking sensitive information in the local filesystem."
         )
 
     print("=======================================================")
