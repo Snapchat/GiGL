@@ -1,4 +1,5 @@
-# This config is used to run homogeneous CORA supervised training and inference using in memory GiGL SGS. This can be run with `make run_hom_cora_sup_test`.
+# Based on https://github.com/Snapchat/GiGL/blob/v0.0.4/examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml
+# This config is used to run homogeneous CORA supervised training and inference using in memory GiGL SGS. This can be run with `make run_api_test`.
 graphMetadata:
   edgeTypes:
   - dstNodeType: paper
