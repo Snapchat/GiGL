@@ -58,34 +58,53 @@ class GraphVisualizer:
         ]
 
     @staticmethod
-    def _create_type_grouped_layout(g, node_index_to_type, node_types, seed=42):
-        """Create a layout that groups nodes of the same type together."""
+    def _create_type_grouped_layout(g, node_index_to_type, node_types, seed=42, layout_mode="bipartite"):
+        """Create a layout based on the specified mode (bipartite or homogeneous)."""
 
-        # Group nodes by their types
-        type_to_nodes = {}
-        for node in g.nodes():
-            node_type = node_index_to_type.get(node, "unknown")
-            if node_type not in type_to_nodes:
-                type_to_nodes[node_type] = []
-            type_to_nodes[node_type].append(node)
+        if layout_mode == "homogeneous":
+            print("Using homogeneous layout")
+            # For homogeneous graphs, use layouts that work well for general graph structure
+            num_nodes = len(g.nodes())
 
-        num_types = len(type_to_nodes)
+            if num_nodes <= 30:
+                # Small to medium graphs - use Kamada-Kawai (good for showing structure)
+                try:
+                    return nx.kamada_kawai_layout(g, scale=6)
+                except:
+                    # Fallback to spring layout if kamada_kawai fails
+                    k = max(2.5, num_nodes / 8.0)
+                    return nx.spring_layout(g, seed=seed, k=k, iterations=200, scale=8)
+            else:
+                # Large graphs - use spring layout with good parameters
+                k = max(2.0, num_nodes / 10.0)
+                return nx.spring_layout(g, seed=seed, k=k, iterations=150, scale=10)
 
-        if num_types == 1:
-            # Single type - use circular layout with more spacing
-            return nx.circular_layout(g, scale=6)
-        elif num_types == 2:
-            # Two types - use bipartite layout with more spacing
-            types = list(type_to_nodes.keys())
-            first_type_nodes = set(type_to_nodes[types[0]])
-            return nx.bipartite_layout(g, first_type_nodes, scale=6)
-        else:
-            # Multiple types or fallback - use spring layout with much more spacing
-            k = max(3.0, len(g.nodes()) / 5.0)  # Dynamic spacing based on node count
-            return nx.spring_layout(g, seed=seed, k=k, iterations=200, scale=8)
+        else:  # layout_mode == "bipartite" (default)
+            # Group nodes by their types for bipartite/heterogeneous layout
+            type_to_nodes = {}
+            for node in g.nodes():
+                node_type = node_index_to_type.get(node, "unknown")
+                if node_type not in type_to_nodes:
+                    type_to_nodes[node_type] = []
+                type_to_nodes[node_type].append(node)
+
+            num_types = len(type_to_nodes)
+
+            if num_types == 1:
+                # Single type - use circular layout with more spacing
+                return nx.circular_layout(g, scale=6)
+            elif num_types == 2:
+                # Two types - use bipartite layout with more spacing
+                types = list(type_to_nodes.keys())
+                first_type_nodes = set(type_to_nodes[types[0]])
+                return nx.bipartite_layout(g, first_type_nodes, scale=6)
+            else:
+                # Multiple types or fallback - use spring layout with much more spacing
+                k = max(3.0, len(g.nodes()) / 5.0)  # Dynamic spacing based on node count
+                return nx.spring_layout(g, seed=seed, k=k, iterations=200, scale=8)
 
     @staticmethod
-    def visualize_graph(data: HeteroData, seed=42):
+    def visualize_graph(data: HeteroData, seed=42, layout_mode="bipartite"):
         # Build a mapping from global node indices to node types BEFORE conversion
         node_index_to_type = {}
         current_index = 0
@@ -122,8 +141,8 @@ class GraphVisualizer:
         # Create a larger figure for better node spacing
         plt.figure(figsize=(10, 6))
 
-        # Generate a layout that groups nodes by type
-        pos = GraphVisualizer._create_type_grouped_layout(g, node_index_to_type, data.node_types, seed)
+        # Generate a layout based on the selected mode
+        pos = GraphVisualizer._create_type_grouped_layout(g, node_index_to_type, data.node_types, seed, layout_mode)
 
         # Identify isolated nodes for special border styling
         isolated_nodes = [node for node in g.nodes() if g.degree(node) == 0]
@@ -173,16 +192,27 @@ class GraphVisualizer:
             node_size=500,
         )
 
-        # Draw edges with curves to reduce overlap
+        # Draw edges - straight for homogeneous, curved for bipartite
         if g.edges() and edge_colors:
-            nx.draw_networkx_edges(
-                g,
-                pos,
-                edge_color=edge_colors,  # type: ignore
-                width=0.75,  # 75% of default edge width
-                alpha=0.8,   # Slightly transparent for better overlap visibility
-                connectionstyle="arc3,rad=0.1",  # Curved edges to reduce overlap
-            )
+            if layout_mode == "homogeneous":
+                # Straight edges for homogeneous graphs
+                nx.draw_networkx_edges(
+                    g,
+                    pos,
+                    edge_color=edge_colors,  # type: ignore
+                    width=0.75,  # 75% of default edge width
+                    alpha=0.9,   # Less transparent for cleaner look
+                )
+            else:
+                # Curved edges for bipartite graphs to reduce overlap
+                nx.draw_networkx_edges(
+                    g,
+                    pos,
+                    edge_color=edge_colors,  # type: ignore
+                    width=0.75,  # 75% of default edge width
+                    alpha=0.8,   # Slightly transparent for better overlap visibility
+                    connectionstyle="arc3,rad=0.1",  # Curved edges to reduce overlap
+                )
 
         # Draw labels last so they appear on top
         nx.draw_networkx_labels(
