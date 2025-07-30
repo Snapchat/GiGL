@@ -12,7 +12,6 @@ graph:
       relation_type: to
       dst_node_type: user
 
-
 adj_list:
   user_to_story: # 83 user_to_story edges
     - src: 0
