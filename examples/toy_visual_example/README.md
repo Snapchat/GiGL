@@ -21,5 +21,8 @@ python -m scripts.bootstrap_resource_config \
   --embedding_bq_dataset_name="gigl_embeddings" \
   --temp_assets_bucket="gs://gigl_temp_assets_$QL_USER" \
   --perm_assets_bucket="gs://gigl_perm_assets_$QL_USER" \
-  --template_resource_config_uri="/examples/toy_visual_example/resource_config.yaml"
+  --template_resource_config_uri="examples/toy_visual_example/resource_config.yaml"
 ```
+
+Accept the default region `us-central1` and output the resource config somewhere locally, like
+`examples/toy_visual_example/resource_config.yaml`.
