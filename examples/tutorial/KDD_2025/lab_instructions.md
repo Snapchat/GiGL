@@ -29,12 +29,18 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 
 1. Click **Start Lab** on the left side of the page. Wait for the lab to be set up.
 2. Right click on **Open Google Cloud Console** button and open in a incognito window.
-   <img width="1002" height="645" alt="Screenshot 2025-07-30 at 12 21 16 PM" src="https://github.com/user-attachments/assets/6c454cf8-ada6-4118-bfa9-c736638ecdc6" />
+   
+  <img width="1004" height="651" alt="Screenshot 2025-07-30 at 12 25 21 PM" src="https://github.com/user-attachments/assets/a1eac61e-7bef-41e2-9863-954916fde717" />
+
 3. Agree to the terms of service for your custom student account for the duration of the lab.
 4. Use the top search bar or left side bar to navigate to the **Workbench** page provided by **Vertex AI**.
+
    <img width="1700" height="875" alt="Screenshot 2025-07-29 at 1 31 12 PM" src="https://github.com/user-attachments/assets/31f581ea-7add-4de6-9522-715d61a2cb21" />
+   
 5. There should be an existing Workbench instance, open **Jupyterlab**.
+   
    <img width="1248" height="558" alt="Screenshot 2025-07-30 at 12 23 01 PM" src="https://github.com/user-attachments/assets/1bf09010-e2d2-4329-8b8c-3c3c988e33aa" />
+   
 6. Open the `gigl` folder in the left sidebar. Navigate to the `examples/tutorial/KDD_2025` folder.
 7. Open the notebooks and follow along the tutorial presentation! 
 
