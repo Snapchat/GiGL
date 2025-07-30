@@ -109,7 +109,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
           setup_gcloud: "true"
-          gcp_project_id: ${{ secrets.gcp_project_id }}
+          gcp_project_id: ${{  vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run API Tests
@@ -117,7 +117,7 @@ jobs:
       with:
         cmd: "make run_api_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ secrets.gcp_project_id }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-lint-test:
     if: github.event_name == 'merge_group'
