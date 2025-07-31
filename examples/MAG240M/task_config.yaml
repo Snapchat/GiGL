@@ -37,6 +37,7 @@ datasetConfig:
     numHops: 2  # Each subgraph that is computed will be of 2 hops
     numNeighborsToSample: 15 # And, we will sample 10 neighbors at each hop for each node
     numUserDefinedPositiveSamples: 1 # We will sample 1 positive sample per anchor node
+    numMaxTrainingSamplesToOutput: 5_000_000
   splitGeneratorConfig:
     assignerArgs:
       seed: '42'
@@ -54,7 +55,7 @@ datasetConfig:
 # The trainer class is responsible for training the model, and the arguments are passed to its constructor.
 trainerConfig:
   # GiGL provides a basic implementation of a NABLP trainer; customers are encouraged to extend this class to suit their needs.
-  trainerClsPath: gigl.src.common.modeling_task_specs.NodeAnchorBasedLinkPredictionModelingTaskSpec
+  trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
   trainerArgs: # The following arguments are passed to trainerClsPath's constructor. See class implementation for more details.
     early_stop_patience: '5'
     early_stop_criterion: 'loss'
@@ -84,5 +85,5 @@ inferencerConfig:
   # and BaseInferencer (interface class needs to implement for inference). See their respective definitions for more information:
   # - gigl.src.training.v1.lib.base_trainer.BaseTrainer
   # - gigl.src.inference.v1.lib.base_inferencer.BaseInferencer
-  inferencerClsPath: gigl.src.common.modeling_task_specs.NodeAnchorBasedLinkPredictionModelingTaskSpec
+  inferencerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
 # ========
