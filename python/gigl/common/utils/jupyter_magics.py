@@ -88,24 +88,6 @@ class GraphVisualizer:
         ]
 
     @staticmethod
-    def _create_deterministic_positions(nodes):
-        """Create deterministic initial positions for nodes based on their IDs."""
-        positions = {}
-
-        for node in nodes:
-            # Use SHA256 hash of node ID to generate deterministic coordinates
-            hash_value = int(hashlib.sha256(str(node).encode("utf-8")).hexdigest(), 16)
-
-            # Generate x and y coordinates from different parts of the hash
-            # Use modulo to keep coordinates in reasonable range [-1, 1]
-            x = ((hash_value % 10000) / 5000.0) - 1.0  # Maps to [-1, 1]
-            y = (((hash_value // 10000) % 10000) / 5000.0) - 1.0  # Maps to [-1, 1]
-
-            positions[node] = (x, y)
-
-        return positions
-
-    @staticmethod
     def _create_type_grouped_layout(
         g,
         node_index_to_type,
@@ -114,43 +96,31 @@ class GraphVisualizer:
         layout_mode=GraphVisualizerLayoutMode.BIPARTITE,
     ):
         """Create a layout based on the specified mode (bipartite or homogeneous)."""
-        print(f"Creating layout for {len(g.nodes())} nodes")
-        print(f"Node index to type: {node_index_to_type}")
-        print(f"Node types: {node_types}")
-        print(f"Layout mode: {layout_mode}")
         # Handle empty graph case
         if len(g.nodes()) == 0:
             return {}
 
         if layout_mode == GraphVisualizerLayoutMode.HOMOGENEOUS:
-            print("Using homogeneous layout")
-            # For homogeneous graphs, use deterministic positioning based on node IDs
+            # For homogeneous graphs, use layouts that work well for general graph structure
             num_nodes = len(g.nodes())
-
-            # Create deterministic initial positions based on node IDs
-            initial_pos = GraphVisualizer._create_deterministic_positions(g.nodes())
 
             if num_nodes <= 30:
                 # Small to medium graphs - use Kamada-Kawai (good for showing structure)
                 try:
-                    # Kamada-Kawai doesn't accept initial positions, so use deterministic spring layout
-                    k = max(4.0, num_nodes / 3.0)
-                    return nx.spring_layout(
-                        g, pos=initial_pos, k=k, iterations=300, scale=15
-                    )
+                    # Increase scale significantly to prevent node overlap (node_size=500)
+                    return nx.kamada_kawai_layout(g, scale=15)
                 except Exception as e:
                     print(
-                        f"Deterministic spring layout failed: {e}, falling back to basic spring layout"
+                        f"Kamada-Kawai layout failed: {e}, falling back to spring layout"
                     )
-                    # Fallback to spring layout with seed
+                    # Fallback to spring layout if kamada_kawai fails
+                    # Increase k (ideal distance) and scale to prevent overlap
                     k = max(4.0, num_nodes / 3.0)
                     return nx.spring_layout(g, seed=seed, k=k, iterations=300, scale=15)
             else:
-                # Large graphs - use spring layout with deterministic initial positions
+                # Large graphs - use spring layout with good parameters
                 k = max(3.0, num_nodes / 6.0)
-                return nx.spring_layout(
-                    g, pos=initial_pos, k=k, iterations=250, scale=20
-                )
+                return nx.spring_layout(g, seed=seed, k=k, iterations=250, scale=20)
 
         elif layout_mode == GraphVisualizerLayoutMode.BIPARTITE:
             # Group nodes by their types for bipartite/heterogeneous layout
@@ -207,21 +177,15 @@ class GraphVisualizer:
         # Convert to NetworkX
         g = torch_geometric.utils.to_networkx(data)
         if subgraph_node_to_global_node_mapping:
-            print(
-                f"Subgraph node to global node mapping: {subgraph_node_to_global_node_mapping}"
-            )
-            print(f"Subgraph nodes: {g.nodes()}")
             mapping = {}
             new_node_index_to_type = {}
             for node in g.nodes():
                 node_type = node_index_to_type.get(node, "unknown")
                 local_node = Node(type=node_type, id=node)
                 global_node = subgraph_node_to_global_node_mapping[local_node]
-                print(f"Local node: {local_node}, Global node: {global_node}")
                 mapping[node] = global_node.id
                 # Preserve the node type information for the global node
                 new_node_index_to_type[global_node.id] = global_node.type
-            print(f"Mapping: {mapping}")
             g = nx.relabel_nodes(g, mapping)
             # Update the node_index_to_type mapping to use global node types
             node_index_to_type = new_node_index_to_type
