@@ -69,7 +69,7 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **Customization Potential:** We'll explore the possibilities for customizing GIGL to adapt it to specific research or
   application needs.
 
-### Hands-On Lab Instructions
+## Hands-On Lab Instructions
 
 To access our lab environment, scan the QR code displayed on the presentation screen, type in your email, then enter the
 OTP code displayed.
