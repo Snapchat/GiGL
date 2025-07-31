@@ -48,7 +48,7 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 
 9. Pro tip: To enable scrolling for notebook cells, you can ctrl/cmd + A to select all notebook cells, right-click then
    select `Enable Scrolling For Outputs`.
-10. Follow along the tutorial presentation and learn about how to use GiGL! 
+10. Follow along the tutorial presentation and learn about how to use GiGL!
 
 ## Additional Resources
 
