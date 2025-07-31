@@ -78,6 +78,14 @@ class SupportedParams:
                 default=None,
                 description="URI to the template resource config file to use for bootstrapping. If provided, will be used as the 'Base' for the resource config, with the appropriate fields overwritten by the values provided in this script.",
             ),
+            "output_resource_config_path": Param(
+                default=None,
+                description="Path to the output resource config file. If not provided, one will be generated in the `perm_assets_bucket`.",
+            ),
+            "force_shell_config_update": Param(
+                default=False,
+                description="If set to True, will not ask to update the shell configuration file. If False, will prompt the user to update the shell configuration file.",
+            ),
         }
 
 
@@ -273,12 +281,15 @@ if __name__ == "__main__":
     curr_username = getpass.getuser()
     default_resource_config_dest_path = f"{values['perm_assets_bucket']}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
 
-    destination_file_path = (
-        input(
-            f"Output path for resource config (default: {default_resource_config_dest_path}); Must be a GCS path starting with 'gs://': "
-        ).strip()
-        or default_resource_config_dest_path
-    )
+    if args.output_resource_config_path:
+        destination_file_path = args.output_resource_config_path
+    else:
+        destination_file_path = (
+            input(
+                f"Output path for resource config (default: {default_resource_config_dest_path}); Must be a GCS path starting with 'gs://': "
+            ).strip()
+            or default_resource_config_dest_path
+        )
 
     file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
     if not isinstance(file_uri_dest, GcsUri):
@@ -322,14 +333,18 @@ if __name__ == "__main__":
     print(f"Updated YAML file saved at '{destination_file_path}'")
 
     # Update the user's shell configuration
-    should_update_shell_config = (
-        input(
-            "Do you want to update your shell configuration file so you can use this new resource config for tests? [y/n] (Default: y): "
+    if args.force_shell_config_update:
+        should_update_shell_config = "y"
+        print("Forcing shell updated due to --force_shell_config_update flag.")
+    else:
+        should_update_shell_config = (
+            input(
+                "Do you want to update your shell configuration file so you can use this new resource config for tests? [y/n] (Default: y): "
+            )
+            .strip()
+            .lower()
+            or "y"
         )
-        .strip()
-        .lower()
-        or "y"
-    )
     if should_update_shell_config == "y":
         shell_config_path: str = infer_shell_file()
         update_shell_config(
