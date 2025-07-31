@@ -26,3 +26,4 @@ python -m scripts.bootstrap_resource_config \
 
 Accept the default region `us-central1` and output the resource config somewhere locally, like
 `examples/toy_visual_example/resource_config.yaml`.
+
