@@ -3,6 +3,7 @@ import pathlib
 from difflib import unified_diff
 from enum import Enum
 from typing import Optional, Type, Union
+from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -16,7 +17,7 @@ from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.graph_data import Node
+from gigl.src.common.types.graph_data import Node, Edge, EdgeType
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
@@ -156,6 +157,9 @@ class GraphVisualizer:
         seed=42,
         layout_mode=GraphVisualizerLayoutMode.BIPARTITE,
         subgraph_node_to_global_node_mapping: Optional[FrozenDict[Node, Node]] = None,
+        # pos_edges is a dictionary of edge type (src_node_type, relation, dst_node_type) to list of (src_node_id, dst_node_id) pairs
+        pos_edges: Optional[dict[tuple[str, str, str], list[tuple[int, int]]]] = None,
+        global_root_node: Optional[tuple[int, str]] = None,
     ):
         # Build a mapping from global node indices to node types BEFORE conversion
         node_index_to_type = {}
@@ -192,6 +196,25 @@ class GraphVisualizer:
             # Update the node_index_to_type mapping to use global node types
             node_index_to_type = new_node_index_to_type
 
+        # Add positive edges to the graph if they don't already exist
+        pos_edge_pairs = set()
+        if pos_edges:
+            for (src_node_type, relation, dst_node_type), edge_pairs in pos_edges.items():
+                for src_id, dst_id in edge_pairs:
+                    pos_edge_pairs.add((src_id, dst_id))
+
+                    # Add nodes if they don't exist
+                    if src_id not in g.nodes():
+                        g.add_node(src_id)
+                        node_index_to_type[src_id] = src_node_type
+                    if dst_id not in g.nodes():
+                        g.add_node(dst_id)
+                        node_index_to_type[dst_id] = dst_node_type
+
+                    # Add edge if it doesn't exist
+                    if not g.has_edge(src_id, dst_id):
+                        g.add_edge(src_id, dst_id)
+
         # Create node type to color mapping
         node_type_to_color = {}
         for node_type in data.node_types:
@@ -215,8 +238,10 @@ class GraphVisualizer:
         plt.figure(figsize=(10, 6))
 
         # Generate a layout based on the selected mode
+        # Get all unique node types actually present in the graph
+        actual_node_types = set(node_index_to_type.values())
         pos = GraphVisualizer._create_type_grouped_layout(
-            g, node_index_to_type, data.node_types, seed, layout_mode
+            g, node_index_to_type, actual_node_types, seed, layout_mode
         )
 
         # Safety check: if pos is None or empty and we have nodes, create a fallback layout
@@ -225,49 +250,70 @@ class GraphVisualizer:
             k = max(4.0, len(g.nodes()) / 3.0)
             pos = nx.spring_layout(g, seed=seed, k=k, iterations=300, scale=15)
 
-        # Identify isolated nodes for special border styling
+        # Identify isolated nodes and root node for special styling
         isolated_nodes = [node for node in g.nodes() if g.degree(node) == 0]
+        root_node_id = global_root_node[0] if global_root_node else None
 
-        # Create border styling (thicker black border for isolated nodes)
-        node_edge_colors = [
-            BLACK if node in isolated_nodes else CHARCOAL for node in g.nodes()
-        ]
-        node_line_widths = [3 if node in isolated_nodes else 1 for node in g.nodes()]
+        # Create border styling (red border for root node, thick black border for isolated nodes)
+        node_edge_colors = []
+        node_line_widths = []
+        node_sizes = []
+
+        for node in g.nodes():
+            if node == root_node_id:
+                node_edge_colors.append("#E53935")  # Red border for root node
+                node_line_widths.append(4)  # Thick border for root node
+                node_sizes.append(1000)  # Twice the size for root node
+            elif node in isolated_nodes:
+                node_edge_colors.append(BLACK)  # Black border for isolated nodes
+                node_line_widths.append(3)
+                node_sizes.append(500)  # Normal size
+            else:
+                node_edge_colors.append(CHARCOAL)  # Default border color
+                node_line_widths.append(1)
+                node_sizes.append(500)  # Normal size
 
         # Create edge type to color mapping
         edge_type_to_color = {}
         edge_colors = []
 
-        # Extract edge types from the original HeteroData
+        # Extract edge types from the graph (now includes any added positive edges)
         for edge in g.edges():
-            # Get node types for source and destination
-            src_node_type = node_index_to_type.get(edge[0], "unknown")
-            dst_node_type = node_index_to_type.get(edge[1], "unknown")
+            # Check if this is a positive edge
+            is_positive_edge = (edge[0], edge[1]) in pos_edge_pairs
 
-            # Create edge type identifier
-            edge_type = f"{src_node_type} → {dst_node_type}"
+            if is_positive_edge:
+                # Color positive edges red
+                edge_colors.append("#E53935")  # Red color for positive edges
+            else:
+                # Get node types for source and destination
+                src_node_type = node_index_to_type.get(edge[0], "unknown")
+                dst_node_type = node_index_to_type.get(edge[1], "unknown")
 
-            # Look for a more specific edge type in HeteroData if available
-            if hasattr(data, "edge_types") and data.edge_types:
-                for et in data.edge_types:
-                    if len(et) == 3:  # (src_type, relation, dst_type)
-                        if et[0] == src_node_type and et[2] == dst_node_type:
-                            edge_type = f"{et[0]} --{et[1]}--> {et[2]}"
-                            break
-                    elif (
-                        isinstance(et, tuple) and len(et) == 2
-                    ):  # Some formats might be (src, dst)
-                        if et[0] == src_node_type and et[1] == dst_node_type:
-                            edge_type = f"{et[0]} → {et[1]}"
-                            break
+                # Create edge type identifier
+                edge_type = f"{src_node_type} → {dst_node_type}"
 
-            # Assign color to edge type
-            if edge_type not in edge_type_to_color:
-                edge_type_to_color[edge_type] = GraphVisualizer.assign_edge_color(
-                    edge_type
-                )
+                # Look for a more specific edge type in HeteroData if available
+                if hasattr(data, "edge_types") and data.edge_types:
+                    for et in data.edge_types:
+                        if len(et) == 3:  # (src_type, relation, dst_type)
+                            if et[0] == src_node_type and et[2] == dst_node_type:
+                                edge_type = f"{et[0]} --{et[1]}--> {et[2]}"
+                                break
+                        elif (
+                            isinstance(et, tuple) and len(et) == 2
+                        ):  # Some formats might be (src, dst)
+                            if et[0] == src_node_type and et[1] == dst_node_type:
+                                edge_type = f"{et[0]} → {et[1]}"
+                                break
 
-            edge_colors.append(edge_type_to_color[edge_type])
+                # Assign color to edge type
+                if edge_type not in edge_type_to_color:
+                    edge_type_to_color[edge_type] = GraphVisualizer.assign_edge_color(
+                        edge_type
+                    )
+
+                edge_colors.append(edge_type_to_color[edge_type])
 
         # Draw nodes first
         nx.draw_networkx_nodes(
@@ -276,7 +322,7 @@ class GraphVisualizer:
             node_color=node_colors if node_colors else "lightblue",  # type: ignore
             edgecolors=node_edge_colors if node_edge_colors else CHARCOAL,  # type: ignore
             linewidths=node_line_widths if node_line_widths else 1,  # type: ignore
-            node_size=500,
+            node_size=node_sizes if node_sizes else 500,  # type: ignore
         )
 
         # Draw edges - straight for homogeneous, curved for bipartite
@@ -342,6 +388,33 @@ class GraphVisualizer:
                 )
             )
 
+        # Add root node indicator
+        if global_root_node:
+            legend_elements.append(
+                plt.Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="#E53935",
+                    markerfacecolor="white",
+                    markeredgewidth=4,
+                    markersize=15,  # Larger marker to represent the larger size
+                    label="Root node",
+                )
+            )
+
+        # Add positive edges to legend if they exist
+        if pos_edges:
+            legend_elements.append(
+                plt.Line2D(
+                    [0],
+                    [0],
+                    color="#E53935",
+                    linewidth=3,
+                    label="Positive edges",
+                )
+            )
+
         # Add edge types
         if edge_type_to_color:
             for edge_type in sorted(edge_type_to_color.keys()):
@@ -397,15 +470,29 @@ class GraphVisualizer:
     ):
         builder = PygGraphBuilder()
         graph_data = GbmlProtosTranslator.graph_data_from_GraphPb(
-            samples=[pb],
+            samples=[pb.neighborhood],
             graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
             builder=builder,
         )
 
+        # Extract positive edges if this is a NodeAnchorBasedLinkPredictionSample
+        pos_edges: Optional[dict[tuple[str, str, str], list[tuple[int, int]]]] = None
+        global_root_node: Optional[tuple[int, str]] = None
+        if isinstance(pb, training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample):
+            pos_edges = defaultdict(list)
+            for edge in pb.pos_edges:
+                edge_type: EdgeType = graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[edge.condensed_edge_type]
+                pos_edges[(edge_type.src_node_type, edge_type.relation, edge_type.dst_node_type)].append((edge.src_node_id, edge.dst_node_id))
+            global_root_node = (
+                pb.root_node.node_id,
+                graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[pb.root_node.condensed_node_type],
+            )
         return GraphVisualizer.visualize_graph(
             data=graph_data.to_hetero_data(),
             layout_mode=layout_mode,
             subgraph_node_to_global_node_mapping=graph_data.subgraph_node_to_global_node_mapping,
+            pos_edges=pos_edges,
+            global_root_node=global_root_node,
         )
 
     @staticmethod
