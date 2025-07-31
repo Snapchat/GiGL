@@ -1,3 +1,4 @@
+import hashlib
 import os
 import pathlib
 from difflib import unified_diff
@@ -65,21 +66,25 @@ class GraphVisualizer:
     edge_colors = [
         "#1565C0",  # medium blue
         "#43A047",  # vivid green
-        "#E53935",  # vivid red
+        "#000000",  # black
     ]
 
     @staticmethod
     def assign_node_color(name: str) -> str:
-        """Assign a node color to a name based on hash and a fixed palette."""
+        """Assign a node color to a name based on deterministic hash and a fixed palette."""
+        # Use SHA256 for deterministic hashing
+        hash_value = int(hashlib.sha256(name.encode('utf-8')).hexdigest(), 16)
         return GraphVisualizer.node_colors[
-            hash(name) % len(GraphVisualizer.node_colors)
+            hash_value % len(GraphVisualizer.node_colors)
         ]
 
     @staticmethod
     def assign_edge_color(name: str) -> str:
-        """Assign an edge color to a name based on hash and a fixed palette (optimized for white background)."""
+        """Assign an edge color to a name based on deterministic hash and a fixed palette (optimized for white background)."""
+        # Use SHA256 for deterministic hashing
+        hash_value = int(hashlib.sha256(name.encode('utf-8')).hexdigest(), 16)
         return GraphVisualizer.edge_colors[
-            hash(name) % len(GraphVisualizer.edge_colors)
+            hash_value % len(GraphVisualizer.edge_colors)
         ]
 
     @staticmethod
@@ -494,109 +499,6 @@ class GraphVisualizer:
             pos_edges=pos_edges,
             global_root_node=global_root_node,
         )
-
-    @staticmethod
-    def plot_graph(
-        pb: Union[
-            training_samples_schema_pb2.RootedNodeNeighborhood,
-            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-        ]
-    ):
-        """
-        Visualize the graph from the protobuf message.
-        """
-        output_graph = nx.DiGraph()
-        nodes = {}
-
-        for node in pb.neighborhood.nodes:
-            node_id = node.node_id
-            nodes[node_id] = {
-                "condensed_node_type": node.condensed_node_type,
-                "feature_values": node.feature_values,
-            }
-            output_graph.add_node(node_id)
-
-        all_edges = list(pb.neighborhood.edges)
-        if hasattr(pb, "pos_edges") and pb.pos_edges:
-            all_edges.extend(pb.pos_edges)
-        if hasattr(pb, "neg_edges") and pb.neg_edges:
-            all_edges.extend(pb.neg_edges)
-
-        for edge in all_edges:
-            src_node_id = edge.src_node_id
-            dst_node_id = edge.dst_node_id
-            condensed_edge_type = edge.condensed_edge_type
-
-            output_graph.add_edge(
-                src_node_id,
-                dst_node_id,
-                condensed_edge_type=edge.condensed_edge_type,
-            )
-
-        edge_colors = []
-        edge_widths = []
-        for output_edge in output_graph.edges():
-            color: str = "black"
-            edge_width = 1.0
-            if hasattr(pb, "pos_edges") and pb.pos_edges:
-                for pos_edge in pb.pos_edges:
-                    if (
-                        pos_edge.src_node_id == output_edge[0]
-                        and pos_edge.dst_node_id == output_edge[1]
-                        and pos_edge.condensed_edge_type
-                        == output_graph[output_edge[0]][output_edge[1]][
-                            "condensed_edge_type"
-                        ]
-                    ):
-                        color = "red"
-                        edge_width = 2.0
-                        break
-            if hasattr(pb, "neg_edges") and pb.neg_edges:
-                for neg_edge in pb.neg_edges:
-                    if (
-                        neg_edge.src_node_id == output_edge[0]
-                        and neg_edge.dst_node_id == output_edge[1]
-                        and neg_edge.condensed_edge_type
-                        == output_graph[output_edge[0]][output_edge[1]][
-                            "condensed_edge_type"
-                        ]
-                    ):
-                        color = "blue"
-                        edge_width = 2.0
-                        break
-            edge_colors.append(color)
-            edge_widths.append(edge_width)
-
-        node_colors = []
-        node_border_colors = []
-        node_border_widths = []
-        for node_id in output_graph.nodes():
-            if node_id == pb.root_node.node_id:
-                node_border_colors.append("black")
-                node_border_widths.append(4)
-            else:
-                node_border_colors.append("lightgrey")
-                node_border_widths.append(1)
-            node_color = GraphVisualizer.assign_node_color(str(node_id))
-            node_colors.append(node_color)
-
-        plt.clf()
-        pos = nx.spring_layout(output_graph, seed=42)
-        nx.draw(
-            output_graph,
-            pos,
-            with_labels=True,
-            node_color=node_colors,
-            edge_color=edge_colors,
-            width=edge_widths,
-            edgecolors=node_border_colors,
-            linewidths=node_border_widths,
-            node_size=500,
-            font_size=10,
-            font_weight="bold",
-        )
-        plt.show()
-        return plt
 
 
 def find_node_pb(
