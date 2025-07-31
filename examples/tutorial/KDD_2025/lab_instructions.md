@@ -47,35 +47,8 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 <img width="1079" height="623" alt="Screenshot 2025-07-31 at 10 53 57 AM" src="https://github.com/user-attachments/assets/c7046ec1-ed79-445b-873e-f15eff7f9d2f" />
 
 9. Pro tip: To enable scrolling for notebook cells, you can ctrl/cmd + A to select all notebook cells, right-click then
-   select `Enable Scrolling For Outputs`
-
-## Setup Resource Config.
-
-The tutorial requires you to setup a [resource config](../../../docs/user_guide/config_guides/resource_config_guide.md)
-in order to launch jobs on GCP.
-
-In your **Jupyterlab** on the **Workbench** instance, press the **+** button and open a new **Terminal**.
-
-You may run the below from `gigl/` root to generate an appropriate resource config. You may find the Project and User on
-the left hand panel on the qwiklabs page.
-
-```bash
-PROJECT=$QWIK_LABS_PROJECT # Ex, qwiklabs-gcp-01-40f6ccb540f3
-QL_USER=$QWIK_LABS_USER # Ex, student-02-5e0049fb83ce
-
-python -m scripts.bootstrap_resource_config \
-  --project="$PROJECT" \
-  --gcp_service_account_email="gigl-dev@$PROJECT.iam.gserviceaccount.com" \
-  --docker_artifact_registry_path="us-central1-docker.pkg.dev/$PROJECT/gigl-base-images" \
-  --temp_assets_bq_dataset_name="gigl_temp_assets" \
-  --embedding_bq_dataset_name="gigl_embeddings" \
-  --temp_assets_bucket="gs://gigl_temp_assets_$QL_USER" \
-  --perm_assets_bucket="gs://gigl_perm_assets_$QL_USER" \
-  --template_resource_config_uri="examples/tutorial/KDD_2025/resource_config.yaml"
-```
-
-Accept the default region `us-central1` and output the resource config somewhere locally, like
-`examples/tutorial/KDD_2025/resource_config.yaml`.
+   select `Enable Scrolling For Outputs`.
+10. Follow along the tutorial presentation and learn about how to use GiGL! 
 
 ## Additional Resources
 
