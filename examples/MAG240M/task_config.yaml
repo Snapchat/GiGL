@@ -37,7 +37,7 @@ datasetConfig:
     numHops: 2  # Each subgraph that is computed will be of 2 hops
     numNeighborsToSample: 15 # And, we will sample 10 neighbors at each hop for each node
     numUserDefinedPositiveSamples: 1 # We will sample 1 positive sample per anchor node
-    numMaxTrainingSamplesToOutput: 5000000
+    numMaxTrainingSamplesToOutput: 5_000_000
   splitGeneratorConfig:
     assignerArgs:
       seed: '42'
