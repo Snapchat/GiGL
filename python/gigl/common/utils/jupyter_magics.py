@@ -1,4 +1,3 @@
-import math
 import os
 import pathlib
 from difflib import unified_diff
@@ -7,7 +6,6 @@ from typing import Optional, Type, Union
 
 import matplotlib.pyplot as plt
 import networkx as nx
-import numpy as np
 import tensorflow as tf
 import torch_geometric.utils
 import yaml
@@ -15,6 +13,11 @@ from IPython.display import HTML, display
 from torch_geometric.data import HeteroData
 
 from gigl.common import Uri
+from gigl.common.collections.frozen_dict import FrozenDict
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
+from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
+from gigl.src.common.types.graph_data import Node
+from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
 
@@ -32,6 +35,7 @@ def change_working_dir_to_gigl_root():
 
 CHARCOAL = "#36454F"
 BLACK = "#000000"
+
 
 class GraphVisualizerLayoutMode(Enum):
     HOMOGENEOUS = "homogeneous"
@@ -78,8 +82,21 @@ class GraphVisualizer:
         ]
 
     @staticmethod
-    def _create_type_grouped_layout(g, node_index_to_type, node_types, seed=42, layout_mode=GraphVisualizerLayoutMode.BIPARTITE):
+    def _create_type_grouped_layout(
+        g,
+        node_index_to_type,
+        node_types,
+        seed=42,
+        layout_mode=GraphVisualizerLayoutMode.BIPARTITE,
+    ):
         """Create a layout based on the specified mode (bipartite or homogeneous)."""
+        print(f"Creating layout for {len(g.nodes())} nodes")
+        print(f"Node index to type: {node_index_to_type}")
+        print(f"Node types: {node_types}")
+        print(f"Layout mode: {layout_mode}")
+        # Handle empty graph case
+        if len(g.nodes()) == 0:
+            return {}
 
         if layout_mode == GraphVisualizerLayoutMode.HOMOGENEOUS:
             print("Using homogeneous layout")
@@ -89,15 +106,20 @@ class GraphVisualizer:
             if num_nodes <= 30:
                 # Small to medium graphs - use Kamada-Kawai (good for showing structure)
                 try:
-                    return nx.kamada_kawai_layout(g, scale=6)
-                except:
+                    # Increase scale significantly to prevent node overlap (node_size=500)
+                    return nx.kamada_kawai_layout(g, scale=15)
+                except Exception as e:
+                    print(
+                        f"Kamada-Kawai layout failed: {e}, falling back to spring layout"
+                    )
                     # Fallback to spring layout if kamada_kawai fails
-                    k = max(2.5, num_nodes / 8.0)
-                    return nx.spring_layout(g, seed=seed, k=k, iterations=200, scale=8)
+                    # Increase k (ideal distance) and scale to prevent overlap
+                    k = max(4.0, num_nodes / 3.0)
+                    return nx.spring_layout(g, seed=seed, k=k, iterations=300, scale=15)
             else:
                 # Large graphs - use spring layout with good parameters
-                k = max(2.0, num_nodes / 10.0)
-                return nx.spring_layout(g, seed=seed, k=k, iterations=150, scale=10)
+                k = max(3.0, num_nodes / 6.0)
+                return nx.spring_layout(g, seed=seed, k=k, iterations=250, scale=20)
 
         elif layout_mode == GraphVisualizerLayoutMode.BIPARTITE:
             # Group nodes by their types for bipartite/heterogeneous layout
@@ -112,19 +134,29 @@ class GraphVisualizer:
 
             if num_types == 1:
                 # Single type - use circular layout with more spacing
-                return nx.circular_layout(g, scale=6)
+                return nx.circular_layout(g, scale=15)
             elif num_types == 2:
                 # Two types - use bipartite layout with more spacing
                 types = list(type_to_nodes.keys())
                 first_type_nodes = set(type_to_nodes[types[0]])
-                return nx.bipartite_layout(g, first_type_nodes, scale=6)
+                return nx.bipartite_layout(g, first_type_nodes, scale=15)
             else:
                 # Multiple types or fallback - use spring layout with much more spacing
-                k = max(3.0, len(g.nodes()) / 5.0)  # Dynamic spacing based on node count
-                return nx.spring_layout(g, seed=seed, k=k, iterations=200, scale=8)
+                k = max(
+                    4.0, len(g.nodes()) / 3.0
+                )  # Dynamic spacing based on node count
+                return nx.spring_layout(g, seed=seed, k=k, iterations=300, scale=15)
+
+        else:
+            raise ValueError(f"Invalid layout mode: {layout_mode}")
 
     @staticmethod
-    def visualize_graph(data: HeteroData, seed=42, layout_mode=GraphVisualizerLayoutMode.BIPARTITE):
+    def visualize_graph(
+        data: HeteroData,
+        seed=42,
+        layout_mode=GraphVisualizerLayoutMode.BIPARTITE,
+        subgraph_node_to_global_node_mapping: Optional[FrozenDict[Node, Node]] = None,
+    ):
         # Build a mapping from global node indices to node types BEFORE conversion
         node_index_to_type = {}
         current_index = 0
@@ -132,7 +164,7 @@ class GraphVisualizer:
         # HeteroData stores nodes by type - we need to map the global indices
         # that NetworkX will use back to the original node types
         for node_type in data.node_types:
-            if hasattr(data[node_type], 'num_nodes'):
+            if hasattr(data[node_type], "num_nodes"):
                 num_nodes = data[node_type].num_nodes
                 for i in range(num_nodes):
                     node_index_to_type[current_index] = node_type
@@ -140,6 +172,25 @@ class GraphVisualizer:
 
         # Convert to NetworkX
         g = torch_geometric.utils.to_networkx(data)
+        if subgraph_node_to_global_node_mapping:
+            print(
+                f"Subgraph node to global node mapping: {subgraph_node_to_global_node_mapping}"
+            )
+            print(f"Subgraph nodes: {g.nodes()}")
+            mapping = {}
+            new_node_index_to_type = {}
+            for node in g.nodes():
+                node_type = node_index_to_type.get(node, "unknown")
+                local_node = Node(type=node_type, id=node)
+                global_node = subgraph_node_to_global_node_mapping[local_node]
+                print(f"Local node: {local_node}, Global node: {global_node}")
+                mapping[node] = global_node.id
+                # Preserve the node type information for the global node
+                new_node_index_to_type[global_node.id] = global_node.type
+            print(f"Mapping: {mapping}")
+            g = nx.relabel_nodes(g, mapping)
+            # Update the node_index_to_type mapping to use global node types
+            node_index_to_type = new_node_index_to_type
 
         # Create node type to color mapping
         node_type_to_color = {}
@@ -154,7 +205,9 @@ class GraphVisualizer:
 
             # Get color for this node type
             if node_type not in node_type_to_color:
-                node_type_to_color[node_type] = GraphVisualizer.assign_node_color(node_type)
+                node_type_to_color[node_type] = GraphVisualizer.assign_node_color(
+                    node_type
+                )
 
             node_colors.append(node_type_to_color[node_type])
 
@@ -162,13 +215,23 @@ class GraphVisualizer:
         plt.figure(figsize=(10, 6))
 
         # Generate a layout based on the selected mode
-        pos = GraphVisualizer._create_type_grouped_layout(g, node_index_to_type, data.node_types, seed, layout_mode)
+        pos = GraphVisualizer._create_type_grouped_layout(
+            g, node_index_to_type, data.node_types, seed, layout_mode
+        )
+
+        # Safety check: if pos is None or empty and we have nodes, create a fallback layout
+        if pos is None or (len(g.nodes()) > 0 and not pos):
+            print("Layout generation failed, using fallback spring layout")
+            k = max(4.0, len(g.nodes()) / 3.0)
+            pos = nx.spring_layout(g, seed=seed, k=k, iterations=300, scale=15)
 
         # Identify isolated nodes for special border styling
         isolated_nodes = [node for node in g.nodes() if g.degree(node) == 0]
 
         # Create border styling (thicker black border for isolated nodes)
-        node_edge_colors = [BLACK if node in isolated_nodes else CHARCOAL for node in g.nodes()]
+        node_edge_colors = [
+            BLACK if node in isolated_nodes else CHARCOAL for node in g.nodes()
+        ]
         node_line_widths = [3 if node in isolated_nodes else 1 for node in g.nodes()]
 
         # Create edge type to color mapping
@@ -185,20 +248,24 @@ class GraphVisualizer:
             edge_type = f"{src_node_type} → {dst_node_type}"
 
             # Look for a more specific edge type in HeteroData if available
-            if hasattr(data, 'edge_types') and data.edge_types:
+            if hasattr(data, "edge_types") and data.edge_types:
                 for et in data.edge_types:
                     if len(et) == 3:  # (src_type, relation, dst_type)
                         if et[0] == src_node_type and et[2] == dst_node_type:
                             edge_type = f"{et[0]} --{et[1]}--> {et[2]}"
                             break
-                    elif isinstance(et, tuple) and len(et) == 2:  # Some formats might be (src, dst)
+                    elif (
+                        isinstance(et, tuple) and len(et) == 2
+                    ):  # Some formats might be (src, dst)
                         if et[0] == src_node_type and et[1] == dst_node_type:
                             edge_type = f"{et[0]} → {et[1]}"
                             break
 
             # Assign color to edge type
             if edge_type not in edge_type_to_color:
-                edge_type_to_color[edge_type] = GraphVisualizer.assign_edge_color(edge_type)
+                edge_type_to_color[edge_type] = GraphVisualizer.assign_edge_color(
+                    edge_type
+                )
 
             edge_colors.append(edge_type_to_color[edge_type])
 
@@ -206,7 +273,7 @@ class GraphVisualizer:
         nx.draw_networkx_nodes(
             g,
             pos,
-            node_color=node_colors if node_colors else 'lightblue',  # type: ignore
+            node_color=node_colors if node_colors else "lightblue",  # type: ignore
             edgecolors=node_edge_colors if node_edge_colors else CHARCOAL,  # type: ignore
             linewidths=node_line_widths if node_line_widths else 1,  # type: ignore
             node_size=500,
@@ -221,7 +288,7 @@ class GraphVisualizer:
                     pos,
                     edge_color=edge_colors,  # type: ignore
                     width=0.75,  # 75% of default edge width
-                    alpha=0.9,   # Less transparent for cleaner look
+                    alpha=0.9,  # Less transparent for cleaner look
                 )
             else:
                 # Curved edges for bipartite graphs to reduce overlap
@@ -230,7 +297,7 @@ class GraphVisualizer:
                     pos,
                     edge_color=edge_colors,  # type: ignore
                     width=0.75,  # 75% of default edge width
-                    alpha=0.8,   # Slightly transparent for better overlap visibility
+                    alpha=0.8,  # Slightly transparent for better overlap visibility
                     connectionstyle="arc3,rad=0.1",  # Curved edges to reduce overlap
                 )
 
@@ -248,26 +315,98 @@ class GraphVisualizer:
         # Add node types
         if len(node_type_to_color) > 1:
             for node_type in sorted(node_type_to_color.keys()):
-                legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
-                                                 markerfacecolor=node_type_to_color[node_type],
-                                                 markersize=10, label=f'Node: {node_type}'))
+                legend_elements.append(
+                    plt.Line2D(
+                        [0],
+                        [0],
+                        marker="o",
+                        color="w",
+                        markerfacecolor=node_type_to_color[node_type],
+                        markersize=10,
+                        label=f"Node: {node_type}",
+                    )
+                )
 
         # Add isolated node indicator
         if isolated_nodes:
-            legend_elements.append(plt.Line2D([0], [0], marker='o', color='black',
-                                             markerfacecolor='white', markeredgewidth=3,
-                                             markersize=10, label='Isolated nodes'))
+            legend_elements.append(
+                plt.Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="black",
+                    markerfacecolor="white",
+                    markeredgewidth=3,
+                    markersize=10,
+                    label="Isolated nodes",
+                )
+            )
 
         # Add edge types
         if edge_type_to_color:
             for edge_type in sorted(edge_type_to_color.keys()):
-                legend_elements.append(plt.Line2D([0], [0], color=edge_type_to_color[edge_type],
-                                                 linewidth=2, label=f'Edge: {edge_type}'))
+                legend_elements.append(
+                    plt.Line2D(
+                        [0],
+                        [0],
+                        color=edge_type_to_color[edge_type],
+                        linewidth=2,
+                        label=f"Edge: {edge_type}",
+                    )
+                )
 
         if legend_elements:
-            plt.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.4, 1))
+            plt.legend(
+                handles=legend_elements, loc="upper right", bbox_to_anchor=(1.4, 1)
+            )
 
         plt.show()
+
+    @staticmethod
+    def pb_to_hetero_data(
+        pb: Union[
+            training_samples_schema_pb2.RootedNodeNeighborhood,
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+        ],
+        graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
+    ) -> HeteroData:
+        """
+        Convert a protobuf message to a HeteroData object.
+
+        Args:
+            pb: Protobuf message containing graph data
+            graph_metadata: GraphMetadata protobuf with condensed type mappings
+                          Contains condensed_node_type_map and condensed_edge_type_map
+        """
+        builder = PygGraphBuilder()
+        graph_data = GbmlProtosTranslator.graph_data_from_GraphPb(
+            samples=[pb],
+            graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
+            builder=builder,
+        )
+        return graph_data.to_hetero_data()
+
+    @staticmethod
+    def plot_pb(
+        pb: Union[
+            training_samples_schema_pb2.RootedNodeNeighborhood,
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+        ],
+        graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
+        layout_mode: GraphVisualizerLayoutMode = GraphVisualizerLayoutMode.BIPARTITE,
+    ):
+        builder = PygGraphBuilder()
+        graph_data = GbmlProtosTranslator.graph_data_from_GraphPb(
+            samples=[pb],
+            graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
+            builder=builder,
+        )
+
+        return GraphVisualizer.visualize_graph(
+            data=graph_data.to_hetero_data(),
+            layout_mode=layout_mode,
+            subgraph_node_to_global_node_mapping=graph_data.subgraph_node_to_global_node_mapping,
+        )
 
     @staticmethod
     def plot_graph(
