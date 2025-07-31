@@ -40,8 +40,8 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 
 6. Open the `gigl` folder in the left sidebar. Navigate to the `examples/tutorial/KDD_2025` folder.
 7. In the hands-on portion of the tutorial, we will be running notebooks
-   `examples/toy_visual_example/toy_example_walkthrough.ipynb` for tabulizard subgraph sampling, and
-   `examples/tutorial/KDD_2025/heteregeneous_walkthrough.ipynb` for in-memory subgraph sampling.
+   `examples/toy_visual_example/toy_example_walkthrough.ipynb` for tabularization subgraph sampling, and
+   `examples/tutorial/KDD_2025/heterogeneous_walkthrough.ipynb` for in-memory subgraph sampling.
 8. Open the notebooks with `gigl` kernel. The select kernel will show on the top right corner of the notebook page.
 
 <img width="1079" height="623" alt="Screenshot 2025-07-31 at 10 53 57 AM" src="https://github.com/user-attachments/assets/c7046ec1-ed79-445b-873e-f15eff7f9d2f" />
