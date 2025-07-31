@@ -1,7 +1,6 @@
 name: Nightly Release
 
 on:
-  push: # TODO: (svij) remove before merging
   workflow_dispatch:
   schedule:
     - cron: "0 19 * * *" # Run daily at 7pm UTC; 12am PST
@@ -15,7 +14,7 @@ permissions:
 # Calls create_release w/ nightly and then run the api tests
 jobs:
   create-release:
-    uses: ./.github/workflows/create_release.yml
+    uses: ./.github/workflows/create_release.yml # TODO: (svij) change to snapchat/gigl/.github/workflows/create_release.yml before merging
     secrets: inherit
     with:
       bump_type: nightly

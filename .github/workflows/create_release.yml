@@ -5,6 +5,7 @@ name: Create Release
 # 2. TODO: (svij)Cron trigger: Nightly build
 
 on:
+  push: # TODO: (svij) remove before merging
   workflow_dispatch:
     inputs:
       bump_type:
@@ -23,7 +24,7 @@ on:
       bump_type:
         description: 'Type of version bump'
         required: true
-        type: string
+        type: string # workflow_call doesnt support choice inputs
     outputs:
       release_branch_name:
         description: "Generated release branch name"

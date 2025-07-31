@@ -261,7 +261,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--export_docker_artifact_registry",
-        help="The docker artifact registry to push the customer src images to.",
+        help="The docker artifact registry to push the customer src images to. For example: us-central1-docker.pkg.dev/some_project_name/gigl-base-images",
         default=None,
     )
     parser.add_argument(
@@ -285,6 +285,9 @@ if __name__ == "__main__":
     # Assert correctness of args
     _assert_required_flags(args)
 
+    # Set the default value for compiled_pipeline_path as we cannot set it in argparse as
+    # for compile action this is a required flag so we cannot provide it a default value.
+    # See _assert_required_flags for more details.
     if args.compiled_pipeline_path:
         compiled_pipeline_path = UriFactory.create_uri(args.compiled_pipeline_path)
     else:

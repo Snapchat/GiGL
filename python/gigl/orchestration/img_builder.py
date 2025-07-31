@@ -1,5 +1,4 @@
 import datetime
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +8,7 @@ from gigl.common.constants import (
     DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG,
 )
 from gigl.common.logger import Logger
+from gigl.common.utils.os_utils import run_command_and_stream_stdout
 
 logger = Logger()
 
@@ -124,23 +124,16 @@ def build_and_push_image(
     build_command.append(context_path)
 
     logger.info(f"Running command: {' '.join(build_command)}")
-    result = subprocess.run(
-        build_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-    )
-    if result.returncode != 0:
-        logger.info(result.stdout.decode())
+
+    returncode = run_command_and_stream_stdout(" ".join(build_command))
+    if returncode != 0:
         logger.error(f"Command failed: {' '.join(build_command)}")
-        raise RuntimeError(f"Docker build failed with exit code {result.returncode}")
+        raise RuntimeError(f"Docker build failed with exit code {returncode}")
 
     # Push image if it's not a multi-arch build (multi-arch images are pushed in the build step)
     if not multi_arch:
         push_command = ["docker", "push", image_name]
-        result_push = subprocess.run(
-            push_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-        )
-        if result_push.returncode != 0:
-            logger.info(result_push.stdout.decode())
+        returncode = run_command_and_stream_stdout(" ".join(push_command))
+        if returncode != 0:
             logger.error(f"Command failed: {' '.join(push_command)}")
-            raise RuntimeError(
-                f"Docker push failed with exit code {result_push.returncode}"
-            )
+            raise RuntimeError(f"Docker push failed with exit code {returncode}")
