@@ -1,10 +1,10 @@
 import hashlib
 import os
 import pathlib
+from collections import defaultdict
 from difflib import unified_diff
 from enum import Enum
 from typing import Optional, Type, Union
-from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -18,7 +18,7 @@ from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.graph_data import Node, Edge, EdgeType
+from gigl.src.common.types.graph_data import EdgeType, Node
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
@@ -73,7 +73,7 @@ class GraphVisualizer:
     def assign_node_color(name: str) -> str:
         """Assign a node color to a name based on deterministic hash and a fixed palette."""
         # Use SHA256 for deterministic hashing
-        hash_value = int(hashlib.sha256(name.encode('utf-8')).hexdigest(), 16)
+        hash_value = int(hashlib.sha256(name.encode("utf-8")).hexdigest(), 16)
         return GraphVisualizer.node_colors[
             hash_value % len(GraphVisualizer.node_colors)
         ]
@@ -82,10 +82,28 @@ class GraphVisualizer:
     def assign_edge_color(name: str) -> str:
         """Assign an edge color to a name based on deterministic hash and a fixed palette (optimized for white background)."""
         # Use SHA256 for deterministic hashing
-        hash_value = int(hashlib.sha256(name.encode('utf-8')).hexdigest(), 16)
+        hash_value = int(hashlib.sha256(name.encode("utf-8")).hexdigest(), 16)
         return GraphVisualizer.edge_colors[
             hash_value % len(GraphVisualizer.edge_colors)
         ]
+
+    @staticmethod
+    def _create_deterministic_positions(nodes):
+        """Create deterministic initial positions for nodes based on their IDs."""
+        positions = {}
+
+        for node in nodes:
+            # Use SHA256 hash of node ID to generate deterministic coordinates
+            hash_value = int(hashlib.sha256(str(node).encode("utf-8")).hexdigest(), 16)
+
+            # Generate x and y coordinates from different parts of the hash
+            # Use modulo to keep coordinates in reasonable range [-1, 1]
+            x = ((hash_value % 10000) / 5000.0) - 1.0  # Maps to [-1, 1]
+            y = (((hash_value // 10000) % 10000) / 5000.0) - 1.0  # Maps to [-1, 1]
+
+            positions[node] = (x, y)
+
+        return positions
 
     @staticmethod
     def _create_type_grouped_layout(
@@ -106,26 +124,33 @@ class GraphVisualizer:
 
         if layout_mode == GraphVisualizerLayoutMode.HOMOGENEOUS:
             print("Using homogeneous layout")
-            # For homogeneous graphs, use layouts that work well for general graph structure
+            # For homogeneous graphs, use deterministic positioning based on node IDs
             num_nodes = len(g.nodes())
+
+            # Create deterministic initial positions based on node IDs
+            initial_pos = GraphVisualizer._create_deterministic_positions(g.nodes())
 
             if num_nodes <= 30:
                 # Small to medium graphs - use Kamada-Kawai (good for showing structure)
                 try:
-                    # Increase scale significantly to prevent node overlap (node_size=500)
-                    return nx.kamada_kawai_layout(g, scale=15)
+                    # Kamada-Kawai doesn't accept initial positions, so use deterministic spring layout
+                    k = max(4.0, num_nodes / 3.0)
+                    return nx.spring_layout(
+                        g, pos=initial_pos, k=k, iterations=300, scale=15
+                    )
                 except Exception as e:
                     print(
-                        f"Kamada-Kawai layout failed: {e}, falling back to spring layout"
+                        f"Deterministic spring layout failed: {e}, falling back to basic spring layout"
                     )
-                    # Fallback to spring layout if kamada_kawai fails
-                    # Increase k (ideal distance) and scale to prevent overlap
+                    # Fallback to spring layout with seed
                     k = max(4.0, num_nodes / 3.0)
                     return nx.spring_layout(g, seed=seed, k=k, iterations=300, scale=15)
             else:
-                # Large graphs - use spring layout with good parameters
+                # Large graphs - use spring layout with deterministic initial positions
                 k = max(3.0, num_nodes / 6.0)
-                return nx.spring_layout(g, seed=seed, k=k, iterations=250, scale=20)
+                return nx.spring_layout(
+                    g, pos=initial_pos, k=k, iterations=250, scale=20
+                )
 
         elif layout_mode == GraphVisualizerLayoutMode.BIPARTITE:
             # Group nodes by their types for bipartite/heterogeneous layout
@@ -204,7 +229,11 @@ class GraphVisualizer:
         # Add positive edges to the graph if they don't already exist
         pos_edge_pairs = set()
         if pos_edges:
-            for (src_node_type, relation, dst_node_type), edge_pairs in pos_edges.items():
+            for (
+                src_node_type,
+                relation,
+                dst_node_type,
+            ), edge_pairs in pos_edges.items():
                 for src_id, dst_id in edge_pairs:
                     pos_edge_pairs.add((src_id, dst_id))
 
@@ -483,14 +512,28 @@ class GraphVisualizer:
         # Extract positive edges if this is a NodeAnchorBasedLinkPredictionSample
         pos_edges: Optional[dict[tuple[str, str, str], list[tuple[int, int]]]] = None
         global_root_node: Optional[tuple[int, str]] = None
-        if isinstance(pb, training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample):
+        if isinstance(
+            pb, training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+        ):
             pos_edges = defaultdict(list)
             for edge in pb.pos_edges:
-                edge_type: EdgeType = graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[edge.condensed_edge_type]
-                pos_edges[(edge_type.src_node_type, edge_type.relation, edge_type.dst_node_type)].append((edge.src_node_id, edge.dst_node_id))
+                edge_type: EdgeType = (
+                    graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
+                        edge.condensed_edge_type
+                    ]
+                )
+                pos_edges[
+                    (
+                        edge_type.src_node_type,
+                        edge_type.relation,
+                        edge_type.dst_node_type,
+                    )
+                ].append((edge.src_node_id, edge.dst_node_id))
             global_root_node = (
                 pb.root_node.node_id,
-                graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[pb.root_node.condensed_node_type],
+                graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
+                    pb.root_node.condensed_node_type
+                ],
             )
         return GraphVisualizer.visualize_graph(
             data=graph_data.to_hetero_data(),
