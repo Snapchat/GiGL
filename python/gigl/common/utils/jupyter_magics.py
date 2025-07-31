@@ -95,7 +95,11 @@ class GraphVisualizer:
         seed=42,
         layout_mode=GraphVisualizerLayoutMode.BIPARTITE,
     ):
-        """Create a layout based on the specified mode (bipartite or homogeneous)."""
+        """
+        Warning: This is mostly just AI slop, but it serves the purpose for now.
+        Create a layout based on the specified mode (bipartite or homogeneous).
+        """
+
         # Handle empty graph case
         if len(g.nodes()) == 0:
             return {}
@@ -161,6 +165,17 @@ class GraphVisualizer:
         pos_edges: Optional[dict[tuple[str, str, str], list[tuple[int, int]]]] = None,
         global_root_node: Optional[tuple[int, str]] = None,
     ):
+        """
+        Warning: This is mostly just AI slop, but it serves the purpose for now.
+        Visualize a graph.
+
+        Args:
+            data: The HeteroData object to visualize.
+            seed: The seed for the random number generator - fix it to ensure reproducibility in visualizations
+            layout_mode: Either GraphVisualizerLayoutMode.HOMOGENEOUS or GraphVisualizerLayoutMode.BIPARTITE
+            subgraph_node_to_global_node_mapping: A mapping from local node indices to global node indices.
+        """
+
         # Build a mapping from global node indices to node types BEFORE conversion
         node_index_to_type = {}
         current_index = 0
