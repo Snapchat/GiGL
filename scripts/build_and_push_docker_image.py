@@ -3,7 +3,6 @@ import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from gigl.common.constants import (
     DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
@@ -11,8 +10,12 @@ from gigl.common.constants import (
     DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG,
 )
 from gigl.common.logger import Logger
+from gigl.orchestration.img_builder import build_and_push_image
 
 logger = Logger()
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+CONTEXT_PATH: str = ROOT_DIR.as_posix()
 
 
 class PredefinedImageType(Enum):
@@ -40,10 +43,14 @@ def build_and_push_cpu_image(
     Args:
         image_name (str): The name of the Docker image to build and push.
     """
+    dockerfile_path: str = (ROOT_DIR / "containers" / "Dockerfile.src").as_posix()
+
     build_and_push_image(
         base_image=DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG,
         image_name=image_name,
-        dockerfile_name="Dockerfile.src",
+        dockerfile_path=dockerfile_path,
+        context_path=CONTEXT_PATH,
+        multi_arch=False,
     )
 
 
@@ -56,10 +63,14 @@ def build_and_push_cuda_image(
     Args:
         image_name (str): The name of the Docker image to build and push.
     """
+    dockerfile_path: str = (ROOT_DIR / "containers" / "Dockerfile.src").as_posix()
+
     build_and_push_image(
         base_image=DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG,
         image_name=image_name,
-        dockerfile_name="Dockerfile.src",
+        dockerfile_path=dockerfile_path,
+        context_path=CONTEXT_PATH,
+        multi_arch=False,
     )
 
 
@@ -72,10 +83,15 @@ def build_and_push_dataflow_image(
     Args:
         image_name (str): The name of the Docker image to build and push.
     """
+    dockerfile_path: str = (
+        ROOT_DIR / "containers" / "Dockerfile.dataflow.src"
+    ).as_posix()
+
     build_and_push_image(
         base_image=DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG,
         image_name=image_name,
-        dockerfile_name="Dockerfile.dataflow.src",
+        dockerfile_path=dockerfile_path,
+        context_path=CONTEXT_PATH,
         multi_arch=True,
     )
 
@@ -89,81 +105,17 @@ def build_and_push_dev_workbench_image(
     Args:
         image_name (str): The name of the Docker image to build and push.
     """
+    dockerfile_path: str = (
+        ROOT_DIR / "containers" / "Dockerfile.gigl_workbench_container"
+    ).as_posix()
+
     build_and_push_image(
         base_image=None,
         image_name=image_name,
-        dockerfile_name="Dockerfile.gigl_workbench_container",
+        dockerfile_path=dockerfile_path,
+        context_path=CONTEXT_PATH,
         multi_arch=False,
     )
-
-
-def build_and_push_image(
-    base_image: Optional[str],
-    image_name: str,
-    dockerfile_name: str,
-    multi_arch: bool = False,
-) -> None:
-    """
-    Builds and pushes a Docker image.
-
-    Args:
-        base_image (Optional[str]): The base image to use for the build.
-        image_name (str): The name of the Docker image to build and push.
-        dockerfile_name (str): The name of the Dockerfile to use for the build.
-        multi_arch (bool): Whether to build a multi-architecture Docker image. Defaults to False.
-    """
-    root_dir = Path(__file__).resolve().parent.parent
-    dockerfile_path = root_dir / "containers" / dockerfile_name
-
-    if multi_arch:
-        build_command = [
-            "docker",
-            "buildx",
-            "build",
-            "--platform",
-            "linux/amd64,linux/arm64",
-            "-f",
-            str(dockerfile_path),
-            "-t",
-            image_name,
-            "--push",
-        ]
-    else:
-        build_command = [
-            "docker",
-            "build",
-            "-f",
-            str(dockerfile_path),
-            "-t",
-            image_name,
-        ]
-
-    if base_image:
-        build_command.extend(["--build-arg", f"BASE_IMAGE={base_image}"])
-
-    build_command.append(root_dir.as_posix())
-
-    logger.info(f"Running command: {' '.join(build_command)}")
-    result = subprocess.run(
-        build_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-    )
-    if result.returncode != 0:
-        logger.info(result.stdout.decode())
-        logger.error(f"Command failed: {' '.join(build_command)}")
-        raise RuntimeError(f"Docker build failed with exit code {result.returncode}")
-
-    # Push image if it's not a multi-arch build (multi-arch images are pushed in the build step)
-    if not multi_arch:
-        push_command = ["docker", "push", image_name]
-        result_push = subprocess.run(
-            push_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-        )
-        if result_push.returncode != 0:
-            logger.info(result_push.stdout.decode())
-            logger.error(f"Command failed: {' '.join(push_command)}")
-            raise RuntimeError(
-                f"Docker push failed with exit code {result_push.returncode}"
-            )
 
 
 if __name__ == "__main__":
@@ -174,47 +126,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--predefined_type",
         choices=[e.value for e in PredefinedImageType],
-        required=False,
+        required=True,
         help="Predefined image type to build. If specified, do not need to specify other arguments, except image_name.",
-    )
-
-    parser.add_argument("--base_image", help="Base image as an optional build argument")
-
-    parser.add_argument(
-        "--dockerfile_name", required=False, help="Dockerfile to use for the build"
-    )
-    parser.add_argument(
-        "--multi_arch",
-        action="store_true",
-        help="Build a multi-architecture Docker image",
     )
 
     args = parser.parse_args()
     try:
-        if args.predefined_type:
-            if args.predefined_type == PredefinedImageType.CPU.value:
-                build_and_push_cpu_image(image_name=args.image_name)
-            elif args.predefined_type == PredefinedImageType.CUDA.value:
-                build_and_push_cuda_image(image_name=args.image_name)
-            elif args.predefined_type == PredefinedImageType.DATAFLOW.value:
-                build_and_push_dataflow_image(image_name=args.image_name)
-            elif args.predefined_type == PredefinedImageType.DEV_WORKBENCH.value:
-                build_and_push_dev_workbench_image(image_name=args.image_name)
-            else:
-                raise ValueError(f"Invalid predefined_type: {args.predefined_type}")
+        if args.predefined_type == PredefinedImageType.CPU.value:
+            build_and_push_cpu_image(image_name=args.image_name)
+        elif args.predefined_type == PredefinedImageType.CUDA.value:
+            build_and_push_cuda_image(image_name=args.image_name)
+        elif args.predefined_type == PredefinedImageType.DATAFLOW.value:
+            build_and_push_dataflow_image(image_name=args.image_name)
+        elif args.predefined_type == PredefinedImageType.DEV_WORKBENCH.value:
+            build_and_push_dev_workbench_image(image_name=args.image_name)
         else:
-            assert (
-                args.base_image
-            ), "base_image is required if predefined_type is not specified"
-            assert (
-                args.dockerfile_name
-            ), "dockerfile_name is required if predefined_type is not specified"
-            build_and_push_image(
-                base_image=args.base_image,
-                image_name=args.image_name,
-                dockerfile_name=args.dockerfile_name,
-                multi_arch=args.multi_arch,
-            )
+            raise ValueError(f"Invalid predefined_type: {args.predefined_type}")
+
     except subprocess.CalledProcessError as e:
         logger.error(f"Command '{e.cmd}' returned non-zero exit status {e.returncode}.")
         sys.exit(e.returncode)
