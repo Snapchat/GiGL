@@ -14,7 +14,7 @@ permissions:
 # Calls create_release w/ nightly and then run the api tests
 jobs:
   create-release:
-    uses: ./.github/workflows/create_release.yml # TODO: (svij) change to snapchat/gigl/.github/workflows/create_release.yml before merging
+    uses: snapchat/gigl/.github/workflows/create_release.yml@main
     secrets: inherit
     with:
       bump_type: nightly

@@ -1,11 +1,10 @@
 name: Create Release
 
 # This workflow can be triggered in two ways:
-# 1. Manual dispatch: Choose bump type and project
-# 2. TODO: (svij)Cron trigger: Nightly build
+# 1. Workflow dispatch: Manually dispatch the workflow and choose bump type and project
+# 2. Workflow call: Execute this workflow from another workflow with bump type as an input
 
 on:
-  push: # TODO: (svij) remove before merging
   workflow_dispatch:
     inputs:
       bump_type:

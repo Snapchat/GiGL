@@ -141,7 +141,6 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
         elif len(getattr(args, flag)) == 0:
             missing_values.append(flag)
 
-
     if missing_flags:
         raise ValueError(
             f"Missing the following flags for a {args.action} command: {missing_flags}. "
