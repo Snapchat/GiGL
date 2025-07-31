@@ -52,7 +52,7 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 The tutorial requires you to setup a [resource config](../../../docs/user_guide/config_guides/resource_config_guide.md)
 in order to launch jobs on GCP.
 
-In your **Jupyterlab** on the **Workbench** instance, press **+** button and open a new **Terminal**.
+In your **Jupyterlab** on the **Workbench** instance, press the **+** button and open a new **Terminal**.
 
 You may run the below from `gigl/` root to generate an appropriate resource config. You may find the Project and User on
 the left hand panel on the qwiklabs page.
