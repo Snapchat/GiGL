@@ -1,8 +1,6 @@
 # <p align="center"> Training Industry-scale GNNs with GiGL: KDD'25 Hands-On Tutorial </p>
 
-______________________________________________________________________
-
-## <p align="center">**To appear at KDD'25 - Stay Tuned**</p>
+## <p align="center">Sunday, August 3rd, 1 - 4pm EDT, Room 707 </p>
 
 ______________________________________________________________________
 
@@ -23,9 +21,21 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **Battle-tested at Snapchat:** GiGL is widely used at Snapchat and has been successfully deployed in production for
   various applications.
 
-## Tutorial Outline
+## Tutorial Schedule
 
-### GNNs and their Scale Challenges (20m)
+| Time (EDT) | Topic                                  | Presenter        | Materials |
+| ---------- | -------------------------------------- | ---------------- | --------- |
+| 1:00 PM    | Introduction                           | Neil Shah        | Slides    |
+| 1:10 PM    | GNNs and their Scale Challenges        | Neil Shah        | Slides    |
+| 1:25 PM    | Overview of GiGL                       | Yozen Liu        | Slides    |
+| 1:40 PM    | Hands-on with GiGL - Show case & Setup | Yozen Liu        | -         |
+| 1:50 PM    | Hands-on with GiGL - Tabularization    | Shubham Vij      | Notebook  |
+| 2:20 PM    | Hands-on with GiGL - In-memory         | Kyle Montemayor  | Notebook  |
+| 3:00 PM    | Coffee break (30m)                     | -                | -         |
+| 3:30 PM    | Hands-on with GiGL - Customization     | Matthew Kolodner | Slides    |
+| 3:55 PM    | Conclusion                             | Yozen Liu        | Slides    |
+
+### GNNs and their Scale Challenges
 
 - **GNN Fundamentals and Formalisms:** This section will cover the basics of Graph Neural Networks, including their
   underlying mathematical concepts and how they operate.
@@ -34,7 +44,7 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **Scalability Challenges:** This part will delve into the inherent difficulties of scaling GNNs to handle large,
   real-world datasets, highlighting the computational and memory limitations.
 
-### Overview of GIGL (20m)
+### Overview of GIGL
 
 - **Technical Scaling Strategy:** We'll discuss the technical approaches and strategies employed by GIGL to overcome the
   scalability challenges of GNNs.
@@ -43,26 +53,17 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **GIGL Core Components:** We'll identify and describe the key building blocks and functionalities that make up the
   GIGL library.
 
-### **Hands-on with GIGL**: Training and Inferring Industry-Scale GNNs - Part I (30m)
+### **Hands-on with GIGL**: Training and Inferring Industry-Scale GNNs
 
 - **Environment Setup:** This hands-on segment will guide you through setting up the necessary software and hardware
   environment to work with GIGL.
 - **Provisioning Access to Large-Scale Graph Data:** We'll cover how to access and prepare large-scale graph datasets
   for use with GIGL.
-
-### **Break** (15m)
-
-### **Hands-on with GIGL**: Training and Inferring Industry-Scale GNNs - Part II (40m)
-
 - **Training Logic Setup:** This part will focus on setting up the core logic for training and performing inference with
-  GNNs using GIGL.
+  GNNs using GIGL. We will also walk through two different paradigms of subgraph sampling, e.g. **Tabularization** &
+  **In-memory**.
 - **Configuration Setup:** We'll walk through configuring various parameters and settings within GIGL for optimal
   performance.
-
-### **Break** (15m)
-
-### **Hands-on with GIGL**: Training and Inferring Industry-Scale GNNs - Part III (40m)
-
 - **End-to-End Pipeline Runs with Large-Scale Graph Data:** This section will involve running complete GNN pipelines on
   large datasets, from data loading to model evaluation.
 - **Customization Potential:** We'll explore the possibilities for customizing GIGL to adapt it to specific research or
@@ -70,5 +71,8 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 
 ## Resources
 
+- **Hands-On Tutorial instructions:** [GiGL KDD '25 Hands-On Tutorial](lab_instructions.md)
 - **GiGL KDD '25 paper:** [GiGL: Large-Scale Graph Neural Networks at Snapchat](https://arxiv.org/abs/2502.15054)
-- **[GiGL Documentation](../../../docs/user_guide/index.rst)**
+- **GiGL Documentation:**
+  - [GiGL User Guide](https://snapchat.github.io/GiGL/docs/user_guide/index.html)
+  - [GiGL API Reference](https://snapchat.github.io/GiGL/docs/api/index.html)
