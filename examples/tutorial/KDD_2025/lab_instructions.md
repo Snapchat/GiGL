@@ -31,16 +31,30 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 2. Right click on **Open Google Cloud Console** button and open in a incognito window.
 3. Agree to the terms of service for your custom student account for the duration of the lab.
 4. Use the top search bar or left side bar to navigate to the **Workbench** page provided by **Vertex AI**.
-5. There should be an existing Workbench instance, open **Jupyterlab**.
+
+<img width="1260" height="777" alt="Screenshot 2025-07-31 at 10 39 58 AM" src="https://github.com/user-attachments/assets/21656547-5889-4c00-9127-ccb8cc4deaf7" />
+
+5. There should be an existing Workbench instance, click open **Jupyterlab**.
+
+<img width="997" height="458" alt="Screenshot 2025-07-31 at 10 48 37 AM" src="https://github.com/user-attachments/assets/3f31655a-d4c1-4545-9616-3285e9892f31" />
+   
 6. Open the `gigl` folder in the left sidebar. Navigate to the `examples/tutorial/KDD_2025` folder.
-7. Open the notebooks and follow along the tutorial presentation!
+7. In the hands-on portion of the tutorial, we will be running notebooks `examples/toy_visual_example/toy_example_walkthrough.ipynb` for tabulizard subgraph sampling, and `examples/tutorial/KDD_2025/heteregeneous_walkthrough.ipynb` for in-memory subgraph sampling.
+8. Open the notebooks with `gigl` kernel.
+
+<img width="1079" height="623" alt="Screenshot 2025-07-31 at 10 53 57 AM" src="https://github.com/user-attachments/assets/c7046ec1-ed79-445b-873e-f15eff7f9d2f" />
+
+9. Pro tip: To enable scrolling for notebook cells, you can ctrl/cmd + A to select all notebook cells, right-click then select `Enable Scrolling For Outputs` 
+
 
 ## Setup Resource Config.
 
 The tutorial requires you to setup a [resource config](../../../docs/user_guide/config_guides/resource_config_guide.md)
 in order to launch jobs on GCP.
 
-You may run the below from GiGL root to generate an appropriate resource config. You may find the Project and User on
+In your **Jupyterlab** on the **Workbench** instance, press **+** button and open a new **Terminal**.
+
+You may run the below from `gigl/` root to generate an appropriate resource config. You may find the Project and User on
 the left hand panel on the qwiklabs page.
 
 ```bash
