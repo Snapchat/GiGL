@@ -69,6 +69,22 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **Customization Potential:** We'll explore the possibilities for customizing GIGL to adapt it to specific research or
   application needs.
 
+## Hands-On Lab Instructions
+
+To access our lab environment, scan the QR code displayed on the presentation screen, type in your email, then enter the
+OTP code displayed.
+
+After registration, click the link displayed to access the lab (you might have to login with your registered email). Now
+you should be able to access the labs!
+
+In our lab environment, you will have access to your own GCP project to run our hands-on tutorial.
+
+<img width="2560" height="1440" alt="Screenshot 2025-07-31 at 11 14 40 AM" src="https://github.com/user-attachments/assets/33190067-2410-4f8f-adba-15afd328ee99" />
+<img width="2560" height="1440" alt="Screenshot 2025-07-31 at 11 14 49 AM" src="https://github.com/user-attachments/assets/4e46dcf2-29c1-447b-8faf-16b94c0d613e" />
+
+Follow the steps in our [lab instructions](lab_instructions.md) to set up your hands-on lab in the Qwiklabs environment.
+If you have any questions, please raise your hand, our tutors will be able to help.
+
 ## Resources
 
 - **Hands-On Tutorial instructions:** [GiGL KDD '25 Hands-On Tutorial](lab_instructions.md)
