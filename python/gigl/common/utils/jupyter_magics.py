@@ -45,8 +45,8 @@ class GraphVisualizer:
 
     # Fixed node color palette — extend as needed
     node_colors = [
-        "#E57373",  # red
         "#64B5F6",  # blue
+        "#E57373",  # red
         "#81C784",  # green
         "#FFD54F",  # yellow
         "#BA68C8",  # purple
