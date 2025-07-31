@@ -130,6 +130,8 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
         required_flags = _REQUIRED_RUN_NO_COMPILE_FLAGS
     elif args.action == Action.COMPILE:
         required_flags = _REQUIRED_COMPILE_FLAGS
+    else:
+        raise ValueError(f"Unknown action: {args.action}")
 
     missing_flags: list[str] = []
     missing_values: list[str] = []
@@ -138,6 +140,7 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
             missing_flags.append(flag)
         elif len(getattr(args, flag)) == 0:
             missing_values.append(flag)
+
 
     if missing_flags:
         raise ValueError(
