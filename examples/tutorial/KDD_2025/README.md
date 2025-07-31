@@ -74,8 +74,7 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 To access our lab environment, scan the QR code displayed on the presentation screen, type in your email, then enter the
 OTP code displayed.
 
-After registration, click the link displayed to access the lab (you might have to login with your registered google
-email again). Now you should be able to access the labs!
+After registration, click the link displayed to access the lab (you might have to login again with your registered email). Now you should be able to access the labs!
 
 In our lab environment, you will have access to your own GCP project to run our hands-on tutorial.
 
