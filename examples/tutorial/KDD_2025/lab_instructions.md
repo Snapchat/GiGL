@@ -33,11 +33,12 @@ Hands-On experience with the GiGL library to train industry-scale Graph Neural N
 4. Use the top search bar or left side bar to navigate to the **Workbench** page provided by **Vertex AI**.
 5. There should be an existing Workbench instance, open **Jupyterlab**.
 6. Open the `gigl` folder in the left sidebar. Navigate to the `examples/tutorial/KDD_2025` folder.
-7. Open the notebooks and follow along the tutorial presentation! 
+7. Open the notebooks and follow along the tutorial presentation!
 
 ## Additional Resources
 
-- GiGL KDD '25 tutorial page: [Homepage](https://github.com/Snapchat/GiGL/blob/main/examples/tutorial/KDD_2025/README.md)
+- GiGL KDD '25 tutorial page:
+  [Homepage](https://github.com/Snapchat/GiGL/blob/main/examples/tutorial/KDD_2025/README.md)
 - GiGL KDD ADS track paper: [Paper link](https://arxiv.org/abs/2502.15054)
 - GiGL library source code: [GitHub](https://github.com/Snapchat/GiGL/tree/main)
 - GiGL documentation: [Read the Docs](https://snapchat.github.io/GiGL/index.html)
