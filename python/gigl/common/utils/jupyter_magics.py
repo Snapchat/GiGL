@@ -16,6 +16,7 @@ from torch_geometric.data import HeteroData
 
 from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
 from gigl.src.common.types.graph_data import EdgeType, Node
@@ -43,6 +44,173 @@ class GraphVisualizerLayoutMode(Enum):
     HOMOGENEOUS = "homogeneous"
     BIPARTITE = "bipartite"
 
+class PbVisualizer:
+    def __init__(self, frozen_task_config: GbmlConfigPbWrapper):
+        self.frozen_task_config = frozen_task_config
+        preprocessed_metadata = frozen_task_config.preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
+        graph_metadata_pb_wrapper = frozen_task_config.graph_metadata_pb_wrapper
+
+        from gigl.src.common.utils.bq import BqUtils
+        bq_utils = BqUtils()
+
+        # dict[tuple[condensed_node_type, enumerated_node_id], tuple[node_type, unenumerated_node_id]]
+        self.enumerated_node_to_unenumerated_node_id_map: dict[tuple[int, int], tuple[str, int]] = {}
+
+        for condensed_node_type, node_metadata in preprocessed_metadata.condensed_node_type_to_preprocessed_metadata.items():
+            node_type = graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[condensed_node_type]
+            result =bq_utils.run_query(
+                query=f"""
+                SELECT int_id, node_id FROM {node_metadata.enumerated_node_ids_bq_table}
+                """,
+                labels={}
+            )
+            for row in result:
+                self.enumerated_node_to_unenumerated_node_id_map[
+                    (condensed_node_type, row.int_id)
+                ] = (node_type, row.node_id)
+
+        # dict[tuple[node_type, unenumerated_node_id], tuple[condensed_node_type, enumerated_node_id]]
+        self.unenumerated_node_id_to_enumerated_node_id_map: dict[tuple[str, int], tuple[int, int]] = {}
+        for (condensed_node_type, int_id), (node_type, node_id) in self.enumerated_node_to_unenumerated_node_id_map.items():
+            self.unenumerated_node_id_to_enumerated_node_id_map[(node_type, node_id)] = (condensed_node_type, int_id)
+
+    def plot_pb(
+        self,
+        pb: Union[
+            training_samples_schema_pb2.RootedNodeNeighborhood,
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+        ],
+        layout_mode: GraphVisualizerLayoutMode = GraphVisualizerLayoutMode.BIPARTITE,
+    ):
+        if not pb:
+            print("No pb to plot")
+            return
+        builder = PygGraphBuilder()
+        graph_metadata_pb_wrapper = self.frozen_task_config.graph_metadata_pb_wrapper
+        graph_data = GbmlProtosTranslator.graph_data_from_GraphPb(
+            samples=[pb.neighborhood],
+            graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
+            builder=builder,
+        )
+
+        # Extract positive edges if this is a NodeAnchorBasedLinkPredictionSample
+        pos_edges: Optional[dict[tuple[str, str, str], list[tuple[int, int]]]] = None
+        global_root_node: Optional[tuple[int, str]] = None
+        if isinstance(
+            pb, training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+        ):
+            pos_edges = defaultdict(list)
+            for edge in pb.pos_edges:
+                edge_type: EdgeType = (
+                    graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
+                        edge.condensed_edge_type
+                    ]
+                )
+                pos_edges[
+                    (
+                        edge_type.src_node_type,
+                        edge_type.relation,
+                        edge_type.dst_node_type,
+                    )
+                ].append((edge.src_node_id, edge.dst_node_id))
+            global_root_node = (
+                pb.root_node.node_id,
+                graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
+                    pb.root_node.condensed_node_type
+                ],
+            )
+
+        subgraph_node_to_unenumerated_node_id_map: dict[Node, Node] = {}
+        for node, global_node in graph_data.subgraph_node_to_global_node_mapping.items():
+            condensed_node_type = graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map[
+                global_node.type
+            ]
+            unenumerated_node_type, unenumerated_node_id = self.enumerated_node_to_unenumerated_node_id_map[
+                (condensed_node_type, global_node.id)
+            ]
+            subgraph_node_to_unenumerated_node_id_map[node] = Node(
+                id=unenumerated_node_id,
+                type=unenumerated_node_type,
+            )
+
+        return GraphVisualizer.visualize_graph(
+            data=graph_data.to_hetero_data(),
+            layout_mode=layout_mode,
+            subgraph_node_to_unenumerated_node_id_map=subgraph_node_to_unenumerated_node_id_map,
+            pos_edges=pos_edges,
+            global_root_node=global_root_node,
+        )
+
+
+    def find_node_pb(
+        self,
+        unenumerated_node_id: int,
+        unenumerated_node_type: str,
+        pb_type: Type[
+            Union[
+                training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+                training_samples_schema_pb2.RootedNodeNeighborhood,
+            ]
+        ],
+    ) -> Optional[
+        Union[
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+            training_samples_schema_pb2.RootedNodeNeighborhood,
+        ]
+    ]:
+        flattened_graph_metadata = self.frozen_task_config.shared_config.flattened_graph_metadata
+        assert hasattr(flattened_graph_metadata, "node_anchor_based_link_prediction_output"), (
+           f"find_node_pb only supported for node_anchor_based_link_prediction, not {flattened_graph_metadata}"
+        )
+
+        tfrecord_uri_prefix: str
+        if pb_type == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample:
+            tfrecord_uri_prefix = flattened_graph_metadata.node_anchor_based_link_prediction_output.tfrecord_uri_prefix
+        elif pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
+            tfrecord_uri_prefix = flattened_graph_metadata.node_anchor_based_link_prediction_output.node_type_to_random_negative_tfrecord_uri_prefix[
+                unenumerated_node_type
+            ]
+        else:
+            raise ValueError(f"Unsupported pb_type: {pb_type}")
+
+        uri = tfrecord_uri_prefix + "*.tfrecord"
+
+        search_node_type, search_node_id = self.unenumerated_node_id_to_enumerated_node_id_map[(unenumerated_node_type, unenumerated_node_id)]
+        print(f"The node id {unenumerated_node_id}, type {unenumerated_node_type} maps to node id {search_node_id}, type {search_node_type}")
+
+        ds = tf.data.TFRecordDataset(tf.io.gfile.glob(uri)).as_numpy_iterator()
+        pb: Optional[
+            Union[
+                training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+                training_samples_schema_pb2.RootedNodeNeighborhood,
+            ]
+        ] = None
+        print (f" Looking for node {search_node_id} in {uri}")
+        pb_output: Optional[
+            Union[
+                training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+                training_samples_schema_pb2.RootedNodeNeighborhood,
+            ]
+        ] = None
+        for bytestr in ds:
+            try:
+                if pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
+                    pb = training_samples_schema_pb2.RootedNodeNeighborhood()
+                elif (
+                    pb_type
+                    == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+                ):
+                    pb = training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample()
+                else:
+                    raise ValueError(f"Unsupported pb_type: {pb_type}")
+                pb.ParseFromString(bytestr)
+                if pb.root_node.node_id == search_node_id:
+                    pb_output = pb
+                    break
+            except StopIteration:
+                break
+
+        return pb_output
 
 class GraphVisualizer:
     """
@@ -160,7 +328,7 @@ class GraphVisualizer:
         data: HeteroData,
         seed=42,
         layout_mode=GraphVisualizerLayoutMode.BIPARTITE,
-        subgraph_node_to_global_node_mapping: Optional[FrozenDict[Node, Node]] = None,
+        subgraph_node_to_unenumerated_node_id_map: Optional[FrozenDict[Node, Node]] = None,
         # pos_edges is a dictionary of edge type (src_node_type, relation, dst_node_type) to list of (src_node_id, dst_node_id) pairs
         pos_edges: Optional[dict[tuple[str, str, str], list[tuple[int, int]]]] = None,
         global_root_node: Optional[tuple[int, str]] = None,
@@ -191,16 +359,16 @@ class GraphVisualizer:
 
         # Convert to NetworkX
         g = torch_geometric.utils.to_networkx(data)
-        if subgraph_node_to_global_node_mapping:
+        if subgraph_node_to_unenumerated_node_id_map:
             mapping = {}
             new_node_index_to_type = {}
             for node in g.nodes():
                 node_type = node_index_to_type.get(node, "unknown")
                 local_node = Node(type=node_type, id=node)
-                global_node = subgraph_node_to_global_node_mapping[local_node]
-                mapping[node] = global_node.id
+                unenumerated_node: Node = subgraph_node_to_unenumerated_node_id_map[local_node]
+                mapping[node] = unenumerated_node.id
                 # Preserve the node type information for the global node
-                new_node_index_to_type[global_node.id] = global_node.type
+                new_node_index_to_type[unenumerated_node.id] = unenumerated_node.type
             g = nx.relabel_nodes(g, mapping)
             # Update the node_index_to_type mapping to use global node types
             node_index_to_type = new_node_index_to_type
@@ -448,122 +616,7 @@ class GraphVisualizer:
 
         plt.show()
 
-    @staticmethod
-    def pb_to_hetero_data(
-        pb: Union[
-            training_samples_schema_pb2.RootedNodeNeighborhood,
-            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-        ],
-        graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
-    ) -> HeteroData:
-        """
-        Convert a protobuf message to a HeteroData object.
 
-        Args:
-            pb: Protobuf message containing graph data
-            graph_metadata: GraphMetadata protobuf with condensed type mappings
-                          Contains condensed_node_type_map and condensed_edge_type_map
-        """
-        builder = PygGraphBuilder()
-        graph_data = GbmlProtosTranslator.graph_data_from_GraphPb(
-            samples=[pb],
-            graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
-            builder=builder,
-        )
-        return graph_data.to_hetero_data()
-
-    @staticmethod
-    def plot_pb(
-        pb: Union[
-            training_samples_schema_pb2.RootedNodeNeighborhood,
-            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-        ],
-        graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
-        layout_mode: GraphVisualizerLayoutMode = GraphVisualizerLayoutMode.BIPARTITE,
-    ):
-        builder = PygGraphBuilder()
-        graph_data = GbmlProtosTranslator.graph_data_from_GraphPb(
-            samples=[pb.neighborhood],
-            graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
-            builder=builder,
-        )
-
-        # Extract positive edges if this is a NodeAnchorBasedLinkPredictionSample
-        pos_edges: Optional[dict[tuple[str, str, str], list[tuple[int, int]]]] = None
-        global_root_node: Optional[tuple[int, str]] = None
-        if isinstance(
-            pb, training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
-        ):
-            pos_edges = defaultdict(list)
-            for edge in pb.pos_edges:
-                edge_type: EdgeType = (
-                    graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
-                        edge.condensed_edge_type
-                    ]
-                )
-                pos_edges[
-                    (
-                        edge_type.src_node_type,
-                        edge_type.relation,
-                        edge_type.dst_node_type,
-                    )
-                ].append((edge.src_node_id, edge.dst_node_id))
-            global_root_node = (
-                pb.root_node.node_id,
-                graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
-                    pb.root_node.condensed_node_type
-                ],
-            )
-        return GraphVisualizer.visualize_graph(
-            data=graph_data.to_hetero_data(),
-            layout_mode=layout_mode,
-            subgraph_node_to_global_node_mapping=graph_data.subgraph_node_to_global_node_mapping,
-            pos_edges=pos_edges,
-            global_root_node=global_root_node,
-        )
-
-
-def find_node_pb(
-    tfrecord_uri_prefix: str,
-    node_id: int,
-    pb_type: Type[
-        Union[
-            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-            training_samples_schema_pb2.RootedNodeNeighborhood,
-        ]
-    ],
-) -> Optional[
-    Union[
-        training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-        training_samples_schema_pb2.RootedNodeNeighborhood,
-    ]
-]:
-    uri = tfrecord_uri_prefix + "*.tfrecord"
-    ds = tf.data.TFRecordDataset(tf.io.gfile.glob(uri)).as_numpy_iterator()
-    pb: Optional[
-        Union[
-            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-            training_samples_schema_pb2.RootedNodeNeighborhood,
-        ]
-    ] = None
-    print(f"Searching for node {node_id} in {uri}")
-    for bytestr in ds:
-        try:
-            if pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
-                pb = training_samples_schema_pb2.RootedNodeNeighborhood()
-            elif (
-                pb_type
-                == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
-            ):
-                pb = training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample()
-            else:
-                raise ValueError(f"Unsupported pb_type: {pb_type}")
-            pb.ParseFromString(bytestr)
-            if pb.root_node.node_id == node_id:
-                break
-        except StopIteration:
-            break
-    return pb
 
 
 def sort_yaml_dict_recursively(obj: dict) -> dict:
