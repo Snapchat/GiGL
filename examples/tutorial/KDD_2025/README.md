@@ -5,7 +5,7 @@
 ______________________________________________________________________
 
 **What does "Gigantic Graph Scale" really mean?** Try wrapping your head around this: **1 billion nodes** connected by
-over **100 billion edges**—that’s the kind of complexity we’re up against when training GNNs at industry scale.
+over **100 billion edges** - that’s the kind of complexity we’re up against when training GNNs at industry scale.
 Traditional tools break. Memory runs out. Algorithms buckle.
 
 In this tutorial, we’ll show you how Gigantic Graph Scale ML is no longer out of reach—it's accessible, practical, and
