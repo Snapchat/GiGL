@@ -4,12 +4,9 @@
 
 ______________________________________________________________________
 
-Try wrapping your head around this: **1 billion nodes** connected by over **100 billion edges**, with total size of
-input data being **100's GB to 10's PB** - that’s the kind of complexity we’re up against when training GNNs at industry
-scale. *Traditional tools break. Memory runs out. Algorithms buckle.* Data of
+**1 billion nodes** connected by over **100 billion edges**, and petabytes of daily ingested data - that’s the kind of complexity and scale we’re up against when training GNNs at industry-scale.
 
-In this tutorial, we’ll show you how Gigantic Scale Graph ML is no longer out of reach - it's accessible, practical, and
-ready for you.
+In this tutorial, we’ll showcase you how industry-scale GraphML can be achieved with GiGL.
 
 ## Table of Contents
 
@@ -149,5 +146,5 @@ at Google. He holds a B.S. of Computer Engineering from the University of Maryla
 ### Matthew Kolodner
 
 Matthew is a Research Engineer at Snap Research. Matthew's work at Snap focuses on graph machine learning, particularly
-in large-scale applications. Matthew received his B.S. and M.S.S. in Computer Science from Stanford University with a
+in large-scale applications. Matthew received his B.S. and M.S. in Computer Science from Stanford University with a
 specialization in Artificial Intelligence.
