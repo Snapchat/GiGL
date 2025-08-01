@@ -81,6 +81,7 @@ class SupportedParams:
             ),
             "output_resource_config_path": Param(
                 default=None,
+                required=False,
                 description="Path to the output resource config file. If not provided, one will be generated in the `perm_assets_bucket`.",
             ),
             "force_shell_config_update": Param(
@@ -334,7 +335,7 @@ if __name__ == "__main__":
     print(f"Updated YAML file saved at '{destination_file_path}'")
 
     # Update the user's shell configuration
-    if strtobool(args.force_shell_config_update):
+    if args.force_shell_config_update and strtobool(args.force_shell_config_update):
         should_update_shell_config = "y"
         print("Forcing shell updated due to --force_shell_config_update flag.")
     else:
