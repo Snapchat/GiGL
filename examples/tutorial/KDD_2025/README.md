@@ -4,7 +4,8 @@
 
 ______________________________________________________________________
 
-**1 billion nodes** connected by over **100 billion edges**, and petabytes of daily ingested data - that’s the kind of complexity and scale we’re up against when training GNNs at industry-scale.
+**1 billion nodes** connected by over **100 billion edges**, and petabytes of daily ingested data - that’s the kind of
+complexity and scale we’re up against when training GNNs at industry-scale.
 
 In this tutorial, we’ll showcase you how industry-scale GraphML can be achieved with GiGL.
 
