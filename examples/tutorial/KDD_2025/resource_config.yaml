@@ -35,12 +35,12 @@ preprocessor_config:
 trainer_resource_config:
   vertex_ai_trainer_config:
     machine_type: "n1-highmem-8"
-    gpu_type: nvidia-tesla-p100  # set to `ACCELERATOR_TYPE_UNSPECIFIED` for cpu training
-    gpu_limit: 1  # set to 0 for cpu training
-    num_replicas: 2
+    gpu_type: ACCELERATOR_TYPE_UNSPECIFIED # CPU Training
+    gpu_limit: 0  # CPU Training
+    num_replicas: 1
 inferencer_resource_config:
   vertex_ai_inferencer_config:
     machine_type: "n1-highmem-8"
-    gpu_type: nvidia-tesla-p100  # set to `ACCELERATOR_TYPE_UNSPECIFIED` for cpu inference
-    gpu_limit: 1  # set to 0 for cpu inference
-    num_replicas: 2
+    gpu_type: ACCELERATOR_TYPE_UNSPECIFIED # CPU Inference
+    gpu_limit: 0  # CPU Inference
+    num_replicas: 1
