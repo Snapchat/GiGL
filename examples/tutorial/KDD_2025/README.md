@@ -4,8 +4,6 @@
 
 ______________________________________________________________________
 
-### What does "Gigantic Graph Scale" really mean?
-
 Try wrapping your head around this: **1 billion nodes** connected by over **100 billion edges**, with total size of
 input data being **100's GB to 10's PB** - that’s the kind of complexity we’re up against when training GNNs at industry
 scale. *Traditional tools break. Memory runs out. Algorithms buckle.* Data of
