@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from distutils.util import strtobool
 from typing import Optional
 
 import yaml
@@ -83,7 +84,7 @@ class SupportedParams:
                 description="Path to the output resource config file. If not provided, one will be generated in the `perm_assets_bucket`.",
             ),
             "force_shell_config_update": Param(
-                default=False,
+                default="False",
                 description="If set to True, will not ask to update the shell configuration file. If False, will prompt the user to update the shell configuration file.",
             ),
         }
@@ -333,7 +334,7 @@ if __name__ == "__main__":
     print(f"Updated YAML file saved at '{destination_file_path}'")
 
     # Update the user's shell configuration
-    if args.force_shell_config_update:
+    if strtobool(args.force_shell_config_update):
         should_update_shell_config = "y"
         print("Forcing shell updated due to --force_shell_config_update flag.")
     else:
