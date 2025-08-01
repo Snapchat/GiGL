@@ -44,6 +44,13 @@ class GraphVisualizerLayoutMode(Enum):
     BIPARTITE = "bipartite"
 
 
+class PbVisualizerFromOutput(Enum):
+    SGS = "sgs"
+    SPLIT_TRAIN = "split_train"
+    SPLIT_VAL = "split_val"
+    SPLIT_TEST = "split_test"
+
+
 class PbVisualizer:
     def __init__(self, frozen_task_config: GbmlConfigPbWrapper):
         self.frozen_task_config = frozen_task_config
@@ -170,6 +177,7 @@ class PbVisualizer:
         self,
         unenumerated_node_id: int,
         unenumerated_node_type: str,
+        from_output: PbVisualizerFromOutput,
         pb_type: Type[
             Union[
                 training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
@@ -182,25 +190,70 @@ class PbVisualizer:
             training_samples_schema_pb2.RootedNodeNeighborhood,
         ]
     ]:
-        flattened_graph_metadata = (
-            self.frozen_task_config.shared_config.flattened_graph_metadata
-        )
-        assert hasattr(
-            flattened_graph_metadata, "node_anchor_based_link_prediction_output"
-        ), f"find_node_pb only supported for node_anchor_based_link_prediction, not {flattened_graph_metadata}"
-
         tfrecord_uri_prefix: str
-        if pb_type == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample:
-            tfrecord_uri_prefix = (
-                flattened_graph_metadata.node_anchor_based_link_prediction_output.tfrecord_uri_prefix
+        if from_output == PbVisualizerFromOutput.SGS:
+            flattened_graph_metadata = (
+                self.frozen_task_config.shared_config.flattened_graph_metadata
             )
-        elif pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
-            tfrecord_uri_prefix = flattened_graph_metadata.node_anchor_based_link_prediction_output.node_type_to_random_negative_tfrecord_uri_prefix[
-                unenumerated_node_type
-            ]
+            assert hasattr(
+                flattened_graph_metadata, "node_anchor_based_link_prediction_output"
+            ), f"find_node_pb only supported for node_anchor_based_link_prediction, not {flattened_graph_metadata}"
+            if (
+                pb_type
+                == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+            ):
+                tfrecord_uri_prefix = (
+                    flattened_graph_metadata.node_anchor_based_link_prediction_output.tfrecord_uri_prefix
+                )
+            elif pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
+                tfrecord_uri_prefix = flattened_graph_metadata.node_anchor_based_link_prediction_output.node_type_to_random_negative_tfrecord_uri_prefix[
+                    unenumerated_node_type
+                ]
+            else:
+                raise ValueError(f"Unsupported pb_type: {pb_type}")
         else:
-            raise ValueError(f"Unsupported pb_type: {pb_type}")
-
+            assert hasattr(
+                self.frozen_task_config.shared_config.dataset_metadata,
+                "node_anchor_based_link_prediction_dataset",
+            ), f"find_node_pb only supported for node_anchor_based_link_prediction, not {self.frozen_task_config.shared_config.dataset_metadata}"
+            dataset = (
+                self.frozen_task_config.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
+            )
+            if (
+                pb_type
+                == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+            ):
+                if from_output == PbVisualizerFromOutput.SPLIT_TRAIN:
+                    tfrecord_uri_prefix = dataset.train_main_data_uri
+                elif from_output == PbVisualizerFromOutput.SPLIT_VAL:
+                    tfrecord_uri_prefix = dataset.val_main_data_uri
+                elif from_output == PbVisualizerFromOutput.SPLIT_TEST:
+                    tfrecord_uri_prefix = dataset.test_main_data_uri
+                else:
+                    raise ValueError(f"Unsupported from_output: {from_output}")
+            elif pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
+                if from_output == PbVisualizerFromOutput.SPLIT_TRAIN:
+                    tfrecord_uri_prefix = (
+                        dataset.train_node_type_to_random_negative_data_uri[
+                            unenumerated_node_type
+                        ]
+                    )
+                elif from_output == PbVisualizerFromOutput.SPLIT_VAL:
+                    tfrecord_uri_prefix = (
+                        dataset.val_node_type_to_random_negative_data_uri[
+                            unenumerated_node_type
+                        ]
+                    )
+                elif from_output == PbVisualizerFromOutput.SPLIT_TEST:
+                    tfrecord_uri_prefix = (
+                        dataset.test_node_type_to_random_negative_data_uri[
+                            unenumerated_node_type
+                        ]
+                    )
+                else:
+                    raise ValueError(f"Unsupported from_output: {from_output}")
+            else:
+                raise ValueError(f"Unsupported pb_type: {pb_type}")
         uri = tfrecord_uri_prefix + "*.tfrecord"
 
         (
