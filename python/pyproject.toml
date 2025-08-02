@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name            = "gigl"
 description     = "GIgantic Graph Learning Library"
 readme          = "README.md"
-version         = "0.0.7"
+version         = "0.0.7.dev20250802004901"
 requires-python = ">=3.9,<3.10" # Currently we only support python 3.9 as per deps setup below
 classifiers     = [
     "Programming Language :: Python",
