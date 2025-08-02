@@ -24,7 +24,7 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 # Point `conda` to `micromamba` as our install scripts still use conda
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
-COPY . /gigl_src
+# COPY . /home/jupyter/gigl
 # RUN cd /gigl_src && make install_dev_deps
 # RUN chmod 755 /gigl_src/containers/gigl_workbench_startup_script.sh && \
 #     chown -R jupyter:jupyter /gigl_src
@@ -36,4 +36,4 @@ COPY . /gigl_src
 
 
 # CMD ["/gigl_src/containers/gigl_workbench_startup_script.sh"]
-CMD ["/run_jupyter.sh"]
+# CMD ["/run_jupyter.sh"]
