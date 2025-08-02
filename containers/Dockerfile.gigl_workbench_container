@@ -25,7 +25,7 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
 COPY . /gigl_src
-RUN cd /gigl_src && make install_dev_deps
+# RUN cd /gigl_src && make install_dev_deps
 # RUN chmod 755 /gigl_src/containers/gigl_workbench_startup_script.sh && \
 #     chown -R jupyter:jupyter /gigl_src
 
