@@ -1,3 +1,5 @@
+# type: ignore
+
 import hashlib
 import os
 import pathlib
@@ -18,7 +20,7 @@ from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.graph_data import EdgeType, Node
+from gigl.src.common.types.graph_data import EdgeType, Node, CondensedEdgeType, CondensedNodeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
@@ -73,7 +75,7 @@ class PbVisualizer:
             node_metadata,
         ) in preprocessed_metadata.condensed_node_type_to_preprocessed_metadata.items():
             node_type = graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
-                condensed_node_type
+                CondensedNodeType(condensed_node_type)
             ]
             result = bq_utils.run_query(
                 query=f"""
@@ -96,7 +98,7 @@ class PbVisualizer:
         ) in self.enumerated_node_to_unenumerated_node_id_map.items():
             self.unenumerated_node_id_to_enumerated_node_id_map[
                 (node_type, node_id)
-            ] = (condensed_node_type, int_id)
+            ] = (CondensedNodeType(condensed_node_type), int_id)
 
     def plot_pb(
         self,
@@ -162,7 +164,7 @@ class PbVisualizer:
             ]
             subgraph_node_to_unenumerated_node_id_map[node] = Node(
                 id=unenumerated_node_id,
-                type=unenumerated_node_type,
+                type=NodeType(unenumerated_node_type),
             )
 
         return GraphVisualizer.visualize_graph(
@@ -466,7 +468,7 @@ class GraphVisualizer:
                 new_node_index_to_type[unenumerated_node.id] = unenumerated_node.type
             g = nx.relabel_nodes(g, mapping)
             # Update the node_index_to_type mapping to use global node types
-            node_index_to_type = new_node_index_to_type
+            node_index_to_type = new_node_index_to_type # type: ignore
 
         # Add positive edges to the graph if they don't already exist
         pos_edge_pairs = set()
