@@ -22,9 +22,8 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 # Point `conda` to `micromamba` as our install scripts still use conda
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
-WORKDIR /home/jupyter/gigl
-COPY . .
-RUN make install_deps
+COPY . /gigl_src
+RUN chown -R jupyter:jupyter /gigl_src
 
 # Add coursier (cs) to the path
 # Default cs paths can be found here:
@@ -32,4 +31,4 @@ RUN make install_deps
 ENV PATH="$PATH:/root/.local/share/coursier/bin"
 
 
-CMD ["/run_jupyter.sh"]
+CMD ["/containers/gigl_workbench_startup_script.sh"]
