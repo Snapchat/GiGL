@@ -23,7 +23,8 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
 COPY . /gigl_src
-RUN chown -R jupyter:jupyter /gigl_src
+RUN chmod 755 /gigl_src/containers/gigl_workbench_startup_script.sh && \
+    chown -R jupyter:jupyter /gigl_src
 
 # Add coursier (cs) to the path
 # Default cs paths can be found here:
