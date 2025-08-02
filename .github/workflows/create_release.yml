@@ -1,8 +1,8 @@
 name: Create Release
 
 # This workflow can be triggered in two ways:
-# 1. Manual dispatch: Choose bump type and project
-# 2. TODO: (svij)Cron trigger: Nightly build
+# 1. Workflow dispatch: Manually dispatch the workflow and choose bump type and project
+# 2. Workflow call: Execute this workflow from another workflow with bump type as an input
 
 on:
   workflow_dispatch:
@@ -17,6 +17,18 @@ on:
           - minor
           - patch
           - nightly
+
+  workflow_call:
+    inputs:
+      bump_type:
+        description: 'Type of version bump'
+        required: true
+        type: string # workflow_call doesnt support choice inputs
+    outputs:
+      release_branch_name:
+        description: "Generated release branch name"
+        value: ${{ jobs.bump_version.outputs.release_branch_name }}
+
 
 jobs:
   # First job: Bump version and create release branch
@@ -188,6 +200,7 @@ jobs:
 
     # Create PR to merge release branch back to main
     - name: Create a new PR
+      if: ${{ inputs.bump_type != 'nightly' }}
       shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -214,9 +227,10 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        PR_URL=$(gh pr view ${{ needs.bump_version.outputs.release_branch_name }} --json url --jq '.url')
-        echo "::notice title=Release PR URL::$PR_URL"
-        echo "::notice title=Release Branch::${{ needs.bump_version.outputs.release_branch_name }}"
+        if [ "${{ inputs.bump_type }}" != "nightly" ]; then
+          PR_URL=$(gh pr view ${{ needs.bump_version.outputs.release_branch_name }} --json url --jq '.url')
+          echo "::notice title=Release PR URL::$PR_URL"
+        fi
         echo "::notice title=Bump Type::${{ needs.bump_version.outputs.bump_type }}"
         echo "::notice title=New Version Tag::v${{ needs.bump_version.outputs.new_version }}"
         echo "::notice title=Trigger::${{ github.event_name }}"

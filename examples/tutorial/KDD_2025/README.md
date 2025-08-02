@@ -4,6 +4,24 @@
 
 ______________________________________________________________________
 
+**1 billion nodes** connected by over **100 billion edges**, and petabytes of daily ingested data - that’s the kind of
+complexity and scale we’re up against when training GNNs at industry-scale.
+
+In this tutorial, we’ll showcase you how industry-scale GraphML can be achieved with GiGL.
+
+## Table of Contents
+
+- [Tutorial Goal](#tutorial-goal)
+- [Tutorial Schedule](#tutorial-schedule)
+  - [GNNs and their Scale Challenges](#gnns-and-their-scale-challenges)
+  - [Overview of GIGL](#overview-of-gigl)
+  - [Hands-on with GIGL: Training and Inferring Industry-Scale GNNs](#hands-on-with-gigl-training-and-inferring-industry-scale-gnns)
+- [Hands-On Lab Instructions](#hands-on-lab-instructions)
+- [Resources](#resources)
+- [In-Person Presenters](#in-person-presenters)
+
+______________________________________________________________________
+
 ## Tutorial Goal
 
 Thanks for your interest and welcome to the KDD'25 tutorial on **Training Industry-scale GNNs with GiGL**! This tutorial
@@ -69,6 +87,22 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **Customization Potential:** We'll explore the possibilities for customizing GIGL to adapt it to specific research or
   application needs.
 
+## Hands-On Lab Instructions
+
+To access our lab environment, scan the QR code displayed on the presentation screen, type in your email, then enter the
+OTP code displayed.
+
+After registration, click the link displayed to access the lab (you might have to login with your registered email). Now
+you should be able to access the labs!
+
+In our lab environment, you will have access to your own GCP project to run our hands-on tutorial.
+
+<img width="2560" height="1440" alt="Screenshot 2025-07-31 at 11 14 40 AM" src="https://github.com/user-attachments/assets/33190067-2410-4f8f-adba-15afd328ee99" />
+<img width="2560" height="1440" alt="Screenshot 2025-07-31 at 11 14 49 AM" src="https://github.com/user-attachments/assets/4e46dcf2-29c1-447b-8faf-16b94c0d613e" />
+
+Follow the steps in our [lab instructions](lab_instructions.md) to set up your hands-on lab in the Qwiklabs environment.
+If you have any questions, please raise your hand, our tutors will be able to help.
+
 ## Resources
 
 - **Hands-On Tutorial instructions:** [GiGL KDD '25 Hands-On Tutorial](lab_instructions.md)
@@ -76,3 +110,42 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 - **GiGL Documentation:**
   - [GiGL User Guide](https://snapchat.github.io/GiGL/docs/user_guide/index.html)
   - [GiGL API Reference](https://snapchat.github.io/GiGL/docs/api/index.html)
+
+# In-Person Presenters
+
+### [Neil Shah](https://nshah.net/)
+
+Dr. Neil Shah is a Principal Scientist at Snap Research. His research focuses on graph ML, large-scale representation
+learning, and recommender systems. His work has resulted in 70+ refereed publications at top data mining and machine
+learning venues.
+
+He has also served as an organizer across multiple venues including KDD, WSDM, SDM, ICWSM, ASONAM and more, and received
+multiple best paper awards (KDD, CHI), departmental rising star awards (NCSU), and outstanding service and reviewer
+awards (NeurIPS, WSDM). He has also served as an organizer across multiple workshops and tutorials at KDD, AAAI, ICDM,
+CIKM and more.
+
+### [Yozen Liu](https://scholar.google.com/citations?user=i3U2JjEAAAAJ&hl=en)
+
+Yozen Liu is a Senior Research Engineer at Snap Research, focusing on graph machine learning, user modeling,
+recommendation systems and their industrial applications. He holds an MS in Computer Science from the University of
+Southern California and has published 25+ papers at top-tier data mining, machine learning and information retrieval
+conferences such as KDD, ICLR, NeurIPS, ICML, WWW, and SIGIR.
+
+### Shubham Vij
+
+Shubham is a Staff Research Engineer specializing in engineering ML systems - bridging the gap between theoretical
+advancements and enterprise scale product development challenges in GraphML, NLP, CV, and ML OPS. He holds dual
+Bachelors degrees in Computer Science, and Business Administration from University of Waterloo, and Wilfrid Laurier
+University respectively.
+
+### Kyle Montemayor
+
+Kyle Montemayor is a Research Engineer at Snap Research, focusing on scaling graph machine learning techniques and
+productionizing graph machine learning research. Prior to joining Snap Research, he worked on Tensorflow Extended (TFX)
+at Google. He holds a B.S. of Computer Engineering from the University of Maryland, College Park.
+
+### Matthew Kolodner
+
+Matthew is a Research Engineer at Snap Research. Matthew's work at Snap focuses on graph machine learning, particularly
+in large-scale applications. Matthew received his B.S. and M.S. in Computer Science from Stanford University with a
+specialization in Artificial Intelligence.
