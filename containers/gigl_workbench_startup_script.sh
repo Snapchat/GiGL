@@ -1,6 +1,7 @@
 echo "SV DEBUG: Running startup scripts"
 
-/run_jupyter.sh
+cp -r /gigl_src /home/jupyter/gigl
 
+/run_jupyter.sh
 
 echo "SV DEBUG: Done Running Startup Script"
