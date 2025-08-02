@@ -31,4 +31,4 @@ RUN chown -R jupyter:jupyter /gigl_src
 ENV PATH="$PATH:/root/.local/share/coursier/bin"
 
 
-CMD ["/containers/gigl_workbench_startup_script.sh"]
+CMD ["gigl_src/containers/gigl_workbench_startup_script.sh"]
