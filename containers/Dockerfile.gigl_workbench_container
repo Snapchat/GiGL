@@ -1,5 +1,7 @@
 # https://cloud.google.com/vertex-ai/docs/workbench/instances/create-custom-container#create-container
-FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/workbench-container:latest
+# FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/workbench-container:latest
+FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/workbench-container:20250609-2200-rc0
+
 
 SHELL ["/bin/bash", "-c"]
 
@@ -23,13 +25,15 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
 COPY . /gigl_src
-RUN chmod 755 /gigl_src/containers/gigl_workbench_startup_script.sh && \
-    chown -R jupyter:jupyter /gigl_src
+RUN cd /gigl_src && make install_dev_deps
+# RUN chmod 755 /gigl_src/containers/gigl_workbench_startup_script.sh && \
+#     chown -R jupyter:jupyter /gigl_src
 
 # Add coursier (cs) to the path
 # Default cs paths can be found here:
 # https://get-coursier.io/docs/cli-install#installation-directory
-ENV PATH="$PATH:/root/.local/share/coursier/bin"
+# ENV PATH="$PATH:/root/.local/share/coursier/bin"
 
 
-CMD ["/gigl_src/containers/gigl_workbench_startup_script.sh"]
+# CMD ["/gigl_src/containers/gigl_workbench_startup_script.sh"]
+CMD ["/run_jupyter.sh"]
