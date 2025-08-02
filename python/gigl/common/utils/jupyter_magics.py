@@ -1,5 +1,4 @@
 # type: ignore
-
 import hashlib
 import os
 import pathlib
@@ -20,7 +19,7 @@ from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.graph_data import EdgeType, Node, CondensedEdgeType, CondensedNodeType, NodeType
+from gigl.src.common.types.graph_data import CondensedNodeType, EdgeType, Node, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
@@ -468,7 +467,7 @@ class GraphVisualizer:
                 new_node_index_to_type[unenumerated_node.id] = unenumerated_node.type
             g = nx.relabel_nodes(g, mapping)
             # Update the node_index_to_type mapping to use global node types
-            node_index_to_type = new_node_index_to_type # type: ignore
+            node_index_to_type = new_node_index_to_type  # type: ignore
 
         # Add positive edges to the graph if they don't already exist
         pos_edge_pairs = set()
