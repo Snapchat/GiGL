@@ -53,7 +53,7 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 | 3:30 PM    | Hands-on with GiGL - Customization     | Matthew Kolodner | Slides                                                    |
 | 3:55 PM    | Conclusion                             | Yozen Liu        | Slides                                                    |
 
-Tutorial slides [PDF](slides_tutorial_KDD_25.pdf)
+*Tutorial slides [PDF](slides_tutorial_KDD_25.pdf)
 
 ### GNNs and their Scale Challenges
 
