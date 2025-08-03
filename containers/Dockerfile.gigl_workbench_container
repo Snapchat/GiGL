@@ -12,7 +12,7 @@ RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERS
 ENV PATH=/opt/micromamba/envs/${ENVIRONMENT_NAME}/bin:$PATH
 
 RUN micromamba install -c conda-forge pip -y
-RUN pip install ipykernel
+RUN pip install ipykernel ipywidgets db-dtypes
 
 RUN python -m ipykernel install --prefix /opt/micromamba/envs/${ENVIRONMENT_NAME} --name ${ENVIRONMENT_NAME} --display-name ${ENVIRONMENT_NAME}
 # Creation of a micromamba kernel automatically creates a python3 kernel
