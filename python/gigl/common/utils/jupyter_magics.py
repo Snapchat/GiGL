@@ -78,7 +78,7 @@ class PbVisualizer:
             ]
             result = bq_utils.run_query(
                 query=f"""
-                SELECT int_id, node_id FROM {node_metadata.enumerated_node_ids_bq_table}
+                SELECT int_id, node_id FROM `{node_metadata.enumerated_node_ids_bq_table}`
                 """,
                 labels={},
             )
