@@ -21,7 +21,7 @@ RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/pytho
 
 # We need to initialize the micromamba environment in the jupyter user's bashrc and profile
 # so that the jupyter notebook can use the micromamba environment.
-RUN micromamba init bash
+RUN micromamba shell init -s bash -r ~/micromamba
 RUN echo "source /root/.bashrc" >> /home/jupyter/.bashrc
 RUN echo "source /root/.profile" >> /home/jupyter/.profile
 RUN echo "micromamba activate gigl" >> /home/jupyter/.bashrc
