@@ -31,7 +31,7 @@ RUN echo "micromamba activate gigl" >> /home/jupyter/.bashrc
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
 COPY . /home/jupyter/gigl
-RUN make install_deps
+RUN cd /home/jupyter/gigl && make install_deps
 
 # Add coursier (cs) to the path
 # Default cs paths can be found here:
