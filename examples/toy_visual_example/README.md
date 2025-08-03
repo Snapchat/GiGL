@@ -2,9 +2,11 @@
 
 1. Make necessary changes to ["graph_config.yaml"](./graph_config.yaml) is updated.
 
-2. Potentially, update `MOCK_DATA_GCS_BUCKET` and `MOCK_DATA_BQ_DATASET_NAME` in `python/gigl/src/mocking/lib/constants.py` to upload to resources your custom buckets.
+2. Potentially, update `MOCK_DATA_GCS_BUCKET` and `MOCK_DATA_BQ_DATASET_NAME` in
+   `python/gigl/src/mocking/lib/constants.py` to upload to resources your custom buckets.
 
 3. Run the following command to upload the relevant mocks to GCS and BQ:
+
 ```bash
 python -m gigl.src.mocking.dataset_asset_mocking_suite \
 --select mock_toy_graph_homogeneous_node_anchor_based_link_prediction_dataset \
