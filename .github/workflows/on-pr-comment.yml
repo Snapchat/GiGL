@@ -14,7 +14,6 @@ permissions:
 
 jobs:
   help:
-    # HELP: /help - Show all available PR comment commands
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -28,53 +27,35 @@ jobs:
       with:
         script: |
           const fs = require('fs');
+          const yaml = require('js-yaml');
           const path = '.github/workflows/on-pr-comment.yml';
           
           try {
             const content = fs.readFileSync(path, 'utf8');
-            const lines = content.split('\n');
             const commands = [];
             
-            // Go through the file sequentially
-            let currentJob = null;
-            let currentHelpText = null;
-            let currentCommand = null;
+            // Parse YAML
+            const workflowData = yaml.load(content);
             
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-              
-              // Check for job definition (starts at column 0, no leading spaces)
-              if (/^[a-zA-Z0-9_-]+:$/.test(line.trim()) && !line.startsWith(' ')) {
-                // If we've seen a previous job with a command, add it to commands
-                if (currentJob && currentCommand) {
-                  const description = currentHelpText || `Run ${currentJob.replace(/-/g, ' ')} workflow`;
-                  commands.push(`- **${currentCommand}** - ${description}`);
-                }
-                
-                // Start tracking new job
-                currentJob = line.trim().replace(':', '');
-                currentHelpText = null;
-                currentCommand = null;
-              }
-              
-              // Look for HELP comment
-              if (line.includes('# HELP:')) {
-                currentHelpText = line.split('# HELP:')[1].trim();
-              }
-              
-              // Look for if condition with PR comment trigger
-              if (line.includes('if:') && line.includes('contains(github.event.comment.body,')) {
-                const match = line.match(/contains\(github\.event\.comment\.body,\s*'([^']+)'\)/);
-                if (match) {
-                  currentCommand = match[1];
+            // Process jobs from parsed YAML
+            if (workflowData.jobs) {
+              for (const [jobName, jobConfig] of Object.entries(workflowData.jobs)) {
+                // Check if this job has a PR comment trigger
+                if (jobConfig.if && jobConfig.if.includes('contains(github.event.comment.body,')) {
+                  const match = jobConfig.if.match(/contains\(github\.event\.comment\.body,\s*'([^']+)'\)/);
+                  if (match) {
+                    const command = match[1];
+                    
+                    // Get description from the first step's name, or fallback to job name
+                    let description = `Run ${jobName.replace(/-/g, ' ')} workflow`;
+                    if (jobConfig.steps && jobConfig.steps.length > 0 && jobConfig.steps[0].name) {
+                      description = jobConfig.steps[0].name;
+                    }
+                    
+                    commands.push(`- **${command}** - ${description}`);
+                  }
                 }
               }
-            }
-            
-            // Don't forget the last job
-            if (currentJob && currentCommand) {
-              const description = currentHelpText || `Run ${currentJob.replace(/-/g, ' ')} workflow`;
-              commands.push(`- **${currentCommand}** - ${description}`);
             }
             
             const helpMessage = `## 🤖 Available PR Commands
@@ -104,7 +85,6 @@ jobs:
         message: ${{ steps.parse_commands.outputs.help_message }}
 
   unit-test:
-    # HELP: /unit_test - Run unit tests for the codebase
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test') }}
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -128,7 +108,6 @@ jobs:
         command: |
           make unit_test
   integration-test:
-    # HELP: /integration_test - Run integration tests for the codebase
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/integration_test') }}
     runs-on: ubuntu-latest
     timeout-minutes: 70 # Tests as of 2025-05-16 are taking ~50 mins to complete, 40% buffer
@@ -148,7 +127,6 @@ jobs:
         command: |
             make integration_test
   integration-e2e-test:
-    # HELP: /e2e_test - Run end-to-end tests for the entire system
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/e2e_test') }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
@@ -169,7 +147,6 @@ jobs:
           make run_all_e2e_tests
 
   notebooks-e2e-test:
-    # HELP: /notebook_tests - Run tests on example notebooks to ensure they work correctly
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
@@ -191,7 +168,6 @@ jobs:
 
 
   lint-test:
-    # HELP: /lint_test - Run code formatting and linting checks
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20 # If our linting takes longer than 20 minutes something has gone very wrong...
