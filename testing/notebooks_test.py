@@ -92,7 +92,7 @@ class TestExampleNotebooks(unittest.TestCase):
                 "kdd_2025_heterogeneous",
                 notebook_path=str(
                     GIGL_ROOT_DIR
-                    / "examples/tutorial/KDD_2025/heteregeneous_walkthrough.ipynb"
+                    / "examples/tutorial/KDD_2025/heterogeneous_walkthrough.ipynb"
                 ),
             ),
         ]
