@@ -4,7 +4,7 @@ SHELL := /bin/bash
 CONDA_ENV_NAME=gnn
 PYTHON_VERSION=3.9
 PIP_VERSION=25.0.1
-DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
+DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
@@ -134,6 +134,10 @@ generate_dev_linux_cuda_hashed_requirements:
 # installation scripts
 precondition_tests:
 	python testing/dep_vars_check.py
+
+
+run_api_test:
+	cd testing/api_test && make run_api_test
 
 
 assert_yaml_configs_parse:

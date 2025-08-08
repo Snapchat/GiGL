@@ -1,0 +1,13 @@
+# This Dockerfile is used to build a container image that contains the source code for a customer.
+# It is a convenience Dockerfile that can be used to copy the entire working dir for a customer's repo
+# into the
+
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
+
+WORKDIR /gigl
+
+COPY . .
+
+# Find out if there is 'setup.py' or 'pyproject.toml' in the current directory, if so install it
+RUN if [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then pip install -e .; fi

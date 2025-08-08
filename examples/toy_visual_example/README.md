@@ -1,25 +1,16 @@
-## Setup Resource Config.
+### Updating Mocked Graph
 
-GiGL requires you to setup a [resource config](../../../docs/user_guide/config_guides/resource_config_guide.md) in order
-to launch jobs on GCP. There is already [resource_config.yaml](./resource_config.yaml) in this directory but it is setup
-for GiGL CICD, and you will not be able to use it.
+1. Make necessary changes to ["graph_config.yaml"](./graph_config.yaml) is updated.
 
-You may run the below from GiGL root to generate an appropriate resource config. If you are onboarding to GiGL through
-qwiklabs then you can directly use the below commands. If not, then you will need to setup your GCP project per our
-[cloud setup guide](../../docs/user_guide/getting_started/cloud_setup_guide.md) before running the below command with
-the appropriate resources.
+2. Potentially, update `MOCK_DATA_GCS_BUCKET` and `MOCK_DATA_BQ_DATASET_NAME` in
+   `python/gigl/src/mocking/lib/constants.py` to upload to resources your custom buckets.
+
+3. Run the following command to upload the relevant mocks to GCS and BQ:
 
 ```bash
-PROJECT=$QWIK_LABS_PROJECT # Ex, qwiklabs-gcp-01-40f6ccb540f3
-QL_USER=$QWIK_LABS_USER # Ex, student-02-5e0049fb83ce
-
-python -m scripts.bootstrap_resource_config \
-  --project="$PROJECT" \
-  --gcp_service_account_email="gigl-dev@$PROJECT.iam.gserviceaccount.com" \
-  --docker_artifact_registry_path="us-central1-docker.pkg.dev/$PROJECT/gigl-base-images" \
-  --temp_assets_bq_dataset_name="gigl_temp_assets" \
-  --embedding_bq_dataset_name="gigl_embeddings" \
-  --temp_assets_bucket="gs://gigl_temp_assets_$QL_USER" \
-  --perm_assets_bucket="gs://gigl_perm_assets_$QL_USER" \
-  --template_resource_config_uri="/examples/toy_visual_example/resource_config.yaml"
+python -m gigl.src.mocking.dataset_asset_mocking_suite \
+--select mock_toy_graph_homogeneous_node_anchor_based_link_prediction_dataset \
+--resource_config_uri=examples/toy_visual_example/resource_config.yaml
 ```
+
+4. Subsequently, update the BQ paths in [task_config.yaml](./task_config.yaml).
