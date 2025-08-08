@@ -103,7 +103,7 @@ jobs:
     - name: Post help comment
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
       with:
-        pr_number: ${{ github.event.issue.number }}
+        pr_number: 267
         message: ${{ steps.parse_commands.outputs.help_message }}
 
   ci-unit-test:
