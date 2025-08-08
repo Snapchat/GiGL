@@ -43,11 +43,13 @@ jobs:
             const jobs = data.jobs;
             console.log(jobs);
             const commands = [];
-            for (const job of jobs) {
-              const jobName = job.name;
-              const jobDescription = job.description;
-              commands.push(`- **${jobName}** - ${jobDescription}`);
-            }
+            jobs.forEach(jobName, jobDetails => {
+              console.log(jobName, jobDetails);
+              for (const step of jobDetails.steps) {
+                console.log(step);
+              }
+              commands.push(`- **${jobName}**  -`);
+            });
             
             const helpMessage = `## 🤖 Available PR Commands
             
