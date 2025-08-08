@@ -19,7 +19,6 @@ permissions:
 jobs:
   help:
     # HELP: /help - Show all available PR comment commands
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
