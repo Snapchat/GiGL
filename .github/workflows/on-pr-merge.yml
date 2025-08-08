@@ -30,54 +30,21 @@ jobs:
       uses: actions/github-script@v7
       with:
         script: |
+          const yaml = require('js-yaml');
           const fs = require('fs');
           const path = '.github/workflows/on-pr-comment.yml';
           
           try {
             const content = fs.readFileSync(path, 'utf8');
-            const lines = content.split('\n');
+            const data = yaml.load(content);
+            console.log(data);
+            const jobs = data.jobs;
+            console.log(jobs);
             const commands = [];
-            
-            // Go through the file sequentially
-            let currentJob = null;
-            let currentHelpText = null;
-            let currentCommand = null;
-            
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-              
-              // Check for job definition (starts at column 0, no leading spaces)
-              if (/^[a-zA-Z0-9_-]+:$/.test(line.trim()) && !line.startsWith(' ')) {
-                // If we've seen a previous job with a command, add it to commands
-                if (currentJob && currentCommand) {
-                  const description = currentHelpText || `Run ${currentJob.replace(/-/g, ' ')} workflow`;
-                  commands.push(`- **${currentCommand}** - ${description}`);
-                }
-                
-                // Start tracking new job
-                currentJob = line.trim().replace(':', '');
-                currentHelpText = null;
-                currentCommand = null;
-              }
-              
-              // Look for HELP comment
-              if (line.includes('# HELP:')) {
-                currentHelpText = line.split('# HELP:')[1].trim();
-              }
-              
-              // Look for if condition with PR comment trigger
-              if (line.includes('if:') && line.includes('contains(github.event.comment.body,')) {
-                const match = line.match(/contains\(github\.event\.comment\.body,\s*'([^']+)'\)/);
-                if (match) {
-                  currentCommand = match[1];
-                }
-              }
-            }
-            
-            // Don't forget the last job
-            if (currentJob && currentCommand) {
-              const description = currentHelpText || `Run ${currentJob.replace(/-/g, ' ')} workflow`;
-              commands.push(`- **${currentCommand}** - ${description}`);
+            for (const job of jobs) {
+              const jobName = job.name;
+              const jobDescription = job.description;
+              commands.push(`- **${jobName}** - ${jobDescription}`);
             }
             
             const helpMessage = `## 🤖 Available PR Commands
