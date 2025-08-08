@@ -6,6 +6,7 @@ on:
   # https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
   pull_request:
   merge_group:
+  push:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -16,6 +17,95 @@ permissions:
   issues: 'write'
 
 jobs:
+  help:
+    # HELP: /help - Show all available PR comment commands
+    #if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Parse available commands
+      id: parse_commands
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = '.github/workflows/on-pr-comment.yml';
+          
+          try {
+            const content = fs.readFileSync(path, 'utf8');
+            const lines = content.split('\n');
+            const commands = [];
+            
+            // Parse job definitions and their trigger conditions
+            let currentJob = null;
+            let currentJobName = null;
+            let helpText = null;
+            
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i].trim();
+              
+              // Check for job definition (starts at column 2, no leading spaces before job name)
+              if (/^[a-zA-Z0-9_-]+:$/.test(line) && !lines[i].startsWith(' ')) {
+                // Save previous job if it had a command
+                if (currentJob) {
+                  commands.push(currentJob);
+                }
+                
+                currentJobName = line.replace(':', '');
+                currentJob = null;
+                helpText = null;
+              }
+              
+              // Look for HELP comment
+              if (line.includes('# HELP:')) {
+                helpText = line.split('# HELP:')[1].trim();
+              }
+              
+              // Look for if condition with PR comment trigger
+              if (line.includes('if:') && line.includes('contains(github.event.comment.body,')) {
+                const match = line.match(/contains\(github\.event\.comment\.body,\s*'([^']+)'\)/);
+                if (match) {
+                  const command = match[1];
+                  const description = helpText || `Run ${currentJobName.replace(/-/g, ' ')} workflow`;
+                  currentJob = `- **${command}** - ${description}`;
+                }
+              }
+            }
+            
+            // Don't forget the last job
+            if (currentJob) {
+              commands.push(currentJob);
+            }
+            
+            const helpMessage = `## 🤖 Available PR Commands
+            
+          You can trigger the following workflows by commenting on this PR:
+          
+          ${commands.join('\n')}
+          
+          ---
+          
+          💡 **Usage:** Simply comment on this PR with any of the commands above (e.g., \`/unit_test\`)
+          
+          ⏱️ **Note:** Commands may take some time to complete. Progress updates will be posted as comments.`;
+            
+            // Set output for the next step
+            core.setOutput('help_message', helpMessage);
+            
+          } catch (error) {
+            console.error('Error reading workflow file:', error);
+            core.setOutput('help_message', '❌ Error: Could not read workflow file to generate help information.');
+          }
+    
+    - name: Post help comment
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      with:
+        pr_number: ${{ github.event.issue.number }}
+        message: ${{ steps.parse_commands.outputs.help_message }}
+
   ci-unit-test:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
