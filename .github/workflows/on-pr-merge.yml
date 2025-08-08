@@ -64,7 +64,8 @@ jobs:
               }
             }
             
-            const helpMessage = `## 🤖 Available PR Commands
+            const helpMessage = `
+          ## 🤖 Available PR Commands
             
           You can trigger the following workflows by commenting on this PR:
           
