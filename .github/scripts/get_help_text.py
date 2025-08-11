@@ -49,13 +49,13 @@ def get_help_text():
                         ):
                             description = job_config["steps"][0]["name"]
 
-                        commands.append(f"- **{command}** - {description}")
+                        commands.append(f"- `{command}` - {description}")
 
-        command_str = "\n".join(commands)
+        command_str = "\n\t".join(commands)
         # Generate the help message
         help_message = textwrap.dedent(
             f"""
-        ## 🤖 Available PR Commands
+        \n## 🤖 Available PR Commands
 
         You can trigger the following workflows by commenting on this PR:
 
