@@ -20,66 +20,18 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-    - run: npm install js-yaml
       
-    - name: Parse available commands
-      id: parse_commands
-      uses: actions/github-script@v7
+    - name: Setup Python
+      uses: actions/setup-python@v4
       with:
-        script: |
-          const fs = require('fs');
-          const yaml = require('js-yaml');
-          const path = '.github/workflows/on-pr-comment.yml';
-          
-          try {
-            const content = fs.readFileSync(path, 'utf8');
-            const commands = [];
-            
-            // Parse YAML
-            const workflowData = yaml.load(content);
-            
-            // Process jobs from parsed YAML
-            if (workflowData.jobs) {
-              for (const [jobName, jobConfig] of Object.entries(workflowData.jobs)) {
-                // Check if this job has a PR comment trigger
-                if (jobConfig.if && jobConfig.if.includes('contains(github.event.comment.body,')) {
-                  const match = jobConfig.if.match(/contains\(github\.event\.comment\.body,\s*'([^']+)'\)/);
-                  if (match) {
-                    const command = match[1];
-                    
-                    // Get description from the first step's name, or fallback to job name
-                    let description = `Run ${jobName.replace(/-/g, ' ')} workflow`;
-                    if (jobConfig.steps && jobConfig.steps.length > 0 && jobConfig.steps[0].name) {
-                      description = jobConfig.steps[0].name;
-                    }
-                    
-                    commands.push(`- **${command}** - ${description}`);
-                  }
-                }
-              }
-            }
-            
-            const helpMessage = `
-          ## 🤖 Available PR Commands
-            
-          You can trigger the following workflows by commenting on this PR:
-          
-          ${commands.join('\n')}
-          
-          ---
-          
-          💡 **Usage:** Simply comment on this PR with any of the commands above (e.g., \`/unit_test\`)
-          
-          ⏱️ **Note:** Commands may take some time to complete. Progress updates will be posted as comments.`;
-            
-            // Set output for the next step
-            core.setOutput('help_message', helpMessage);
-            
-          } catch (error) {
-            console.error('Error reading workflow file:', error);
-            core.setOutput('help_message', '❌ Error: Could not read workflow file to generate help information.');
-          }
+        python-version: '3.x'
+        
+    - name: Install PyYAML
+      run: pip install PyYAML
+      
+    - name: Generate help text
+      id: parse_commands
+      run: python .github/scripts/get_help_text.py
     
     - name: Post help comment
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
