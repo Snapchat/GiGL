@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script to generate help text for available PR comment commands.
 Reads the workflow YAML file and extracts commands with their descriptions.
@@ -6,7 +5,6 @@ Reads the workflow YAML file and extracts commands with their descriptions.
 
 import os
 import re
-import textwrap
 from pathlib import Path
 
 import yaml
@@ -53,8 +51,7 @@ def get_help_text():
 
         command_str = "\n".join(commands)
         # Generate the help message
-        help_message = textwrap.dedent(
-            f"""
+        help_message = f"""
 
         ## 🤖 Available PR Commands
 
@@ -67,7 +64,9 @@ def get_help_text():
 
         ⏱️ **Note:** Commands may take some time to complete. Progress updates will be posted as comments.
         """
-        )
+        # Get rid of leading whitespace
+        # For some reason, textwrap.dedent() is not working as expected.
+        help_message = "\n".join(l.lstrip() for l in help_message.splitlines())
 
         return help_message
 
