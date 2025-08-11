@@ -51,23 +51,23 @@ def get_help_text():
 
                         commands.append(f"- `{command}` - {description}")
 
-        command_str = "\n\t".join(commands)
+        command_str = "\n".join(commands)
         # Generate the help message
         help_message = textwrap.dedent(
             f"""
-        \n## 🤖 Available PR Commands
+
+        ## 🤖 Available PR Commands
 
         You can trigger the following workflows by commenting on this PR:
 
         {command_str}
 
-        ---
 
         💡 **Usage:** Simply comment on this PR with any of the commands above (e.g., `/unit_test`)
 
         ⏱️ **Note:** Commands may take some time to complete. Progress updates will be posted as comments.
         """
-        ).strip()
+        )
 
         return help_message
 
@@ -84,7 +84,7 @@ def main():
     if github_output:
         with open(github_output, "a") as f:
             # Use EOF delimiter for multiline output
-            f.write(f"help_message<<EOF\n{help_text}\nEOF\n")
+            f.write(f'"help_message={help_text}"')
     else:
         # Fallback: print to stdout for local testing
         print(help_text)
