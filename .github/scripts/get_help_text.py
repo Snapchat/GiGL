@@ -31,6 +31,8 @@ def get_help_text():
                         and "contains(github.event.comment.body," in job_config["if"]
                     ):
                         # Extract the command from the if condition
+                        # Searching for lines like: "contains(github.event.comment.body,'/unit_test')"
+                        # and extracting the '/unit_test'
                         match = re.search(
                             r"contains\(github\.event\.comment\.body,\s*'([^']+)'\)",
                             job_config["if"],
