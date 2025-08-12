@@ -2,6 +2,7 @@
 DatasetFactory is responsible for building and returning a DistLinkPredictionDataset class or subclass. It does this by spawning a
 process which initializes rpc + worker group, loads and builds a partitioned dataset, and shuts down the rpc + worker group.
 """
+import gc
 import time
 from collections import abc
 from distutils.util import strtobool
@@ -50,6 +51,24 @@ from gigl.utils.data_splitters import (
 )
 
 logger = Logger()
+
+
+def _separate_tensor(tensor: torch.Tensor):
+    # Get the shape of the input tensor
+    N, X_plus_1 = tensor.shape
+
+    # Calculate X
+    X = X_plus_1 - 1
+
+    # Handle the edge case where X = 0
+    if X == 0:
+        first_tensor = None
+    else:
+        first_tensor = tensor[:, :X]
+
+    second_tensor = tensor[:, X:X_plus_1]
+
+    return first_tensor, second_tensor
 
 
 @tf_on_cpu
@@ -192,6 +211,16 @@ def _load_and_build_partitioned_dataset(
 
     partition_output = partitioner.partition()
 
+    # Check if its a node splitter
+
+    node_features, node_labels = _separate_tensor(
+        partition_output.partitioned_node_features.feats
+    )
+
+    partition_output.partitioned_node_features.feats = node_features
+
+    gc.collect()
+
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
     )
@@ -201,6 +230,7 @@ def _load_and_build_partitioned_dataset(
 
     dataset.build(
         partition_output=partition_output,
+        node_labels=node_labels,
         splitter=splitter,
     )
 

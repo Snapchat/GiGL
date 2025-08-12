@@ -72,6 +72,7 @@ class DistLinkPredictionDataset(DistDataset):
         edge_feature_info: Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
+        node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
     ) -> None:
         """
         Initializes the fields of the DistLinkPredictionDataset class. This function is called upon each serialization of the DistLinkPredictionDataset instance.
@@ -106,6 +107,7 @@ class DistLinkPredictionDataset(DistDataset):
             graph_partition=graph_partition,
             node_feature_partition=node_feature_partition,
             edge_feature_partition=edge_feature_partition,
+            whole_node_labels=node_labels,
             node_pb=node_partition_book,
             edge_pb=edge_partition_book,
             edge_dir=edge_dir,
@@ -358,6 +360,7 @@ class DistLinkPredictionDataset(DistDataset):
     def build(
         self,
         partition_output: PartitionOutput,
+        node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
         splitter: Optional[NodeAnchorLinkSplitter] = None,
     ) -> None:
         """
@@ -458,11 +461,18 @@ class DistLinkPredictionDataset(DistDataset):
                 id2idx=node_id2idx,
                 with_gpu=False,
             )
+            if node_labels is not None:
+                self.init_node_labels(node_label_data=node_labels, id2idx=node_id2idx)
             self._node_feature_info = FeatureInfo(
                 dim=partitioned_node_features.size(1),
                 dtype=partitioned_node_features.dtype,
             )
-            del partitioned_node_features, partitioned_node_feature_ids, node_id2idx
+            del (
+                partitioned_node_features,
+                partitioned_node_feature_ids,
+                node_id2idx,
+                node_labels,
+            )
         elif isinstance(partition_output.partitioned_node_features, abc.Mapping):
             assert isinstance(partition_output.node_partition_book, abc.Mapping)
             node_type_to_partitioned_node_features = {
@@ -489,6 +499,10 @@ class DistLinkPredictionDataset(DistDataset):
                 id2idx=node_type_to_id2idx,
                 with_gpu=False,
             )
+            if node_labels is not None:
+                self.init_node_labels(
+                    node_label_data=node_labels, id2idx=node_type_to_id2idx
+                )
             self._node_feature_info = {
                 node_type: FeatureInfo(
                     dim=feature_partition_data.size(1),
@@ -500,6 +514,7 @@ class DistLinkPredictionDataset(DistDataset):
                 node_type_to_partitioned_node_features,
                 node_type_to_partitioned_node_feature_ids,
                 node_type_to_id2idx,
+                node_labels,
             )
 
         partition_output.partitioned_node_features = None
@@ -696,6 +711,7 @@ class DistLinkPredictionDataset(DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
+        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
     ]:
         """
         Serializes the member variables of the DistLinkPredictionDatasetClass
@@ -834,6 +850,7 @@ def _rebuild_dist_link_prediction_dataset(
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
+        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
     ]
 ):
     dataset = DistLinkPredictionDataset.from_ipc_handle(ipc_handle)
