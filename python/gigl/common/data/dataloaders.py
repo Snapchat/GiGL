@@ -314,7 +314,7 @@ class TFRecordDataLoader:
 
         if label_key is not None:
             feature_spec_dict[label_key] = tf.io.FixedLenFeature(
-                shape=[], dtype=tf.int16
+                shape=[], dtype=tf.int64
             )
 
         if isinstance(entity_key, str):
