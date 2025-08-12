@@ -12,42 +12,44 @@ import yaml
 
 def get_help_text():
     """Generate help text by parsing the workflow file."""
-    workflow_path = Path(".github/workflows/on-pr-comment.yml")
+    workflow_path = Path(".github/workflows/")
+    commands = []
 
-    try:
-        # Read and parse the YAML file
-        with open(workflow_path, "r") as f:
-            content = f.read()
-            workflow_data = yaml.safe_load(content)
+    for workflow_file in workflow_path.rglob("*.yml"):
+        try:
+            # Read and parse the YAML file
+            with open(workflow_file, "r") as f:
+                content = f.read()
+                workflow_data = yaml.safe_load(content)
 
-        commands = []
+            # Process jobs from parsed YAML
+            if "jobs" in workflow_data:
+                for job_name, job_config in workflow_data["jobs"].items():
+                    # Check if this job has a PR comment trigger
+                    if (
+                        "if" in job_config
+                        and "contains(github.event.comment.body," in job_config["if"]
+                    ):
+                        # Extract the command from the if condition
+                        match = re.search(
+                            r"contains\(github\.event\.comment\.body,\s*'([^']+)'\)",
+                            job_config["if"],
+                        )
+                        if match:
+                            command = match.group(1)
 
-        # Process jobs from parsed YAML
-        if "jobs" in workflow_data:
-            for job_name, job_config in workflow_data["jobs"].items():
-                # Check if this job has a PR comment trigger
-                if (
-                    "if" in job_config
-                    and "contains(github.event.comment.body," in job_config["if"]
-                ):
-                    # Extract the command from the if condition
-                    match = re.search(
-                        r"contains\(github\.event\.comment\.body,\s*'([^']+)'\)",
-                        job_config["if"],
-                    )
-                    if match:
-                        command = match.group(1)
+                            # Get description from the first step's name, or fallback to job name
+                            description = f"Run {job_name.replace('-', ' ')} workflow"
+                            if (
+                                "steps" in job_config
+                                and len(job_config["steps"]) > 0
+                                and "name" in job_config["steps"][0]
+                            ):
+                                description = job_config["steps"][0]["name"]
 
-                        # Get description from the first step's name, or fallback to job name
-                        description = f"Run {job_name.replace('-', ' ')} workflow"
-                        if (
-                            "steps" in job_config
-                            and len(job_config["steps"]) > 0
-                            and "name" in job_config["steps"][0]
-                        ):
-                            description = job_config["steps"][0]["name"]
-
-                        commands.append(f"- `{command}` - {description}")
+                            commands.append(f"- `{command}` - {description}")
+        except Exception as e:
+            return f"❌ Error: Could not read workflow file {workflow_file} to generate help information. {str(e)}"
 
         command_str = "\n".join(commands)
         # Generate the help message
@@ -70,9 +72,6 @@ def get_help_text():
 
         return help_message
 
-    except Exception as e:
-        return f"❌ Error: Could not read workflow file to generate help information. {str(e)}"
-
 
 def main():
     """Main function to generate help text and set GitHub output."""
@@ -84,6 +83,7 @@ def main():
         with open(github_output, "a") as f:
             # Use EOF delimiter for multiline output
             f.write(f"help_message<<EOF\n{help_text}\nEOF\n")
+            f.write(f"some_value=20\n")
     else:
         # Fallback: print to stdout for local testing
         print(help_text)
