@@ -83,7 +83,6 @@ def main():
         with open(github_output, "a") as f:
             # Use EOF delimiter for multiline output
             f.write(f"help_message<<EOF\n{help_text}\nEOF\n")
-            f.write(f"some_value=20\n")
     else:
         # Fallback: print to stdout for local testing
         print(help_text)

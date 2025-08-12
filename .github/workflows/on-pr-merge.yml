@@ -118,34 +118,3 @@ jobs:
         source ~/.profile
         make check_format
         make assert_yaml_configs_parse
-
-  help:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.x'
-        
-    - name: Install PyYAML
-      run: pip install PyYAML
-      
-    - name: Generate help text
-      id: parse_commands
-      run: python .github/scripts/get_help_text.py
-    
-    - name: Post help comment
-      uses: snapchat/gigl/.github/actions/comment-on-pr@main
-      with:
-        pr_number: ${{ github.event.pull_request.number }}
-        message: ${{ steps.parse_commands.outputs.help_message }}
-    
-    - name: Post test comment
-      uses: snapchat/gigl/.github/actions/comment-on-pr@main
-      with:
-        pr_number: ${{ github.event.pull_request.number }}
-        message: ${{ steps.parse_commands.outputs.some_value }}
