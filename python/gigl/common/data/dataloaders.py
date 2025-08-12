@@ -99,10 +99,8 @@ def _concatenate_features_by_names(
         tensor = feature_key_to_tf_tensor[feature_key]
 
         # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
-        # Some features (e.g., home city, last city, etc.) are vocabulary
-        # ids and are stored as int type. We cast it to float here and convert
-        # it back to int before feeding it to the feature embedding layer.
-        # Note that this is ok for small int values (less than 2^24, or ~16 million).
+        # Features may be stored as int type. We cast it to float here and will need to subsequently convert
+        # it back to int. Note that this is ok for small int values (less than 2^24, or ~16 million).
         # For large int values, we will need to round it when converting back
         # from float, as otherwise there will be precision loss.
         if tensor.dtype != tf.float32:
