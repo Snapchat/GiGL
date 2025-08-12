@@ -35,6 +35,8 @@ class SerializedTFRecordInfo:
     feature_dim: int
     # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.
     entity_key: Union[str, Tuple[str, str]]
+    # Name of the label column for the current entity, defaults to None.
+    label_key: Optional[str] = None
     # The regex pattern to match the TFRecord files at the specified prefix
     tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$"
 
@@ -79,30 +81,34 @@ class TFDatasetOptions:
 def _concatenate_features_by_names(
     feature_key_to_tf_tensor: dict[str, tf.Tensor],
     feature_keys: Sequence[str],
+    label_key: Optional[str],
 ) -> tf.Tensor:
     """
     Concatenates feature tensors in the order specified by feature names.
+    Also concatenates labels to the end of the feature list if they are present using the corresponding label key
 
     It is assumed that feature_names is a subset of the keys in feature_name_to_tf_tensor.
 
     Args:
         feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
         feature_keys (list[str]): A list of feature names specifying the order in which tensors should be concatenated.
+        label_key (Optional[str]): Name of the label column for the current entity, defaults to None.
 
     Returns:
-        tf.Tensor: A concatenated tensor of the features in the specified order.
+        tf.Tensor: A concatenated tensor of the features in the specified order, with the label being concatenated at the end if it exists
     """
 
     features: list[tf.Tensor] = []
+
+    if label_key is not None:
+        feature_keys.append(label_key)
 
     for feature_key in feature_keys:
         tensor = feature_key_to_tf_tensor[feature_key]
 
         # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
-        # Some features (e.g., home city, last city, etc.) are vocabulary
-        # ids and are stored as int type. We cast it to float here and convert
-        # it back to int before feeding it to the feature embedding layer.
-        # Note that this is ok for small int values (less than 2^24, or ~16 million).
+        # Features may be stored as int type. We cast it to float here and will need to subsequently convert
+        # it back to int. Note that this is ok for small int values (less than 2^24, or ~16 million).
         # For large int values, we will need to round it when converting back
         # from float, as otherwise there will be precision loss.
         if tensor.dtype != tf.float32:
@@ -300,10 +306,16 @@ class TFRecordDataLoader:
         """
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
+        label_key = serialized_tf_record_info.label_key
 
         # We make a deep copy of the feature spec dict so that future modifications don't redirect to the input
 
         feature_spec_dict = deepcopy(serialized_tf_record_info.feature_spec)
+
+        if label_key is not None:
+            feature_spec_dict[label_key] = tf.io.FixedLenFeature(
+                shape=[], dtype=tf.int16
+            )
 
         if isinstance(entity_key, str):
             assert isinstance(entity_key, str)
@@ -379,7 +391,7 @@ class TFRecordDataLoader:
             id_tensors.append(proccess_id_tensor(batch))
             if feature_keys:
                 feature_tensors.append(
-                    _concatenate_features_by_names(batch, feature_keys)
+                    _concatenate_features_by_names(batch, feature_keys, label_key)
                 )
             num_entities_processed += (
                 id_tensors[-1].shape[0]
