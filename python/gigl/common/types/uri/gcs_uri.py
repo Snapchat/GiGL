@@ -56,24 +56,3 @@ class GcsUri(Uri):
         if raise_exception and not has_no_backslash:
             raise TypeError(f"{cls.__name__} does not support backslashes; got {uri}")
         return True if (has_valid_prefix and has_no_backslash) else False
-
-    @classmethod
-    def join(
-        cls, token: Union[str, Path, Uri], *tokens: Union[str, Path, Uri]
-    ) -> GcsUri:
-        """
-        Joins multiple URI tokens together and returns a new GcsUri object.
-
-        Args:
-            token (Union[str, Path, Uri]): The first URI token to join.
-            *tokens (Union[str, Path, Uri]): Additional URI tokens to join.
-
-        Returns:
-            GcsUri: A new GcsUri object representing the joined URI.
-        """
-        joined_uri = super().join(token, *tokens)
-        uri = cls(uri=joined_uri.uri)
-        return uri
-
-    def __repr__(self) -> str:
-        return self.uri

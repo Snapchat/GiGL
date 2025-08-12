@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Any, Union
 
+from typing_extensions import Self
+
 
 class Uri(object):
     """
@@ -14,11 +16,11 @@ class Uri(object):
     def uri(self):
         return self.__uri
 
-    def __init__(self, uri: Union[str, Path, Uri]):
+    def __init__(self, uri: _URI_LIKE):
         self.__uri = self._token_to_string(uri)
 
     @staticmethod
-    def _token_to_string(token: Union[str, Path, Uri]) -> str:
+    def _token_to_string(token: _URI_LIKE) -> str:
         if isinstance(token, str):
             return token
         elif isinstance(token, Uri):
@@ -27,8 +29,11 @@ class Uri(object):
             return str(token)
         return ""
 
+    # TODO(kmonte): You should not be able to join a Uri with a Uri of a different type.
+    # *or* join HTTP on HTTP or GCS on GCS.
+    # This is not backwards compatible, so come around to this later.
     @classmethod
-    def join(cls, token: Union[str, Path, Uri], *tokens: Union[str, Path, Uri]) -> Uri:
+    def join(cls, token: _URI_LIKE, *tokens: _URI_LIKE) -> Self:
         """
         Join multiple tokens to create a new Uri instance.
 
@@ -43,13 +48,11 @@ class Uri(object):
         token = cls._token_to_string(token)
         token_strs: list[str] = [cls._token_to_string(token) for token in tokens]
         joined_tmp_path = os.path.join(token, *token_strs)
-        joined_path = Uri(joined_tmp_path)
+        joined_path = cls(joined_tmp_path)
         return joined_path
 
     @classmethod
-    def is_valid(
-        cls, uri: Union[str, Path, Uri], raise_exception: bool = False
-    ) -> bool:
+    def is_valid(cls, uri: _URI_LIKE, raise_exception: bool = False) -> bool:
         """
         Check if the given URI is valid.
 
@@ -83,3 +86,13 @@ class Uri(object):
         if isinstance(other, Uri):
             return self.uri == other.uri
         return False
+
+    def __truediv__(self, other: _URI_LIKE) -> Self:
+        if isinstance(other, Uri) and not isinstance(other, type(self)):
+            raise TypeError(
+                f"Cannot use '/' operator to join {type(self).__name__} with {type(other).__name__}"
+            )
+        return self.join(self, other)
+
+
+_URI_LIKE = Union[str, Path, Uri]

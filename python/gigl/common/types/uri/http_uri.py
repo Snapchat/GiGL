@@ -45,21 +45,4 @@ class HttpUri(Uri):
             raise TypeError(f"{cls.__name__} must start with http:// or https://")
         if raise_exception and not has_no_backslash:
             raise TypeError(f"{cls.__name__} does not support backslashes")
-        return True if (has_valid_prefix and has_no_backslash) else False
-
-    @classmethod
-    def join(
-        cls, token: Union[str, Path, Uri], *tokens: Union[str, Path, Uri]
-    ) -> HttpUri:
-        """Join multiple URI tokens into a single URI.
-
-        Args:
-            token: The first URI token.
-            *tokens: Additional URI tokens to join.
-
-        Returns:
-            HttpUri: The joined URI.
-        """
-        joined_uri = super().join(token, *tokens)
-        uri = cls(uri=joined_uri.uri)
-        return uri
+        return has_valid_prefix and has_no_backslash
