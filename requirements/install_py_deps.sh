@@ -83,10 +83,10 @@ fi
 echo "Installing from ${req_file}"
 pip install -r $req_file $PIP_ARGS
 
-ls -la
 
+# Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
+# We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-echo "Script dir: $SCRIPT_DIR"
 python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
 
 conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
