@@ -83,7 +83,9 @@ fi
 echo "Installing from ${req_file}"
 pip install -r $req_file $PIP_ARGS
 
-python python/gigl/scripts/post_install.py
+ls -la
+
+python ./python/gigl/scripts/post_install.py
 
 conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
 
