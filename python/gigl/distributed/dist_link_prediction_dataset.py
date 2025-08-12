@@ -757,6 +757,7 @@ class DistLinkPredictionDataset(DistDataset):
             self._num_test,  # Additional field unique to DistLinkPredictionDataset class
             self._node_feature_info,  # Additional field unique to DistLinkPredictionDataset class
             self._edge_feature_info,  # Additional field unique to DistLinkPredictionDataset class
+            self.node_labels,
         )
         return ipc_handle
 
