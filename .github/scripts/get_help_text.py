@@ -12,10 +12,10 @@ import yaml
 
 def get_help_text():
     """Generate help text by parsing the workflow file."""
-    workflow_path = Path(".github/workflows/")
+    workflow_path = Path(".github/workflows")
     commands = []
 
-    for workflow_file in workflow_path.rglob("*.yml"):
+    for workflow_file in workflow_path.glob("**/*.yml"):
         try:
             # Read and parse the YAML file
             with open(workflow_file, "r") as f:
@@ -51,26 +51,26 @@ def get_help_text():
         except Exception as e:
             return f"❌ Error: Could not read workflow file {workflow_file} to generate help information. {str(e)}"
 
-        command_str = "\n".join(commands)
-        # Generate the help message
-        help_message = f"""
+    command_str = "\n".join(commands)
+    # Generate the help message
+    help_message = f"""
 
-        ## 🤖 Available PR Commands
+    ## 🤖 Available PR Commands
 
-        You can trigger the following workflows by commenting on this PR:
+    You can trigger the following workflows by commenting on this PR:
 
-        {command_str}
+    {command_str}
 
 
-        💡 **Usage:** Simply comment on this PR with any of the commands above (e.g., `/unit_test`)
+    💡 **Usage:** Simply comment on this PR with any of the commands above (e.g., `/unit_test`)
 
-        ⏱️ **Note:** Commands may take some time to complete. Progress updates will be posted as comments.
-        """
-        # Get rid of leading whitespace
-        # For some reason, textwrap.dedent() is not working as expected.
-        help_message = "\n".join(l.lstrip() for l in help_message.splitlines())
+    ⏱️ **Note:** Commands may take some time to complete. Progress updates will be posted as comments.
+    """
+    # Get rid of leading whitespace
+    # For some reason, textwrap.dedent() is not working as expected.
+    help_message = "\n".join(l.lstrip() for l in help_message.splitlines())
 
-        return help_message
+    return help_message
 
 
 def main():
