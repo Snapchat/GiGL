@@ -579,7 +579,7 @@ class DistLinkPredictionDataset(DistDataset):
 
         gc.collect()
 
-        # Initializing Positive and Negative Labels
+        # Initializing Positive and Negative Edge Labels
         self._positive_edge_label = partition_output.partitioned_positive_labels
         self._negative_edge_label = partition_output.partitioned_negative_labels
 

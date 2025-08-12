@@ -179,7 +179,7 @@ class TFRecordDataLoader:
         """
         file_loader = FileLoader()
         uris = sorted(
-            file_loader.list_children(uri, pattern=tfrecord_pattern),
+            file_loader.list_children(uri, pattern=None),
             key=lambda uri: uri.uri,
         )
         if len(uris) == 0:
@@ -306,6 +306,7 @@ class TFRecordDataLoader:
         """
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
+
         label_key = serialized_tf_record_info.label_key
 
         # We make a deep copy of the feature spec dict so that future modifications don't redirect to the input
@@ -370,11 +371,17 @@ class TFRecordDataLoader:
                 if entity_type == FeatureTypes.NODE
                 else torch.empty(2, 0)
             )
-            empty_feature = (
-                torch.empty(0, serialized_tf_record_info.feature_dim)
-                if feature_keys
-                else None
-            )
+            if feature_keys:
+                if label_key:
+                    empty_feature = torch.empty(
+                        0, serialized_tf_record_info.feature_dim + 1
+                    )
+                else:
+                    empty_feature = torch.empty(
+                        0, serialized_tf_record_info.feature_dim
+                    )
+            else:
+                empty_feature = None
             return empty_entity, empty_feature
 
         dataset = TFRecordDataLoader._build_dataset_for_uris(
@@ -389,7 +396,7 @@ class TFRecordDataLoader:
         feature_tensors = []
         for idx, batch in enumerate(dataset):
             id_tensors.append(proccess_id_tensor(batch))
-            if feature_keys:
+            if feature_keys or label_key:
                 feature_tensors.append(
                     _concatenate_features_by_names(batch, feature_keys, label_key)
                 )
