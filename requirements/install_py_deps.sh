@@ -84,8 +84,9 @@ echo "Installing from ${req_file}"
 pip install -r $req_file $PIP_ARGS
 
 ls -la
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+echo "Script dir: $SCRIPT_DIR"
 python $SCRIPT_DIR/python/gigl/scripts/post_install.py
 
 conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
