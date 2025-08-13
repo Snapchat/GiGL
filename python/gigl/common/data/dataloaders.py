@@ -100,10 +100,12 @@ def _concatenate_features_by_names(
 
     features: list[tf.Tensor] = []
 
-    if label_key is not None:
-        feature_keys.append(label_key)
+    feature_iterable = feature_keys.copy()
 
-    for feature_key in feature_keys:
+    if label_key is not None:
+        feature_iterable.append(label_key)
+
+    for feature_key in feature_iterable:
         tensor = feature_key_to_tf_tensor[feature_key]
 
         # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
@@ -371,15 +373,12 @@ class TFRecordDataLoader:
                 if entity_type == FeatureTypes.NODE
                 else torch.empty(2, 0)
             )
-            if feature_keys:
-                if label_key:
-                    empty_feature = torch.empty(
-                        0, serialized_tf_record_info.feature_dim + 1
-                    )
-                else:
-                    empty_feature = torch.empty(
-                        0, serialized_tf_record_info.feature_dim
-                    )
+            if label_key:
+                empty_feature = torch.empty(
+                    0, serialized_tf_record_info.feature_dim + 1
+                )
+            elif feature_keys:
+                empty_feature = torch.empty(0, serialized_tf_record_info.feature_dim)
             else:
                 empty_feature = None
             return empty_entity, empty_feature
