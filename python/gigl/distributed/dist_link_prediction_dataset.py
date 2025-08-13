@@ -510,6 +510,7 @@ class DistLinkPredictionDataset(DistDataset):
             node_type_to_partitioned_node_features = {
                 node_type: feature_partition_data.feats
                 for node_type, feature_partition_data in partition_output.partitioned_node_features.items()
+                if feature_partition_data.feats.numel() > 0
             }
             node_type_to_partitioned_node_feature_ids = {
                 node_type: feature_partition_data.ids

@@ -38,6 +38,7 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_process_group_name,
 )
+from gigl.distributed.utils.node_labels import get_labels_from_features
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -54,24 +55,6 @@ from gigl.utils.data_splitters import (
 )
 
 logger = Logger()
-
-
-def _separate_tensor(tensor: torch.Tensor):
-    # Get the shape of the input tensor
-    N, X_plus_1 = tensor.shape
-
-    # Calculate X
-    X = X_plus_1 - 1
-
-    # Handle the edge case where X = 0
-    if X == 0:
-        first_tensor = None
-    else:
-        first_tensor = tensor[:, :X]
-
-    second_tensor = tensor[:, X:X_plus_1]
-
-    return first_tensor, second_tensor
 
 
 @tf_on_cpu
@@ -225,7 +208,7 @@ def _load_and_build_partitioned_dataset(
                 node_type,
                 node_feature,
             ) in partition_output.partitioned_node_features.items():
-                node_features, node_labels[node_type] = _separate_tensor(
+                node_features, node_labels[node_type] = get_labels_from_features(
                     node_feature.feats
                 )
                 partition_output.partitioned_node_features[
@@ -234,7 +217,7 @@ def _load_and_build_partitioned_dataset(
         elif isinstance(
             partition_output.partitioned_node_features, FeaturePartitionData
         ):
-            node_features, node_labels = _separate_tensor(
+            node_features, node_labels = get_labels_from_features(
                 partition_output.partitioned_node_features.feats
             )
             partition_output.partitioned_node_features.feats = node_features
