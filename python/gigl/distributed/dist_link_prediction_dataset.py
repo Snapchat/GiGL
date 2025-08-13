@@ -488,11 +488,12 @@ class DistLinkPredictionDataset(DistDataset):
             else:
                 node_id2idx = id2idx(partitioned_node_feature_ids)
 
-            self.init_node_features(
-                node_feature_data=partitioned_node_features,
-                id2idx=node_id2idx,
-                with_gpu=False,
-            )
+            if partitioned_node_features.numel() > 0:
+                self.init_node_features(
+                    node_feature_data=partitioned_node_features,
+                    id2idx=node_id2idx,
+                    with_gpu=False,
+                )
             if node_labels is not None:
                 self.init_node_labels(node_label_data=node_labels, id2idx=node_id2idx)
             self._node_feature_info = FeatureInfo(
@@ -527,11 +528,12 @@ class DistLinkPredictionDataset(DistDataset):
                     node_type_to_id2idx[node_type] = id2idx(
                         node_type_to_partitioned_node_feature_ids[node_type]
                     )
-            self.init_node_features(
-                node_feature_data=node_type_to_partitioned_node_features,
-                id2idx=node_type_to_id2idx,
-                with_gpu=False,
-            )
+            if node_type_to_partitioned_node_features:
+                self.init_node_features(
+                    node_feature_data=node_type_to_partitioned_node_features,
+                    id2idx=node_type_to_id2idx,
+                    with_gpu=False,
+                )
             if node_labels is not None:
                 self.init_node_labels(
                     node_label_data=node_labels, id2idx=node_type_to_id2idx

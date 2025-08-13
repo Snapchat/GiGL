@@ -1,5 +1,6 @@
 import torch
 
+
 def get_labels_from_features(
     feature_and_label_tensor: torch.Tensor, label_dim: int = 1
 ) -> tuple[torch.Tensor, torch.Tensor]:
