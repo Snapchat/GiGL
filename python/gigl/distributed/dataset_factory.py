@@ -334,9 +334,9 @@ def _build_dataset_process(
         master_port=rpc_port,
         num_rpc_threads=16,
     )
-    # HashedNodeAnchorLinkSplitter requires rpc to be initialized, so we initialize it here.
+    # Splitters requires rpc to be initialized, so we initialize it here.
     should_teardown_process_group = False
-    if isinstance(splitter, HashedNodeAnchorLinkSplitter):
+    if splitter is not None:
         should_teardown_process_group = True
         torch.distributed.init_process_group(
             backend="gloo",
