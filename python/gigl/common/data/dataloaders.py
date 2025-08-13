@@ -28,7 +28,7 @@ class SerializedTFRecordInfo:
     # Uri Prefix for stored TfRecords
     tfrecord_uri_prefix: Uri
     # Feature names to load for the current entity
-    feature_keys: Sequence[str]
+    feature_keys: list[str]
     # a dict of feature name -> FeatureSpec (eg. FixedLenFeature, VarlenFeature, SparseFeature, RaggedFeature). If entity keys are not present, we insert them during tensor loading
     feature_spec: FeatureSpecDict
     # Feature dimension of current entity
@@ -80,7 +80,7 @@ class TFDatasetOptions:
 
 def _concatenate_features_by_names(
     feature_key_to_tf_tensor: dict[str, tf.Tensor],
-    feature_keys: Sequence[str],
+    feature_keys: list[str],
     label_key: Optional[str],
 ) -> tf.Tensor:
     """

@@ -377,7 +377,7 @@ class DistLinkPredictionDataset(DistDataset):
     def build(
         self,
         partition_output: PartitionOutput,
-        node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+        node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
         splitter: Optional[NodeAnchorLinkSplitter] = None,
     ) -> None:
         """
@@ -392,6 +392,7 @@ class DistLinkPredictionDataset(DistDataset):
 
         Args:
             partition_output (PartitionOutput): Partitioned Graph to be stored in the DistLinkPredictionDataset class
+            node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Node labels to register to the dataset class
             splitter (Optional[NodeAnchorLinkSplitter]): A function that takes in an edge index and returns:
                                                             * a tuple of train, val, and test node ids, if heterogeneous
                                                             * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
