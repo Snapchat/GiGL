@@ -1,4 +1,5 @@
 # Security Protocol
 
-If you discover a security vulnerability, please do not report it publicly. Instead, email us at:
-`opensource [at] snap [dot] com`. We’ll do our best to respond quickly and fix the issue.
+If you believe you’ve found a security vulnerability in this project, please report it via our HackerOne program: [https://hackerone.com/snapchat](https://hackerone.com/snapchat)
+
+Please include as much detail as possible to help us validate and fix the issue quickly.
