@@ -96,10 +96,14 @@ class DistLinkPredictionDataset(DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
+            node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): The labels of each node on the current machine. Will be a dict if heterogeneous.
         """
         self._rank: int = rank
         self._world_size: int = world_size
         self._edge_dir: Literal["in", "out"] = edge_dir
+        self._node_labels: Optional[
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        ] = node_labels
 
         super().__init__(
             num_partitions=world_size,
@@ -237,6 +241,19 @@ class DistLinkPredictionDataset(DistDataset):
     @property
     def node_ids(self) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
         return self._node_ids
+
+    @property
+    def node_labels(
+        self,
+    ) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
+        return self._node_labels
+
+    @node_labels.setter
+    def node_labels(
+        self,
+        new_node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+    ):
+        self._node_labels = new_node_labels
 
     @property
     def node_feature_info(
@@ -732,6 +749,7 @@ class DistLinkPredictionDataset(DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
+            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Node labels on the current machine. Will be a dict if heterogeneous.
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -757,7 +775,7 @@ class DistLinkPredictionDataset(DistDataset):
             self._num_test,  # Additional field unique to DistLinkPredictionDataset class
             self._node_feature_info,  # Additional field unique to DistLinkPredictionDataset class
             self._edge_feature_info,  # Additional field unique to DistLinkPredictionDataset class
-            self.node_labels,
+            self._node_labels,
         )
         return ipc_handle
 
@@ -851,7 +869,9 @@ def _rebuild_dist_link_prediction_dataset(
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+        Optional[
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        ],  # Node Label Tensor
     ]
 ):
     dataset = DistLinkPredictionDataset.from_ipc_handle(ipc_handle)
