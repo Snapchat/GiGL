@@ -24,7 +24,7 @@ from gigl.types.graph import (
     GraphPartitionData,
     PartitionOutput,
 )
-from gigl.utils.data_splitters import NodeAnchorLinkSplitter
+from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeAnchorSplitter
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
@@ -378,7 +378,7 @@ class DistLinkPredictionDataset(DistDataset):
         self,
         partition_output: PartitionOutput,
         node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
-        splitter: Optional[NodeAnchorLinkSplitter] = None,
+        splitter: Optional[Union[NodeAnchorSplitter, NodeAnchorLinkSplitter]] = None,
     ) -> None:
         """
         Provided some partition graph information, this method stores these tensors inside of the class for
@@ -393,7 +393,7 @@ class DistLinkPredictionDataset(DistDataset):
         Args:
             partition_output (PartitionOutput): Partitioned Graph to be stored in the DistLinkPredictionDataset class
             node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Node labels to register to the dataset class
-            splitter (Optional[NodeAnchorLinkSplitter]): A function that takes in an edge index and returns:
+            splitter (Optional[Union[NodeAnchorSplitter, NodeAnchorLinkSplitter]]): A function that takes in an edge index or node and returns:
                                                             * a tuple of train, val, and test node ids, if heterogeneous
                                                             * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
                                                Optional as not all datasets need to be split on, e.g. if we're doing inference.
@@ -442,11 +442,25 @@ class DistLinkPredictionDataset(DistDataset):
         )
 
         # Splitting logic for training
-
-        if splitter is not None:
+        if isinstance(splitter, NodeAnchorLinkSplitter):
             split_start = time.time()
             logger.info("Starting splitting edges...")
             splits = splitter(edge_index=partitioned_edge_index)
+            logger.info(
+                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
+            )
+        elif isinstance(splitter, NodeAnchorSplitter):
+            split_start = time.time()
+            logger.info("Starting splitting nodes...")
+            node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
+                {
+                    node_type: get_ids_on_rank(partition_book, rank=self._rank)
+                    for node_type, partition_book in self._node_partition_book.items()
+                }
+                if isinstance(self._node_partition_book, abc.Mapping)
+                else get_ids_on_rank(self._node_partition_book, rank=self._rank)
+            )
+            splits = splitter(node_ids=node_ids)
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )
