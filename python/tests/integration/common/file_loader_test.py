@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import uuid
+from typing import Dict
 
 from parameterized import param, parameterized
 
@@ -94,7 +95,7 @@ class FileLoaderTest(unittest.TestCase):
         local_fs.create_empty_file_if_none_exists(local_path=local_file_path_src)
         self.assertTrue(local_fs.does_path_exist(local_file_path_src))
 
-        file_uri_map: dict[Uri, Uri] = {local_file_path_src: local_file_path_dst}
+        file_uri_map: Dict[Uri, Uri] = {local_file_path_src: local_file_path_dst}
         self.file_loader.load_files(source_to_dest_file_uri_map=file_uri_map)
         self.assertTrue(local_fs.does_path_exist(local_file_path_dst))
         self.assertTrue(os.path.islink(local_file_path_dst.uri))
@@ -120,7 +121,7 @@ class FileLoaderTest(unittest.TestCase):
         local_fs.create_empty_file_if_none_exists(local_path=local_file_path_src)
         self.assertTrue(local_fs.does_path_exist(local_file_path_src))
 
-        file_uri_map: dict[Uri, Uri] = {local_file_path_src: gcs_file_path_dst}
+        file_uri_map: Dict[Uri, Uri] = {local_file_path_src: gcs_file_path_dst}
         self.file_loader.load_files(source_to_dest_file_uri_map=file_uri_map)
         self.assertTrue(self.gcs_utils.does_gcs_file_exist(gcs_path=gcs_file_path_dst))
         self.gcs_utils.delete_gcs_file_if_exist(gcs_path=gcs_file_path_dst)
@@ -133,7 +134,7 @@ class FileLoaderTest(unittest.TestCase):
             self.test_asset_directory, "test_http_to_local.txt"
         )
         local_fs.remove_file_if_exist(local_path=local_file_path_dst)
-        file_uri_map: dict[Uri, Uri] = {http_file_path_src: local_file_path_dst}
+        file_uri_map: Dict[Uri, Uri] = {http_file_path_src: local_file_path_dst}
         self.file_loader.load_files(source_to_dest_file_uri_map=file_uri_map)
         self.assertTrue(local_fs.does_path_exist(local_file_path_dst))
 
@@ -163,7 +164,7 @@ class FileLoaderTest(unittest.TestCase):
         local_fs.remove_file_if_exist(local_path=local_file_path_src)
         self.assertTrue(self.gcs_utils.does_gcs_file_exist(gcs_file_path_src))
 
-        file_uri_map: dict[Uri, Uri] = {gcs_file_path_src: local_file_path_dst}
+        file_uri_map: Dict[Uri, Uri] = {gcs_file_path_src: local_file_path_dst}
         self.file_loader.load_files(source_to_dest_file_uri_map=file_uri_map)
         self.assertTrue(local_fs.does_path_exist(local_file_path_dst))
         self.gcs_utils.delete_gcs_file_if_exist(gcs_path=gcs_file_path_src)
@@ -208,7 +209,7 @@ class FileLoaderTest(unittest.TestCase):
             local_fs.create_empty_file_if_none_exists(local_path=file)
             self.assertTrue(local_fs.does_path_exist(file))
 
-        dir_uri_map: dict[Uri, Uri] = {local_src_dir: local_dst_dir}
+        dir_uri_map: Dict[Uri, Uri] = {local_src_dir: local_dst_dir}
         self.file_loader.load_directories(source_to_dest_directory_map=dir_uri_map)
 
         for file in local_file_paths_dst:
@@ -236,7 +237,7 @@ class FileLoaderTest(unittest.TestCase):
             local_fs.create_empty_file_if_none_exists(local_path=file)
             self.assertTrue(local_fs.does_path_exist(file))
 
-        dir_uri_map: dict[Uri, Uri] = {local_src_dir: gcs_dst_dir}
+        dir_uri_map: Dict[Uri, Uri] = {local_src_dir: gcs_dst_dir}
         self.file_loader.load_directories(source_to_dest_directory_map=dir_uri_map)
 
         for gcs_file in gcs_file_paths_dst:
@@ -274,7 +275,7 @@ class FileLoaderTest(unittest.TestCase):
             local_fs.create_empty_file_if_none_exists(local_file)
             self.assertTrue(local_fs.does_path_exist(local_file))
 
-        local_file_path_to_gcs_path_map: dict[LocalUri, GcsUri] = {
+        local_file_path_to_gcs_path_map: Dict[LocalUri, GcsUri] = {
             local_file_path_src: gcs_file_path_src
             for local_file_path_src, gcs_file_path_src in zip(
                 local_file_paths_src, gcs_file_paths_src
@@ -287,7 +288,7 @@ class FileLoaderTest(unittest.TestCase):
             self.assertTrue(self.gcs_utils.does_gcs_file_exist(gcs_file))
         local_fs.remove_folder_if_exist(local_path=local_src_dir)
 
-        dir_uri_map: dict[Uri, Uri] = {gcs_src_dir: local_dst_dir}
+        dir_uri_map: Dict[Uri, Uri] = {gcs_src_dir: local_dst_dir}
         self.file_loader.load_directories(source_to_dest_directory_map=dir_uri_map)
 
         for file in local_file_paths_dst:
@@ -305,7 +306,7 @@ class FileLoaderTest(unittest.TestCase):
         gcs_dst_dir: GcsUri = GcsUri.join(
             self.gcs_test_asset_directory, self.test_asset_directory, "dst"
         )
-        dir_uri_map: dict[Uri, Uri] = {gcs_src_dir: gcs_dst_dir}
+        dir_uri_map: Dict[Uri, Uri] = {gcs_src_dir: gcs_dst_dir}
 
         with self.assertRaises(TypeError):
             self.file_loader.load_directories(source_to_dest_directory_map=dir_uri_map)

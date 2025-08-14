@@ -1,3 +1,5 @@
+from typing import Dict
+
 from gigl.common.logger import Logger
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -54,7 +56,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
 
     def get_nodes_preprocessing_spec(
         self,
-    ) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
+    ) -> Dict[NodeDataReference, NodeDataPreprocessingSpec]:
         node_data_ref = BigqueryNodeDataReference(
             reference_uri=self._bq_nodes_table_name,
             node_type=NodeType(self._node_type),
@@ -80,7 +82,7 @@ class ToyDataPreprocessorConfig(DataPreprocessorConfig):
 
     def get_edges_preprocessing_spec(
         self,
-    ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+    ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
         edge_data_ref = BigqueryEdgeDataReference(
             reference_uri=self._bq_edges_table_name,
             edge_type=EdgeType(

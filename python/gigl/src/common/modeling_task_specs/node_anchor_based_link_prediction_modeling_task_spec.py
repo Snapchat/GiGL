@@ -1,8 +1,7 @@
-from collections import OrderedDict
 from contextlib import ExitStack
 from distutils.util import strtobool
 from time import time
-from typing import Any, Optional, Type
+from typing import Any, Dict, Optional, OrderedDict, Type
 
 import torch
 import torch.distributed
@@ -110,7 +109,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         except ImportError as e:
             logger.error(f"Could not import optimizer from {optim_cls_path}: {e}")
             raise e
-        self._optim_kwargs: dict[str, Any] = {}
+        self._optim_kwargs: Dict[str, Any] = {}
         self._optim_kwargs["lr"] = float(kwargs.get("optim_lr", 5e-3))
         self._optim_kwargs["weight_decay"] = float(
             kwargs.get("optim_weight_decay", 1e-6)
@@ -128,7 +127,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         except ImportError as e:
             logger.error(f"Could not import LRScheduler from {lr_scheduler_path}: {e}")
             raise e
-        self._lr_scheduler_kwargs: dict[str, Any] = {}
+        self._lr_scheduler_kwargs: Dict[str, Any] = {}
         self._lr_scheduler_kwargs["factor"] = float(kwargs.get("factor", 1.0))
         self._lr_scheduler_kwargs["total_iters"] = int(kwargs.get("total_iters", 10))
 
@@ -140,7 +139,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         random_negative_sample_batch_size_for_evaluation = int(
             kwargs.get("random_negative_sample_batch_size_for_evaluation", 512)
         )
-        dataloader_batch_size_map: dict[DataloaderTypes, int] = {
+        dataloader_batch_size_map: Dict[DataloaderTypes, int] = {
             DataloaderTypes.train_main: main_sample_batch_size,
             DataloaderTypes.val_main: main_sample_batch_size,
             DataloaderTypes.test_main: main_sample_batch_size,
@@ -150,7 +149,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         }
 
         # TODO (mkolodner-sc): Investigate how we can automatically infer num_worker values
-        dataloader_num_workers_map: dict[DataloaderTypes, int] = {
+        dataloader_num_workers_map: Dict[DataloaderTypes, int] = {
             DataloaderTypes.train_main: int(kwargs.get("train_main_num_workers", 4)),
             DataloaderTypes.val_main: int(kwargs.get("val_main_num_workers", 2)),
             DataloaderTypes.test_main: int(kwargs.get("test_main_num_workers", 2)),
@@ -237,15 +236,15 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper = (
             gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
         )
-        condensed_node_type_to_feat_dim_map: dict[
+        condensed_node_type_to_feat_dim_map: Dict[
             CondensedNodeType, int
         ] = preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map
-        condensed_edge_type_to_feat_dim_map: dict[
+        condensed_edge_type_to_feat_dim_map: Dict[
             CondensedEdgeType, int
         ] = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map
         encoder_model: nn.Module
         if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous:
-            node_type_to_feat_dim_map: dict[NodeType, int] = {
+            node_type_to_feat_dim_map: Dict[NodeType, int] = {
                 gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
                     condensed_node_type
                 ]: condensed_node_type_to_feat_dim_map[
@@ -253,7 +252,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
                 ]
                 for condensed_node_type in condensed_node_type_to_feat_dim_map
             }
-            edge_type_to_feat_dim_map: dict[EdgeType, int] = {
+            edge_type_to_feat_dim_map: Dict[EdgeType, int] = {
                 gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
                     condensed_edge_type
                 ]: condensed_edge_type_to_feat_dim_map[
@@ -469,7 +468,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         device: torch.device,
         num_batches: int,
-    ) -> dict[EvalMetricType, Any]:
+    ) -> Dict[EvalMetricType, Any]:
         """
         Get the validation metrics for the model using the similarity scores for the positive and negative samples.
 
@@ -479,7 +478,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
             device: torch.device to run the validation on
 
         Returns:
-            dict[str, Any]: Metrics for validation
+            Dict[str, Any]: Metrics for validation
         """
 
         self.model.eval()
@@ -488,14 +487,14 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         ks_for_evaluation = torch.LongTensor(KS_FOR_EVAL).to(device)
         num_nodes_for_rank_eval_computation = 0
         # Currently support mrr, loss, and hits@k metrics for validation and testing
-        metrics: dict[EvalMetricType, torch.Tensor] = {
+        metrics: Dict[EvalMetricType, torch.Tensor] = {
             EvalMetricType.mrr: torch.FloatTensor([0.0]).to(device),
             EvalMetricType.loss: torch.FloatTensor([0.0]).to(device),
             EvalMetricType.hits: torch.zeros_like(
                 ks_for_evaluation, dtype=torch.float32
             ).to(device),
         }
-        final_metrics: dict[EvalMetricType, Any] = {}
+        final_metrics: Dict[EvalMetricType, Any] = {}
 
         if is_distributed_available_and_initialized():
             # In cases of uneven batch sizes per rank, we force to be even, reducing overall batch size to evaluate

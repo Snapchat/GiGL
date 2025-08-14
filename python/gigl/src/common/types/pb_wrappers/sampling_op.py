@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Set, Union, cast
+from typing import Dict, Optional, Set, Union, cast
 
 from gigl.src.common.types.exception import (
     SubgraphSamplingValidationError,
@@ -99,7 +99,7 @@ class UserDefinedPbWrapper:
         return self.user_defined_pb.path_to_udf
 
     @property
-    def params(self) -> dict[str, str]:
+    def params(self) -> Dict[str, str]:
         return dict(self.user_defined_pb.params)
 
 

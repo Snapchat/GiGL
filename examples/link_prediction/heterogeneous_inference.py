@@ -22,7 +22,7 @@ You can run this example in a full pipeline with `make run_het_dblp_sup_test` fr
 import argparse
 import gc
 import time
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 import torch
 import torch.distributed
@@ -68,10 +68,10 @@ def _inference_process(
     hid_dim: int,
     out_dim: int,
     dataset: DistLinkPredictionDataset,
-    inferencer_args: dict[str, str],
+    inferencer_args: Dict[str, str],
     inference_node_type: NodeType,
-    node_type_to_feature_dim: dict[NodeType, int],
-    edge_type_to_feature_dim: dict[EdgeType, int],
+    node_type_to_feature_dim: Dict[NodeType, int],
+    edge_type_to_feature_dim: Dict[EdgeType, int],
 ):
     """
     This function is spawned by multiple processes per machine and is responsible for:
@@ -92,11 +92,11 @@ def _inference_process(
         hid_dim (int): Hidden dimension of the model
         out_dim (int): Output dimension of the model
         dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
-        inferencer_args (dict[str, str]): Additional arguments for inferencer
+        inferencer_args (Dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for in current inference process. This is used to
             tag the embeddings written to GCS.
-        node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension per node type for the model
-        edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension per edge type for the model
+        node_type_to_feature_dim (Dict[NodeType, int]): Input node feature dimension per node type for the model
+        edge_type_to_feature_dim (Dict[EdgeType, int]): Input edge feature dimension per edge type for the model
     """
 
     # Parses the fanout as a string.
@@ -146,7 +146,7 @@ def _inference_process(
 
     # Get the node ids on the current machine for the current node type
     node_type_to_input_node_ids: Optional[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
     ] = dataset.node_ids
     assert isinstance(
         node_type_to_input_node_ids, dict
@@ -330,14 +330,14 @@ def _run_example_inference(
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    node_type_to_feature_dim: dict[NodeType, int] = {
+    node_type_to_feature_dim: Dict[NodeType, int] = {
         graph_metadata.condensed_node_type_to_node_type_map[
             condensed_node_type
         ]: node_feature_dim
         for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
     }
 
-    edge_type_to_feature_dim: dict[EdgeType, int] = {
+    edge_type_to_feature_dim: Dict[EdgeType, int] = {
         graph_metadata.condensed_edge_type_to_edge_type_map[
             condensed_edge_type
         ]: edge_feature_dim

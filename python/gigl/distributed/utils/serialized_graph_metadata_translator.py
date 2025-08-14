@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Dict, Tuple, Union
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
@@ -60,10 +60,10 @@ def convert_pb_to_serialized_graph_metadata(
         SerializedGraphMetadata: Dataset Metadata for all entity and node/edge types.
     """
 
-    node_entity_info: dict[NodeType, SerializedTFRecordInfo] = {}
-    edge_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
-    positive_label_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
-    negative_label_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
+    node_entity_info: Dict[NodeType, SerializedTFRecordInfo] = {}
+    edge_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
+    positive_label_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
+    negative_label_entity_info: Dict[EdgeType, SerializedTFRecordInfo] = {}
 
     preprocessed_metadata_pb = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
 

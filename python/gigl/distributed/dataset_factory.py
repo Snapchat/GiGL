@@ -5,7 +5,7 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 import time
 from collections import abc
 from distutils.util import strtobool
-from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
+from typing import Dict, Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -111,7 +111,7 @@ def _load_and_build_partitioned_dataset(
             raise ValueError(
                 "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
             )
-        positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        positive_label_edges: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         if isinstance(loaded_graph_tensors.edge_index, abc.Mapping):
             # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
             # we can remove this assert.

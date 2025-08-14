@@ -1,5 +1,5 @@
 from collections import Counter, abc
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -38,7 +38,7 @@ class DistNeighborLoader(DistLoader):
     def __init__(
         self,
         dataset: DistLinkPredictionDataset,
-        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
+        num_neighbors: Union[list[int], Dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -63,7 +63,7 @@ class DistNeighborLoader(DistLoader):
 
         Args:
             dataset (DistLinkPredictionDataset): The dataset to sample from.
-            num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
+            num_neighbors (list[int] or Dict[Tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting

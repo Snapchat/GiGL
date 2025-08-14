@@ -62,7 +62,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Final, Optional
+from typing import Dict, Final, Optional
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -93,14 +93,14 @@ class VertexAiJobConfig:
     container_uri: str
     command: list[str]
     args: Optional[list[str]] = None
-    environment_variables: Optional[list[dict[str, str]]] = None
+    environment_variables: Optional[list[Dict[str, str]]] = None
     machine_type: str = "n1-standard-4"
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
     replica_count: int = 1
     boot_disk_type: str = "pd-ssd"  # Persistent Disk SSD
     boot_disk_size_gb: int = 100  # Default disk size in GB
-    labels: Optional[dict[str, str]] = None
+    labels: Optional[Dict[str, str]] = None
     timeout_s: Optional[
         int
     ] = None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
@@ -250,7 +250,7 @@ class VertexAIService:
         self,
         display_name: str,
         template_path: Uri,
-        run_keyword_args: dict[str, str],
+        run_keyword_args: Dict[str, str],
         job_id: Optional[str] = None,
         experiment: Optional[str] = None,
     ) -> aiplatform.PipelineJob:
@@ -262,7 +262,7 @@ class VertexAIService:
         Args:
             display_name (str): The display of the pipeline.
             template_path (Uri): The path to the compiled pipeline YAML.
-            run_keyword_args (dict[str, str]): Runtime arguements passed to your pipeline.
+            run_keyword_args (Dict[str, str]): Runtime arguements passed to your pipeline.
             job_id (Optional[str]): The ID of the job. If not provided will be the *pipeline_name* + datetime.
                                     Note: The pipeline_name and display_name are *not* the same.
                                     Note: pipeline_name comes is defined in the `template_path` and ultimately comes from Python pipeline definition.

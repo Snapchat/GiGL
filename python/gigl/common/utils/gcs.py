@@ -4,7 +4,7 @@ import tempfile
 import typing
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
-from typing import IO, AnyStr, Iterable, Optional, Tuple, Union
+from typing import IO, AnyStr, Dict, Iterable, Optional, Tuple, Union
 
 import google.cloud.exceptions as google_exceptions
 import google.cloud.storage as storage
@@ -58,7 +58,7 @@ def _pickling_safe_upload_file_to_gcs(obj: Tuple[Tuple[LocalUri, GcsUri], str]):
 
 
 def _upload_files_to_gcs_parallel(
-    project: str, local_file_path_to_gcs_path_map: dict[LocalUri, GcsUri]
+    project: str, local_file_path_to_gcs_path_map: Dict[LocalUri, GcsUri]
 ):
     with ProcessPoolExecutor(max_workers=None) as executor:
         results = executor.map(
@@ -121,14 +121,14 @@ class GcsUtils:
 
     def upload_files_to_gcs(
         self,
-        local_file_path_to_gcs_path_map: dict[LocalUri, GcsUri],
+        local_file_path_to_gcs_path_map: Dict[LocalUri, GcsUri],
         parallel: bool = True,
     ) -> None:
         """
         Upload files from local paths to their subsequent provided GCS paths.
 
         Args:
-            local_file_path_to_gcs_path_map (dict[LocalUri, GcsUri]): A dictionary mapping local file paths to GCS paths.
+            local_file_path_to_gcs_path_map (Dict[LocalUri, GcsUri]): A dictionary mapping local file paths to GCS paths.
             parallel (bool): Flag indicating whether to upload files in parallel. Defaults to True.
         """
         if parallel:
@@ -224,7 +224,7 @@ class GcsUtils:
         return file_blobs
 
     def download_files_from_gcs_paths_to_local_paths(
-        self, file_map: dict[GcsUri, LocalUri]
+        self, file_map: Dict[GcsUri, LocalUri]
     ):
         """
         Downloads files from GCS path to local path.

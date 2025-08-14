@@ -7,7 +7,7 @@ import sys
 import threading
 import traceback
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
@@ -82,14 +82,14 @@ class InferencerV1:
 
     def write_from_gcs_to_bq(
         self,
-        schema: dict[str, list[dict[str, str]]],
+        schema: Dict[str, list[Dict[str, str]]],
         gcs_uri: GcsUri,
         bq_table_uri: str,
     ) -> None:
         """
         Writes embeddings or predictions from gcs folder to bq table with specified schema
         Args:
-            schema (Optional[dict[str, list[dict[str, str]]]): BQ Table schema for embeddings or predictions from inference output
+            schema (Optional[Dict[str, list[Dict[str, str]]]): BQ Table schema for embeddings or predictions from inference output
             gcs_uri (GcsUri): GCS Folder for embeddings or predictions from inference output
             bq_table_uri (str): Path to the table for embeddings or predictions output
         """
@@ -111,7 +111,7 @@ class InferencerV1:
         logger.info(f"Finished loading to BQ table {bq_table_uri}")
 
     def generate_inferencer_instance(self) -> BaseInferencer:
-        kwargs: dict[str, Any] = {}
+        kwargs: Dict[str, Any] = {}
 
         inferencer_class_path: str = (
             self.gbml_config_pb_wrapper.inferencer_config.inferencer_cls_path
@@ -260,7 +260,7 @@ class InferencerV1:
                 graph_builder=graph_builder,
             )
         )
-        node_type_to_inferencer_output_paths_map: dict[
+        node_type_to_inferencer_output_paths_map: Dict[
             NodeType, InferencerOutputPaths
         ] = dict()
         dataflow_setup_lock = threading.Lock()
@@ -270,7 +270,7 @@ class InferencerV1:
         num_workers = min(get_available_cpus(), MAX_INFERENCER_NUM_WORKERS)
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
             logger.info(f"Using up to {num_workers} threads.")
-            futures: dict[
+            futures: Dict[
                 concurrent.futures.Future[InferencerOutputPaths], NodeType
             ] = dict()
             for (

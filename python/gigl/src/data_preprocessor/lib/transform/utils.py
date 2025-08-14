@@ -337,7 +337,7 @@ def get_load_data_and_transform_pipeline_component(
         )
 
         # The transformed_features returned by tft_beam.TransformDataset is a
-        # PCollection of Tuple[pa.RecordBatch, dict[str, pa.Array]]. The first
+        # PCollection of Tuple[pa.RecordBatch, Dict[str, pa.Array]]. The first
         # one are the transformed features. The second one are the passthrough
         # features, which doesn't apply here since we do not specify passthrough_keys
         # in tft_beam.Context. Hence we drop the second one in the tuple.

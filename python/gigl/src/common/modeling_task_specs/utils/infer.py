@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Set, Union
+from typing import Dict, Set, Union
 
 import torch
 import torch.nn as nn
@@ -42,7 +42,7 @@ def infer_training_batch(
     ],
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     device: torch.device,
-) -> dict[CondensedNodeType, torch.Tensor]:
+) -> Dict[CondensedNodeType, torch.Tensor]:
     # Compute embeddings for all nodes in the main and random batches.
     if isinstance(training_batch, NodeAnchorBasedLinkPredictionBatch) or isinstance(
         training_batch, RootedNodeNeighborhoodBatch
@@ -61,7 +61,7 @@ def infer_training_batch(
     output_node_types = [NodeType(node_type) for node_type in supervision_node_types]
 
     training_batch = training_batch.to(device=device)
-    node_type_to_embeddings: dict[NodeType, torch.Tensor] = model(
+    node_type_to_embeddings: Dict[NodeType, torch.Tensor] = model(
         data=training_batch, output_node_types=output_node_types, device=device
     )
     return {
@@ -92,7 +92,7 @@ def infer_root_embeddings(
         raise NotImplementedError(
             "Stage 3 HGS is not yet supported -- training can only be performed with one unique source node type."
         )
-    node_type_to_embeddings: dict[NodeType, torch.Tensor] = model(
+    node_type_to_embeddings: Dict[NodeType, torch.Tensor] = model(
         data=batch_graph, output_node_types=output_node_types, device=device
     )
     out = node_type_to_embeddings[output_node_types[0]]
@@ -109,25 +109,25 @@ def infer_task_inputs(
     device: torch.device,
 ) -> NodeAnchorBasedLinkPredictionTaskInputs:
     # Initializing empty container values
-    batch_scores: list[dict[CondensedEdgeType, BatchScores]] = []
-    batch_combined_scores: dict[CondensedEdgeType, BatchCombinedScores] = {}
+    batch_scores: list[Dict[CondensedEdgeType, BatchScores]] = []
+    batch_combined_scores: Dict[CondensedEdgeType, BatchCombinedScores] = {}
 
-    pos_embeddings: dict[CondensedEdgeType, torch.FloatTensor] = {}
-    hard_neg_embeddings: dict[CondensedEdgeType, torch.FloatTensor] = {}
-    repeated_anchor_embeddings: dict[CondensedEdgeType, torch.FloatTensor] = {}
+    pos_embeddings: Dict[CondensedEdgeType, torch.FloatTensor] = {}
+    hard_neg_embeddings: Dict[CondensedEdgeType, torch.FloatTensor] = {}
+    repeated_anchor_embeddings: Dict[CondensedEdgeType, torch.FloatTensor] = {}
 
-    _pos_embeddings: dict[CondensedEdgeType, list[torch.FloatTensor]] = defaultdict(
+    _pos_embeddings: Dict[CondensedEdgeType, list[torch.FloatTensor]] = defaultdict(
         list
     )
-    _hard_neg_embeddings: dict[
+    _hard_neg_embeddings: Dict[
         CondensedEdgeType, list[torch.FloatTensor]
     ] = defaultdict(list)
 
-    _positive_ids: dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
-    _hard_neg_ids: dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
+    _positive_ids: Dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
+    _hard_neg_ids: Dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
 
     # Map of Condensed Edge Type to list of num_pos_nodes for retrieval calculation
-    repeated_anchor_count: dict[CondensedEdgeType, list[int]] = defaultdict(list)
+    repeated_anchor_count: Dict[CondensedEdgeType, list[int]] = defaultdict(list)
 
     # Populate main_batch and RNN task inputs field
     input_batch = InputBatch(main_batch=main_batch, random_neg_batch=random_neg_batch)
@@ -161,7 +161,7 @@ def infer_task_inputs(
 
     # Forward input batch through model
 
-    main_embeddings: dict[CondensedNodeType, torch.Tensor] = infer_training_batch(
+    main_embeddings: Dict[CondensedNodeType, torch.Tensor] = infer_training_batch(
         model=model,
         training_batch=main_batch,
         gbml_config_pb_wrapper=gbml_config_pb_wrapper,
@@ -174,11 +174,11 @@ def infer_task_inputs(
         device=device,
     )
 
-    main_batch_node_id_mapping: dict[
-        CondensedNodeType, dict[NodeId, NodeId]
+    main_batch_node_id_mapping: Dict[
+        CondensedNodeType, Dict[NodeId, NodeId]
     ] = main_batch.condensed_node_type_to_subgraph_id_to_global_node_id
-    random_negative_batch_node_id_mapping: dict[
-        CondensedNodeType, dict[NodeId, NodeId]
+    random_negative_batch_node_id_mapping: Dict[
+        CondensedNodeType, Dict[NodeId, NodeId]
     ] = random_neg_batch.condensed_node_type_to_subgraph_id_to_global_node_id
 
     # Getting all condensed anchor node types for getting query embeddings
@@ -206,8 +206,8 @@ def infer_task_inputs(
     ]
 
     # Getting RNN Embeddings and Scores
-    random_neg_root_embeddings: dict[CondensedNodeType, torch.FloatTensor] = {}
-    random_neg_scores: dict[CondensedNodeType, torch.FloatTensor] = {}
+    random_neg_root_embeddings: Dict[CondensedNodeType, torch.FloatTensor] = {}
+    random_neg_scores: Dict[CondensedNodeType, torch.FloatTensor] = {}
 
     for (
         condensed_node_type
@@ -234,7 +234,7 @@ def infer_task_inputs(
     # Loop through all root nodes and populate ids, embeddings, and scores per condensed edge type
     for root_node_idx, root_node in enumerate(main_batch_root_node_indices):
         root_node = torch.unsqueeze(root_node, 0)  # shape=[1]
-        _batch_scores: dict[CondensedEdgeType, BatchScores] = {}
+        _batch_scores: Dict[CondensedEdgeType, BatchScores] = {}
         for (
             supervision_edge_type
         ) in (

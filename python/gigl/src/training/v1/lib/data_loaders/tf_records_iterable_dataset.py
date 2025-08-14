@@ -1,4 +1,4 @@
-from typing import Callable, Generic, Iterable, Iterator, TypeVar
+from typing import Callable, Dict, Generic, Iterable, Iterator, TypeVar
 
 import numpy as np
 import tensorflow as tf
@@ -114,20 +114,20 @@ class LoopyIterableDataset(torch.utils.data.IterableDataset, Generic[T]):
 class CombinedIterableDatasets(torch.utils.data.IterableDataset, Generic[T]):
     def __init__(
         self,
-        iterable_dataset_map: dict[
+        iterable_dataset_map: Dict[
             NodeType,
             torch.utils.data.IterableDataset[T],
         ],
     ) -> None:
         self._iterable_dataset_map = iterable_dataset_map
 
-    def __iter__(self) -> Iterator[dict[NodeType, T]]:
+    def __iter__(self) -> Iterator[Dict[NodeType, T]]:
         iterators = [
             (node_type, iter(dataset))
             for node_type, dataset in self._iterable_dataset_map.items()
         ]
         while True:
-            combined_data: dict[NodeType, T] = {}
+            combined_data: Dict[NodeType, T] = {}
             for node_type, iterator in iterators:
                 samples = next(iterator)
                 combined_data[node_type] = samples

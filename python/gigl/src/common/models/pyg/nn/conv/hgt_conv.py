@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 from torch import Tensor
@@ -32,7 +32,7 @@ class HGTConv(MessagePassing):
         hetero/hgt_dblp.py>`_.
 
     Args:
-        in_channels (int or dict[str, int]): Size of each input sample of every
+        in_channels (int or Dict[str, int]): Size of each input sample of every
             node type, or :obj:`-1` to derive the size from the first input(s)
             to the forward method.
         out_channels (int): Size of each output sample.
@@ -49,7 +49,7 @@ class HGTConv(MessagePassing):
 
     def __init__(
         self,
-        in_channels: Union[int, dict[str, int]],
+        in_channels: Union[int, Dict[str, int]],
         out_channels: int,
         metadata: Metadata,
         heads: int = 1,
@@ -105,11 +105,11 @@ class HGTConv(MessagePassing):
         ones(self.skip)
         ones(self.p_rel)
 
-    def _cat(self, x_dict: dict[str, Tensor]) -> Tuple[Tensor, dict[str, int]]:
+    def _cat(self, x_dict: Dict[str, Tensor]) -> Tuple[Tensor, Dict[str, int]]:
         """Concatenates a dictionary of features."""
         cumsum = 0
         outs: list[Tensor] = []
-        offset: dict[str, int] = {}
+        offset: Dict[str, int] = {}
         for key, x in x_dict.items():
             outs.append(x)
             offset[key] = cumsum
@@ -118,10 +118,10 @@ class HGTConv(MessagePassing):
 
     def _construct_src_node_feat(
         self,
-        k_dict: dict[str, Tensor],
-        v_dict: dict[str, Tensor],
-        edge_index_dict: dict[EdgeType, Adj],
-    ) -> Tuple[Tensor, Tensor, dict[EdgeType, int]]:
+        k_dict: Dict[str, Tensor],
+        v_dict: Dict[str, Tensor],
+        edge_index_dict: Dict[EdgeType, Adj],
+    ) -> Tuple[Tensor, Tensor, Dict[EdgeType, int]]:
         """Constructs the source node representations."""
         cumsum = 0
         num_edge_types = len(self.edge_types)
@@ -131,7 +131,7 @@ class HGTConv(MessagePassing):
         ks: list[Tensor] = []
         vs: list[Tensor] = []
         type_list: list[Tensor] = []
-        offset: dict[EdgeType, int] = {}
+        offset: Dict[EdgeType, int] = {}
         for edge_type in edge_index_dict.keys():
             src = edge_type[0]
             N = k_dict[src].size(0)
@@ -161,21 +161,21 @@ class HGTConv(MessagePassing):
 
     def forward(
         self,
-        x_dict: dict[NodeType, Tensor],
-        edge_index_dict: dict[EdgeType, Adj],  # Support both.
-    ) -> dict[NodeType, Optional[Tensor]]:
+        x_dict: Dict[NodeType, Tensor],
+        edge_index_dict: Dict[EdgeType, Adj],  # Support both.
+    ) -> Dict[NodeType, Optional[Tensor]]:
         r"""Runs the forward pass of the module.
 
         Args:
-            x_dict (dict[str, torch.Tensor]): A dictionary holding input node
+            x_dict (Dict[str, torch.Tensor]): A dictionary holding input node
                 features  for each individual node type.
-            edge_index_dict (dict[Tuple[str, str, str], torch.Tensor]): A
+            edge_index_dict (Dict[Tuple[str, str, str], torch.Tensor]): A
                 dictionary holding graph connectivity information for each
                 individual edge type, either as a :class:`torch.Tensor` of
                 shape :obj:`[2, num_edges]` or a
                 :class:`torch_sparse.SparseTensor`.
 
-        :rtype: :obj:`dict[str, Optional[torch.Tensor]]` - The output node
+        :rtype: :obj:`Dict[str, Optional[torch.Tensor]]` - The output node
             embeddings for each node type.
             In case a node type does not receive any message, its output will
             be set to :obj:`None`.

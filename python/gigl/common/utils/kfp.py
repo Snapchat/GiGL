@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -46,7 +46,7 @@ class KfpOutputViewers:
 
         https://www.kubeflow.org/docs/components/pipelines/sdk/output-viewer/
         """
-        self.__outputs_list: list[dict[str, Any]] = []
+        self.__outputs_list: list[Dict[str, Any]] = []
 
     def add_confusion_matrix(
         self, confusion_matrix: np.ndarray, vocab: Optional[list[str]] = None

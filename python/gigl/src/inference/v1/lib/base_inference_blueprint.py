@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Generic, Iterable, Optional, TypeVar
+from typing import Callable, Dict, Generic, Iterable, Optional, TypeVar
 
 import apache_beam as beam
 from apache_beam import pvalue
@@ -145,10 +145,10 @@ class BaseInferenceBlueprint(
             return DEFAULT_PREDICTIONS_TABLE_SCHEMA
 
     @abstractmethod
-    def get_inference_data_tf_record_uri_prefixes(self) -> dict[NodeType, list[Uri]]:
+    def get_inference_data_tf_record_uri_prefixes(self) -> Dict[NodeType, list[Uri]]:
         """
         Returns:
-            dict[NodeType, list[Uri]]: Dictionary of node type to the list of uri prefixes where to find tf record files
+            Dict[NodeType, list[Uri]]: Dictionary of node type to the list of uri prefixes where to find tf record files
             that will be used for inference
         """
         raise NotImplementedError

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from distutils.util import strtobool
-from typing import Optional
+from typing import Dict, Optional
 
 import yaml
 
@@ -43,7 +43,7 @@ class SupportedParams:
                 e,
             )
             raise
-        self.defaults: dict[str, Param] = {
+        self.defaults: Dict[str, Param] = {
             "project": Param(
                 default=project,
                 description="GCP Project name that you are planning on using",
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         parser.add_argument(f"--{key}", type=str, help=help_text)
     args = parser.parse_args()
 
-    values: dict[str, str] = {}
+    values: Dict[str, str] = {}
     for key, param in supported_params.defaults.items():
         # Check if value is provided in command line arguments
         if getattr(args, key):

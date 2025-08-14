@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Type, Union
+from typing import Dict, Type, Union
 
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
@@ -23,9 +23,9 @@ class InputDataStrategy(Enum):
 
 def run_distributed_partitioner(
     rank: int,
-    output_dict: dict[int, PartitionOutput],
+    output_dict: Dict[int, PartitionOutput],
     is_heterogeneous: bool,
-    rank_to_input_graph: dict[int, TestGraphData],
+    rank_to_input_graph: Dict[int, TestGraphData],
     should_assign_edges_by_src_node: bool,
     master_addr: str,
     master_port: int,
@@ -36,9 +36,9 @@ def run_distributed_partitioner(
     Runs the distributed partitioner on a specific rank.
     Args:
         rank (int): Current rank of process
-        output_dict: dict[int, PartitionOutput]: Dict initialized by mp.Manager().dict() in which outputs of partitioner will be written to. This is a mapping of rank to Partition output.
+        output_dict: Dict[int, PartitionOutput]: Dict initialized by mp.Manager().dict() in which outputs of partitioner will be written to. This is a mapping of rank to Partition output.
         is_heterogeneous (bool): Whether homogeneous or heterogeneous inputs should be used
-        rank_to_input_graph (dict[int, TestGraphData]): Mapping of rank to mocked input graph for testing partitioning
+        rank_to_input_graph (Dict[int, TestGraphData]): Mapping of rank to mocked input graph for testing partitioning
         should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
         master_addr (str): Master address for initializing rpc for partitioning
         master_port (int): Master port for initializing rpc for partitioning
@@ -47,12 +47,12 @@ def run_distributed_partitioner(
     """
 
     input_graph = rank_to_input_graph[rank]
-    node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    positive_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    negative_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    node_ids: Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
+    edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
+    node_features: Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
+    edge_features: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
+    positive_labels: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
+    negative_labels: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
 
     if not is_heterogeneous:
         node_ids = input_graph.node_ids[USER_NODE_TYPE]

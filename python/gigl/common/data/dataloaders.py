@@ -2,7 +2,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
 import psutil
 import tensorflow as tf
@@ -77,7 +77,7 @@ class TFDatasetOptions:
 
 
 def _concatenate_features_by_names(
-    feature_key_to_tf_tensor: dict[str, tf.Tensor],
+    feature_key_to_tf_tensor: Dict[str, tf.Tensor],
     feature_keys: Sequence[str],
 ) -> tf.Tensor:
     """
@@ -86,7 +86,7 @@ def _concatenate_features_by_names(
     It is assumed that feature_names is a subset of the keys in feature_name_to_tf_tensor.
 
     Args:
-        feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
+        feature_key_to_tf_tensor (Dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
         feature_keys (list[str]): A list of feature names specifying the order in which tensors should be concatenated.
 
     Returns:
@@ -131,13 +131,13 @@ def _tf_tensor_to_torch_tensor(tf_tensor: tf.Tensor) -> torch.Tensor:
 def _build_example_parser(
     *,
     feature_spec: FeatureSpecDict,
-) -> Callable[[bytes], dict[str, tf.Tensor]]:
+) -> Callable[[bytes], Dict[str, tf.Tensor]]:
     # Wrapping this partial with tf.function gives us a speedup.
     # https://www.tensorflow.org/guide/function
     @tf.function
     def _parse_example(
         example_proto: bytes, spec: FeatureSpecDict
-    ) -> dict[str, tf.Tensor]:
+    ) -> Dict[str, tf.Tensor]:
         return tf.io.parse_example(example_proto, spec)
 
     return partial(_parse_example, spec=feature_spec)

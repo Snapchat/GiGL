@@ -1,6 +1,6 @@
 import datetime
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 from google.cloud.dataproc_v1.types import (
     Cluster,
@@ -37,7 +37,7 @@ class DataprocClusterInitData:
     is_debug_mode: bool
     debug_cluster_owner_alias: Optional[str] = None
     init_script_uri: Optional[GcsUri] = None
-    labels: Optional[dict[str, str]] = None
+    labels: Optional[Dict[str, str]] = None
 
 
 class SparkJobManager:

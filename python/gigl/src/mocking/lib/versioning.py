@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import NamedTuple
+from typing import Dict, NamedTuple
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
@@ -22,7 +22,7 @@ class MockedDatasetArtifactMetadata(NamedTuple):
         }
 
     @staticmethod
-    def from_dict(dict_repr: dict[str, str]) -> MockedDatasetArtifactMetadata:
+    def from_dict(dict_repr: Dict[str, str]) -> MockedDatasetArtifactMetadata:
         return MockedDatasetArtifactMetadata(
             version=dict_repr["version"],
             frozen_gbml_config_uri=UriFactory.create_uri(
@@ -31,7 +31,7 @@ class MockedDatasetArtifactMetadata(NamedTuple):
         )
 
 
-def get_mocked_dataset_artifact_metadata() -> dict[str, MockedDatasetArtifactMetadata]:
+def get_mocked_dataset_artifact_metadata() -> Dict[str, MockedDatasetArtifactMetadata]:
     """
     Creates a dictionary of task names to mocked dataset artifact metadata.
 
@@ -40,7 +40,7 @@ def get_mocked_dataset_artifact_metadata() -> dict[str, MockedDatasetArtifactMet
     """
     artifact_metadata_uri = MOCKED_DATASET_ARTIFACT_METADATA_LOCAL_PATH
     f = open(artifact_metadata_uri.uri, "r")
-    metadata: dict[str, dict[str, str]] = {}
+    metadata: Dict[str, Dict[str, str]] = {}
     try:
         metadata = json.load(fp=f)
     except json.JSONDecodeError as e:
@@ -57,13 +57,13 @@ def get_mocked_dataset_artifact_metadata() -> dict[str, MockedDatasetArtifactMet
 
 
 def update_mocked_dataset_artifact_metadata(
-    task_name_to_artifact_metadata: dict[str, MockedDatasetArtifactMetadata]
+    task_name_to_artifact_metadata: Dict[str, MockedDatasetArtifactMetadata]
 ) -> None:
     """
     Update the mocked dataset artifact metadata with the given task names and metadata.
 
     Args:
-        task_name_to_versions (dict[str, MockedDatasetArtifactMetadata]): A dictionary containing task names and their corresponding metadata.
+        task_name_to_versions (Dict[str, MockedDatasetArtifactMetadata]): A dictionary containing task names and their corresponding metadata.
 
     Returns:
         None

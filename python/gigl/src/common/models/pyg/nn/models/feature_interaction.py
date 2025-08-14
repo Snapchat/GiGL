@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -19,9 +19,9 @@ class FeatureInteraction(nn.Module):
         self,
         in_dim: int,
         use_dcnv2_feats_interaction: bool = False,
-        dcnv2_kwargs: dict[str, Any] = {},
+        dcnv2_kwargs: Dict[str, Any] = {},
         use_mlp_feats_interaction: bool = False,
-        mlp_feats_kwargs: dict[str, Any] = {},
+        mlp_feats_kwargs: Dict[str, Any] = {},
         activation: Callable = F.relu,
         combination_mode: Optional[str] = None,
     ) -> None:

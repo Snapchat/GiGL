@@ -1,7 +1,7 @@
 import gc
 import time
 from collections import abc, defaultdict
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
@@ -145,34 +145,34 @@ class DistPartitioner:
     def __init__(
         self,
         should_assign_edges_by_src_node: bool = False,
-        node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
+        node_ids: Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]] = None,
         node_features: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
         ] = None,
-        edge_index: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None,
+        edge_index: Optional[Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]] = None,
         edge_features: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         ] = None,
         positive_labels: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         ] = None,
         negative_labels: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         ] = None,
     ):
         """
         Initializes the parameters of the partitioner. Also optionally takes in node and edge tensors as arguments and registers them to the partitioner. Registered
-        entities should be a dictionary of dict[[NodeType or EdgeType], torch.Tensor] if heterogeneous or a torch.Tensor if homogeneous.
+        entities should be a dictionary of Dict[[NodeType or EdgeType], torch.Tensor] if heterogeneous or a torch.Tensor if homogeneous.
         This class assumes the distributed context has already been initialized outside of this class with the glt.distributed.init_worker_group()
         function and that rpc has been initialized with glt_distributed.init_rpc().
         Args:
             should_assign_edges_by_src_node (bool): Whether edges should be assigned to the machine of the source nodes during partitioning
-            node_ids (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node ids from input. Tensors should be of shape [num_nodes_on_current_rank]
-            node_features (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node feats from input. Tensors should be of shope [num_nodes_on_current_rank, node_feat_dim]
-            edge_index (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge indexes from input. Tensors should be of shape [2, num_edges_on_current_rank]
-            edge_features (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge features from input. Tensors should be of shape [num_edges_on_current_rank, edge_feat_dim]
-            positive_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_pos_labels_on_current_rank]
-            negative_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_neg_labels_on_current_rank]
+            node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]): Optionally registered node ids from input. Tensors should be of shape [num_nodes_on_current_rank]
+            node_features (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]): Optionally registered node feats from input. Tensors should be of shope [num_nodes_on_current_rank, node_feat_dim]
+            edge_index (Optional[Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]]): Optionally registered edge indexes from input. Tensors should be of shape [2, num_edges_on_current_rank]
+            edge_features (Optional[Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]]): Optionally registered edge features from input. Tensors should be of shape [num_edges_on_current_rank, edge_feat_dim]
+            positive_labels (Optional[Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_pos_labels_on_current_rank]
+            negative_labels (Optional[Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_neg_labels_on_current_rank]
         """
 
         self._world_size: int
@@ -185,22 +185,22 @@ class DistPartitioner:
         self._should_assign_edges_by_src_node: bool = should_assign_edges_by_src_node
         self._edge_types: list[EdgeType] = []
         self._node_types: list[NodeType] = []
-        self._num_nodes: Optional[dict[NodeType, int]] = None
-        self._num_edges: Optional[dict[EdgeType, int]] = None
+        self._num_nodes: Optional[Dict[NodeType, int]] = None
+        self._num_edges: Optional[Dict[EdgeType, int]] = None
 
-        self._node_ids: Optional[dict[NodeType, torch.Tensor]] = None
-        self._node_feat: Optional[dict[NodeType, torch.Tensor]] = None
-        self._node_feat_dim: Optional[dict[NodeType, int]] = None
+        self._node_ids: Optional[Dict[NodeType, torch.Tensor]] = None
+        self._node_feat: Optional[Dict[NodeType, torch.Tensor]] = None
+        self._node_feat_dim: Optional[Dict[NodeType, int]] = None
 
-        self._edge_index: Optional[dict[EdgeType, torch.Tensor]] = None
-        self._edge_ids: Optional[dict[EdgeType, tuple[int, int]]] = None
-        self._edge_feat: Optional[dict[EdgeType, torch.Tensor]] = None
-        self._edge_feat_dim: Optional[dict[EdgeType, int]] = None
+        self._edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
+        self._edge_ids: Optional[Dict[EdgeType, tuple[int, int]]] = None
+        self._edge_feat: Optional[Dict[EdgeType, torch.Tensor]] = None
+        self._edge_feat_dim: Optional[Dict[EdgeType, int]] = None
 
         # TODO (mkolodner-sc): Deprecate the need for explicitly storing labels are part of this class, leveraging
         # heterogeneous support instead
-        self._positive_label_edge_index: Optional[dict[EdgeType, torch.Tensor]] = None
-        self._negative_label_edge_index: Optional[dict[EdgeType, torch.Tensor]] = None
+        self._positive_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
+        self._negative_label_edge_index: Optional[Dict[EdgeType, torch.Tensor]] = None
 
         if node_ids is not None:
             self.register_node_ids(node_ids=node_ids)
@@ -290,10 +290,10 @@ class DistPartitioner:
         input_node_entity: Union[
             torch.Tensor,
             PartitionBook,
-            dict[NodeType, torch.Tensor],
-            dict[NodeType, PartitionBook],
+            Dict[NodeType, torch.Tensor],
+            Dict[NodeType, PartitionBook],
         ],
-    ) -> Union[dict[NodeType, torch.Tensor], dict[NodeType, PartitionBook]]:
+    ) -> Union[Dict[NodeType, torch.Tensor], Dict[NodeType, PartitionBook]]:
         """
         Converts input_node_entity into heterogeneous format if it is not already. If input is homogeneous, this will be a dictionary with Node Type DEFAULT_HOMOGENEOUS_NODE_TYPE.
         This is done so that the logical can be simplified for partitioning to just the heterogeneous case. Homogeneous inputs are re-converted back to non-dictionary
@@ -322,10 +322,10 @@ class DistPartitioner:
         input_edge_entity: Union[
             torch.Tensor,
             PartitionBook,
-            dict[EdgeType, torch.Tensor],
-            dict[EdgeType, PartitionBook],
+            Dict[EdgeType, torch.Tensor],
+            Dict[EdgeType, PartitionBook],
         ],
-    ) -> Union[dict[EdgeType, torch.Tensor], dict[EdgeType, PartitionBook]]:
+    ) -> Union[Dict[EdgeType, torch.Tensor], Dict[EdgeType, PartitionBook]]:
         """
         Converts input_edge_entity into heterogeneous format if it is not already. If input is homogeneous, this will be a dictionary with Edge Type DEFAULT_HOMOGENEOUS_EDGE_TYPE.
         """
@@ -345,7 +345,7 @@ class DistPartitioner:
         return to_heterogeneous_edge(input_edge_entity)
 
     def register_node_ids(
-        self, node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        self, node_ids: Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
     ) -> None:
         """
         Registers the node ids to the partitioner. Also computes additional fields for partitioning such as the total number of nodes across all ranks.
@@ -353,7 +353,7 @@ class DistPartitioner:
         For optimal memory management, it is recommended that the reference to the node_id tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
         Args:
-            node_ids (Union[torch.Tensor, dict[NodeType, torch.Tensor]]): Input node_ids which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
+            node_ids (Union[torch.Tensor, Dict[NodeType, torch.Tensor]]): Input node_ids which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
         """
 
         self._assert_and_get_rpc_setup()
@@ -372,12 +372,12 @@ class DistPartitioner:
         self._node_ids = convert_to_tensor(input_node_ids, dtype=torch.int64)
 
         # This tuple here represents a (rank, num_nodes_on_rank) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
-        # num_nodes_on_rank is a dict[NodeType, int].
+        # num_nodes_on_rank is a Dict[NodeType, int].
         # Gathered_num_nodes is then used to identify the number of nodes on each rank, allowing us to access the total number of nodes across all ranks
-        gathered_node_info: dict[str, Tuple[int, dict[NodeType, int]]]
+        gathered_node_info: Dict[str, Tuple[int, Dict[NodeType, int]]]
         self._num_nodes = defaultdict(int)
 
-        node_type_to_num_nodes: dict[NodeType, int] = {
+        node_type_to_num_nodes: Dict[NodeType, int] = {
             node_type: input_node_ids[node_type].size(0)
             for node_type in sorted(input_node_ids.keys())
         }
@@ -395,7 +395,7 @@ class DistPartitioner:
                 self._num_nodes[node_type] += gathered_node_type_to_num_nodes[node_type]
 
     def register_edge_index(
-        self, edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        self, edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
     ) -> None:
         """
         Registers the edge_index to the partitioner. Also computes additional fields for partitioning such as the total number of edges across all ranks and the number of
@@ -404,7 +404,7 @@ class DistPartitioner:
         For optimal memory management, it is recommended that the reference to edge_index tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
         Args:
-            edge_index (Union[torch.Tensor, dict[EdgeType, torch.Tensor]]): Input edge index which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
+            edge_index (Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]): Input edge index which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
         """
 
         self._assert_and_get_rpc_setup()
@@ -424,12 +424,12 @@ class DistPartitioner:
         self._edge_index = convert_to_tensor(input_edge_index, dtype=torch.int64)
 
         # The tuple here represents a (rank, num_edges_on_rank) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`
-        # num_edges_on_rank is a dict[EdgeType, int].
+        # num_edges_on_rank is a Dict[EdgeType, int].
         # Gathered_num_edges is then used to identify the number of edges on each rank, allowing us to access the total number of edges across all ranks
-        gathered_edge_info: dict[str, Tuple[int, dict[EdgeType, int]]]
+        gathered_edge_info: Dict[str, Tuple[int, Dict[EdgeType, int]]]
         self._num_edges = {}
-        edge_ids: dict[EdgeType, tuple[int, int]] = {}
-        edge_type_to_num_edges: dict[EdgeType, int] = {
+        edge_ids: Dict[EdgeType, tuple[int, int]] = {}
+        edge_type_to_num_edges: Dict[EdgeType, int] = {
             edge_type: input_edge_index[edge_type].size(1)
             for edge_type in sorted(input_edge_index.keys())
         }
@@ -462,7 +462,7 @@ class DistPartitioner:
         self._edge_ids = edge_ids
 
     def register_node_features(
-        self, node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        self, node_features: Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
     ) -> None:
         """
         Registers the node features to the partitioner.
@@ -472,7 +472,7 @@ class DistPartitioner:
         We do not need to perform `all_gather` calls here since register_node_ids is responsible for determining total number of nodes
         across all ranks.
         Args:
-            node_features(Union[torch.Tensor, dict[NodeType, torch.Tensor]]): Input node features which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
+            node_features(Union[torch.Tensor, Dict[NodeType, torch.Tensor]]): Input node features which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
         """
 
         self._assert_and_get_rpc_setup()
@@ -493,7 +493,7 @@ class DistPartitioner:
             self._node_feat_dim[node_type] = input_node_features[node_type].shape[1]
 
     def register_edge_features(
-        self, edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        self, edge_features: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
     ) -> None:
         """
         Registers the edge features to the partitioner.
@@ -503,7 +503,7 @@ class DistPartitioner:
         We do not need to perform `all_gather` calls here since register_edge_index is responsible for determining total number of edges
         across all ranks and inferrring edge ids.
         Args:
-            edge_features(Union[torch.Tensor, dict[EdgeType, torch.Tensor]]): Input edge features which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
+            edge_features(Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]): Input edge features which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
         """
 
         self._assert_and_get_rpc_setup()
@@ -525,7 +525,7 @@ class DistPartitioner:
 
     def register_labels(
         self,
-        label_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        label_edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]],
         is_positive: bool,
     ) -> None:
         """
@@ -537,7 +537,7 @@ class DistPartitioner:
         We do not need to perform `all_gather` calls here since register_edge_index is responsible for determining total number of edges
         across all ranks and inferring edge ids.
         Args:
-            label_edge_index (Union[torch.Tensor, dict[EdgeType, torch.Tensor]]): Input positive or negative labels which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
+            label_edge_index (Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]): Input positive or negative labels which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
             is_positive (bool): Whether positive labels are currently being registered. If False, labels will be registered as negative
         """
 
@@ -744,14 +744,14 @@ class DistPartitioner:
 
     def _partition_node_features(
         self,
-        node_partition_book: dict[NodeType, PartitionBook],
+        node_partition_book: Dict[NodeType, PartitionBook],
         node_type: NodeType,
     ) -> FeaturePartitionData:
         """
         Partitions node features according to the node partition book.
 
         Args:
-            node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
+            node_partition_book (Dict[NodeType, PartitionBook]): The partition book of nodes
             node_type (NodeType): Node type of input data
 
         Returns:
@@ -830,7 +830,7 @@ class DistPartitioner:
 
     def _partition_edge_index_and_edge_features(
         self,
-        node_partition_book: dict[NodeType, PartitionBook],
+        node_partition_book: Dict[NodeType, PartitionBook],
         edge_type: EdgeType,
     ) -> Tuple[
         GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
@@ -839,7 +839,7 @@ class DistPartitioner:
         both the returned edge feature and edge partition book will be None.
 
         Args:
-            node_partition_book (dict[NodeType, PartitionBook]): The partition books of all graph nodes.
+            node_partition_book (Dict[NodeType, PartitionBook]): The partition books of all graph nodes.
             edge_type (EdgeType): The edge type for input edges
 
         Returns:
@@ -991,7 +991,7 @@ class DistPartitioner:
 
     def _partition_label_edge_index(
         self,
-        node_partition_book: dict[NodeType, PartitionBook],
+        node_partition_book: Dict[NodeType, PartitionBook],
         is_positive: bool,
         edge_type: EdgeType,
     ) -> torch.Tensor:
@@ -999,7 +999,7 @@ class DistPartitioner:
         Partitions labels according to the node partition book.
 
         Args:
-            node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
+            node_partition_book (Dict[NodeType, PartitionBook]): The partition book of nodes
             is_positive (bool): Whether positive labels are currently being registered. If False, negative labels will be partitioned.
             edge_type (EdgeType): Edge type of input data, must be specified if heterogeneous
 
@@ -1090,12 +1090,12 @@ class DistPartitioner:
 
         return partitioned_label_edge_index
 
-    def partition_node(self) -> Union[PartitionBook, dict[NodeType, PartitionBook]]:
+    def partition_node(self) -> Union[PartitionBook, Dict[NodeType, PartitionBook]]:
         """
         Partitions nodes of a graph. If heterogeneous, partitions nodes for all node types.
 
         Returns:
-            Union[PartitionBook, dict[NodeType, PartitionBook]]: Partition Book of input nodes or Dict if heterogeneous
+            Union[PartitionBook, Dict[NodeType, PartitionBook]]: Partition Book of input nodes or Dict if heterogeneous
         """
 
         self._assert_and_get_rpc_setup()
@@ -1111,7 +1111,7 @@ class DistPartitioner:
             input_entity=self._num_nodes, is_node_entity=True, is_subset=False
         )
 
-        node_partition_book: dict[NodeType, PartitionBook] = {}
+        node_partition_book: Dict[NodeType, PartitionBook] = {}
         for node_type in self._node_types:
             node_partition_book[node_type] = self._partition_node(node_type=node_type)
 
@@ -1133,16 +1133,16 @@ class DistPartitioner:
             return node_partition_book
 
     def partition_node_features(
-        self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
-    ) -> Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]:
+        self, node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]]
+    ) -> Union[FeaturePartitionData, Dict[NodeType, FeaturePartitionData]]:
         """
         Partitions node features of a graph. If heterogeneous, partitions features for all node type.
         Must call `partition_node` first to get the node partition book as input.
 
         Args:
-            node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The Computed Node Partition Book
+            node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The Computed Node Partition Book
         Returns:
-            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]: Feature Partition Data of ids and features or Dict if heterogeneous.
+            Union[FeaturePartitionData, Dict[NodeType, FeaturePartitionData]]: Feature Partition Data of ids and features or Dict if heterogeneous.
         """
         assert (
             self._node_feat is not None
@@ -1175,7 +1175,7 @@ class DistPartitioner:
 
         node_feature_types = sorted(self._node_feat.keys())
 
-        partitioned_node_features: dict[NodeType, FeaturePartitionData] = {}
+        partitioned_node_features: Dict[NodeType, FeaturePartitionData] = {}
         for node_type in node_feature_types:
             partitioned_node_features[node_type] = self._partition_node_features(
                 node_partition_book=transformed_node_partition_book, node_type=node_type
@@ -1190,26 +1190,26 @@ class DistPartitioner:
             return partitioned_node_features
 
     def partition_edge_index_and_edge_features(
-        self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
+        self, node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]]
     ) -> Union[
         Tuple[
             GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
         ],
         Tuple[
-            dict[EdgeType, GraphPartitionData],
-            dict[EdgeType, FeaturePartitionData],
-            dict[EdgeType, PartitionBook],
+            Dict[EdgeType, GraphPartitionData],
+            Dict[EdgeType, FeaturePartitionData],
+            Dict[EdgeType, PartitionBook],
         ],
     ]:
         """
         Partitions edges of a graph, including edge indices and edge features. If there are no edge features, only edge indices are partitioned.
         If heterogeneous, partitions edges/features for all edge types. Must call `partition_node` first to get the node partition book as input.
         Args:
-            node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
+            node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
         Returns:
             Union[
                 Tuple[GraphPartitionData, FeaturePartitionData, PartitionBook],
-                Tuple[dict[EdgeType, GraphPartitionData], dict[EdgeType, FeaturePartitionData], dict[EdgeType, PartitionBook]],
+                Tuple[Dict[EdgeType, GraphPartitionData], Dict[EdgeType, FeaturePartitionData], Dict[EdgeType, PartitionBook]],
             ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous
         """
 
@@ -1253,9 +1253,9 @@ class DistPartitioner:
                 input_entity=self._edge_feat, is_node_entity=False, is_subset=True
             )
 
-        edge_partition_book: dict[EdgeType, PartitionBook] = {}
-        partitioned_edge_index: dict[EdgeType, GraphPartitionData] = {}
-        partitioned_edge_features: dict[EdgeType, FeaturePartitionData] = {}
+        edge_partition_book: Dict[EdgeType, PartitionBook] = {}
+        partitioned_edge_index: Dict[EdgeType, GraphPartitionData] = {}
+        partitioned_edge_features: Dict[EdgeType, FeaturePartitionData] = {}
         for edge_type in self._edge_types:
             (
                 partitioned_edge_index_per_edge_type,
@@ -1303,18 +1303,18 @@ class DistPartitioner:
 
     def partition_labels(
         self,
-        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        node_partition_book: Union[PartitionBook, Dict[NodeType, PartitionBook]],
         is_positive: bool,
-    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+    ) -> Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]:
         """
         Partitions positive or negative labels of a graph. If heterogeneous, partitions labels for all edge type.
         Must call `partition_node` first to get the node partition book as input.
         Note that labels are always partitioned by the source node, since the edges are always assumed to be anchor_node -> to -> supervision node.
         Args:
-            node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
+            node_partition_book (Union[PartitionBook, Dict[NodeType, PartitionBook]]): The computed Node Partition Book
             is_positive (bool): Whether positive labels are currently being registered. If False, negative labels will be partitioned.
         Returns:
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: Returns the edge indices for partitioned positive or negative label, dependent on the is_positive flag
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]: Returns the edge indices for partitioned positive or negative label, dependent on the is_positive flag
         """
 
         self._assert_and_get_rpc_setup()
@@ -1351,7 +1351,7 @@ class DistPartitioner:
             is_subset=False,
         )
 
-        partitioned_label_edge_index: dict[EdgeType, torch.Tensor] = {}
+        partitioned_label_edge_index: Dict[EdgeType, torch.Tensor] = {}
         for edge_type in edge_label_types:
             partitioned_label_edge_index[edge_type] = self._partition_label_edge_index(
                 node_partition_book=transformed_node_partition_book,

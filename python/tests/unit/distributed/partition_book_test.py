@@ -1,4 +1,5 @@
 import unittest
+from typing import Dict
 
 import torch
 from graphlearn_torch.partition import RangePartitionBook
@@ -44,7 +45,7 @@ class PartitionBookTest(unittest.TestCase):
         self,
         _,
         partition_book: torch.Tensor,
-        rank_to_expected_ids: dict[int, torch.Tensor],
+        rank_to_expected_ids: Dict[int, torch.Tensor],
     ):
         for rank, expected_ids in rank_to_expected_ids.items():
             with self.subTest(rank=rank):
