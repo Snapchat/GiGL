@@ -79,24 +79,22 @@ def _create_distributed_splits_from_hash(
     global_max_hash_value = max_hash_value
     global_min_hash_value = min_hash_value
     for max_and_min in all_max_and_mins:
-        global_max_hash_value = max(
-            global_max_hash_value, max_and_min[0].item()
-        )
-        global_min_hash_value = min(
-            global_min_hash_value, max_and_min[1].item()
-        )
+        global_max_hash_value = max(global_max_hash_value, max_and_min[0].item())
+        global_min_hash_value = min(global_min_hash_value, max_and_min[1].item())
 
-    normalized_hash_values = (hash_values - global_min_hash_value) / global_max_hash_value
+    normalized_hash_values = (
+        hash_values - global_min_hash_value
+    ) / global_max_hash_value
 
     # Create splits from normalized hash values
-    test_inds = normalized_hash_values >= 1 - num_test # 1 x M
-    val_inds = (normalized_hash_values >= 1 - num_test - num_val) & ~test_inds # 1 x M
-    train_inds = ~test_inds & ~val_inds # 1 x M
+    test_inds = normalized_hash_values >= 1 - num_test  # 1 x M
+    val_inds = (normalized_hash_values >= 1 - num_test - num_val) & ~test_inds  # 1 x M
+    train_inds = ~test_inds & ~val_inds  # 1 x M
 
     # Apply masks to select nodes
-    train = nodes_to_select[train_inds] # 1 x num_train_nodes
-    val = nodes_to_select[val_inds] # 1 x num_val_nodes
-    test = nodes_to_select[test_inds] # 1 x num_test_nodes
+    train = nodes_to_select[train_inds]  # 1 x num_train_nodes
+    val = nodes_to_select[val_inds]  # 1 x num_val_nodes
+    test = nodes_to_select[test_inds]  # 1 x num_test_nodes
 
     return train, val, test
 
@@ -144,7 +142,7 @@ class NodeAnchorSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on nodes directly.
 
     Args:
-        node_ids: The node IDs to split on. 1D tensor for homogeneous or mapping for heterogeneous
+        node_ids: The node IDs to split on. 1D tensor for homogeneous or mapping for heterogeneous. 1 x N
     Returns:
         The train (1 x X), val (1 x Y), test (1 x Z) nodes. X + Y + Z = N
     """
