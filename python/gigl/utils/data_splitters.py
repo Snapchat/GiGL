@@ -452,6 +452,9 @@ class HashedNodeSplitter:
     In node-based splitting, each node will be placed into exactly one split based on its hash value.
     This is simpler than edge-based splitting as it doesn't require extracting anchor nodes from edges.
 
+    The splitter uses an efficient bincount-based approach to identify unique nodes, which is more
+    memory efficient than torch.unique(), especially for sparse node ID spaces.
+
     Args:
         node_ids: The node IDs to split. Either a 1D tensor for homogeneous graphs,
                  or a mapping from node types to 1D tensors for heterogeneous graphs.
@@ -512,8 +515,19 @@ class HashedNodeSplitter:
         for node_type, nodes_to_split in node_ids_dict.items():
             _check_node_ids(nodes_to_split)
 
-            # Remove duplicates while preserving order
-            unique_nodes = torch.unique(nodes_to_split, sorted=False)
+            # Use efficient bincount approach to find unique nodes instead of torch.unique()
+            max_node_id = int(nodes_to_split.max().item() + 1)
+            # Set device explicitly here so we don't default to CPU.
+            node_id_count = torch.zeros(
+                max_node_id, dtype=torch.uint8, device=nodes_to_split.device
+            )
+            node_id_count.add_(torch.bincount(nodes_to_split, minlength=max_node_id))
+            # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
+            # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
+            # and the `squeeze` converts that to a 1d tensor (`[1, 3]`).
+            unique_nodes = torch.nonzero(node_id_count).squeeze()
+            # node_id_count no longer needed, so we can clean up its memory.
+            del node_id_count
 
             hash_values = self._hash_function(unique_nodes)  # 1 x M
 
@@ -526,6 +540,7 @@ class HashedNodeSplitter:
 
             # Clean up memory
             del hash_values
+            del unique_nodes
             gc.collect()
 
         if len(splits) == 0:
