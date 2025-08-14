@@ -39,7 +39,8 @@ def _create_distributed_splits_from_hash(
     num_val: float,
     num_test: float,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Creates train, val, test splits from hash values using distributed coordination.
+    """
+    Creates train, val, test splits from hash values using distributed coordination.
 
     This function performs the complete splitting workflow:
     1. Validates that a distributed process group is initialized
@@ -89,14 +90,14 @@ def _create_distributed_splits_from_hash(
     normalized_hash_values = (hash_values - global_min_hash_value) / global_max_hash_value
 
     # Create splits from normalized hash values
-    test_inds = normalized_hash_values >= 1 - num_test
-    val_inds = (normalized_hash_values >= 1 - num_test - num_val) & ~test_inds
-    train_inds = ~test_inds & ~val_inds
+    test_inds = normalized_hash_values >= 1 - num_test # 1 x M
+    val_inds = (normalized_hash_values >= 1 - num_test - num_val) & ~test_inds # 1 x M
+    train_inds = ~test_inds & ~val_inds # 1 x M
 
     # Apply masks to select nodes
-    train = nodes_to_select[train_inds]
-    val = nodes_to_select[val_inds]
-    test = nodes_to_select[test_inds]
+    train = nodes_to_select[train_inds] # 1 x num_train_nodes
+    val = nodes_to_select[val_inds] # 1 x num_val_nodes
+    test = nodes_to_select[test_inds] # 1 x num_test_nodes
 
     return train, val, test
 
