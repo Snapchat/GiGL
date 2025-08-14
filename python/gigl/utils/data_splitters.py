@@ -11,7 +11,6 @@ from typing import (
     Tuple,
     Union,
     overload,
-    runtime_checkable,
 )
 
 import torch
@@ -102,7 +101,6 @@ def _create_distributed_splits_from_hash(
     return train, val, test
 
 
-@runtime_checkable
 class NodeAnchorLinkSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on edges.
 
@@ -142,7 +140,6 @@ class NodeAnchorLinkSplitter(Protocol):
         ...
 
 
-@runtime_checkable
 class NodeAnchorSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on nodes directly.
 
