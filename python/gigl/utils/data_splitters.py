@@ -528,6 +528,7 @@ class HashedNodeSplitter:
             unique_nodes = torch.nonzero(node_id_count).squeeze()
             # node_id_count no longer needed, so we can clean up its memory.
             del node_id_count
+            gc.collect()
 
             hash_values = self._hash_function(unique_nodes)  # 1 x M
 
