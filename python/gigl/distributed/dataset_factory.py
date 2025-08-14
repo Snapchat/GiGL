@@ -105,6 +105,7 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
+        should_load_node_labels=isinstance(splitter, NodeAnchorSplitter),
     )
 
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready

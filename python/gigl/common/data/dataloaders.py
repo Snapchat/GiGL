@@ -295,6 +295,7 @@ class TFRecordDataLoader:
         self,
         serialized_tf_record_info: SerializedTFRecordInfo,
         tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+        should_load_node_labels: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Loads torch tensors from a set of TFRecord files.
@@ -302,6 +303,7 @@ class TFRecordDataLoader:
         Args:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
+            should_load_node_labels (bool): Whether node labels should be loaded. If True, will load node labels as part of the node features. Defaults to False.
 
         Returns:
             Tuple[torch.Tensor, Optional[torch.Tensor]]: The (id_tensor, feature_tensor) for the loaded entities.
@@ -309,7 +311,14 @@ class TFRecordDataLoader:
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
 
-        label_key = serialized_tf_record_info.label_key
+        if should_load_node_labels:
+            label_key = serialized_tf_record_info.label_key
+            if label_key is None:
+                raise ValueError(
+                    "Set `should_load_node_labels` to True, but found no label key to load from in the serailized tfrecord info."
+                )
+        else:
+            label_key = None
 
         # We make a deep copy of the feature spec dict so that future modifications don't redirect to the input
 
