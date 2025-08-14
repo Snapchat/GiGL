@@ -33,6 +33,74 @@ logger = Logger()
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
 
 
+def _create_distributed_splits_from_hash(
+    nodes_to_select: torch.Tensor,
+    hash_values: torch.Tensor,
+    num_val: float,
+    num_test: float,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Creates train, val, test splits from hash values using distributed coordination.
+
+    This function performs the complete splitting workflow:
+    1. Validates that a distributed process group is initialized
+    2. Normalizes hash values globally across all processes
+    3. Creates train/val/test splits from the normalized hash values
+
+    Args:
+        nodes_to_select (torch.Tensor): The nodes to split.
+        hash_values (torch.Tensor): Raw hash values for the nodes.
+        num_val (float): Percentage of nodes for validation.
+        num_test (float): Percentage of nodes for testing.
+
+    Returns:
+        Tuple of (train_nodes, val_nodes, test_nodes).
+
+    Raises:
+        RuntimeError: If no distributed process group is found.
+    """
+    # Validate distributed process group
+    if not torch.distributed.is_initialized():
+        raise RuntimeError(
+            f"Splitter requires a Torch distributed process group, but none was found. "
+            "Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
+        )
+
+    # Normalize hash values globally across all processes
+    min_hash_value, max_hash_value = map(torch.Tensor.item, hash_values.aminmax())
+
+    all_max_and_mins = [
+        torch.zeros(2, dtype=torch.int64)
+        for _ in range(torch.distributed.get_world_size())
+    ]
+    torch.distributed.all_gather(
+        all_max_and_mins,
+        torch.tensor([max_hash_value, min_hash_value], dtype=torch.int64),
+    )
+    global_max_hash_value = max_hash_value
+    global_min_hash_value = min_hash_value
+    for max_and_min in all_max_and_mins:
+        global_max_hash_value = max(
+            global_max_hash_value, max_and_min[0].item()
+        )
+        global_min_hash_value = min(
+            global_min_hash_value, max_and_min[1].item()
+        )
+
+    normalized_hash_values = (hash_values - global_min_hash_value) / global_max_hash_value
+
+    # Create splits from normalized hash values
+    test_inds = normalized_hash_values >= 1 - num_test
+    val_inds = (normalized_hash_values >= 1 - num_test - num_val) & ~test_inds
+    train_inds = ~test_inds & ~val_inds
+
+    # Apply masks to select nodes
+    train = nodes_to_select[train_inds]
+    val = nodes_to_select[val_inds]
+    test = nodes_to_select[test_inds]
+
+    return train, val, test
+
+
 @runtime_checkable
 class NodeAnchorLinkSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on edges.
@@ -350,54 +418,15 @@ class HashedNodeAnchorLinkSplitter:
             gc.collect()
 
             hash_values = self._hash_function(nodes_to_select)  # 1 x M
-            # Now, we want to normalize the hash values to [0, 1) range so we can select them easily into splits.
-            # We want to do this *globally* e.g. across all processes,
-            # so that we can ensure that the same nodes are selected for the same split across all processes.
-            # If we don't do this, then if we have `[0, 1, 2, 3, 4]` on one process and `[4, 5, 6, 7]` on another,
-            # with the identity hash `4` may end up in Test in one rank and Train in another.
-            min_hash_value, max_hash_value = map(
-                torch.Tensor.item, hash_values.aminmax()
+            # Create train, val, test splits using distributed coordination
+            train, val, test = _create_distributed_splits_from_hash(
+                nodes_to_select, hash_values, self._num_val, self._num_test
             )
-            if torch.distributed.is_initialized():
-                all_max_and_mins = [
-                    torch.zeros(2, dtype=torch.int64)
-                    for _ in range(torch.distributed.get_world_size())
-                ]
-                torch.distributed.all_gather(
-                    all_max_and_mins,
-                    torch.tensor([max_hash_value, min_hash_value], dtype=torch.int64),
-                )
-                global_max_hash_value = max_hash_value
-                global_min_hash_value = min_hash_value
-                for max_and_min in all_max_and_mins:
-                    global_max_hash_value = max(
-                        global_max_hash_value, max_and_min[0].item()
-                    )
-                    global_min_hash_value = min(
-                        global_min_hash_value, max_and_min[1].item()
-                    )
-            else:
-                raise RuntimeError(
-                    f"{type(self).__name__} requires a Torch distributed process group, but none was found. Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
-                )
-            hash_values = (
-                hash_values - global_min_hash_value
-            ) / global_max_hash_value  # Normalize the hash values to [0, 1)
-
-            # Now that we've normalized the hash values, we can select the train, val, and test nodes.
-            test_inds = hash_values >= 1 - self._num_test  # 1 x M
-            val_inds = (
-                hash_values >= 1 - self._num_test - self._num_val
-            ) & ~test_inds  # 1 x M
             del hash_values
             gc.collect()
-            train_inds = ~test_inds & ~val_inds  # 1 x M
-            train = nodes_to_select[train_inds]  # 1 x num_train_nodes
-            val = nodes_to_select[val_inds]  # 1 x num_val_nodes
-            test = nodes_to_select[test_inds]  # 1 x num_test_nodes
             splits[anchor_node_type] = (train, val, test)
             # We no longer need the nodes to select, so we can clean up their memory.
-            del nodes_to_select, train_inds, val_inds, test_inds
+            del nodes_to_select
             gc.collect()
         if len(splits) == 0:
             raise ValueError(
@@ -488,53 +517,15 @@ class HashedNodeSplitter:
 
             hash_values = self._hash_function(unique_nodes)  # 1 x M
 
-            # Normalize the hash values to [0, 1) range globally across all processes
-            min_hash_value, max_hash_value = map(
-                torch.Tensor.item, hash_values.aminmax()
+            # Create train, val, test splits using distributed coordination
+            train, val, test = _create_distributed_splits_from_hash(
+                unique_nodes, hash_values, self._num_val, self._num_test
             )
-
-            if torch.distributed.is_initialized():
-                all_max_and_mins = [
-                    torch.zeros(2, dtype=torch.int64)
-                    for _ in range(torch.distributed.get_world_size())
-                ]
-                torch.distributed.all_gather(
-                    all_max_and_mins,
-                    torch.tensor([max_hash_value, min_hash_value], dtype=torch.int64),
-                )
-                global_max_hash_value = max_hash_value
-                global_min_hash_value = min_hash_value
-                for max_and_min in all_max_and_mins:
-                    global_max_hash_value = max(
-                        global_max_hash_value, max_and_min[0].item()
-                    )
-                    global_min_hash_value = min(
-                        global_min_hash_value, max_and_min[1].item()
-                    )
-            else:
-                raise RuntimeError(
-                    f"{type(self).__name__} requires a Torch distributed process group, but none was found. Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
-                )
-
-            hash_values = (
-                hash_values - global_min_hash_value
-            ) / global_max_hash_value  # Normalize the hash values to [0, 1)
-
-            # Select the train, val, and test nodes based on normalized hash values
-            test_inds = hash_values >= 1 - self._num_test  # 1 x M
-            val_inds = (
-                hash_values >= 1 - self._num_test - self._num_val
-            ) & ~test_inds  # 1 x M
-            train_inds = ~test_inds & ~val_inds  # 1 x M
-
-            train = unique_nodes[train_inds]  # 1 x num_train_nodes
-            val = unique_nodes[val_inds]  # 1 x num_val_nodes
-            test = unique_nodes[test_inds]  # 1 x num_test_nodes
 
             splits[node_type] = (train, val, test)
 
             # Clean up memory
-            del hash_values, train_inds, val_inds, test_inds
+            del hash_values
             gc.collect()
 
         if len(splits) == 0:
