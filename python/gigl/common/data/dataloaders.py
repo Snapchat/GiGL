@@ -181,7 +181,7 @@ class TFRecordDataLoader:
         """
         file_loader = FileLoader()
         uris = sorted(
-            file_loader.list_children(uri, pattern=None),
+            file_loader.list_children(uri, pattern=tfrecord_pattern),
             key=lambda uri: uri.uri,
         )
         if len(uris) == 0:
