@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import Dict, Tuple
 
 from gigl.common.logger import Logger
 from gigl.common.utils.func_tools import lru_cache
@@ -19,7 +19,7 @@ logger = Logger()
 class GraphMetadataPbWrapper:
     graph_metadata_pb: graph_schema_pb2.GraphMetadata
 
-    __condensed_edge_type_to_condensed_node_types: dict[
+    __condensed_edge_type_to_condensed_node_types: Dict[
         CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
     ] = field(init=False)
     __hash: int = field(init=False)
@@ -36,7 +36,7 @@ class GraphMetadataPbWrapper:
             )
 
         # Populate the __condensed_edge_type_to_condensed_node_types field.
-        node_type_to_condensed_node_types: dict[NodeType, CondensedNodeType] = dict()
+        node_type_to_condensed_node_types: Dict[NodeType, CondensedNodeType] = dict()
         for (
             condensed_node_type,
             node_type,
@@ -45,7 +45,7 @@ class GraphMetadataPbWrapper:
                 condensed_node_type
             )
 
-        condensed_edge_type_to_condensed_node_types: dict[
+        condensed_edge_type_to_condensed_node_types: Dict[
             CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
         ] = dict()
         for condensed_edge_type in self.graph_metadata_pb.condensed_edge_type_map:
@@ -87,7 +87,7 @@ class GraphMetadataPbWrapper:
     @property
     def condensed_edge_type_to_condensed_node_types(
         self,
-    ) -> dict[CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]]:
+    ) -> Dict[CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]]:
         """
         Allows access to a mapping which simplifies looking up src/dst
         CondensedNodeTypes for each CondensedEdgeType.
@@ -142,7 +142,7 @@ class GraphMetadataPbWrapper:
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def condensed_node_type_to_node_type_map(self) -> dict[CondensedNodeType, NodeType]:
+    def condensed_node_type_to_node_type_map(self) -> Dict[CondensedNodeType, NodeType]:
         return {
             CondensedNodeType(condensed_node_type): NodeType(node_type)
             for condensed_node_type, node_type in self.graph_metadata_pb.condensed_node_type_map.items()
@@ -150,12 +150,12 @@ class GraphMetadataPbWrapper:
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def node_type_to_condensed_node_type_map(self) -> dict[NodeType, CondensedNodeType]:
+    def node_type_to_condensed_node_type_map(self) -> Dict[NodeType, CondensedNodeType]:
         return {v: k for k, v in self.condensed_node_type_to_node_type_map.items()}
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def condensed_edge_type_to_edge_type_map(self) -> dict[CondensedEdgeType, EdgeType]:
+    def condensed_edge_type_to_edge_type_map(self) -> Dict[CondensedEdgeType, EdgeType]:
         return {
             CondensedEdgeType(condensed_edge_type): EdgeType(
                 src_node_type=NodeType(edge_type.src_node_type),
@@ -167,7 +167,7 @@ class GraphMetadataPbWrapper:
 
     @property  # type: ignore
     @lru_cache(maxsize=1)
-    def edge_type_to_condensed_edge_type_map(self) -> dict[EdgeType, CondensedEdgeType]:
+    def edge_type_to_condensed_edge_type_map(self) -> Dict[EdgeType, CondensedEdgeType]:
         return {v: k for k, v in self.condensed_edge_type_to_edge_type_map.items()}
 
     @property  # type: ignore

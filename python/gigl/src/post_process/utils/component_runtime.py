@@ -1,10 +1,12 @@
+from typing import Dict
+
 # from gigl.common.services.kfp import KFPService
 from gigl.common.types.wrappers.kfp_api import KfpTaskDetails
 
 # TODO: This needs to update ot Vertex AI
 # def get_task_details_from_kfp_pipeline(
 #     kfp_service: KFPService, experiment_name: str, kfp_run_name: str
-# ) -> dict[str, KfpTaskDetails]:
+# ) -> Dict[str, KfpTaskDetails]:
 #     pipeline_run_detail: Optional[
 #         ApiRunDetailWrapper
 #     ] = kfp_service.get_latest_run_with_name(
@@ -15,8 +17,8 @@ from gigl.common.types.wrappers.kfp_api import KfpTaskDetails
 
 
 def assert_component_runtimes_match_expected_parameters(
-    task_details_map: dict[str, KfpTaskDetails],
-    component_name_runtime_hr: dict[str, int],
+    task_details_map: Dict[str, KfpTaskDetails],
+    component_name_runtime_hr: Dict[str, int],
 ) -> None:
     for component_name, expected_runtime_hr in component_name_runtime_hr.items():
         relevant_task = task_details_map.get(component_name)

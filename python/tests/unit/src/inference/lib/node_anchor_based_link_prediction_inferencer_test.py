@@ -1,7 +1,6 @@
 import tempfile
 import unittest
-from collections import OrderedDict
-from typing import Optional
+from typing import Optional, OrderedDict
 
 import torch
 import yaml

@@ -1,5 +1,5 @@
 import os
-from typing import Final, Optional
+from typing import Dict, Final, Optional
 
 import kfp
 import kfp.dsl.pipeline_channel
@@ -38,7 +38,7 @@ SPECED_COMPONENTS: Final[list[str]] = [
 _speced_component_root: Final[LocalUri] = LocalUri.join(
     _COMPONENTS_BASE_PATH, "components"
 )
-_speced_component_op_dict: Final[dict[GiGLComponents, kfp.components.YamlComponent]] = {
+_speced_component_op_dict: Final[Dict[GiGLComponents, kfp.components.YamlComponent]] = {
     GiGLComponents(component): kfp.components.load_component_from_file(
         LocalUri.join(_speced_component_root, component, "component.yaml").uri
     )

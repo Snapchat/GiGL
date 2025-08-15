@@ -1,3 +1,5 @@
+from typing import Dict
+
 from gigl.common.logger import Logger
 from gigl.src.applied_tasks.test_tasks.academic import (
     get_pyg_cora_dataset,
@@ -114,7 +116,7 @@ class PygTrainingTest(unittest.TestCase):
 
         # put model in train mode
         self.lp_model.train()
-        out: dict[NodeType, torch.Tensor] = self.lp_model(
+        out: Dict[NodeType, torch.Tensor] = self.lp_model(
             features, self.node_types, self.device
         )
         encoder_output: torch.Tensor = list(out.values())[0]

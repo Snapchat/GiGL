@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 import tensorflow as tf
 
@@ -45,7 +45,7 @@ class DataPreprocessorConfig(ABC):
     @abstractmethod
     def get_nodes_preprocessing_spec(
         self,
-    ) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
+    ) -> Dict[NodeDataReference, NodeDataPreprocessingSpec]:
         """
         Defines transformation imperatives for different node types
         """
@@ -54,7 +54,7 @@ class DataPreprocessorConfig(ABC):
     @abstractmethod
     def get_edges_preprocessing_spec(
         self,
-    ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+    ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
         """
         Defines transformation imperatives for different edge types
         """
@@ -63,11 +63,11 @@ class DataPreprocessorConfig(ABC):
 
 def build_ingestion_feature_spec_fn(
     fixed_string_fields: Optional[list[str]] = None,
-    fixed_string_field_shapes: dict[str, list[int]] = {},
+    fixed_string_field_shapes: Dict[str, list[int]] = {},
     fixed_float_fields: Optional[list[str]] = None,
-    fixed_float_field_shapes: dict[str, list[int]] = {},
+    fixed_float_field_shapes: Dict[str, list[int]] = {},
     fixed_int_fields: Optional[list[str]] = None,
-    fixed_int_field_shapes: dict[str, list[int]] = {},
+    fixed_int_field_shapes: Dict[str, list[int]] = {},
     varlen_string_fields: Optional[list[str]] = None,
     varlen_float_fields: Optional[list[str]] = None,
     varlen_int_fields: Optional[list[str]] = None,

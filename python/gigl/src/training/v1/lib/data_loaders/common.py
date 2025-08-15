@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Union
+from typing import Dict, Union
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
@@ -26,7 +26,7 @@ class DataloaderTypes(Enum):
 
 @dataclass
 class DataloaderConfig:
-    uris: Union[list[Uri], dict[NodeType, list[Uri]]]
+    uris: Union[list[Uri], Dict[NodeType, list[Uri]]]
     batch_size: int = _DEFAULT_DATA_LOADER_BATCH_SIZE
     num_workers: int = _DEFAULT_DATA_LOADER_NUM_WORKERS
     should_loop: bool = False

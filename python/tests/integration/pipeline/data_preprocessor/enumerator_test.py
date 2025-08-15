@@ -1,5 +1,5 @@
 import unittest
-from typing import Any, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 
 import google.cloud.bigquery as bigquery
 import pandas as pd
@@ -45,7 +45,7 @@ _NEGATIVE_EDGES = [("Alice", "Alice"), ("Bob", "Bob"), ("Charlie", "Charlie")]
 _PERSON_NODE_IDENTIFIER_FIELD = "person"
 # Define node features rows for each node
 _PERSON_NODE_FEATURE_FLOAT_FIELDS = ["height", "age", "weight"]
-_PERSON_NODE_FEATURE_RECORDS: list[dict[str, Any]] = [
+_PERSON_NODE_FEATURE_RECORDS: list[Dict[str, Any]] = [
     {
         _PERSON_NODE_IDENTIFIER_FIELD: node,
         "height": float(i),
@@ -94,7 +94,7 @@ class EnumeratorTest(unittest.TestCase):
     def __upload_records_to_bq(
         self,
         data_reference: Union[BigqueryEdgeDataReference, BigqueryNodeDataReference],
-        records: list[dict[str, Any]],
+        records: list[Dict[str, Any]],
     ):
         self.__bq_utils.create_or_empty_bq_table(bq_path=data_reference.reference_uri)
         columns: list[str] = []
@@ -237,9 +237,9 @@ class EnumeratorTest(unittest.TestCase):
             self.assertIn(field, schema)
 
     def fetch_enumerated_node_map_and_assert_correctness(
-        self, map_enum_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata]
-    ) -> dict[int, str]:
-        int_to_orig_node_id_map: dict[int, str] = {}
+        self, map_enum_node_type_metadata: Dict[NodeType, EnumeratorNodeTypeMetadata]
+    ) -> Dict[int, str]:
+        int_to_orig_node_id_map: Dict[int, str] = {}
 
         person_enumerated_node_type_metadata = map_enum_node_type_metadata[
             _PERSON_NODE_TYPE
@@ -275,8 +275,8 @@ class EnumeratorTest(unittest.TestCase):
 
     def assert_enumerated_node_features_correctness(
         self,
-        int_to_orig_node_id_map: dict[int, str],
-        map_enum_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata],
+        int_to_orig_node_id_map: Dict[int, str],
+        map_enum_node_type_metadata: Dict[NodeType, EnumeratorNodeTypeMetadata],
     ):
         person_enumerated_node_type_metadata = map_enum_node_type_metadata[
             _PERSON_NODE_TYPE
@@ -334,8 +334,8 @@ class EnumeratorTest(unittest.TestCase):
 
     def assert_enumerated_edge_features_correctness(
         self,
-        int_to_orig_node_id_map: dict[int, str],
-        map_enum_edge_type_metadata: dict[
+        int_to_orig_node_id_map: Dict[int, str],
+        map_enum_edge_type_metadata: Dict[
             Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
         ],
     ):
@@ -383,7 +383,7 @@ class EnumeratorTest(unittest.TestCase):
         def __assert_enumerated_table_rows_match_original_rows(
             table_name: str,
             expected_edge_feature_fields: list[str],
-            original_edge_feature_records: list[dict[str, Any]],
+            original_edge_feature_records: list[Dict[str, Any]],
         ):
             result = list(
                 self.__bq_utils.run_query(
@@ -480,11 +480,11 @@ class EnumeratorTest(unittest.TestCase):
                 edge_metadata.enumerated_edge_data_reference.reference_uri
             )
 
-        map_enum_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata] = {
+        map_enum_node_type_metadata: Dict[NodeType, EnumeratorNodeTypeMetadata] = {
             node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
             for node_type_metadata in list_enumerator_node_type_metadata
         }
-        map_enum_edge_type_metadata: dict[
+        map_enum_edge_type_metadata: Dict[
             Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
         ] = {
             (
@@ -493,7 +493,7 @@ class EnumeratorTest(unittest.TestCase):
             ): edge_type_metadata
             for edge_type_metadata in list_enumerator_edge_type_metadata
         }
-        int_to_orig_node_id_map: dict[
+        int_to_orig_node_id_map: Dict[
             int, str
         ] = self.fetch_enumerated_node_map_and_assert_correctness(
             map_enum_node_type_metadata=map_enum_node_type_metadata

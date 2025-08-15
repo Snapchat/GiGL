@@ -1,7 +1,7 @@
 import time
 import traceback
 from dataclasses import dataclass
-from typing import MutableMapping, Optional, Union
+from typing import Dict, MutableMapping, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -38,36 +38,36 @@ class SerializedGraphMetadata:
     Stores information for all entities. If homogeneous, all types are of type SerializedTFRecordInfo. Otherwise, they are dictionaries with the corresponding mapping.
     """
 
-    # Node Entity Info for loading node tensors, a SerializedTFRecordInfo for homogeneous and dict[NodeType, SerializedTFRecordInfo] for heterogeneous cases
+    # Node Entity Info for loading node tensors, a SerializedTFRecordInfo for homogeneous and Dict[NodeType, SerializedTFRecordInfo] for heterogeneous cases
     node_entity_info: Union[
-        SerializedTFRecordInfo, dict[NodeType, SerializedTFRecordInfo]
+        SerializedTFRecordInfo, Dict[NodeType, SerializedTFRecordInfo]
     ]
-    # Edge Entity Info for loading edge tensors, a SerializedTFRecordInfo for homogeneous and dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases
+    # Edge Entity Info for loading edge tensors, a SerializedTFRecordInfo for homogeneous and Dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases
     edge_entity_info: Union[
-        SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]
+        SerializedTFRecordInfo, Dict[EdgeType, SerializedTFRecordInfo]
     ]
-    # Positive Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases.
+    # Positive Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and Dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases.
     # If there are no positive labels for any edge type, this value is None
     positive_label_entity_info: Optional[
-        Union[SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]]
+        Union[SerializedTFRecordInfo, Dict[EdgeType, SerializedTFRecordInfo]]
     ] = None
-    # Negative Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases.
+    # Negative Label Entity Info, if present, a SerializedTFRecordInfo for homogeneous and Dict[EdgeType, SerializedTFRecordInfo] for heterogeneous cases.
     # If there are no negative labels for any edge type, this value is None.
     negative_label_entity_info: Optional[
-        Union[SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]]
+        Union[SerializedTFRecordInfo, Dict[EdgeType, SerializedTFRecordInfo]]
     ] = None
 
 
 def _data_loading_process(
     tf_record_dataloader: TFRecordDataLoader,
     output_dict: MutableMapping[
-        str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
+        str, Union[torch.Tensor, Dict[Union[NodeType, EdgeType], torch.Tensor]]
     ],
     error_dict: MutableMapping[str, str],
     entity_type: str,
     serialized_tf_record_info: Union[
         SerializedTFRecordInfo,
-        dict[Union[NodeType, EdgeType], SerializedTFRecordInfo],
+        Dict[Union[NodeType, EdgeType], SerializedTFRecordInfo],
     ],
     rank: int,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
@@ -79,12 +79,12 @@ def _data_loading_process(
 
     Args:
         tf_record_dataloader (TFRecordDataLoader): TFRecordDataloader used for loading tensors from serialized tfrecords
-        output_dict (MutableMapping[str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]]):
+        output_dict (MutableMapping[str, Union[torch.Tensor, Dict[Union[NodeType, EdgeType], torch.Tensor]]]):
             Dictionary initialized by mp.Manager().dict() in which outputs of tensor loading will be written to
         error_dict (MutableMapping[str, str]): Dictionary initialized by mp.Manager().dict() in which error of errors in current process will be written to
         entity_type (str): Entity type to prefix ids, features, and error keys with when
             writing to the output_dict and error_dict fields
-        serialized_tf_record_info (Union[SerializedTFRecordInfo, dict[NodeType, SerializedTFRecordInfo], dict[EdgeType, SerializedTFRecordInfo]]):
+        serialized_tf_record_info (Union[SerializedTFRecordInfo, Dict[NodeType, SerializedTFRecordInfo], Dict[EdgeType, SerializedTFRecordInfo]]):
             Serialized information for current entity
         rank (int): Rank of the current machine
         tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
@@ -113,8 +113,8 @@ def _data_loading_process(
             f"Rank {rank} has begun to load data from tfrecord directories: {all_tf_record_uris}"
         )
 
-        ids: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
-        features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        ids: Dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        features: Dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
             graph_type,
             serialized_entity_tf_record_info,
@@ -206,11 +206,11 @@ def load_torch_tensors_from_tf_record(
     ctx = mp.get_context("spawn")
 
     node_output_dict: MutableMapping[
-        str, Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        str, Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
     ] = manager.dict()
 
     edge_output_dict: MutableMapping[
-        str, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        str, Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
     ] = manager.dict()
 
     error_dict: MutableMapping[str, str] = manager.dict()

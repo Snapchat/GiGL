@@ -4,7 +4,7 @@ import os
 import pathlib
 import re
 import shutil
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
@@ -181,14 +181,14 @@ def create_empty_file_if_none_exists(local_path: LocalUri) -> None:
 
 
 def copy_files(
-    local_source_to_local_dst_path_map: dict[LocalUri, LocalUri],
+    local_source_to_local_dst_path_map: Dict[LocalUri, LocalUri],
     should_overwrite: Optional[bool] = False,
 ) -> None:
     """
     Copy files from source paths to destination paths.
 
     Args:
-        local_source_to_local_dst_path_map (dict[LocalUri, LocalUri]): A dictionary mapping source paths to destination paths.
+        local_source_to_local_dst_path_map (Dict[LocalUri, LocalUri]): A dictionary mapping source paths to destination paths.
         should_overwrite (Optional[bool]): If True, overwrite existing files at the destination paths. Defaults to False.
 
     Returns:
@@ -211,14 +211,14 @@ def copy_files(
 
 
 def create_file_symlinks(
-    local_source_to_link_path_map: dict[LocalUri, LocalUri],
+    local_source_to_link_path_map: Dict[LocalUri, LocalUri],
     should_overwrite: Optional[bool] = False,
 ) -> None:
     """
     Create symlinks between source paths and link paths.
 
     Args:
-        local_source_to_link_path_map (dict[LocalUri, LocalUri]): A dictionary mapping source paths to link paths.
+        local_source_to_link_path_map (Dict[LocalUri, LocalUri]): A dictionary mapping source paths to link paths.
         should_overwrite (Optional[bool]): If True, overwrite existing links at the link paths. Defaults to False.
 
     Returns:

@@ -14,7 +14,7 @@
 # 3. Copy the output and paste it into the file project/GCPDepsBOM.scala
 # 4. Uncomment the line in build.sbt
 
-from typing import NewType, Tuple
+from typing import NewType, Dict, Tuple
 import subprocess
 
 BOM_VERSION = "26.2.0"
@@ -40,14 +40,14 @@ def run_command(cmd: str) -> str:
         exit(1)
     return result.stdout
 
-def get_deps_dict(deps: str) -> dict[Tuple[Group, Artifact], Version]:
-    deps_dict: dict[Tuple[Group, Artifact], Version] = {}
+def get_deps_dict(deps: str) -> Dict[Tuple[Group, Artifact], Version]:
+    deps_dict: Dict[Tuple[Group, Artifact], Version] = {}
     for line in deps.splitlines():
         group, artifact, version = line.split(':')
         deps_dict[(Group(group), Artifact(artifact))] = Version(version)
     return deps_dict
 
-def get_bom_deps(bom_version: Version) -> dict[Tuple[Group, Artifact], Version]:
+def get_bom_deps(bom_version: Version) -> Dict[Tuple[Group, Artifact], Version]:
     print(f"Getting dependencies for BOM version {bom_version}")
     url_bom_deps_versioned = f"{URL_BASE_BOM_DEPS}{bom_version}/index.html"
     cmd_get_bom_deps = f"curl '{url_bom_deps_versioned}' | {GREP_REGEX_GOOGLE_DEPS}"
@@ -55,7 +55,7 @@ def get_bom_deps(bom_version: Version) -> dict[Tuple[Group, Artifact], Version]:
     return get_deps_dict(result_stdout)
 
 
-def get_current_deps() -> dict[Tuple[Group, Artifact], Version]:
+def get_current_deps() -> Dict[Tuple[Group, Artifact], Version]:
     cmd_get_current_deps = f"sbt dependencyTree | {GREP_REGEX_GOOGLE_DEPS}"
     result_stdout = run_command(cmd_get_current_deps)
     return get_deps_dict(result_stdout)

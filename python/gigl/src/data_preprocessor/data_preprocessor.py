@@ -4,7 +4,7 @@ import sys
 import threading
 from collections import defaultdict
 from itertools import chain, repeat
-from typing import Callable, Iterable, NamedTuple, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, NamedTuple, Optional, Tuple, Union
 
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
@@ -74,8 +74,8 @@ logger = Logger()
 
 
 class PreprocessedMetadataReferences(NamedTuple):
-    node_data: dict[NodeDataReference, TransformedFeaturesInfo]
-    edge_data: dict[EdgeDataReference, TransformedFeaturesInfo]
+    node_data: Dict[NodeDataReference, TransformedFeaturesInfo]
+    edge_data: Dict[EdgeDataReference, TransformedFeaturesInfo]
 
 
 class DataPreprocessor:
@@ -310,10 +310,10 @@ class DataPreprocessor:
 
     def __preprocess_all_data_references(
         self,
-        node_ref_to_preprocessing_spec: dict[
+        node_ref_to_preprocessing_spec: Dict[
             NodeDataReference, NodeDataPreprocessingSpec
         ],
-        edge_ref_to_preprocessing_spec: dict[
+        edge_ref_to_preprocessing_spec: Dict[
             EdgeDataReference, EdgeDataPreprocessingSpec
         ],
     ) -> PreprocessedMetadataReferences:
@@ -342,8 +342,8 @@ class DataPreprocessor:
             f"{__build_data_reference_str(references=edge_ref_to_preprocessing_spec.keys())}"
         )
 
-        node_refs_and_results: dict[NodeDataReference, TransformedFeaturesInfo] = dict()
-        edge_refs_and_results: dict[EdgeDataReference, TransformedFeaturesInfo] = dict()
+        node_refs_and_results: Dict[NodeDataReference, TransformedFeaturesInfo] = dict()
+        edge_refs_and_results: Dict[EdgeDataReference, TransformedFeaturesInfo] = dict()
 
         # We kick off multiple Dataflow pipelines, each of which kicks off a setup.py sdist run.
         # sdist has race-condition issues for simultaneous runs: https://github.com/pypa/setuptools/issues/1222
@@ -358,7 +358,7 @@ class DataPreprocessor:
             max_workers=num_dataflow_jobs
         ) as executor:
             logger.info(f"Launching {num_dataflow_jobs} dataflow jobs in parallel.")
-            futures: dict[
+            futures: Dict[
                 concurrent.futures.Future[TransformedFeaturesInfo],
                 Tuple[Union[NodeDataReference, EdgeDataReference], FeatureTypes],
             ] = dict()
@@ -440,7 +440,7 @@ class DataPreprocessor:
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata:
         preprocessed_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata()
 
-        enumerator_node_type_metadata_map: dict[
+        enumerator_node_type_metadata_map: Dict[
             NodeType, EnumeratorNodeTypeMetadata
         ] = {
             node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
@@ -492,8 +492,8 @@ class DataPreprocessor:
         # Populate all edge data.
         logger.info("Populating preprocessed metadata with edge data.")
 
-        enumerator_edge_type_metadata_map: dict[
-            EdgeType, dict[EdgeUsageType, EnumeratorEdgeTypeMetadata]
+        enumerator_edge_type_metadata_map: Dict[
+            EdgeType, Dict[EdgeUsageType, EnumeratorEdgeTypeMetadata]
         ] = defaultdict(dict)
         for edge_type_metadata in enumerator_edge_type_metadata:
             enumerator_edge_type_metadata_map[
@@ -502,8 +502,8 @@ class DataPreprocessor:
                 edge_type_metadata.enumerated_edge_data_reference.edge_usage_type
             ] = edge_type_metadata
 
-        preprocessed_metadata_references_map: dict[
-            EdgeType, dict[EdgeUsageType, TransformedFeaturesInfo]
+        preprocessed_metadata_references_map: Dict[
+            EdgeType, Dict[EdgeUsageType, TransformedFeaturesInfo]
         ] = defaultdict(dict)
         edge_info: Tuple[EdgeDataReference, TransformedFeaturesInfo]
         for edge_info in preprocessed_metadata_references.edge_data.items():
@@ -515,7 +515,7 @@ class DataPreprocessor:
             ] = edge_transformed_features_info
 
         edge_type: EdgeType
-        edge_transformed_features_info_map: dict[EdgeUsageType, TransformedFeaturesInfo]
+        edge_transformed_features_info_map: Dict[EdgeUsageType, TransformedFeaturesInfo]
         for (
             edge_type,
             edge_transformed_features_info_map,
@@ -641,17 +641,17 @@ class DataPreprocessor:
 
     def __patch_preprocessing_specs(
         self,
-        node_data_reference_to_preprocessing_spec: dict[
+        node_data_reference_to_preprocessing_spec: Dict[
             NodeDataReference, NodeDataPreprocessingSpec
         ],
-        edge_data_reference_to_preprocessing_spec: dict[
+        edge_data_reference_to_preprocessing_spec: Dict[
             EdgeDataReference, EdgeDataPreprocessingSpec
         ],
         enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata],
         enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata],
     ) -> Tuple[
-        dict[NodeDataReference, NodeDataPreprocessingSpec],
-        dict[EdgeDataReference, EdgeDataPreprocessingSpec],
+        Dict[NodeDataReference, NodeDataPreprocessingSpec],
+        Dict[EdgeDataReference, EdgeDataPreprocessingSpec],
     ]:
         """
         Patches the preprocessing specs for enumerated node and edge data references.
@@ -666,7 +666,7 @@ class DataPreprocessor:
         """
 
         # First, we patch the node data references.
-        enumerated_node_refs_to_preprocessing_specs: dict[
+        enumerated_node_refs_to_preprocessing_specs: Dict[
             NodeDataReference, NodeDataPreprocessingSpec
         ] = {}
 
@@ -710,7 +710,7 @@ class DataPreprocessor:
             ] = enumerated_node_data_preprocessing_spec
 
         # Now we do the same for edges.
-        enumerated_edge_refs_to_preprocessing_specs: dict[
+        enumerated_edge_refs_to_preprocessing_specs: Dict[
             EdgeDataReference, EdgeDataPreprocessingSpec
         ] = {}
         for enumerated_edge_metadata in enumerator_edge_type_metadata:
@@ -779,7 +779,7 @@ class DataPreprocessor:
 
         # Update the node and edge data references to include identifiers. In current configuration setup,
         # these identifiers are piped in from the DataPreprocessorConfig.
-        node_refs_to_specs: dict[NodeDataReference, NodeDataPreprocessingSpec] = {}
+        node_refs_to_specs: Dict[NodeDataReference, NodeDataPreprocessingSpec] = {}
         for (
             node_data_reference,
             node_data_preprocessing_spec,
@@ -796,7 +796,7 @@ class DataPreprocessor:
                 node_data_ref_with_identifier
             ] = node_data_preprocessing_spec
 
-        edge_refs_to_specs: dict[EdgeDataReference, EdgeDataPreprocessingSpec] = {}
+        edge_refs_to_specs: Dict[EdgeDataReference, EdgeDataPreprocessingSpec] = {}
         for (
             edge_data_reference,
             edge_data_preprocessing_spec,

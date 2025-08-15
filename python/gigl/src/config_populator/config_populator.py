@@ -3,7 +3,7 @@ import sys
 import traceback
 from collections import Counter
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import gigl.src.common.constants.bq as bq_constants
 import gigl.src.common.constants.gcs as gcs_constants
@@ -130,7 +130,7 @@ class ConfigPopulator:
                 )
             )
 
-            node_type_to_random_negative_tfrecord_uri_prefix: dict[str, str] = {}
+            node_type_to_random_negative_tfrecord_uri_prefix: Dict[str, str] = {}
             for node_type in random_negative_node_types:
                 node_type_to_random_negative_tfrecord_uri_prefix[
                     str(node_type)
@@ -229,9 +229,9 @@ class ConfigPopulator:
                 )
             )
 
-            train_node_type_to_random_negative_data_uri: dict[str, str] = {}
-            val_node_type_to_random_negative_data_uri: dict[str, str] = {}
-            test_node_type_to_random_negative_data_uri: dict[str, str] = {}
+            train_node_type_to_random_negative_data_uri: Dict[str, str] = {}
+            val_node_type_to_random_negative_data_uri: Dict[str, str] = {}
+            test_node_type_to_random_negative_data_uri: Dict[str, str] = {}
 
             for node_type in random_negative_node_types:
                 train_node_type_to_random_negative_data_uri[
@@ -328,7 +328,7 @@ class ConfigPopulator:
         """
         Populates the embeddings path and predictions path per inferencer node type in InferenceMetadata.
         """
-        node_type_to_inferencer_output_info_map: dict[
+        node_type_to_inferencer_output_info_map: Dict[
             str, inference_metadata_pb2.InferenceOutput
         ] = {}
         inferencer_node_types = self.task_metadata_pb_wrapper.get_task_root_node_types()

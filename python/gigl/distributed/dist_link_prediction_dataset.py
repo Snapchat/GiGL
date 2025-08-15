@@ -4,7 +4,7 @@ import gc
 import time
 from collections import abc
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, Union
+from typing import Dict, Literal, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.data import Feature, Graph
@@ -43,34 +43,34 @@ class DistLinkPredictionDataset(DistDataset):
         rank: int,
         world_size: int,
         edge_dir: Literal["in", "out"],
-        graph_partition: Optional[Union[Graph, dict[EdgeType, Graph]]] = None,
+        graph_partition: Optional[Union[Graph, Dict[EdgeType, Graph]]] = None,
         node_feature_partition: Optional[
-            Union[Feature, dict[NodeType, Feature]]
+            Union[Feature, Dict[NodeType, Feature]]
         ] = None,
         edge_feature_partition: Optional[
-            Union[Feature, dict[EdgeType, Feature]]
+            Union[Feature, Dict[EdgeType, Feature]]
         ] = None,
         node_partition_book: Optional[
-            Union[PartitionBook, dict[NodeType, PartitionBook]]
+            Union[PartitionBook, Dict[NodeType, PartitionBook]]
         ] = None,
         edge_partition_book: Optional[
-            Union[PartitionBook, dict[EdgeType, PartitionBook]]
+            Union[PartitionBook, Dict[EdgeType, PartitionBook]]
         ] = None,
         positive_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         ] = None,
         negative_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         ] = None,
         node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
         num_train: Optional[Union[int, dict[NodeType, int]]] = None,
         num_val: Optional[Union[int, dict[NodeType, int]]] = None,
         num_test: Optional[Union[int, dict[NodeType, int]]] = None,
         node_feature_info: Optional[
-            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
+            Union[FeatureInfo, Dict[NodeType, FeatureInfo]]
         ] = None,
         edge_feature_info: Optional[
-            Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
+            Union[FeatureInfo, Dict[EdgeType, FeatureInfo]]
         ] = None,
     ) -> None:
         """
@@ -111,14 +111,14 @@ class DistLinkPredictionDataset(DistDataset):
             edge_dir=edge_dir,
         )
         self._positive_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         ] = positive_edge_label
         self._negative_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         ] = negative_edge_label
 
         self._node_ids: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            Union[torch.Tensor, Dict[NodeType, torch.Tensor]]
         ] = node_ids
 
         self._num_train = num_train
@@ -157,15 +157,15 @@ class DistLinkPredictionDataset(DistDataset):
         self._edge_dir = new_edge_dir
 
     @property
-    def graph(self) -> Optional[Union[Graph, dict[EdgeType, Graph]]]:
+    def graph(self) -> Optional[Union[Graph, Dict[EdgeType, Graph]]]:
         return self._graph
 
     @graph.setter
-    def graph(self, new_graph: Optional[Union[Graph, dict[EdgeType, Graph]]]):
+    def graph(self, new_graph: Optional[Union[Graph, Dict[EdgeType, Graph]]]):
         self._graph = new_graph
 
     @property
-    def node_features(self) -> Optional[Union[Feature, dict[NodeType, Feature]]]:
+    def node_features(self) -> Optional[Union[Feature, Dict[NodeType, Feature]]]:
         """
         During serializiation, the initialized `Feature` type does not immediately contain the feature and id2index tensors. These
         fields are initially set to None, and are only populated when we retrieve the size, retrieve the shape, or index into one of these tensors.
@@ -175,12 +175,12 @@ class DistLinkPredictionDataset(DistDataset):
 
     @node_features.setter
     def node_features(
-        self, new_node_features: Optional[Union[Feature, dict[NodeType, Feature]]]
+        self, new_node_features: Optional[Union[Feature, Dict[NodeType, Feature]]]
     ):
         self._node_features = new_node_features
 
     @property
-    def edge_features(self) -> Optional[Union[Feature, dict[EdgeType, Feature]]]:
+    def edge_features(self) -> Optional[Union[Feature, Dict[EdgeType, Feature]]]:
         """
         During serializiation, the initialized `Feature` type does not immediately contain the feature and id2index tensors. These
         fields are initially set to None, and are only populated when we retrieve the size, retrieve the shape, or index into one of these tensors.
@@ -190,50 +190,50 @@ class DistLinkPredictionDataset(DistDataset):
 
     @edge_features.setter
     def edge_features(
-        self, new_edge_features: Optional[Union[Feature, dict[EdgeType, Feature]]]
+        self, new_edge_features: Optional[Union[Feature, Dict[EdgeType, Feature]]]
     ):
         self._edge_features = new_edge_features
 
     @property
     def node_pb(
         self,
-    ) -> Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]]:
+    ) -> Optional[Union[PartitionBook, Dict[NodeType, PartitionBook]]]:
         return self._node_partition_book
 
     @node_pb.setter
     def node_pb(
         self,
-        new_node_pb: Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]],
+        new_node_pb: Optional[Union[PartitionBook, Dict[NodeType, PartitionBook]]],
     ):
         self._node_partition_book = new_node_pb
 
     @property
     def edge_pb(
         self,
-    ) -> Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]:
+    ) -> Optional[Union[PartitionBook, Dict[EdgeType, PartitionBook]]]:
         return self._edge_partition_book
 
     @edge_pb.setter
     def edge_pb(
         self,
-        new_edge_pb: Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]],
+        new_edge_pb: Optional[Union[PartitionBook, Dict[EdgeType, PartitionBook]]],
     ):
         self._edge_partition_book = new_edge_pb
 
     @property
     def positive_edge_label(
         self,
-    ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
+    ) -> Optional[Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]]:
         return self._positive_edge_label
 
     @property
     def negative_edge_label(
         self,
-    ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
+    ) -> Optional[Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]]:
         return self._negative_edge_label
 
     @property
-    def node_ids(self) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
+    def node_ids(self) -> Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]:
         return self._node_ids
 
     @property
@@ -396,9 +396,9 @@ class DistLinkPredictionDataset(DistDataset):
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
-        partitioned_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        partitioned_edge_index: Union[torch.Tensor, Dict[EdgeType, torch.Tensor]]
         partitioned_edge_ids: Union[
-            Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
+            Optional[torch.Tensor], Dict[EdgeType, Optional[torch.Tensor]]
         ]
         if isinstance(partition_output.partitioned_edge_index, GraphPartitionData):
             partitioned_edge_index = partition_output.partitioned_edge_index.edge_index

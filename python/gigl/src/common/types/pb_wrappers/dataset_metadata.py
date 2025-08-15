@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import Type, cast
+from typing import Dict, Type, cast
 
 from gigl.common import Uri, UriFactory
 from gigl.src.common.types.pb_wrappers.types import DatasetMetadataPb, TrainingSamplePb
 from snapchat.research.gbml import dataset_metadata_pb2, training_samples_schema_pb2
 
-DATASET_TO_TRAINING_SAMPLE_TYPE: dict[
+DATASET_TO_TRAINING_SAMPLE_TYPE: Dict[
     Type[DatasetMetadataPb], Type[TrainingSamplePb]
 ] = {
     dataset_metadata_pb2.SupervisedNodeClassificationDataset: training_samples_schema_pb2.SupervisedNodeClassificationSample,

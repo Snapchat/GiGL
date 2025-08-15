@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, Set
+from typing import Dict, Protocol, Set
 
 import torch
 
@@ -36,18 +36,18 @@ class GbmlGraphDataProtocol(Protocol):
         these graphs data formats.
 
         Returns:
-            dict[Node, Node]
+            Dict[Node, Node]
         """
         ...
 
     @global_node_to_subgraph_node_mapping.setter
     def global_node_to_subgraph_node_mapping(
-        self, global_node_to_subgraph_node_mapping: dict[Node, Node]
+        self, global_node_to_subgraph_node_mapping: Dict[Node, Node]
     ) -> None:
         """See global_node_to_subgraph_node_mapping
 
         Args:
-            global_node_to_subgraph_node_mapping (dict[Node, Node])
+            global_node_to_subgraph_node_mapping (Dict[Node, Node])
         """
         ...
 

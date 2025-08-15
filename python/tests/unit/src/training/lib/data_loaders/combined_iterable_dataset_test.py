@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from collections import defaultdict
+from typing import Dict
 
 import tensorflow as tf
 
@@ -29,7 +30,7 @@ class CombinedIterableDatasetTest(unittest.TestCase):
         self._files = self.__mock_tfrecord_files()
 
     def __mock_tfrecord_files(self):
-        tfrecord_files: dict[NodeType, list[LocalUri]] = defaultdict(list)
+        tfrecord_files: Dict[NodeType, list[LocalUri]] = defaultdict(list)
         for node_type_idx, condensed_node_type in enumerate(self._condensed_node_types):
             node_type = EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER.condensed_node_type_to_node_type_map[
                 condensed_node_type
@@ -69,7 +70,7 @@ class CombinedIterableDatasetTest(unittest.TestCase):
             )
             return samples
 
-        loopy_datasets_map: dict[NodeType, LoopyIterableDataset] = {}
+        loopy_datasets_map: Dict[NodeType, LoopyIterableDataset] = {}
         for condensed_node_type_str in self._files:
             tf_dataset = TfRecordsIterableDataset(
                 tf_record_uris=self._files[condensed_node_type_str],
@@ -99,7 +100,7 @@ class CombinedIterableDatasetTest(unittest.TestCase):
             )
             return samples
 
-        datasets_map: dict[NodeType, TfRecordsIterableDataset] = {}
+        datasets_map: Dict[NodeType, TfRecordsIterableDataset] = {}
         for condensed_node_type_str in self._files:
             tf_dataset = TfRecordsIterableDataset(
                 tf_record_uris=self._files[condensed_node_type_str],

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
-from typing import Set, Union
+from typing import Dict, Set, Union
 
 import torch
 import torch_geometric.data
@@ -36,12 +36,12 @@ class RootedNodeNeighborhoodBatch:
     graph: Union[
         torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
     ]  # batch-coalesced graph data used for message passing
-    condensed_node_type_to_root_node_indices_map: dict[
+    condensed_node_type_to_root_node_indices_map: Dict[
         CondensedNodeType, torch.LongTensor
     ]  # maps condensed node type to root node indices within the batch for whom to compute loss
     root_nodes: list[Node]
-    condensed_node_type_to_subgraph_id_to_global_node_id: dict[
-        CondensedNodeType, dict[NodeId, NodeId]
+    condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
+        CondensedNodeType, Dict[NodeId, NodeId]
     ]  # for each condensed node type, maps subgraph node id to global node id
 
     @staticmethod
@@ -79,7 +79,7 @@ class RootedNodeNeighborhoodBatch:
         builder: GraphBuilder,
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
-        samples: list[dict[NodeType, RootedNodeNeighborhoodSample]],
+        samples: list[Dict[NodeType, RootedNodeNeighborhoodSample]],
     ) -> RootedNodeNeighborhoodBatch:
         """
         We coalesce the various sample subgraphs to build a single unified neighborhood, which we use for message
@@ -106,12 +106,12 @@ class RootedNodeNeighborhoodBatch:
                 builder.add_graph_data(graph_data=graph_data)
         batch_graph_data = builder.build()
 
-        node_mapping: dict[
+        node_mapping: Dict[
             Node, Node
         ] = batch_graph_data.global_node_to_subgraph_node_mapping
 
-        condensed_node_type_to_subgraph_id_to_global_node_id: dict[
-            CondensedNodeType, dict[NodeId, NodeId]
+        condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
+            CondensedNodeType, Dict[NodeId, NodeId]
         ] = defaultdict(dict)
         for node_with_global_id, node_with_subgraph_id in node_mapping.items():
             condensed_node_type: CondensedNodeType = (
@@ -124,7 +124,7 @@ class RootedNodeNeighborhoodBatch:
             ] = node_with_global_id.id
 
         # We separate root node indices based on the node type of the root node
-        condensed_node_type_to_root_node_indices_map: dict[
+        condensed_node_type_to_root_node_indices_map: Dict[
             CondensedNodeType, torch.LongTensor
         ] = {}
         for node_type in unique_node_types:
@@ -193,8 +193,8 @@ class RootedNodeNeighborhoodBatch:
 
         node_mapping = batch_graph_data.global_node_to_subgraph_node_mapping
 
-        condensed_node_type_to_subgraph_id_to_global_node_id: dict[
-            CondensedNodeType, dict[NodeId, NodeId]
+        condensed_node_type_to_subgraph_id_to_global_node_id: Dict[
+            CondensedNodeType, Dict[NodeId, NodeId]
         ] = defaultdict(dict)
 
         for node_with_global_id, node_with_subgraph_id in node_mapping.items():
@@ -207,7 +207,7 @@ class RootedNodeNeighborhoodBatch:
                 node_with_subgraph_id.id
             ] = node_with_global_id.id
 
-        condensed_node_type_to_root_node_indices_map: dict[
+        condensed_node_type_to_root_node_indices_map: Dict[
             CondensedNodeType, torch.LongTensor
         ] = {
             graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map[
@@ -253,7 +253,7 @@ class RootedNodeNeighborhoodBatch:
         has 20 batches, but the random-negative dataloader only has 10.  This pacing issue would cause us to
         not be able to fetch random negatives for the last 10 main-sample batches, undesirably.
         """
-        iterable_dataset_map: dict[
+        iterable_dataset_map: Dict[
             NodeType,
             torch.utils.data.IterableDataset[RootedNodeNeighborhoodSample],
         ] = {}

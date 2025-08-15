@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
 import tensorflow as tf
@@ -11,12 +11,12 @@ from gigl.common import Uri
 
 # TODO (mkolodner-sc): Move these variables to a more general location, as they are used even outside of context of data preprocessor
 
-InstanceDict = dict[str, Any]
-TFTensorDict = dict[str, common_types.TensorType]
-FeatureSpecDict = dict[str, common_types.FeatureSpecType]
-FeatureIndexDict = dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
-FeatureSchemaDict = dict[str, Feature]
-FeatureVocabDict = dict[str, list[str]]
+InstanceDict = Dict[str, Any]
+TFTensorDict = Dict[str, common_types.TensorType]
+FeatureSpecDict = Dict[str, common_types.FeatureSpecType]
+FeatureIndexDict = Dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
+FeatureSchemaDict = Dict[str, Feature]
+FeatureVocabDict = Dict[str, list[str]]
 
 
 # Only these 3 dtypes are supported in TFTransform

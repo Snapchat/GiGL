@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -43,12 +43,12 @@ class DatasetAssetMockingSuite:
 
     @dataclass
     class ToyGraphData:
-        node_types: dict[str, NodeType]
-        edge_types: dict[str, EdgeType]
-        node_feats: dict[str, torch.Tensor]
-        edge_indices: dict[str, torch.Tensor]
-        node_labels: Optional[dict[str, torch.Tensor]] = None
-        edge_feats: Optional[dict[str, torch.Tensor]] = None
+        node_types: Dict[str, NodeType]
+        edge_types: Dict[str, EdgeType]
+        node_feats: Dict[str, torch.Tensor]
+        edge_indices: Dict[str, torch.Tensor]
+        node_labels: Optional[Dict[str, torch.Tensor]] = None
+        edge_feats: Optional[Dict[str, torch.Tensor]] = None
 
     @dataclass
     class UserDefinedLabels:
@@ -76,7 +76,7 @@ class DatasetAssetMockingSuite:
     @staticmethod
     def _get_pyg_dblp_dataset(
         store_at: str = "/tmp/DBLP",
-    ) -> Tuple[DBLPFromGCS, dict[str, NodeType], dict[str, EdgeType]]:
+    ) -> Tuple[DBLPFromGCS, Dict[str, NodeType], Dict[str, EdgeType]]:
         """DBLP graph is the graph in the first index in the returned dataset.
         https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.datasets.DBLP.html
         Detailed description of the dataset:
@@ -430,9 +430,9 @@ class DatasetAssetMockingSuite:
         task_metadata_type: TaskMetadataType = (
             TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK
         )
-        edge_index: dict[EdgeType, torch.Tensor]
-        node_feats: dict[NodeType, torch.Tensor]
-        edge_feats: Optional[dict[EdgeType, torch.Tensor]] = None
+        edge_index: Dict[EdgeType, torch.Tensor]
+        node_feats: Dict[NodeType, torch.Tensor]
+        edge_feats: Optional[Dict[EdgeType, torch.Tensor]] = None
 
         # Extract edge types and node types from the HeteroData object
         edge_types = list(toy_data.edge_types)
@@ -559,12 +559,12 @@ class DatasetAssetMockingSuite:
 
     def compute_datasets_to_mock(
         self, selected_datasets: Optional[list[str]] = None
-    ) -> dict[str, MockedDatasetInfo]:
+    ) -> Dict[str, MockedDatasetInfo]:
         """
         Returns a dictionary of mocked datasets to be used in the mocking suite.
         If `selected_datasets` is provided, only those datasets will be returned.
         """
-        mocked_datasets: dict[str, MockedDatasetInfo] = dict()
+        mocked_datasets: Dict[str, MockedDatasetInfo] = dict()
         all_mocking_func_names: list[str] = [
             attr
             for attr in dir(self)

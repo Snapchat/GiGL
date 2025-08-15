@@ -4,7 +4,7 @@ import inspect
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 
 @dataclass
@@ -16,7 +16,7 @@ class Param:
 
 
 class SupportedParams:
-    defaults: dict[str, Param]
+    defaults: Dict[str, Param]
 
     def __init__(self):
         whoami = getpass.getuser()
@@ -30,7 +30,7 @@ class SupportedParams:
                 e,
             )
             raise
-        self.defaults: dict[str, Param] = {
+        self.defaults: Dict[str, Param] = {
             "project": Param(default=project, description="GCP project ID"),
             "zone": Param(default="us-central1-a", description="GCP zone"),
             "service_account": Param(default=None, description="Service account email"),
@@ -193,7 +193,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    values: dict[str, str] = {}
+    values: Dict[str, str] = {}
     for key, param in supported_params.defaults.items():
         # Check if value is provided in command line arguments
         if getattr(args, key):
