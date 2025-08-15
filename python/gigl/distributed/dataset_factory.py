@@ -231,6 +231,8 @@ def _load_and_build_partitioned_dataset(
 
     gc.collect()
 
+    # TODO (mkolodner-sc): Add node labels to the dataset
+
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
     )
