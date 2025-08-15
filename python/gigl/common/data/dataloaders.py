@@ -1,6 +1,6 @@
 import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Callable, Optional, Sequence, Tuple, Union
 
@@ -35,8 +35,8 @@ class SerializedTFRecordInfo:
     feature_dim: int
     # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.
     entity_key: Union[str, Tuple[str, str]]
-    # Name of the label column for the current entity, defaults to None.
-    label_key: Optional[str] = None
+    # Name of the label columns for the current entity, defaults to an empty list.
+    label_keys: list[str] = field(default_factory=list)
     # The regex pattern to match the TFRecord files at the specified prefix
     tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$"
 
@@ -81,7 +81,7 @@ class TFDatasetOptions:
 def _concatenate_features_by_names(
     feature_key_to_tf_tensor: dict[str, tf.Tensor],
     feature_keys: list[str],
-    label_key: Optional[str],
+    label_keys: list[str],
 ) -> tf.Tensor:
     """
     Concatenates feature tensors in the order specified by feature names.
@@ -92,7 +92,7 @@ def _concatenate_features_by_names(
     Args:
         feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
         feature_keys (list[str]): A list of feature names specifying the order in which tensors should be concatenated.
-        label_key (Optional[str]): Name of the label column for the current entity, defaults to None.
+        label_keys (Optional[str]): Name of the label columns for the current entity.
 
     Returns:
         tf.Tensor: A concatenated tensor of the features in the specified order, with the label being concatenated at the end if it exists
@@ -102,7 +102,7 @@ def _concatenate_features_by_names(
 
     feature_iterable = feature_keys.copy()
 
-    if label_key is not None:
+    for label_key in label_keys:
         feature_iterable.append(label_key)
 
     for feature_key in feature_iterable:
@@ -312,19 +312,19 @@ class TFRecordDataLoader:
         feature_keys = serialized_tf_record_info.feature_keys
 
         if should_load_node_labels:
-            label_key = serialized_tf_record_info.label_key
-            if label_key is None:
+            label_keys = serialized_tf_record_info.label_keys
+            if not label_keys:
                 raise ValueError(
                     "Set `should_load_node_labels` to True, but found no label key to load from in the serailized tfrecord info."
                 )
         else:
-            label_key = None
+            label_keys = []
 
         # We make a deep copy of the feature spec dict so that future modifications don't redirect to the input
 
         feature_spec_dict = deepcopy(serialized_tf_record_info.feature_spec)
 
-        if label_key is not None:
+        for label_key in label_keys:
             feature_spec_dict[label_key] = tf.io.FixedLenFeature(
                 shape=[], dtype=tf.int64
             )
@@ -382,9 +382,9 @@ class TFRecordDataLoader:
                 if entity_type == FeatureTypes.NODE
                 else torch.empty(2, 0)
             )
-            if label_key:
+            if label_keys:
                 empty_feature = torch.empty(
-                    0, serialized_tf_record_info.feature_dim + 1
+                    0, serialized_tf_record_info.feature_dim + len(label_keys)
                 )
             elif feature_keys:
                 empty_feature = torch.empty(0, serialized_tf_record_info.feature_dim)
@@ -404,9 +404,9 @@ class TFRecordDataLoader:
         feature_tensors = []
         for idx, batch in enumerate(dataset):
             id_tensors.append(proccess_id_tensor(batch))
-            if feature_keys or label_key:
+            if feature_keys or label_keys:
                 feature_tensors.append(
-                    _concatenate_features_by_names(batch, feature_keys, label_key)
+                    _concatenate_features_by_names(batch, feature_keys, label_keys)
                 )
             num_entities_processed += (
                 id_tensors[-1].shape[0]

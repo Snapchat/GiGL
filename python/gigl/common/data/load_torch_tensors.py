@@ -71,7 +71,6 @@ def _data_loading_process(
     ],
     rank: int,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    should_load_node_labels: bool = False,
 ) -> None:
     """
     Spawned multiprocessing.Process which loads homogeneous or heterogeneous information for a specific entity type [node, edge, positive_label, negative_label]
@@ -89,7 +88,6 @@ def _data_loading_process(
             Serialized information for current entity
         rank (int): Rank of the current machine
         tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
-        should_load_node_labels (bool): Whether node labels should be loaded. If True, will load node labels as part of the node features. Defaults to False.
     """
     # We add a try - except clause here to ensure that exceptions are properly circulated back to the parent process
     try:
@@ -127,7 +125,6 @@ def _data_loading_process(
             ) = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
                 tf_dataset_options=tf_dataset_options,
-                should_load_node_labels=should_load_node_labels,
             )
             ids[graph_type] = entity_ids
             logger.info(
@@ -179,7 +176,6 @@ def load_torch_tensors_from_tf_record(
     rank: int = 0,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    should_load_node_labels: bool = False,
 ) -> LoadedGraphTensors:
     """
     Loads all torch tensors from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
@@ -195,7 +191,6 @@ def load_torch_tensors_from_tf_record(
         rank (int): Rank on current machine
         node_tf_dataset_options (TFDatasetOptions): The options to use for nodes when building the dataset.
         edge_tf_dataset_options (TFDatasetOptions): The options to use for edges when building the dataset.
-        should_load_node_labels (bool): Whether node labels should be loaded. If True, will load node labels as part of the node features. Defaults to False.
     Returns:
         loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors
     """
@@ -230,7 +225,6 @@ def load_torch_tensors_from_tf_record(
             "serialized_tf_record_info": serialized_graph_metadata.node_entity_info,
             "rank": rank,
             "tf_dataset_options": node_tf_dataset_options,
-            "should_load_node_labels": should_load_node_labels,
         },
     )
 
