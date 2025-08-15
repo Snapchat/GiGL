@@ -20,7 +20,7 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import TFRecordDataLoader
+from gigl.common.data.dataloaders import SerializedTFRecordInfo, TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
@@ -195,19 +195,18 @@ def _load_and_build_partitioned_dataset(
     partition_output = partitioner.partition()
 
     node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
-    if isinstance(serialized_graph_metadata.node_entity_info, abc.Mapping):
-        if not isinstance(partition_output.partitioned_node_features, abc.Mapping):
-            raise ValueError(
-                f"Expected partitioned node features to be a dictionary, got {type(partition_output.partitioned_node_features)}"
-            )
+    if isinstance(partition_output.partitioned_node_features, abc.Mapping):
         node_labels = {}
         for (
             node_type,
             node_feature,
         ) in partition_output.partitioned_node_features.items():
-            label_dim = len(
-                serialized_graph_metadata.node_entity_info[node_type].label_keys
-            )
+            if isinstance(serialized_graph_metadata.node_entity_info, abc.Mapping):
+                label_dim = len(
+                    serialized_graph_metadata.node_entity_info[node_type].label_keys
+                )
+            else:
+                label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
             if label_dim > 0:
                 node_features, node_labels[node_type] = get_labels_from_features(
                     node_feature.feats, label_dim=label_dim
@@ -215,12 +214,12 @@ def _load_and_build_partitioned_dataset(
                 partition_output.partitioned_node_features[
                     node_type
                 ].feats = node_features
-    else:
+    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
         if not isinstance(
-            partition_output.partitioned_node_features, FeaturePartitionData
+            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
         ):
             raise ValueError(
-                f"Expected partitioned node features to be type FeaturePartitionData, got {type(partition_output.partitioned_node_features)}"
+                f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
             )
         label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
         if label_dim > 0:
