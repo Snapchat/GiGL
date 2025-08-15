@@ -13,8 +13,8 @@ from gigl.common import Uri
 
 # Note: we use `typing.Dict` here instead of `dict` as the version of Beam we are on (2.56.0)
 # will see some failures when running with very large data and `dict`.
-# I am not sure what the root cause here is,
-# but I suspect it may be related to our version of Beam only parsing `typing` annotations [1]
+# We are not sure what the root cause here is,
+# this may be related to our version of Beam only parsing `typing` annotations [1]
 # and dicts having some special Coder [2].
 # If/when we upgrade beam versions, we could revisit this.
 # [1]: https://github.com/apache/beam/blob/96d2a281cd69698463d5455861335b4d7d09e795/sdks/python/apache_beam/typehints/native_type_compatibility.py#L277-L279
