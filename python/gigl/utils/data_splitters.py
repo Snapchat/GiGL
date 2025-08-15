@@ -1,5 +1,5 @@
 import gc
-from collections import defaultdict
+from collections import Mapping, defaultdict
 from typing import (
     Callable,
     Final,
@@ -53,15 +53,15 @@ class NodeAnchorLinkSplitter(Protocol):
     @overload
     def __call__(
         self,
-        edge_index: dict[EdgeType, torch.Tensor],
-    ) -> dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        edge_index: Mapping[EdgeType, torch.Tensor],
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         ...
 
     def __call__(
         self, *args, **kwargs
     ) -> Union[
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         ...
 
@@ -89,15 +89,15 @@ class NodeSplitter(Protocol):
     @overload
     def __call__(
         self,
-        node_ids: dict[NodeType, torch.Tensor],
-    ) -> dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        node_ids: Mapping[NodeType, torch.Tensor],
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         ...
 
     def __call__(
         self, *args, **kwargs
     ) -> Union[
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         ...
 
@@ -256,18 +256,18 @@ class HashedNodeAnchorLinkSplitter:
     @overload
     def __call__(
         self,
-        edge_index: dict[EdgeType, torch.Tensor],
-    ) -> dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        edge_index: Mapping[EdgeType, torch.Tensor],
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         ...
 
     def __call__(
         self,
         edge_index: Union[
-            torch.Tensor, dict[EdgeType, torch.Tensor]
+            torch.Tensor, Mapping[EdgeType, torch.Tensor]
         ],  # 2 x N (num_edges)
     ) -> Union[
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         # Validate distributed process group
         if not torch.distributed.is_initialized():
@@ -301,7 +301,7 @@ class HashedNodeAnchorLinkSplitter:
                 continue
 
             coo_edges = edge_index[edge_type_to_split]
-            _check_edge_index_is_valid(coo_edges)
+            _check_edge_index(coo_edges)
             anchor_nodes = (
                 coo_edges[1] if self._sampling_direction == "in" else coo_edges[0]
             )
@@ -425,16 +425,16 @@ class HashedNodeSplitter:
     @overload
     def __call__(
         self,
-        node_ids: dict[NodeType, torch.Tensor],
-    ) -> dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        node_ids: Mapping[NodeType, torch.Tensor],
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         ...
 
     def __call__(
         self,
-        node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        node_ids: Union[torch.Tensor, Mapping[NodeType, torch.Tensor]],
     ) -> Union[
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         # Validate distributed process group
         if not torch.distributed.is_initialized():
@@ -442,17 +442,17 @@ class HashedNodeSplitter:
                 f"Splitter requires a Torch distributed process group, but none was found. "
                 "Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
             )
-        if isinstance(node_ids, torch.Tensor):
-            is_heterogeneous = False
-            node_ids_dict = {DEFAULT_HOMOGENEOUS_NODE_TYPE: node_ids}
-        else:
+        if isinstance(node_ids, Mapping):
             is_heterogeneous = True
             node_ids_dict = node_ids
+        else:
+            is_heterogeneous = False
+            node_ids_dict = {DEFAULT_HOMOGENEOUS_NODE_TYPE: node_ids}
 
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
 
         for node_type, nodes_to_split in node_ids_dict.items():
-            _check_node_ids_are_valid(nodes_to_split)
+            _check_node_ids(nodes_to_split)
 
             # Use efficient bincount approach to find unique nodes instead of torch.unique()
             max_node_id = int(nodes_to_split.max().item() + 1)
@@ -596,7 +596,7 @@ def get_labels_for_anchor_nodes(
         negative labels may be None depending on if negative_label_edge_type is provided.
         The returned tensors are of shape N x M where N is the number of nodes and M is the max number of labels, per type.
     """
-    if not isinstance(dataset.graph, dict):
+    if not isinstance(dataset.graph, Mapping):
         raise ValueError(
             "The dataset must be heterogeneous to select labels for anchor nodes."
         )
@@ -712,7 +712,7 @@ def _check_val_test_percentage(
             )
 
 
-def _check_edge_index_is_valid(edge_index: torch.Tensor):
+def _check_edge_index(edge_index: torch.Tensor):
     """Asserts edge index is the appropriate shape and is not sparse."""
     size = edge_index.size()
     if size[0] != 2 or len(size) != 2:
@@ -723,7 +723,7 @@ def _check_edge_index_is_valid(edge_index: torch.Tensor):
         raise ValueError("Expected a dense tensor. Received a sparse tensor.")
 
 
-def _check_node_ids_are_valid(node_ids: torch.Tensor):
+def _check_node_ids(node_ids: torch.Tensor):
     """Asserts node_ids tensor is the appropriate shape and is not sparse."""
     if len(node_ids.shape) != 1:
         raise ValueError(
