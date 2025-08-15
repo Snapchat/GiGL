@@ -27,6 +27,13 @@ _FEATURE_SPEC_WITHOUT_ENTITY_KEY: FeatureSpecDict = {
     "feature_1": tf.io.FixedLenFeature([], tf.float32),
 }
 
+_FEATURE_SPEC_WITH_LABEL: FeatureSpecDict = {
+    "node_id": tf.io.FixedLenFeature([], tf.int64),
+    "feature_0": tf.io.FixedLenFeature([], tf.float32),
+    "feature_1": tf.io.FixedLenFeature([], tf.float32),
+    "label": tf.io.FixedLenFeature([], tf.int64),
+}
+
 
 def _get_mock_node_examples() -> list[tf.train.Example]:
     """Generate mock examples for testing.
@@ -49,6 +56,9 @@ def _get_mock_node_examples() -> list[tf.train.Example]:
                         "feature_1": tf.train.Feature(
                             float_list=tf.train.FloatList(value=[i * 0.1])
                         ),
+                        "label": tf.train.Feature(
+                            int64_list=tf.train.Int64List(value=[i % 2])
+                        ),
                     }
                 )
             )
@@ -62,6 +72,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.temp_dir.name)
 
+        # Create standard examples without labels
         examples = _get_mock_node_examples()
         with tf.io.TFRecordWriter(str(self.data_dir / "100.tfrecord")) as writer:
             for example in examples:
@@ -74,29 +85,34 @@ class TFRecordDataLoaderTest(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "No features",
+                "No features, no labels",
                 feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
                 feature_keys=[],
                 feature_dim=0,
+                label_key=None,
                 expected_id_tensor=torch.tensor(range(100)),
                 expected_feature_tensor=None,
+                should_load_node_labels=False,
             ),
             param(
-                "One feature",
+                "One feature, no labels",
                 feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
                 feature_keys=["feature_0"],
-                feature_dim=0,
+                feature_dim=1,
+                label_key=None,
                 expected_id_tensor=torch.tensor(range(100)),
                 expected_feature_tensor=torch.tensor(
                     range(100), dtype=torch.float32
                 ).reshape(100, 1)
                 * 10,
+                should_load_node_labels=False,
             ),
             param(
-                "Two features",
+                "Two features, no labels",
                 feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
                 feature_keys=["feature_0", "feature_1"],
-                feature_dim=0,
+                feature_dim=2,
+                label_key=None,
                 expected_id_tensor=torch.tensor(range(100)),
                 expected_feature_tensor=torch.concat(
                     (
@@ -107,12 +123,14 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                     ),
                     dim=1,
                 ),
+                should_load_node_labels=False,
             ),
             param(
-                "Two features, no entity key in feature schema",
+                "Two features, no entity key in feature schema, no labels",
                 feature_spec=_FEATURE_SPEC_WITHOUT_ENTITY_KEY,
                 feature_keys=["feature_0", "feature_1"],
-                feature_dim=0,
+                feature_dim=2,
+                label_key=None,
                 expected_id_tensor=torch.tensor(range(100)),
                 expected_feature_tensor=torch.concat(
                     (
@@ -123,6 +141,81 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                     ),
                     dim=1,
                 ),
+                should_load_node_labels=False,
+            ),
+            param(
+                "Two features with labels",
+                feature_spec=_FEATURE_SPEC_WITH_LABEL,
+                feature_keys=["feature_0", "feature_1"],
+                feature_dim=2,
+                label_key="label",
+                expected_id_tensor=torch.tensor(range(100)),
+                expected_feature_tensor=torch.concat(
+                    (
+                        torch.tensor(range(100), dtype=torch.float32).reshape(100, 1)
+                        * 10,  # feature_0
+                        torch.tensor(range(100), dtype=torch.float32).reshape(100, 1)
+                        * 0.1,  # feature_1
+                        torch.tensor(
+                            [i % 2 for i in range(100)], dtype=torch.float32
+                        ).reshape(
+                            100, 1
+                        ),  # label
+                    ),
+                    dim=1,
+                ),
+                should_load_node_labels=True,
+            ),
+            param(
+                "One feature with labels",
+                feature_spec=_FEATURE_SPEC_WITH_LABEL,
+                feature_keys=["feature_0"],
+                feature_dim=1,
+                label_key="label",
+                expected_id_tensor=torch.tensor(range(100)),
+                expected_feature_tensor=torch.concat(
+                    (
+                        torch.tensor(range(100), dtype=torch.float32).reshape(100, 1)
+                        * 10,  # feature_0
+                        torch.tensor(
+                            [i % 2 for i in range(100)], dtype=torch.float32
+                        ).reshape(
+                            100, 1
+                        ),  # label
+                    ),
+                    dim=1,
+                ),
+                should_load_node_labels=True,
+            ),
+            param(
+                "Only labels, no features",
+                feature_spec=_FEATURE_SPEC_WITH_LABEL,
+                feature_keys=[],
+                feature_dim=0,
+                label_key="label",
+                expected_id_tensor=torch.tensor(range(100)),
+                expected_feature_tensor=torch.tensor(
+                    [i % 2 for i in range(100)], dtype=torch.float32
+                ).reshape(100, 1),
+                should_load_node_labels=True,
+            ),
+            param(
+                "Two features, labels are present but bool is specified as False",
+                feature_spec=_FEATURE_SPEC_WITH_LABEL,
+                feature_keys=["feature_0", "feature_1"],
+                feature_dim=2,
+                label_key="label",
+                expected_id_tensor=torch.tensor(range(100)),
+                expected_feature_tensor=torch.concat(
+                    (
+                        torch.tensor(range(100), dtype=torch.float32).reshape(100, 1)
+                        * 10,
+                        torch.tensor(range(100), dtype=torch.float32).reshape(100, 1)
+                        * 0.1,
+                    ),
+                    dim=1,
+                ),
+                should_load_node_labels=False,
             ),
         ]
     )
@@ -132,9 +225,12 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         feature_spec: FeatureSpecDict,
         feature_keys: list[str],
         feature_dim: int,
+        label_key: Optional[str],
         expected_id_tensor: torch.Tensor,
         expected_feature_tensor: Optional[torch.Tensor],
+        should_load_node_labels: bool,
     ):
+        """Test TFRecordDataLoader's ability to load features and optionally labels."""
         loader = TFRecordDataLoader(rank=0, world_size=1)
         node_ids, feature_tensor = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
@@ -143,14 +239,32 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                 feature_keys=feature_keys,
                 feature_dim=feature_dim,
                 entity_key="node_id",
+                label_key=label_key,
                 tfrecord_uri_pattern="100.tfrecord",
             ),
             tf_dataset_options=TFDatasetOptions(deterministic=True),
+            should_load_node_labels=should_load_node_labels,
         )
 
+        # Verify entity IDs are loaded correctly
         assert_close(node_ids, expected_id_tensor)
 
+        # Verify feature tensor (which includes labels concatenated at the end if label_key is specified)
         assert_close(feature_tensor, expected_feature_tensor)
+
+        # Additional verification: if labels are included, check the dimension
+        if should_load_node_labels and label_key is not None:
+            assert feature_tensor is not None
+            expected_feature_columns = len(feature_keys) + 1  # +1 for the label
+            self.assertEqual(feature_tensor.shape[1], expected_feature_columns)
+
+            # Verify that labels are in the last column
+            if len(feature_keys) > 0:
+                label_column = feature_tensor[:, -1]
+                expected_labels = torch.tensor(
+                    [i % 2 for i in range(100)], dtype=torch.float32
+                )
+                assert_close(label_column, expected_labels)
 
     def test_build_dataset_for_uris(self):
         dataset = TFRecordDataLoader._build_dataset_for_uris(
@@ -196,6 +310,24 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                 expected_features=torch.empty(0, 3),
                 entity_key=("src_node_id", "dst_node_id"),
             ),
+            param(
+                "node_with_label_only",
+                feature_keys=[],
+                feature_dim=0,
+                expected_node_ids=torch.empty(0),
+                expected_features=torch.empty(0, 1),  # 1 label
+                entity_key="node_id",
+                label_key="label",
+            ),
+            param(
+                "node_with_features_and_label",
+                feature_keys=["foo_feature"],
+                feature_dim=1,
+                expected_node_ids=torch.empty(0),
+                expected_features=torch.empty(0, 2),  # 1 feature + 1 label
+                entity_key="node_id",
+                label_key="label",
+            ),
         ]
     )
     def test_load_empty_directory(
@@ -206,6 +338,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         expected_node_ids: torch.Tensor,
         expected_features: Optional[torch.Tensor],
         entity_key: Union[str, Tuple[str, str]],
+        label_key: Optional[str] = None,
     ):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
@@ -218,9 +351,10 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                 feature_keys=feature_keys,
                 feature_dim=feature_dim,
                 entity_key=entity_key,
-                tfrecord_uri_pattern=".tfrecord",
+                label_key=label_key,
             ),
             tf_dataset_options=TFDatasetOptions(deterministic=True),
+            should_load_node_labels=label_key is not None,
         )
 
         assert_close(node_ids, expected_node_ids)
@@ -264,3 +398,20 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                     [u.uri for u in uris],
                     [str(path / f"{i:0>2}.tfrecord") for i in expected],
                 )
+
+    def test_raises_when_no_label_key(self):
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        with self.assertRaises(ValueError):
+            loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+                    feature_spec=_FEATURE_SPEC_WITH_LABEL,
+                    feature_keys=["feature_0", "feature_1"],
+                    feature_dim=2,
+                    entity_key="node_id",
+                    label_key=None,
+                    tfrecord_uri_pattern="100.tfrecord",
+                ),
+                tf_dataset_options=TFDatasetOptions(deterministic=True),
+                should_load_node_labels=True,
+            )
