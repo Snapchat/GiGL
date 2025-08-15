@@ -2,6 +2,7 @@
 DatasetFactory is responsible for building and returning a DistLinkPredictionDataset class or subclass. It does this by spawning a
 process which initializes rpc + worker group, loads and builds a partitioned dataset, and shuts down the rpc + worker group.
 """
+import gc
 import time
 from collections import abc
 from distutils.util import strtobool
@@ -40,14 +41,15 @@ from gigl.distributed.utils import (
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeaturePartitionData
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
     select_ssl_positive_label_edges,
 )
+from gigl.utils.node_labels import get_labels_from_features
 
 logger = Logger()
 
@@ -191,6 +193,43 @@ def _load_and_build_partitioned_dataset(
     del loaded_graph_tensors
 
     partition_output = partitioner.partition()
+
+    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
+    if isinstance(serialized_graph_metadata.node_entity_info, abc.Mapping):
+        if not isinstance(partition_output.partitioned_node_features, abc.Mapping):
+            raise ValueError(
+                f"Expected partitioned node features to be a dictionary, got {type(partition_output.partitioned_node_features)}"
+            )
+        node_labels = {}
+        for (
+            node_type,
+            node_feature,
+        ) in partition_output.partitioned_node_features.items():
+            label_dim = len(
+                serialized_graph_metadata.node_entity_info[node_type].label_keys
+            )
+            if label_dim > 0:
+                node_features, node_labels[node_type] = get_labels_from_features(
+                    node_feature.feats, label_dim=label_dim
+                )
+                partition_output.partitioned_node_features[
+                    node_type
+                ].feats = node_features
+    else:
+        if not isinstance(
+            partition_output.partitioned_node_features, FeaturePartitionData
+        ):
+            raise ValueError(
+                f"Expected partitioned node features to be type FeaturePartitionData, got {type(partition_output.partitioned_node_features)}"
+            )
+        label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
+        if label_dim > 0:
+            node_features, node_labels = get_labels_from_features(
+                partition_output.partitioned_node_features.feats, label_dim=label_dim
+            )
+            partition_output.partitioned_node_features.feats = node_features
+
+    gc.collect()
 
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
