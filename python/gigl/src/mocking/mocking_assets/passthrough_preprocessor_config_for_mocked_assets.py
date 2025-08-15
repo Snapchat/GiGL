@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import gigl.src.mocking.lib.constants as test_tasks_constants
 from gigl.common.logger import Logger
@@ -49,8 +49,8 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
 
     def get_nodes_preprocessing_spec(
         self,
-    ) -> Dict[NodeDataReference, NodeDataPreprocessingSpec]:
-        node_data_ref_to_preprocessing_specs: Dict[
+    ) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
+        node_data_ref_to_preprocessing_specs: dict[
             NodeDataReference, NodeDataPreprocessingSpec
         ] = dict()
 
@@ -110,8 +110,8 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
 
     def get_edges_preprocessing_spec(
         self,
-    ) -> Dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
-        edge_data_ref_to_preprocessing_specs: Dict[
+    ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+        edge_data_ref_to_preprocessing_specs: dict[
             EdgeDataReference, EdgeDataPreprocessingSpec
         ] = dict()
         for edge_type in self.__mocked_dataset.edge_types:

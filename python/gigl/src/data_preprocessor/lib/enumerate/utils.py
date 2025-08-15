@@ -2,7 +2,7 @@ import concurrent.futures
 import sys
 import traceback
 from dataclasses import dataclass
-from typing import Dict, Sequence, Tuple
+from typing import Sequence, Tuple
 
 import google.cloud.bigquery as bigquery
 
@@ -64,7 +64,7 @@ def get_enumerated_edge_features_bq_table_name(
     )
 
 
-def get_resource_labels() -> Dict[str, str]:
+def get_resource_labels() -> dict[str, str]:
     resource_config = get_resource_config()
     return resource_config.get_resource_labels(
         component=GiGLComponents.DataPreprocessor
@@ -269,7 +269,7 @@ class Enumerator:
     def __enumerate_all_edge_references(
         self,
         edge_data_references: Sequence[EdgeDataReference],
-        map_enumerator_node_type_metadata: Dict[NodeType, EnumeratorNodeTypeMetadata],
+        map_enumerator_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata],
     ) -> list[EnumeratorEdgeTypeMetadata]:
         results: list[EnumeratorEdgeTypeMetadata] = []
 
@@ -367,7 +367,7 @@ class Enumerator:
     def __enumerate_edge_reference(
         self,
         edge_data_ref: EdgeDataReference,
-        map_enumerator_node_type_metadata: Dict[NodeType, EnumeratorNodeTypeMetadata],
+        map_enumerator_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata],
     ) -> EnumeratorEdgeTypeMetadata:
         if not isinstance(edge_data_ref, BigqueryEdgeDataReference):
             raise NotImplementedError(
@@ -450,7 +450,7 @@ class Enumerator:
         ] = self.__enumerate_all_node_references(
             node_data_references=node_data_references
         )
-        map_enumerator_node_type_metadata: Dict[
+        map_enumerator_node_type_metadata: dict[
             NodeType, EnumeratorNodeTypeMetadata
         ] = {
             node_metadata.input_node_data_reference.node_type: node_metadata
