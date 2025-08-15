@@ -12,7 +12,7 @@ from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edg
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     HashedNodeSplitter,
-    _check_edge_index,
+    _check_edge_index_is_valid,
     _check_val_test_percentage,
     _fast_hash,
     _get_padded_labels,
@@ -568,9 +568,9 @@ class TestDataSplitters(unittest.TestCase):
             param("Sparse tensor", edges=torch.zeros(2, 2).to_sparse()),
         ]
     )
-    def test_check_edge_index(self, _, edges):
+    def test_check_edge_index_is_valid(self, _, edges):
         with self.assertRaises(ValueError):
-            _check_edge_index(edges)
+            _check_edge_index_is_valid(edges)
 
     def test_hashed_node_anchor_link_splitter_requires_process_group(self):
         edges = torch.stack(
