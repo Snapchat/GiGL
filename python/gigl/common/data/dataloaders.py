@@ -302,7 +302,6 @@ class TFRecordDataLoader:
         Args:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
-            should_load_node_labels (bool): Whether node labels should be loaded. If True, will load node labels as part of the node features. Defaults to False.
 
         Returns:
             Tuple[torch.Tensor, Optional[torch.Tensor]]: The (id_tensor, feature_tensor) for the loaded entities.
