@@ -70,7 +70,7 @@ class NodeAnchorLinkSplitter(Protocol):
         ...
 
 
-class NodeAnchorSplitter(Protocol):
+class NodeSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on nodes directly.
 
     Args:
