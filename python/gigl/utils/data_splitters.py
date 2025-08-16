@@ -11,6 +11,7 @@ from typing import (
     Tuple,
     Union,
     overload,
+    runtime_checkable,
 )
 
 import torch
@@ -32,6 +33,76 @@ logger = Logger()
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
 
 
+def _create_distributed_splits_from_hash(
+    nodes_to_select: torch.Tensor,
+    hash_values: torch.Tensor,
+    num_val: float,
+    num_test: float,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Creates train, val, test splits from hash values using distributed coordination.
+
+    This function performs the complete splitting workflow:
+    1. Validates that a distributed process group is initialized
+    2. Normalizes hash values globally across all processes
+    3. Creates train/val/test splits from the normalized hash values
+
+    Args:
+        nodes_to_select (torch.Tensor): The nodes to split.
+        hash_values (torch.Tensor): Raw hash values for the nodes.
+        num_val (float): Percentage of nodes for validation.
+        num_test (float): Percentage of nodes for testing.
+
+    Returns:
+        Tuple of (train_nodes, val_nodes, test_nodes).
+
+    Raises:
+        RuntimeError: If no distributed process group is found.
+    """
+    # Validate distributed process group
+    if not torch.distributed.is_initialized():
+        raise RuntimeError(
+            f"Splitter requires a Torch distributed process group, but none was found. "
+            "Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
+        )
+
+    # Normalize hash values globally across all processes
+    min_hash_value, max_hash_value = map(torch.Tensor.item, hash_values.aminmax())
+
+    all_max_and_mins = [
+        torch.zeros(2, dtype=torch.int64)
+        for _ in range(torch.distributed.get_world_size())
+    ]
+    torch.distributed.all_gather(
+        all_max_and_mins,
+        torch.tensor([max_hash_value, min_hash_value], dtype=torch.int64),
+    )
+    global_max_hash_value = max_hash_value
+    global_min_hash_value = min_hash_value
+    for max_and_min in all_max_and_mins:
+        global_max_hash_value = max(
+            global_max_hash_value, max_and_min[0].item()
+        )
+        global_min_hash_value = min(
+            global_min_hash_value, max_and_min[1].item()
+        )
+
+    normalized_hash_values = (hash_values - global_min_hash_value) / global_max_hash_value
+
+    # Create splits from normalized hash values
+    test_inds = normalized_hash_values >= 1 - num_test # 1 x M
+    val_inds = (normalized_hash_values >= 1 - num_test - num_val) & ~test_inds # 1 x M
+    train_inds = ~test_inds & ~val_inds # 1 x M
+
+    # Apply masks to select nodes
+    train = nodes_to_select[train_inds] # 1 x num_train_nodes
+    val = nodes_to_select[val_inds] # 1 x num_val_nodes
+    test = nodes_to_select[test_inds] # 1 x num_test_nodes
+
+    return train, val, test
+
+
+@runtime_checkable
 class NodeAnchorLinkSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on edges.
 
@@ -68,6 +139,39 @@ class NodeAnchorLinkSplitter(Protocol):
 
     @property
     def should_convert_labels_to_edges(self):
+        ...
+
+
+@runtime_checkable
+class NodeAnchorSplitter(Protocol):
+    """Protocol that should be satisfied for anything that is used to split on nodes directly.
+
+    Args:
+        node_ids: The node IDs to split on. 1D tensor for homogeneous or mapping for heterogeneous
+    Returns:
+        The train (1 x X), val (1 x Y), test (1 x Z) nodes. X + Y + Z = N
+    """
+
+    @overload
+    def __call__(
+        self,
+        node_ids: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ...
+
+    @overload
+    def __call__(
+        self,
+        node_ids: Mapping[NodeType, torch.Tensor],
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        ...
+
+    def __call__(
+        self, *args, **kwargs
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    ]:
         ...
 
 
@@ -315,54 +419,15 @@ class HashedNodeAnchorLinkSplitter:
             gc.collect()
 
             hash_values = self._hash_function(nodes_to_select)  # 1 x M
-            # Now, we want to normalize the hash values to [0, 1) range so we can select them easily into splits.
-            # We want to do this *globally* e.g. across all processes,
-            # so that we can ensure that the same nodes are selected for the same split across all processes.
-            # If we don't do this, then if we have `[0, 1, 2, 3, 4]` on one process and `[4, 5, 6, 7]` on another,
-            # with the identity hash `4` may end up in Test in one rank and Train in another.
-            min_hash_value, max_hash_value = map(
-                torch.Tensor.item, hash_values.aminmax()
+            # Create train, val, test splits using distributed coordination
+            train, val, test = _create_distributed_splits_from_hash(
+                nodes_to_select, hash_values, self._num_val, self._num_test
             )
-            if torch.distributed.is_initialized():
-                all_max_and_mins = [
-                    torch.zeros(2, dtype=torch.int64)
-                    for _ in range(torch.distributed.get_world_size())
-                ]
-                torch.distributed.all_gather(
-                    all_max_and_mins,
-                    torch.tensor([max_hash_value, min_hash_value], dtype=torch.int64),
-                )
-                global_max_hash_value = max_hash_value
-                global_min_hash_value = min_hash_value
-                for max_and_min in all_max_and_mins:
-                    global_max_hash_value = max(
-                        global_max_hash_value, max_and_min[0].item()
-                    )
-                    global_min_hash_value = min(
-                        global_min_hash_value, max_and_min[1].item()
-                    )
-            else:
-                raise RuntimeError(
-                    f"{type(self).__name__} requires a Torch distributed process group, but none was found. Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
-                )
-            hash_values = (
-                hash_values - global_min_hash_value
-            ) / global_max_hash_value  # Normalize the hash values to [0, 1)
-
-            # Now that we've normalized the hash values, we can select the train, val, and test nodes.
-            test_inds = hash_values >= 1 - self._num_test  # 1 x M
-            val_inds = (
-                hash_values >= 1 - self._num_test - self._num_val
-            ) & ~test_inds  # 1 x M
             del hash_values
             gc.collect()
-            train_inds = ~test_inds & ~val_inds  # 1 x M
-            train = nodes_to_select[train_inds]  # 1 x num_train_nodes
-            val = nodes_to_select[val_inds]  # 1 x num_val_nodes
-            test = nodes_to_select[test_inds]  # 1 x num_test_nodes
             splits[anchor_node_type] = (train, val, test)
             # We no longer need the nodes to select, so we can clean up their memory.
-            del nodes_to_select, train_inds, val_inds, test_inds
+            del nodes_to_select
             gc.collect()
         if len(splits) == 0:
             raise ValueError(
@@ -377,6 +442,116 @@ class HashedNodeAnchorLinkSplitter:
     @property
     def should_convert_labels_to_edges(self):
         return self._should_convert_labels_to_edges
+
+
+class HashedNodeSplitter:
+    """Selects train, val, and test nodes based on provided node IDs directly.
+
+    NOTE: This splitter must be called when a Torch distributed process group is initialized.
+    e.g. `torch.distributed.init_process_group` must be called before using this splitter.
+
+    In node-based splitting, each node will be placed into exactly one split based on its hash value.
+    This is simpler than edge-based splitting as it doesn't require extracting anchor nodes from edges.
+
+    The splitter uses an efficient bincount-based approach to identify unique nodes, which is more
+    memory efficient than torch.unique(), especially for sparse node ID spaces.
+
+    Args:
+        node_ids: The node IDs to split. Either a 1D tensor for homogeneous graphs,
+                 or a mapping from node types to 1D tensors for heterogeneous graphs.
+    Returns:
+        The train, val, test node splits as tensors or mappings depending on input format.
+    """
+
+    def __init__(
+        self,
+        num_val: float = 0.1,
+        num_test: float = 0.1,
+        hash_function: Callable[[torch.Tensor], torch.Tensor] = _fast_hash,
+    ):
+        """Initializes the HashedNodeSplitter.
+
+        Args:
+            num_val (float): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
+            num_test (float): The percentage of nodes to use for testing. Defaults to 0.1 (10%).
+            hash_function (Callable[[torch.Tensor], torch.Tensor]): The hash function to use. Defaults to `_fast_hash`.
+        """
+        _check_val_test_percentage(num_val, num_test)
+
+        self._num_val = num_val
+        self._num_test = num_test
+        self._hash_function = hash_function
+
+    @overload
+    def __call__(
+        self,
+        node_ids: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ...
+
+    @overload
+    def __call__(
+        self,
+        node_ids: Mapping[NodeType, torch.Tensor],
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        ...
+
+    def __call__(
+        self,
+        node_ids: Union[torch.Tensor, Mapping[NodeType, torch.Tensor]],
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    ]:
+        node_ids_dict: Mapping[NodeType, torch.Tensor]
+        if isinstance(node_ids, torch.Tensor):
+            is_heterogeneous = False
+            node_ids_dict = {DEFAULT_HOMOGENEOUS_NODE_TYPE: node_ids}
+        else:
+            is_heterogeneous = True
+            node_ids_dict = node_ids
+
+        splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+
+        for node_type, nodes_to_split in node_ids_dict.items():
+            _check_node_ids(nodes_to_split)
+
+            # Use efficient bincount approach to find unique nodes instead of torch.unique()
+            max_node_id = int(nodes_to_split.max().item() + 1)
+            # Set device explicitly here so we don't default to CPU.
+            node_id_count = torch.zeros(
+                max_node_id, dtype=torch.uint8, device=nodes_to_split.device
+            )
+            node_id_count.add_(torch.bincount(nodes_to_split, minlength=max_node_id))
+            # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
+            # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
+            # and the `squeeze` converts that to a 1d tensor (`[1, 3]`).
+            unique_nodes = torch.nonzero(node_id_count).squeeze()
+            # node_id_count no longer needed, so we can clean up its memory.
+            del node_id_count
+            gc.collect()
+
+            hash_values = self._hash_function(unique_nodes)  # 1 x M
+
+            # Create train, val, test splits using distributed coordination
+            train, val, test = _create_distributed_splits_from_hash(
+                unique_nodes, hash_values, self._num_val, self._num_test
+            )
+
+            splits[node_type] = (train, val, test)
+
+            # Clean up memory
+            del hash_values
+            del unique_nodes
+            gc.collect()
+
+        if len(splits) == 0:
+            raise ValueError("No node IDs provided for splitting")
+
+        if is_heterogeneous:
+            return splits
+        else:
+            return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
 
 
 def get_labels_for_anchor_nodes(
@@ -544,6 +719,18 @@ def _check_edge_index(edge_index: torch.Tensor):
         )
     if edge_index.is_sparse:
         raise ValueError("Expected a dense tensor. Received a sparse tensor.")
+
+
+def _check_node_ids(node_ids: torch.Tensor):
+    """Asserts node_ids tensor is the appropriate shape and is not sparse."""
+    if len(node_ids.shape) != 1:
+        raise ValueError(
+            f"Expected node_ids to be a 1D tensor. Received a tensor of shape: {node_ids.shape}."
+        )
+    if node_ids.is_sparse:
+        raise ValueError("Expected a dense tensor. Received a sparse tensor.")
+    if node_ids.numel() == 0:
+        raise ValueError("Expected non-empty node_ids tensor.")
 
 
 def select_ssl_positive_label_edges(
