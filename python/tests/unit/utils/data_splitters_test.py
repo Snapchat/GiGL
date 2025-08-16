@@ -159,11 +159,9 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.2,
                 test_num=0.2,
-                expected_train=torch.tensor(
-                    [1, 1, 2, 2, 5, 5, 20, 20], dtype=torch.int64
-                ),
+                expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
-                expected_test=torch.tensor([200, 200], dtype=torch.int64),
+                expected_test=torch.tensor([200], dtype=torch.int64),
             ),
             param(
                 "One source node id",
@@ -783,11 +781,9 @@ class TestDataSplitters(unittest.TestCase):
                 ),
                 val_num=0.2,
                 test_num=0.2,
-                expected_train=torch.tensor(
-                    [1, 1, 2, 2, 5, 5, 20, 20], dtype=torch.int64
-                ),
+                expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
-                expected_test=torch.tensor([200, 200], dtype=torch.int64),
+                expected_test=torch.tensor([200], dtype=torch.int64),
             ),
         ]
     )
