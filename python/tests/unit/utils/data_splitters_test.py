@@ -122,7 +122,6 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.tensor(
                     [0, 1, 2, 3, 4, 5, 6, 7], dtype=torch.int64
                 ),
@@ -163,7 +162,6 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.tensor(
                     [0, 1, 2, 3, 4, 5, 6, 7], dtype=torch.int64
                 ),
@@ -181,9 +179,6 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.2,
                 test_num=0.2,
-                # Since we are using the identity hash with 0.6-0.2-0.2 split, we'd expect values 1-159 to be train, 160-179 to be val, 180 - 200 to be test.
-                # Since there no value between 160-179, val is empty.
-                # Since there is one value between 180-199, test has one item.
                 expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
                 expected_test=torch.tensor([200], dtype=torch.int64),
@@ -199,10 +194,7 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0 to be train and val and test to be empty.
-                expected_train=torch.tensor(
-                    [0], dtype=torch.int64
-                ),
+                expected_train=torch.tensor([0], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
                 expected_test=torch.tensor([], dtype=torch.int64),
             ),
@@ -219,6 +211,11 @@ class TestDataSplitters(unittest.TestCase):
         expected_val,
         expected_test,
     ):
+        # We are using the identity function to hash our source/destination nodes. As a result, the maximum node id will be the maximum hash, and the minumum node id will be the minimum hash.
+        # The expected tensors are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
@@ -251,7 +248,6 @@ class TestDataSplitters(unittest.TestCase):
                 edge_types_to_split=[EdgeType(_NODE_A, _TO, _NODE_B)],
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -281,7 +277,6 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -312,8 +307,6 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
-                # We'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for _NODE_C
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -349,7 +342,6 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(16, dtype=torch.int64),
@@ -380,7 +372,6 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(8, dtype=torch.int64),
@@ -411,7 +402,6 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-8 to be train, 9 to be val, and 10-11 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(9, dtype=torch.int64),
@@ -431,6 +421,12 @@ class TestDataSplitters(unittest.TestCase):
         test_num,
         expected,
     ):
+        # We are using the identity function to hash our source/destination nodes. As a result, the maximum node id per node type will be the maximum hash for that node type,
+        # and the minumum node id per node type will be the minimum hash for that node type.
+        # The expected tensors for each node type are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
@@ -794,7 +790,6 @@ class TestDataSplitters(unittest.TestCase):
                 node_ids=torch.arange(10, dtype=torch.int64),
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.arange(8, dtype=torch.int64),
                 expected_val=torch.tensor([8], dtype=torch.int64),
                 expected_test=torch.tensor([9], dtype=torch.int64),
@@ -809,7 +804,6 @@ class TestDataSplitters(unittest.TestCase):
                 ),
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.arange(8, dtype=torch.int64),
                 expected_val=torch.tensor([8], dtype=torch.int64),
                 expected_test=torch.tensor([9], dtype=torch.int64),
@@ -819,9 +813,6 @@ class TestDataSplitters(unittest.TestCase):
                 node_ids=torch.tensor([1, 20, 2, 5, 200], dtype=torch.int64),
                 val_num=0.2,
                 test_num=0.2,
-                # Since we are using the identity hash with 0.6-0.2-0.2 split, we'd expect values 1-159 to be train, 160-179 to be val, 180 - 200 to be test.
-                # Since there no value between 160-179, val is empty.
-                # Since there is one value between 180-200, test has one item.
                 expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
                 expected_test=torch.tensor([200], dtype=torch.int64),
@@ -838,6 +829,12 @@ class TestDataSplitters(unittest.TestCase):
         expected_val,
         expected_test,
     ):
+        # We are using the identity function to hash our nodes ids. As a result, the maximum node id per node type will be the maximum hash,
+        # and the minumum node id will be the minimum hash.
+        # The expected tensors are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
@@ -860,7 +857,6 @@ class TestDataSplitters(unittest.TestCase):
                 node_ids={_NODE_A: torch.arange(10, dtype=torch.int64)},
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(8, dtype=torch.int64),
@@ -877,8 +873,6 @@ class TestDataSplitters(unittest.TestCase):
                 },
                 val_num=0.1,
                 test_num=0.1,
-                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
-                # We'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for _NODE_B
                 expected={
                     _NODE_A: (
                         torch.arange(8, dtype=torch.int64),
@@ -901,9 +895,6 @@ class TestDataSplitters(unittest.TestCase):
                 },
                 val_num=0.2,
                 test_num=0.2,
-                # Since we are using the identity hash with 0.6-0.2-0.2 split, we'd expect values 0-2 to be train, 3 to be val, and 4 to be test for _NODE_A
-                # We'd expect values 0-71 to be train, 72-95 to be val, and 96-119 to be test for _NODE_B
-                # We'd expect values 0-5 to be train, 6-7 to be val, and 8-9 to be test
                 expected={
                     _NODE_A: (
                         torch.arange(3, dtype=torch.int64),
@@ -932,6 +923,12 @@ class TestDataSplitters(unittest.TestCase):
         test_num,
         expected,
     ):
+        # We are using the identity function to hash our node ids. As a result, the maximum node id per node type will be the maximum hash for that node type,
+        # and the minumum node id per node type will be the minimum hash for that node type.
+        # The expected tensors for each node type are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
