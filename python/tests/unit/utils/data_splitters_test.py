@@ -12,8 +12,8 @@ from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edg
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     HashedNodeSplitter,
+    _assert_valid_split_ratios,
     _check_edge_index,
-    _check_val_test_percentage,
     _fast_hash,
     _get_padded_labels,
     get_labels_for_anchor_nodes,
@@ -187,6 +187,24 @@ class TestDataSplitters(unittest.TestCase):
                 expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
                 expected_test=torch.tensor([200], dtype=torch.int64),
+            ),
+            param(
+                "One source node id",
+                edges=torch.stack(
+                    [
+                        torch.zeros(10, dtype=torch.int64),
+                        torch.ones(10, dtype=torch.int64),
+                    ]
+                ),
+                sampling_direction="out",
+                val_num=0.1,
+                test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0 to be train and val and test to be empty.
+                expected_train=torch.tensor(
+                    [0], dtype=torch.int64
+                ),
+                expected_val=torch.tensor([], dtype=torch.int64),
+                expected_test=torch.tensor([], dtype=torch.int64),
             ),
         ]
     )
@@ -597,9 +615,9 @@ class TestDataSplitters(unittest.TestCase):
             param("Negative val percentage", train_percentage=0.8, val_percentage=-1.0),
         ]
     )
-    def test_check_val_test_percentage(self, _, train_percentage, val_percentage):
+    def test_assert_valid_split_ratios(self, _, train_percentage, val_percentage):
         with self.assertRaises(ValueError):
-            _check_val_test_percentage(train_percentage, val_percentage)
+            _assert_valid_split_ratios(train_percentage, val_percentage)
 
     @parameterized.expand(
         [

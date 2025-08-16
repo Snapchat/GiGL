@@ -197,8 +197,8 @@ class HashedNodeAnchorLinkSplitter:
                 `gigl.distributed.build_dataset` convert all labels into edges, and will infer positive and negative edge types based on
                 `supervision_edge_types`.
         """
-        _check_sampling_direction(sampling_direction)
-        _check_val_test_percentage(num_val, num_test)
+        _assert_sampling_direction(sampling_direction)
+        _assert_valid_split_ratios(num_val, num_test)
 
         self._sampling_direction = sampling_direction
         self._num_val = num_val
@@ -347,6 +347,8 @@ class HashedNodeAnchorLinkSplitter:
             # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
             # and the `squeeze` converts that to a 1d tensor (`[1, 3]`).
             nodes_to_select = torch.nonzero(node_id_count).squeeze()
+            if nodes_to_select.dim() == 0:
+                nodes_to_select = nodes_to_select.unsqueeze(0)
             # node_id_count no longer needed, so we can clean up it's memory.
             del node_id_count
             gc.collect()
@@ -409,7 +411,7 @@ class HashedNodeSplitter:
             num_test (float): The percentage of nodes to use for testing. Defaults to 0.1 (10%).
             hash_function (Callable[[torch.Tensor], torch.Tensor]): The hash function to use. Defaults to `_fast_hash`.
         """
-        _check_val_test_percentage(num_val, num_test)
+        _assert_valid_split_ratios(num_val, num_test)
 
         self._num_val = num_val
         self._num_test = num_test
@@ -456,15 +458,13 @@ class HashedNodeSplitter:
 
             # Use efficient bincount approach to find unique nodes instead of torch.unique()
             max_node_id = int(nodes_to_split.max().item() + 1)
-            # Set device explicitly here so we don't default to CPU.
-            node_id_count = torch.zeros(
-                max_node_id, dtype=torch.uint8, device=nodes_to_split.device
-            )
-            node_id_count.add_(torch.bincount(nodes_to_split, minlength=max_node_id))
+            node_id_count = torch.bincount(nodes_to_split, minlength=max_node_id)
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
             # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
             # and the `squeeze` converts that to a 1d tensor (`[1, 3]`).
             unique_nodes = torch.nonzero(node_id_count).squeeze()
+            if unique_nodes.dim() == 0:
+                unique_nodes = unique_nodes.unsqueeze(0)
             # node_id_count no longer needed, so we can clean up its memory.
             del node_id_count
             gc.collect()
@@ -520,7 +520,10 @@ def _create_distributed_splits_from_hash(
         RuntimeError: If no distributed process group is found.
     """
 
-    _check_val_test_percentage(num_val, num_test)
+    _assert_valid_split_ratios(num_val, num_test)
+
+    # Ensure hash values and nodes_to_select are on the same device
+    hash_values = hash_values.to(nodes_to_select.device)
 
     # Normalize hash values globally across all processes
     min_hash_value, max_hash_value = map(torch.Tensor.item, hash_values.aminmax())
@@ -678,14 +681,14 @@ def _get_padded_labels(
     return labels
 
 
-def _check_sampling_direction(sampling_direction: str):
+def _assert_sampling_direction(sampling_direction: str):
     if sampling_direction not in ["in", "out"]:
         raise ValueError(
             f"Invalid sampling direction {sampling_direction}. Expected 'in' or 'out'."
         )
 
 
-def _check_val_test_percentage(
+def _assert_valid_split_ratios(
     val_percentage: Union[float, int], test_percentage: Union[float, int]
 ):
     """Checks that the val and test percentages make sense, e.g. we can still have train nodes, and they are non-negative."""
