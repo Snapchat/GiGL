@@ -781,9 +781,11 @@ class TestDataSplitters(unittest.TestCase):
                 ),
                 val_num=0.2,
                 test_num=0.2,
-                expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
+                expected_train=torch.tensor(
+                    [1, 1, 2, 2, 5, 5, 20, 20], dtype=torch.int64
+                ),
                 expected_val=torch.tensor([], dtype=torch.int64),
-                expected_test=torch.tensor([200], dtype=torch.int64),
+                expected_test=torch.tensor([200, 200], dtype=torch.int64),
             ),
         ]
     )
@@ -814,9 +816,9 @@ class TestDataSplitters(unittest.TestCase):
 
         train, val, test = splitter(node_ids)
 
-        assert_close(train, expected_train, rtol=0, atol=0)
-        assert_close(val, expected_val, rtol=0, atol=0)
-        assert_close(test, expected_test, rtol=0, atol=0)
+        assert_tensor_equality(train, expected_train, dim=0)
+        assert_tensor_equality(val, expected_val, dim=0)
+        assert_tensor_equality(test, expected_test, dim=0)
 
     @parameterized.expand(
         [
@@ -916,9 +918,9 @@ class TestDataSplitters(unittest.TestCase):
             expected_test,
         ) in expected.items():
             train, val, test = split[node_type]
-            assert_close(train, expected_train, rtol=0, atol=0)
-            assert_close(val, expected_val, rtol=0, atol=0)
-            assert_close(test, expected_test, rtol=0, atol=0)
+            assert_tensor_equality(train, expected_train, dim=0)
+            assert_tensor_equality(val, expected_val, dim=0)
+            assert_tensor_equality(test, expected_test, dim=0)
 
     def test_hashed_node_splitter_requires_process_group(self):
         node_ids = torch.arange(10, dtype=torch.int64)

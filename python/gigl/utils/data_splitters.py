@@ -388,9 +388,6 @@ class HashedNodeSplitter:
     In node-based splitting, each node will be placed into exactly one split based on its hash value.
     This is simpler than edge-based splitting as it doesn't require extracting anchor nodes from edges.
 
-    The splitter uses an efficient bincount-based approach to identify unique nodes, which is faster than using
-    torch.unique().
-
     Args:
         node_ids: The node IDs to split. Either a 1D tensor for homogeneous graphs,
                  or a mapping from node types to 1D tensors for heterogeneous graphs.
@@ -456,31 +453,17 @@ class HashedNodeSplitter:
         for node_type, nodes_to_split in node_ids_dict.items():
             _check_node_ids(nodes_to_split)
 
-            # Use efficient bincount approach to find unique nodes instead of torch.unique()
-            max_node_id = int(nodes_to_split.max().item() + 1)
-            node_id_count = torch.bincount(nodes_to_split, minlength=max_node_id)
-            # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
-            # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
-            # and the `squeeze` converts that to a 1d tensor (`[1, 3]`).
-            unique_nodes = torch.nonzero(node_id_count).squeeze()
-            if unique_nodes.dim() == 0:
-                unique_nodes = unique_nodes.unsqueeze(0)
-            # node_id_count no longer needed, so we can clean up its memory.
-            del node_id_count
-            gc.collect()
-
-            hash_values = self._hash_function(unique_nodes)  # 1 x M
+            hash_values = self._hash_function(nodes_to_split)  # 1 x M
 
             # Create train, val, test splits using distributed coordination
             train, val, test = _create_distributed_splits_from_hash(
-                unique_nodes, hash_values, self._num_val, self._num_test
+                nodes_to_split, hash_values, self._num_val, self._num_test
             )
 
             splits[node_type] = (train, val, test)
 
             # Clean up memory
             del hash_values
-            del unique_nodes
             gc.collect()
 
         if len(splits) == 0:
