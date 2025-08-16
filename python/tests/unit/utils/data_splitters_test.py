@@ -147,41 +147,23 @@ class TestDataSplitters(unittest.TestCase):
                 expected_test=torch.tensor([9], dtype=torch.int64),
             ),
             param(
-                "With dups",
+                "Non-contiguous and duplicated source node ids",
                 edges=torch.stack(
                     [
-                        torch.cat(
-                            [
-                                torch.arange(10, dtype=torch.int64),
-                                torch.arange(10, dtype=torch.int64),
-                            ]
+                        torch.tensor(
+                            [1, 2, 20, 5, 200, 1, 5, 20, 200, 2], dtype=torch.int64
                         ),
-                        torch.zeros(20, dtype=torch.int64),
-                    ]
-                ),
-                sampling_direction="out",
-                val_num=0.1,
-                test_num=0.1,
-                expected_train=torch.tensor(
-                    [0, 1, 2, 3, 4, 5, 6, 7], dtype=torch.int64
-                ),
-                expected_val=torch.tensor([8], dtype=torch.int64),
-                expected_test=torch.tensor([9], dtype=torch.int64),
-            ),
-            param(
-                "Non-contiguous source node ids",
-                edges=torch.stack(
-                    [
-                        torch.tensor([1, 20, 2, 5, 200], dtype=torch.int64),
-                        torch.zeros(5, dtype=torch.int64),
+                        torch.zeros(10, dtype=torch.int64),
                     ]
                 ),
                 sampling_direction="out",
                 val_num=0.2,
                 test_num=0.2,
-                expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
+                expected_train=torch.tensor(
+                    [1, 1, 2, 2, 5, 5, 20, 20], dtype=torch.int64
+                ),
                 expected_val=torch.tensor([], dtype=torch.int64),
-                expected_test=torch.tensor([200], dtype=torch.int64),
+                expected_test=torch.tensor([200, 200], dtype=torch.int64),
             ),
             param(
                 "One source node id",
@@ -786,7 +768,7 @@ class TestDataSplitters(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "Basic node splitting with identity hash",
+                "Basic node splitting",
                 node_ids=torch.arange(10, dtype=torch.int64),
                 val_num=0.1,
                 test_num=0.1,
@@ -795,27 +777,17 @@ class TestDataSplitters(unittest.TestCase):
                 expected_test=torch.tensor([9], dtype=torch.int64),
             ),
             param(
-                "Node splitting with duplicates",
-                node_ids=torch.cat(
-                    [
-                        torch.arange(10, dtype=torch.int64),
-                        torch.arange(10, dtype=torch.int64),
-                    ]
+                "Node splitting with non-contiguous and duplicate IDs",
+                node_ids=torch.tensor(
+                    [1, 2, 20, 5, 200, 1, 5, 20, 200, 2], dtype=torch.int64
                 ),
-                val_num=0.1,
-                test_num=0.1,
-                expected_train=torch.arange(8, dtype=torch.int64),
-                expected_val=torch.tensor([8], dtype=torch.int64),
-                expected_test=torch.tensor([9], dtype=torch.int64),
-            ),
-            param(
-                "Node splitting with non-contiguous IDs",
-                node_ids=torch.tensor([1, 20, 2, 5, 200], dtype=torch.int64),
                 val_num=0.2,
                 test_num=0.2,
-                expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
+                expected_train=torch.tensor(
+                    [1, 1, 2, 2, 5, 5, 20, 20], dtype=torch.int64
+                ),
                 expected_val=torch.tensor([], dtype=torch.int64),
-                expected_test=torch.tensor([200], dtype=torch.int64),
+                expected_test=torch.tensor([200, 200], dtype=torch.int64),
             ),
         ]
     )
