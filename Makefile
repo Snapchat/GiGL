@@ -144,10 +144,10 @@ assert_yaml_configs_parse:
 	python testing/assert_yaml_configs_parse.py -d .
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
-# Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
+# Ex. `make unit_test_py PY_TEST_FILES="*proto_utils_test.py"`
 # By default, runs all tests under python/tests/unit.
 # See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
-unit_test_py: clean_build_files_py type_check
+unit_test_py: clean_build_files_py
 	( cd python ; \
 	python -m tests.unit.main \
 		--env=test \
