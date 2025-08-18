@@ -49,9 +49,41 @@ from gigl.utils.data_splitters import (
     NodeAnchorLinkSplitter,
     select_ssl_positive_label_edges,
 )
-from gigl.utils.node_labels import get_labels_from_features
 
 logger = Logger()
+
+
+def _get_labels_from_features(
+    feature_and_label_tensor: torch.Tensor, label_dim: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Given a combined tensor of features and labels, returns the features and labels separately.
+    Args:
+        feature_and_label_tensor (torch.Tensor): Tensor of features and labels
+        label_dim (int): Dimension of the labels
+    Returns:
+        feature_tensor (torch.Tensor): Tensor of features
+        label_tensor (torch.Tensor): Tensor of labels
+    """
+
+    if len(feature_and_label_tensor.shape) != 2:
+        raise ValueError(
+            f"Expected tensor to be 2D for extracting labels, but got shape {feature_and_label_tensor.shape}"
+        )
+
+    _, feature_and_label_dim = feature_and_label_tensor.shape
+
+    if label_dim > feature_and_label_dim:
+        raise ValueError(
+            f"Got invalid label dim {label_dim} for extracting labels from tensor of shape {feature_and_label_dim}"
+        )
+
+    feature_dim = feature_and_label_dim - label_dim
+
+    return (
+        feature_and_label_tensor[:, :feature_dim],
+        feature_and_label_tensor[:, feature_dim:],
+    )
 
 
 @tf_on_cpu
@@ -208,12 +240,15 @@ def _load_and_build_partitioned_dataset(
             else:
                 label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
             if label_dim > 0:
-                node_features, node_labels[node_type] = get_labels_from_features(
+                node_features, node_labels[node_type] = _get_labels_from_features(
                     node_feature.feats, label_dim=label_dim
                 )
                 partition_output.partitioned_node_features[
                     node_type
-                ].feats = node_features
+                ] = FeaturePartitionData(feats=node_features, ids=node_feature.ids)
+                del node_feature
+                gc.collect()
+
     elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
         if not isinstance(
             serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
@@ -223,12 +258,17 @@ def _load_and_build_partitioned_dataset(
             )
         label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
         if label_dim > 0:
-            node_features, node_labels = get_labels_from_features(
+            node_features, node_labels = _get_labels_from_features(
                 partition_output.partitioned_node_features.feats, label_dim=label_dim
             )
-            partition_output.partitioned_node_features.feats = node_features
-
-    gc.collect()
+            partition_output.partitioned_node_features = FeaturePartitionData(
+                feats=node_features, ids=partition_output.partitioned_node_features.ids
+            )
+            gc.collect()
+    else:
+        raise ValueError(
+            f"Expected to have partitioned node features if labels are present, but got node features {node_features}"
+        )
 
     # TODO (mkolodner-sc): Add node labels to the dataset
 
