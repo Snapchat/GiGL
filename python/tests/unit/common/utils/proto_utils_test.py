@@ -1,7 +1,6 @@
-import os
+import unittest
 from datetime import datetime, timedelta
 from tempfile import NamedTemporaryFile
-import unittest
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
@@ -54,10 +53,11 @@ trainerConfig:
         optim_lr: '0.005'
     trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
 """
+
+
 class ProtoUtilsTest(unittest.TestCase):
     def setUp(self):
         self.proto_utils = ProtoUtils()
-
 
         tmp_file = NamedTemporaryFile(delete=False)
         logger.info(f"Writing test config to {tmp_file.name}")
@@ -81,7 +81,9 @@ class ProtoUtilsTest(unittest.TestCase):
             f"project.dataset.bq_edges_table_name_{datetime.now().strftime('%Y%m%d')}"
         )
         self.assertEqual(
-            task_config.dataset_config.data_preprocessor_config.data_preprocessor_args["bq_edges_table_name"],
+            task_config.dataset_config.data_preprocessor_config.data_preprocessor_args[
+                "bq_edges_table_name"
+            ],
             expected_bq_edges_table_name,
         )
         expected_positive_label_date_range_start = (
@@ -91,6 +93,8 @@ class ProtoUtilsTest(unittest.TestCase):
             datetime.now() - timedelta(days=1)
         ).strftime("%Y%m%d")
         self.assertEqual(
-            task_config.dataset_config.data_preprocessor_config.data_preprocessor_args["positive_label_date_range"],
+            task_config.dataset_config.data_preprocessor_config.data_preprocessor_args[
+                "positive_label_date_range"
+            ],
             f"{expected_positive_label_date_range_start}:{expected_positive_label_date_range_end}",
         )

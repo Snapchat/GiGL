@@ -5,11 +5,11 @@ import yaml
 from google.protobuf import message
 from google.protobuf.json_format import MessageToDict, ParseDict
 from omegaconf import OmegaConf
-from gigl.src.common.utils.omegaconf_resolvers import register_resolvers
 
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.src.common.utils.file_loader import FileLoader
+from gigl.src.common.utils.omegaconf_resolvers import register_resolvers
 
 logger = Logger()
 

@@ -1,10 +1,11 @@
 import unittest
 from datetime import datetime
 from unittest.mock import patch
-from gigl.src.common.utils.omegaconf_resolvers import register_resolvers
 
 import yaml
 from omegaconf import OmegaConf
+
+from gigl.src.common.utils.omegaconf_resolvers import register_resolvers
 
 
 class TestNowResolver(unittest.TestCase):
