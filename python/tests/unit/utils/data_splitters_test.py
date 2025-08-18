@@ -1,5 +1,6 @@
 import unittest
 from collections.abc import Mapping
+from typing import Union
 
 import torch
 import torch.multiprocessing as mp
@@ -29,12 +30,16 @@ _NODE_A = NodeType("A")
 _NODE_B = NodeType("B")
 _NODE_C = NodeType("C")
 _TO = Relation("to")
-_IDENTITY_HASH = lambda x: x
 
 # For SelectSSLPositiveLabelEdgesTest
 _NUM_EDGES = 1_000_000
 _TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 2).reshape((2, _NUM_EDGES))
 _INVALID_TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 10).reshape((10, _NUM_EDGES))
+
+
+class _IdentityHash:
+    def __call__(self, x):
+        return x
 
 
 def _run_splitter_distributed(
@@ -43,7 +48,7 @@ def _run_splitter_distributed(
     init_method: str,
     tensors: list[torch.Tensor],
     expected: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    is_node_split: bool,
+    splitter: Union[HashedNodeSplitter, HashedNodeAnchorLinkSplitter],
 ):
     """Run the splitter in a distributed setting and check the results.
     Args:
@@ -52,21 +57,12 @@ def _run_splitter_distributed(
         init_method (str): The method to initialize the process group.
         tensors (list[torch.Tensor]): List of edge tensors for each process.
         expected (list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]): Expected train, val, test splits for each process.
-        is_node_split (bool): Whether the splitter should be for nodes or edges
+        splitter (Union[HashedNodeSplitter, HashedNodeAnchorLinkSplitter]): The splitter to use for the distributed test
     """
     torch.distributed.init_process_group(
         rank=process_num, world_size=world_size, init_method=init_method
     )
-    if is_node_split:
-        node_splitter = HashedNodeSplitter(hash_function=_IDENTITY_HASH)
-        train, val, test = node_splitter(tensors[process_num])
-    else:
-        node_anchor_link_splitter = HashedNodeAnchorLinkSplitter(
-            sampling_direction="out",
-            should_convert_labels_to_edges=False,
-            hash_function=_IDENTITY_HASH,
-        )
-        train, val, test = node_anchor_link_splitter(tensors[process_num])
+    train, val, test = splitter(tensors[process_num])
     expected_train, expected_val, expected_test = expected[process_num]
     assert_tensor_equality(train, expected_train)
     assert_tensor_equality(val, expected_val)
@@ -201,7 +197,7 @@ class TestDataSplitters(unittest.TestCase):
         )
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
-            hash_function=_IDENTITY_HASH,
+            hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
             should_convert_labels_to_edges=False,
@@ -413,7 +409,7 @@ class TestDataSplitters(unittest.TestCase):
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in",
-            hash_function=_IDENTITY_HASH,
+            hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
             supervision_edge_types=edge_types_to_split,
@@ -435,6 +431,11 @@ class TestDataSplitters(unittest.TestCase):
 
     def test_node_based_link_splitter_parallelized(self):
         init_method = get_process_group_init_method()
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="out",
+            should_convert_labels_to_edges=False,
+            hash_function=_IdentityHash(),
+        )
         edges = [
             torch.stack(
                 [
@@ -489,7 +490,7 @@ class TestDataSplitters(unittest.TestCase):
                 init_method,  # init_method
                 edges,  # tensors
                 expected_splits,  # expected
-                False,  # is_node_split
+                splitter,  # splitter
             ),
             nprocs=3,
             join=True,
@@ -497,7 +498,7 @@ class TestDataSplitters(unittest.TestCase):
 
     def test_node_based_splitter_parallelized(self):
         init_method = get_process_group_init_method()
-        splitter = HashedNodeSplitter(hash_function=_IDENTITY_HASH)
+        splitter = HashedNodeSplitter(hash_function=_IdentityHash())
         nodes = [
             torch.arange(0, 20, dtype=torch.int64),
             torch.arange(0, 10, dtype=torch.int64),
@@ -537,7 +538,7 @@ class TestDataSplitters(unittest.TestCase):
                 init_method,  # init_method
                 nodes,  # tensors
                 expected_splits,  # expected
-                True,  # is_node_split
+                splitter,  # splitter
             ),
             nprocs=3,
             join=True,
@@ -809,7 +810,7 @@ class TestDataSplitters(unittest.TestCase):
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
         splitter = HashedNodeSplitter(
-            hash_function=_IDENTITY_HASH,
+            hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
         )
@@ -904,7 +905,7 @@ class TestDataSplitters(unittest.TestCase):
         )
 
         splitter = HashedNodeSplitter(
-            hash_function=_IDENTITY_HASH,
+            hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
         )

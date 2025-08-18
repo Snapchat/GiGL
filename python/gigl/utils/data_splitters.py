@@ -388,6 +388,12 @@ class HashedNodeSplitter:
     In node-based splitting, each node will be placed into exactly one split based on its hash value.
     This is simpler than edge-based splitting as it doesn't require extracting anchor nodes from edges.
 
+    Additionally, the HashedNodeSplitter does not de-dup repeated node ids. This means that if there are repeated node ids
+    which are passed in, the same number of repeated node ids are included in the output, all of which are put into the same split.
+    This differs from the HashedNodeAnchorLinkSplitter, which does de-dup the repeated source or destination nodes that appear from the
+    labeled edges.
+
+
     Args:
         node_ids: The node IDs to split. Either a 1D tensor for homogeneous graphs,
                  or a mapping from node types to 1D tensors for heterogeneous graphs.
