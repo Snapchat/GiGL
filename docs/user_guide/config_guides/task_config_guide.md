@@ -125,15 +125,13 @@ class implement the protocol defined @ {py:class}`gigl.src.inference.v1.lib.base
 GiGL makes use of custom [Omegaconf resolvers](https://omegaconf.readthedocs.io/en/latest/custom_resolvers.html) to
 allow us to expose MACROs that are resolved at runtime instead of being hardcoded.
 
-### Time Offsets with Named Parameters
+### Time resolvers
 
 ```yaml
-# Single offsets
 trainerArgs:
     today: "${now:%Y%m%d-%H:%M:%S}"          # → "20250101-12:00:00
     tomorrow: "${now:%Y-%m-%d,days+1}"       # → "2023-01-02"
     yesterday: "${now:%Y-%m-%d,days-1}"      # → "2024-12-31"
-    # Multiple offsets
     future_time: "${now:%Y%m%d %H:%M:%S,days+1,hours-1,minutes+30,seconds+10}"  # → "20250102 11:30:10"
     log_file: "logs/run_${now:%H-%M-%S}.log"  # → "logs/run_12-00-00.log"
 ```
