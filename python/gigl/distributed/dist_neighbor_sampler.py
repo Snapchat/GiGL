@@ -120,8 +120,6 @@ class DistABLPNeighborSampler(DistNeighborSampler):
                     if output.edge is not None:
                         edge_dict[etype] = output.edge
 
-                if len(nbr_dict) == 0:
-                    continue
                 nodes_dict, rows_dict, cols_dict = inducer.induce_next(nbr_dict)
                 merge_dict(nodes_dict, out_nodes_hetero)
                 merge_dict(rows_dict, out_rows_hetero)
