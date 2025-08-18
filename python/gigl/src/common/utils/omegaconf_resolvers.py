@@ -65,12 +65,15 @@ def now_resolver(*args) -> str:
     format_str = "%Y%m%d_%H%M%S"
     days = hours = minutes = seconds = 0
 
-    for i, arg in enumerate(args):
+    for i, arg in enumerate(
+        args
+    ):  # i.e. args = ["%Y%m%d_%H%M%S", "days+1", "hours-2", "minutes30", "seconds-15"]
         if i == 0 and not any(
             unit in arg for unit in ["days", "hours", "minutes", "seconds"]
         ):
             # First argument is format string if it doesn't contain time units
             format_str = arg
+
         else:
             # Parse time offset specifications like "days+1", "hours-2", etc.
             arg = arg.strip()
@@ -79,31 +82,35 @@ def now_resolver(*args) -> str:
             for unit in ["days", "hours", "minutes", "seconds"]:
                 if arg.startswith(unit):
                     value_str = arg[len(unit) :]
+                    if not value_str:
+                        raise ValueError(
+                            f"Could not parse time offset '{arg}': no value found"
+                        )
 
-                    # Handle the sign - remove + if present, keep - for negatives
+                    # Handle the sign: remove + if present, keep - for negatives
                     if value_str.startswith("+"):
                         value_str = value_str[1:]
 
                     try:
                         value = int(value_str)
-                        if unit == "days":
-                            days = value
-                        elif unit == "hours":
-                            hours = value
-                        elif unit == "minutes":
-                            minutes = value
-                        elif unit == "seconds":
-                            seconds = value
-                        break  # Exit the unit loop once we find a match
                     except ValueError:
-                        logger.warning(
+                        # Cleaner error message
+                        raise ValueError(
                             f"Could not parse time offset '{arg}': invalid value '{value_str}'"
                         )
-                        break
-            else:
-                # No unit found in this argument
-                if arg:  # Only warn if the argument is not empty
-                    logger.warning(
+                    if unit == "days":
+                        days = value
+                    elif unit == "hours":
+                        hours = value
+                    elif unit == "minutes":
+                        minutes = value
+                    elif unit == "seconds":
+                        seconds = value
+                    break  # Exit the unit loop once we find a match
+
+            else:  # If loop completes without breaking, then no unit found in this argument
+                if arg:  # Raise an error if the argument is not empty
+                    raise ValueError(
                         f"Could not parse time offset '{arg}': unknown format"
                     )
 
@@ -121,4 +128,9 @@ def register_resolvers() -> None:
     all custom resolvers with OmegaConf.
     """
     logger.info("Registering OmegaConf resolvers")
-    OmegaConf.register_new_resolver("now", now_resolver)
+    if not OmegaConf.has_resolver("now"):
+        OmegaConf.register_new_resolver("now", now_resolver)
+    else:
+        logger.info(
+            "OmegaConf resolver 'now' already registered, skipping registration"
+        )

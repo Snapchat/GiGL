@@ -1,3 +1,4 @@
+import os
 import unittest
 from datetime import datetime, timedelta
 from tempfile import NamedTemporaryFile
@@ -67,8 +68,7 @@ class ProtoUtilsTest(unittest.TestCase):
 
     def tearDown(self):
         # delete the temporary file
-        pass
-        # os.remove(self.test_task_config_path)
+        os.remove(self.test_task_config_path)
 
     def test_can_read_gbml_config_from_yaml(self):
         task_config = self.proto_utils.read_proto_from_yaml(

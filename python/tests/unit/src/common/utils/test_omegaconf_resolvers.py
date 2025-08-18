@@ -9,12 +9,9 @@ from gigl.src.common.utils.omegaconf_resolvers import register_resolvers
 
 
 class TestNowResolver(unittest.TestCase):
-    """Test cases for the 'now' OmegaConf resolver."""
-
     def setUp(self):
-        """Set up test fixtures with a fixed datetime for consistent testing."""
-        # Use a fixed datetime for predictable testing
         register_resolvers()
+        # Use a fixed datetime for predictable testing
         self.test_datetime = datetime(
             year=2023, month=12, day=15, hour=14, minute=30, second=22
         )  # 2023-12-15 14:30:22
@@ -32,10 +29,9 @@ class TestNowResolver(unittest.TestCase):
             timestamp: "${now:}"  # Uses default format
             short_date: "${now:%m-%d}"
 
-            # Explicit named parameter syntax (user-friendly!)
             tomorrow: "${now:%Y-%m-%d,days+1}"
             yesterday: "${now:%Y-%m-%d,days-1}"
-            tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,days+1,hours+5,minutes+30,seconds+15}"
+            tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,hours+5,days+1,minutes+30,seconds+15}"
         """
 
         expected_name = "exp_20231215_143022"
@@ -61,7 +57,10 @@ class TestNowResolver(unittest.TestCase):
             expected_tomorrow_plus_5_hours_30_min_15_sec,
         )
 
-
-if __name__ == "__main__":
-    # Run the tests
-    unittest.main()
+    def test_now_resolver_with_invalid_format(self):
+        yaml_config = """
+        experiment:
+            name: "exp_${now: hours+1, weirdargument-1}"
+        """
+        with self.assertRaises(ValueError):
+            OmegaConf.create(yaml_config).experiment.name
