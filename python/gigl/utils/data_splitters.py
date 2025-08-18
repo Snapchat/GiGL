@@ -1,5 +1,6 @@
 import gc
-from collections import Mapping, defaultdict
+from collections import defaultdict
+from collections.abc import Mapping
 from typing import (
     Callable,
     Final,
