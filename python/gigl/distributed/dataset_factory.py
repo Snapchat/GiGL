@@ -267,7 +267,7 @@ def _load_and_build_partitioned_dataset(
             gc.collect()
     else:
         raise ValueError(
-            f"Expected to have partitioned node features if labels are present, but got node features {node_features}"
+            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
         )
 
     # TODO (mkolodner-sc): Add node labels to the dataset
