@@ -34,6 +34,7 @@ from gigl.types.graph import (
     PartitionOutput,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
+    to_heterogeneous_edge,
     to_heterogeneous_node,
     to_homogeneous,
 )
@@ -435,6 +436,26 @@ def _run_toy_heterogeneous_ablp(
     shutdown_rpc()
 
 
+def _run_isolated_node_ablp_loader(_, dataset: DistLinkPredictionDataset):
+    assert isinstance(dataset.node_ids, abc.Mapping)
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=to_homogeneous(dataset.node_ids),
+        num_neighbors=[2, 2],
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
+
+    shutdown_rpc()
+
+
 class DistributedNeighborLoaderTest(unittest.TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
@@ -818,6 +839,28 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         mp.spawn(
             fn=_run_toy_heterogeneous_ablp,
             args=(dataset, self._context, supervision_edge_types, fanout),
+        )
+
+    def test_isolated_node_ablp_loader(
+        self,
+    ):
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            edge_partition_book={},
+            partitioned_edge_index={},
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels={
+                to_heterogeneous_edge(torch.tensor([[0], [1]]))
+            },
+        )
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_isolated_node_ablp_loader,
+            args=(dataset,),
         )
 
 
