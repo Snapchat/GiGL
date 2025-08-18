@@ -14,17 +14,29 @@ from gigl.common.data.dataloaders import (
     TFDatasetOptions,
     TFRecordDataLoader,
 )
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
+from gigl.src.mocking.lib.versioning import (
+    MockedDatasetArtifactMetadata,
+    get_mocked_dataset_artifact_metadata,
+)
+from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
+    CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
+)
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
     "node_id": tf.io.FixedLenFeature([], tf.int64),
     "feature_0": tf.io.FixedLenFeature([], tf.float32),
     "feature_1": tf.io.FixedLenFeature([], tf.float32),
+    "label_0": tf.io.FixedLenFeature([], tf.int64),
+    "label_1": tf.io.FixedLenFeature([], tf.int64),
 }
 
 _FEATURE_SPEC_WITHOUT_ENTITY_KEY: FeatureSpecDict = {
     "feature_0": tf.io.FixedLenFeature([], tf.float32),
     "feature_1": tf.io.FixedLenFeature([], tf.float32),
+    "label_0": tf.io.FixedLenFeature([], tf.int64),
+    "label_1": tf.io.FixedLenFeature([], tf.int64),
 }
 
 
@@ -288,7 +300,6 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                 tfrecord_uri_pattern="100.tfrecord",
             ),
             tf_dataset_options=TFDatasetOptions(deterministic=True),
-            should_load_node_labels=bool(label_keys),
         )
 
         # Verify entity IDs are loaded correctly
@@ -385,7 +396,6 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                 label_keys=label_keys,
             ),
             tf_dataset_options=TFDatasetOptions(deterministic=True),
-            should_load_node_labels=bool(label_keys),
         )
 
         assert_close(node_ids, expected_node_ids)
@@ -429,3 +439,49 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                     [u.uri for u in uris],
                     [str(path / f"{i:0>2}.tfrecord") for i in expected],
                 )
+
+    def test_load_labels_from_pb(self):
+        mocked_dataset_artifact_metadata: MockedDatasetArtifactMetadata = (
+            get_mocked_dataset_artifact_metadata()[
+                CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO.name
+            ]
+        )
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=mocked_dataset_artifact_metadata.frozen_gbml_config_uri
+            )
+        )
+        preprocessed_metadata_pb_wrapper = (
+            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
+        )
+        condensed_node_type = (
+            gbml_config_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_node_type
+        )
+        node_metadata = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
+            condensed_node_type
+        ]
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        _, feature_tensor = loader.load_as_torch_tensors(
+            serialized_tf_record_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=UriFactory.create_uri(
+                    node_metadata.tfrecord_uri_prefix
+                ),
+                feature_spec=preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_schema_map[
+                    condensed_node_type
+                ].feature_spec,
+                feature_keys=node_metadata.feature_keys,
+                feature_dim=node_metadata.feature_dim,
+                entity_key=node_metadata.node_id_key,
+                label_keys=node_metadata.label_keys,
+                tfrecord_uri_pattern=".*\.tfrecord$",
+            ),
+            tf_dataset_options=TFDatasetOptions(deterministic=True),
+        )
+        # Ensure we have loaded data
+        assert feature_tensor is not None
+        self.assertGreater(feature_tensor.size(0), 0)
+        # Ensure labels have been added as an additional dimension to the features
+        self.assertEqual(
+            feature_tensor.size(1),
+            node_metadata.feature_dim + len(node_metadata.label_keys),
+        )
