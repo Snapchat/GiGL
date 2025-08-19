@@ -782,6 +782,8 @@ class TestDataSplitters(unittest.TestCase):
                 ),
                 val_num=0.2,
                 test_num=0.2,
+                # Val is empty in this case because, with the identity hash, we expect 1-120 to be in train,
+                # 120-160 to be in val, and 160-200 to be in test, and thus have no IDs which fall in the val range.
                 expected_train=torch.tensor(
                     [1, 1, 2, 2, 5, 5, 20, 20], dtype=torch.int64
                 ),

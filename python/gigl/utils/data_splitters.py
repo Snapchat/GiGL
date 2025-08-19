@@ -160,6 +160,7 @@ class HashedNodeAnchorLinkSplitter:
     NOTE: This splitter must be called when a Torch distributed process group is initialized.
     e.g. `torch.distributed.init_process_group` must be called before using this splitter.
 
+    We need this communication between the processes for determining the maximum and minimum hashed node id across all machines.
 
     In node-based splitting, a node may only ever live in one split. E.g. if one
     node has two label edges, *both* of those edges will be placed into the same split.
@@ -515,8 +516,6 @@ def _create_distributed_splits_from_hash(
     Raises:
         RuntimeError: If no distributed process group is found.
     """
-
-    _assert_valid_split_ratios(num_val, num_test)
 
     # Ensure hash values and nodes_to_select are on the same device
     hash_values = hash_values.to(nodes_to_select.device)
