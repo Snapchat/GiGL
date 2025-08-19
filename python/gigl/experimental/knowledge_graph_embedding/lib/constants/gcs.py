@@ -20,6 +20,7 @@ def get_applied_task_staging_path(
         applied_task_identifier=applied_task_identifier
     )
 
+
 def get_edge_dataset_output_path(
     applied_task_identifier: AppliedTaskIdentifier,
 ) -> GcsUri:
@@ -33,9 +34,7 @@ def get_edge_dataset_output_path(
         GcsUri: The GCS URI for the staging path of the applied task.
     """
     return GcsUri.join(
-        get_applied_task_staging_path(
-            applied_task_identifier=applied_task_identifier
-        ),
+        get_applied_task_staging_path(applied_task_identifier=applied_task_identifier),
         "edge_dataset",
     )
 
