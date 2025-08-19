@@ -309,6 +309,9 @@ class HashedNodeAnchorLinkSplitter:
                 max_node_id, dtype=torch.uint8, device=anchor_nodes.device
             )
             for anchor_nodes in collected_anchor_nodes:
+                # Clamp here to avoid overflow to 0
+                # If we don't clamp, and the counts add up to X mod 255,
+                # then we will asume we have no nodes in that bucket, which is incorrect.
                 node_id_count.add_(
                     torch.bincount(anchor_nodes, minlength=max_node_id)
                 ).clamp(max=255)
