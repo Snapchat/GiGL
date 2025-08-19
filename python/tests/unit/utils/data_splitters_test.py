@@ -118,6 +118,7 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.tensor(
                     [0, 1, 2, 3, 4, 5, 6, 7], dtype=torch.int64
                 ),
@@ -155,6 +156,9 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.2,
                 test_num=0.2,
+                # Since we are using the identity hash with 0.6-0.2-0.2 split, we'd expect values 1-159 to be train, 160-179 to be val, 180 - 200 to be test.
+                # Since there no value between 160-179, val is empty.
+                # Since there is one value between 180-199, test has one item.
                 expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
                 expected_test=torch.tensor([200], dtype=torch.int64),
@@ -170,6 +174,7 @@ class TestDataSplitters(unittest.TestCase):
                 sampling_direction="out",
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0 to be train and val and test to be empty.
                 expected_train=torch.tensor([0], dtype=torch.int64),
                 expected_val=torch.tensor([], dtype=torch.int64),
                 expected_test=torch.tensor([], dtype=torch.int64),
@@ -224,6 +229,7 @@ class TestDataSplitters(unittest.TestCase):
                 edge_types_to_split=[EdgeType(_NODE_A, _TO, _NODE_B)],
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -253,6 +259,7 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -283,6 +290,8 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
+                # We'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for _NODE_C
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -318,6 +327,7 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(16, dtype=torch.int64),
@@ -348,6 +358,7 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(8, dtype=torch.int64),
@@ -378,6 +389,7 @@ class TestDataSplitters(unittest.TestCase):
                 ],
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-8 to be train, 9 to be val, and 10-11 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(9, dtype=torch.int64),
@@ -771,6 +783,7 @@ class TestDataSplitters(unittest.TestCase):
                 node_ids=torch.arange(10, dtype=torch.int64),
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.arange(8, dtype=torch.int64),
                 expected_val=torch.tensor([8], dtype=torch.int64),
                 expected_test=torch.tensor([9], dtype=torch.int64),
@@ -830,6 +843,7 @@ class TestDataSplitters(unittest.TestCase):
                 node_ids={_NODE_A: torch.arange(10, dtype=torch.int64)},
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(8, dtype=torch.int64),
@@ -846,6 +860,8 @@ class TestDataSplitters(unittest.TestCase):
                 },
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
+                # We'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for _NODE_B
                 expected={
                     _NODE_A: (
                         torch.arange(8, dtype=torch.int64),
@@ -868,6 +884,9 @@ class TestDataSplitters(unittest.TestCase):
                 },
                 val_num=0.2,
                 test_num=0.2,
+                # Since we are using the identity hash with 0.6-0.2-0.2 split, we'd expect values 0-2 to be train, 3 to be val, and 4 to be test for _NODE_A
+                # We'd expect values 0-71 to be train, 72-95 to be val, and 96-119 to be test for _NODE_B
+                # We'd expect values 0-5 to be train, 6-7 to be val, and 8-9 to be test
                 expected={
                     _NODE_A: (
                         torch.arange(3, dtype=torch.int64),
