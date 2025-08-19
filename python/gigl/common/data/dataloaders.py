@@ -29,7 +29,9 @@ class SerializedTFRecordInfo:
     tfrecord_uri_prefix: Uri
     # Feature names to load for the current entity
     feature_keys: Sequence[str]
-    # A dict of feature name -> FeatureSpec (eg. FixedLenFeature, VarlenFeature, SparseFeature, RaggedFeature). If entity keys are not present, we insert them during tensor loading.
+    # A dict of feature name -> FeatureSpec (eg. FixedLenFeature, VarlenFeature, SparseFeature, RaggedFeature).
+    # If entity keys are not present, we insert them during tensor loading. For example, if the FeatureSpecDict
+    # doesn't have the "node_id" identifier, we populate the feature_spce with a FixedLenFeature with shape=[], dtype=tf.int64.
     # Note that entity label keys should also be included in the feature_spec if they are present.
     feature_spec: FeatureSpecDict
     # Feature dimension of current entity

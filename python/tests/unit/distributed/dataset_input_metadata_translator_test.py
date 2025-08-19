@@ -153,7 +153,7 @@ class TranslatorTestCase(unittest.TestCase):
             )
             self.assertEqual(
                 sorted(seralized_node_info.feature_keys),
-                sorted(
+                (
                     preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_keys_map[
                         condensed_node_type
                     ]

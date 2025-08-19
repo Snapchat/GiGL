@@ -75,7 +75,7 @@ def _get_labels_from_features(
 
     if label_dim > feature_and_label_dim:
         raise ValueError(
-            f"Got invalid label dim {label_dim} for extracting labels from tensor of shape {feature_and_label_dim}"
+            f"Got invalid label dim {label_dim} for extracting labels from tensor of shape {feature_and_label_tensor.shape}"
         )
 
     feature_dim = feature_and_label_dim - label_dim
