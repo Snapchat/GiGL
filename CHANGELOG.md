@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added support for NodeAnchorSplitter
+
 - Add support for loading, partitioning, and separate node labels from features
 
 ### Changed
