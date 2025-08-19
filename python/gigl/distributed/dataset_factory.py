@@ -43,12 +43,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    FeaturePartitionData,
-    LoadedGraphTensors,
-    PartitionOutput,
-)
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeaturePartitionData
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
@@ -56,125 +51,6 @@ from gigl.utils.data_splitters import (
 )
 
 logger = Logger()
-
-
-def _process_ssl_positive_labels(
-    loaded_graph_tensors: LoadedGraphTensors,
-    ssl_positive_label_percentage: float,
-    splitter: Optional[NodeAnchorLinkSplitter],
-) -> None:
-    """
-    Processes SSL positive label selection from edge indices.
-
-    Args:
-        loaded_graph_tensors (LoadedGraphTensors): The loaded graph tensors to modify
-        ssl_positive_label_percentage (float): Percentage of edges to select as self-supervised labels
-        splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter used for heterogeneous graphs
-
-    """
-    if (
-        loaded_graph_tensors.positive_label is not None
-        or loaded_graph_tensors.negative_label is not None
-    ):
-        raise ValueError(
-            "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
-        )
-
-    positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    if isinstance(loaded_graph_tensors.edge_index, Mapping):
-        # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
-        # we can remove this assert.
-        assert isinstance(
-            splitter, HashedNodeAnchorLinkSplitter
-        ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
-        positive_label_edges = {}
-        for supervision_edge_type in splitter._supervision_edge_types:
-            positive_label_edges[
-                supervision_edge_type
-            ] = select_ssl_positive_label_edges(
-                edge_index=loaded_graph_tensors.edge_index[supervision_edge_type],
-                positive_label_percentage=ssl_positive_label_percentage,
-            )
-    elif isinstance(loaded_graph_tensors.edge_index, torch.Tensor):
-        positive_label_edges = select_ssl_positive_label_edges(
-            edge_index=loaded_graph_tensors.edge_index,
-            positive_label_percentage=ssl_positive_label_percentage,
-        )
-    else:
-        raise ValueError(
-            f"Found an unknown edge index type: {type(loaded_graph_tensors.edge_index)} when attempting to select positive labels"
-        )
-
-    loaded_graph_tensors.positive_label = positive_label_edges
-
-
-def _partition_graph_data(
-    loaded_graph_tensors: LoadedGraphTensors,
-    edge_dir: Literal["in", "out"],
-    partitioner_class: Optional[Type[DistPartitioner]],
-) -> PartitionOutput:
-    """
-    Partitions graph data using the specified partitioner.
-
-    Args:
-        loaded_graph_tensors (LoadedGraphTensors): The loaded graph tensors containing node_ids, edge_index, features, and labels
-        edge_dir (Literal["in", "out"]): Edge direction of the provided graph
-        partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs
-
-    Returns:
-        PartitionOutput: The result of partitioning the graph data
-    """
-    should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
-
-    if partitioner_class is None:
-        partitioner_class = DistPartitioner
-
-    if should_assign_edges_by_src_node:
-        logger.info(
-            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its source node machine"
-        )
-    else:
-        logger.info(
-            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its destination node machine"
-        )
-    partitioner = partitioner_class(
-        should_assign_edges_by_src_node=should_assign_edges_by_src_node
-    )
-
-    partitioner.register_node_ids(node_ids=loaded_graph_tensors.node_ids)
-    partitioner.register_edge_index(edge_index=loaded_graph_tensors.edge_index)
-    if loaded_graph_tensors.node_features is not None:
-        partitioner.register_node_features(
-            node_features=loaded_graph_tensors.node_features
-        )
-    if loaded_graph_tensors.edge_features is not None:
-        partitioner.register_edge_features(
-            edge_features=loaded_graph_tensors.edge_features
-        )
-    if loaded_graph_tensors.positive_label is not None:
-        partitioner.register_labels(
-            label_edge_index=loaded_graph_tensors.positive_label, is_positive=True
-        )
-    if loaded_graph_tensors.negative_label is not None:
-        partitioner.register_labels(
-            label_edge_index=loaded_graph_tensors.negative_label, is_positive=False
-        )
-
-    # We call del so that the reference count of these registered fields is 1,
-    # allowing these intermediate assets to be cleaned up as necessary inside of the partitioner.partition() call
-
-    del (
-        loaded_graph_tensors.node_ids,
-        loaded_graph_tensors.node_features,
-        loaded_graph_tensors.edge_index,
-        loaded_graph_tensors.edge_features,
-        loaded_graph_tensors.positive_label,
-        loaded_graph_tensors.negative_label,
-    )
-    del loaded_graph_tensors
-
-    partition_output = partitioner.partition()
-    return partition_output
 
 
 def _get_labels_from_features(
@@ -208,67 +84,6 @@ def _get_labels_from_features(
         feature_and_label_tensor[:, :feature_dim],
         feature_and_label_tensor[:, feature_dim:],
     )
-
-
-def _extract_node_labels(
-    partition_output: PartitionOutput,
-    serialized_graph_metadata: SerializedGraphMetadata,
-) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
-    """
-    Extracts node labels from partitioned node features.
-
-    Args:
-        partition_output (PartitionOutput): The partitioned graph data
-        serialized_graph_metadata (SerializedGraphMetadata): Metadata containing node label information
-
-    Returns:
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Extracted node labels or None if no labels are present
-    """
-    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
-    if isinstance(partition_output.partitioned_node_features, Mapping):
-        node_labels = {}
-        for (
-            node_type,
-            node_feature,
-        ) in partition_output.partitioned_node_features.items():
-            if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
-                label_dim = len(
-                    serialized_graph_metadata.node_entity_info[node_type].label_keys
-                )
-            else:
-                label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
-            if label_dim > 0:
-                node_features, node_labels[node_type] = _get_labels_from_features(
-                    node_feature.feats, label_dim=label_dim
-                )
-                partition_output.partitioned_node_features[
-                    node_type
-                ] = FeaturePartitionData(feats=node_features, ids=node_feature.ids)
-                del node_feature
-                gc.collect()
-
-    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
-        if not isinstance(
-            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
-        ):
-            raise ValueError(
-                f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
-            )
-        label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
-        if label_dim > 0:
-            node_features, node_labels = _get_labels_from_features(
-                partition_output.partitioned_node_features.feats, label_dim=label_dim
-            )
-            partition_output.partitioned_node_features = FeaturePartitionData(
-                feats=node_features, ids=partition_output.partitioned_node_features.ids
-            )
-            gc.collect()
-    else:
-        raise ValueError(
-            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
-        )
-
-    return node_labels
 
 
 @tf_on_cpu
@@ -321,31 +136,139 @@ def _load_and_build_partitioned_dataset(
         edge_tf_dataset_options=edge_tf_dataset_options,
     )
 
-    # TODO (mkolodner-sc): Move SSL code block to transductive splitter once that is ready
+    # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
-        _process_ssl_positive_labels(
-            loaded_graph_tensors=loaded_graph_tensors,
-            ssl_positive_label_percentage=_ssl_positive_label_percentage,
-            splitter=splitter,
-        )
+        if (
+            loaded_graph_tensors.positive_label is not None
+            or loaded_graph_tensors.negative_label is not None
+        ):
+            raise ValueError(
+                "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
+            )
+        positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        if isinstance(loaded_graph_tensors.edge_index, Mapping):
+            # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
+            # we can remove this assert.
+            assert isinstance(
+                splitter, HashedNodeAnchorLinkSplitter
+            ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
+            positive_label_edges = {}
+            for supervision_edge_type in splitter._supervision_edge_types:
+                positive_label_edges[
+                    supervision_edge_type
+                ] = select_ssl_positive_label_edges(
+                    edge_index=loaded_graph_tensors.edge_index[supervision_edge_type],
+                    positive_label_percentage=_ssl_positive_label_percentage,
+                )
+        elif isinstance(loaded_graph_tensors.edge_index, torch.Tensor):
+            positive_label_edges = select_ssl_positive_label_edges(
+                edge_index=loaded_graph_tensors.edge_index,
+                positive_label_percentage=_ssl_positive_label_percentage,
+            )
+        else:
+            raise ValueError(
+                f"Found an unknown edge index type: {type(loaded_graph_tensors.edge_index)} when attempting to select positive labels"
+            )
+
+        loaded_graph_tensors.positive_label = positive_label_edges
 
     if splitter is not None and splitter.should_convert_labels_to_edges:
         loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
-    partition_output = _partition_graph_data(
-        loaded_graph_tensors=loaded_graph_tensors,
-        edge_dir=edge_dir,
-        partitioner_class=partitioner_class,
+    should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
+
+    if partitioner_class is None:
+        partitioner_class = DistPartitioner
+
+    if should_assign_edges_by_src_node:
+        logger.info(
+            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its source node machine"
+        )
+    else:
+        logger.info(
+            f"Initializing {partitioner_class.__name__} instance while partitioning edges to its destination node machine"
+        )
+    partitioner = partitioner_class(
+        should_assign_edges_by_src_node=should_assign_edges_by_src_node
     )
 
-    # TODO (mkolodner-sc): Consider moving this to the TFRecordDataLoader if we want the partitioner to be explicitly handle node labels
+    partitioner.register_node_ids(node_ids=loaded_graph_tensors.node_ids)
+    partitioner.register_edge_index(edge_index=loaded_graph_tensors.edge_index)
+    if loaded_graph_tensors.node_features is not None:
+        partitioner.register_node_features(
+            node_features=loaded_graph_tensors.node_features
+        )
+    if loaded_graph_tensors.edge_features is not None:
+        partitioner.register_edge_features(
+            edge_features=loaded_graph_tensors.edge_features
+        )
+    if loaded_graph_tensors.positive_label is not None:
+        partitioner.register_labels(
+            label_edge_index=loaded_graph_tensors.positive_label, is_positive=True
+        )
+    if loaded_graph_tensors.negative_label is not None:
+        partitioner.register_labels(
+            label_edge_index=loaded_graph_tensors.negative_label, is_positive=False
+        )
 
-    node_labels: Optional[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    ] = _extract_node_labels(
-        partition_output=partition_output,
-        serialized_graph_metadata=serialized_graph_metadata,
+    # We call del so that the reference count of these registered fields is 1,
+    # allowing these intermediate assets to be cleaned up as necessary inside of the partitioner.partition() call
+
+    del (
+        loaded_graph_tensors.node_ids,
+        loaded_graph_tensors.node_features,
+        loaded_graph_tensors.edge_index,
+        loaded_graph_tensors.edge_features,
+        loaded_graph_tensors.positive_label,
+        loaded_graph_tensors.negative_label,
     )
+    del loaded_graph_tensors
+
+    partition_output = partitioner.partition()
+
+    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
+    if isinstance(partition_output.partitioned_node_features, Mapping):
+        node_labels = {}
+        for (
+            node_type,
+            node_feature,
+        ) in partition_output.partitioned_node_features.items():
+            if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
+                label_dim = len(
+                    serialized_graph_metadata.node_entity_info[node_type].label_keys
+                )
+            else:
+                label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
+            if label_dim > 0:
+                node_features, node_labels[node_type] = _get_labels_from_features(
+                    node_feature.feats, label_dim=label_dim
+                )
+                partition_output.partitioned_node_features[
+                    node_type
+                ] = FeaturePartitionData(feats=node_features, ids=node_feature.ids)
+                del node_feature
+                gc.collect()
+
+    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
+        if not isinstance(
+            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
+        ):
+            raise ValueError(
+                f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
+            )
+        label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
+        if label_dim > 0:
+            node_features, node_labels = _get_labels_from_features(
+                partition_output.partitioned_node_features.feats, label_dim=label_dim
+            )
+            partition_output.partitioned_node_features = FeaturePartitionData(
+                feats=node_features, ids=partition_output.partitioned_node_features.ids
+            )
+            gc.collect()
+    else:
+        raise ValueError(
+            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
+        )
 
     # TODO (mkolodner-sc): Add node labels to the dataset
 
