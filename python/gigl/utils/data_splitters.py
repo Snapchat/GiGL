@@ -386,6 +386,8 @@ class HashedNodeSplitter:
     NOTE: This splitter must be called when a Torch distributed process group is initialized.
     e.g. `torch.distributed.init_process_group` must be called before using this splitter.
 
+    We need this communication between the processes for determining the maximum and minimum hashed node id across all machines.
+
     In node-based splitting, each node will be placed into exactly one split based on its hash value.
     This is simpler than edge-based splitting as it doesn't require extracting anchor nodes from edges.
 
