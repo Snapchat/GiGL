@@ -125,6 +125,10 @@ class implement the protocol defined @ {py:class}`gigl.src.inference.v1.lib.base
 GiGL makes use of custom [Omegaconf resolvers](https://omegaconf.readthedocs.io/en/latest/custom_resolvers.html) to
 allow us to expose MACROs that are resolved at runtime instead of being hardcoded.
 
+```{note}
+In tabularized GiGL: Subgraph Sampler, and Split Generator do not have no support for custom resolvers. In most cases this should not be a problem as the config populator should populate any needed custom resolution to your frozen configs.
+```
+
 ### Time resolvers
 
 ```yaml
