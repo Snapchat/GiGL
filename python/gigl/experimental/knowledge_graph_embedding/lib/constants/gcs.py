@@ -11,7 +11,7 @@ def get_applied_task_staging_path(
     Returns the GCS URI for the staging/temp path of the applied task.
 
     Args:
-        applied_task_identifeir: The identifier of the applied task.
+        applied_task_identifier: The identifier of the applied task.
 
     Returns:
         GcsUri: The GCS URI for the staging path of the applied task.
@@ -63,7 +63,7 @@ def get_embedding_output_path_for_edge_type(
     Returns the GCS URI for the embedding output path for a specific edge type.
 
     Args:
-        applied_task_identifeir: The identifier of the applied task.
+        applied_task_identifier: The identifier of the applied task.
         edge_type: The edge type for which to get the embedding output path.
 
     Returns:
@@ -82,7 +82,7 @@ def get_embedding_output_path_for_src_node(
     Returns the GCS URI for the embedding output path for a specific source node type.
 
     Args:
-        applied_task_identifeir: The identifier of the applied task.
+        applied_task_identifier: The identifier of the applied task.
         edge_type: The edge type for which to get the embedding output path.
 
     Returns:
@@ -102,7 +102,7 @@ def get_embedding_output_path_for_dst_node(
     Returns the GCS URI for the embedding output path for a specific source node type.
 
     Args:
-        applied_task_identifeir: The identifier of the applied task.
+        applied_task_identifier: The identifier of the applied task.
         edge_type: The edge type for which to get the embedding output path.
 
     Returns:
@@ -122,7 +122,7 @@ def get_enumerated_config_output_path(
     Returns the GCS URI for the path to the config to be run post enumeration of data.
 
     Args:
-        applied_task_identifeir: The identifier of the applied task.
+        applied_task_identifier: The identifier of the applied task.
 
     Returns:
         GcsUri: The GCS URI for the staging path of the applied task.
