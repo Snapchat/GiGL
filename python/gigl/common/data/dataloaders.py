@@ -29,7 +29,7 @@ class SerializedTFRecordInfo:
     tfrecord_uri_prefix: Uri
     # Feature names to load for the current entity
     feature_keys: Sequence[str]
-    # a dict of feature name -> FeatureSpec (eg. FixedLenFeature, VarlenFeature, SparseFeature, RaggedFeature). If entity keys are not present, we insert them during tensor loading.
+    # A dict of feature name -> FeatureSpec (eg. FixedLenFeature, VarlenFeature, SparseFeature, RaggedFeature). If entity keys are not present, we insert them during tensor loading.
     # Note that entity label keys should also be included in the feature_spec if they are present.
     feature_spec: FeatureSpecDict
     # Feature dimension of current entity
@@ -374,7 +374,7 @@ class TFRecordDataLoader:
                 )
             elif label_keys and not feature_keys:
                 empty_feature = torch.empty(0, len(label_keys))
-            elif feature_keys:
+            elif not label_keys and feature_keys:
                 empty_feature = torch.empty(0, serialized_tf_record_info.feature_dim)
             else:
                 empty_feature = None

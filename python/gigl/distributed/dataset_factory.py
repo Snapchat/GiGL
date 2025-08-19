@@ -4,7 +4,7 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 """
 import gc
 import time
-from collections import abc
+from collections.abc import Mapping
 from distutils.util import strtobool
 from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
 
@@ -18,7 +18,7 @@ from graphlearn_torch.distributed import (
     rpc_is_initialized,
     shutdown_rpc,
 )
-from gigl.types.graph import LoadedGraphTensors
+
 from gigl.common import Uri, UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo, TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
@@ -43,7 +43,12 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeaturePartitionData, PartitionOutput
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    FeaturePartitionData,
+    LoadedGraphTensors,
+    PartitionOutput,
+)
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
@@ -170,13 +175,13 @@ def _extract_node_labels(
         node_labels: Extracted node labels or None if no labels are present
     """
     node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
-    if isinstance(partition_output.partitioned_node_features, abc.Mapping):
+    if isinstance(partition_output.partitioned_node_features, Mapping):
         node_labels = {}
         for (
             node_type,
             node_feature,
         ) in partition_output.partitioned_node_features.items():
-            if isinstance(serialized_graph_metadata.node_entity_info, abc.Mapping):
+            if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
                 label_dim = len(
                     serialized_graph_metadata.node_entity_info[node_type].label_keys
                 )
@@ -241,7 +246,7 @@ def _process_ssl_positive_labels(
         )
 
     positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    if isinstance(loaded_graph_tensors.edge_index, abc.Mapping):
+    if isinstance(loaded_graph_tensors.edge_index, Mapping):
         # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
         # we can remove this assert.
         assert isinstance(
@@ -335,7 +340,9 @@ def _load_and_build_partitioned_dataset(
         partitioner_class=partitioner_class,
     )
 
-    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = _extract_node_labels(
+    node_labels: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ] = _extract_node_labels(
         partition_output=partition_output,
         serialized_graph_metadata=serialized_graph_metadata,
     )
