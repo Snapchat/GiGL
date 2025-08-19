@@ -233,10 +233,13 @@ def _load_and_build_partitioned_dataset(
             node_type,
             node_feature,
         ) in partition_output.partitioned_node_features.items():
+            # serialized_graph_metadata can be heterogeneous for a heterogeneous node features
             if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
                 label_dim = len(
                     serialized_graph_metadata.node_entity_info[node_type].label_keys
                 )
+            # serialized_graph_metadata can be homogeneous for a heterogeneous node features,
+            # since we inject positive and negative label types as edges
             else:
                 label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
             if label_dim > 0:
@@ -250,6 +253,7 @@ def _load_and_build_partitioned_dataset(
                 gc.collect()
 
     elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
+        # serialized graph metadata must be homogeneous if partitioned node features is homogeneous
         if not isinstance(
             serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
         ):
