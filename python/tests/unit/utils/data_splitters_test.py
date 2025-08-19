@@ -11,6 +11,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
+    HashedNodeSplitter,
     _check_edge_index,
     _check_val_test_percentage,
     _fast_hash,
@@ -727,6 +728,216 @@ class TestDataSplitters(unittest.TestCase):
     def test_get_padded_labels(self, _, node_ids, topo, expected):
         labels = _get_padded_labels(node_ids, topo)
         assert_close(labels, expected, rtol=0, atol=0)
+
+    @parameterized.expand(
+        [
+            param(
+                "Basic node splitting with identity hash",
+                node_ids=torch.arange(10, dtype=torch.int64),
+                hash_function=lambda x: x,
+                val_num=0.1,
+                test_num=0.1,
+                expected_train=torch.arange(8, dtype=torch.int64),
+                expected_val=torch.tensor([8], dtype=torch.int64),
+                expected_test=torch.tensor([9], dtype=torch.int64),
+            ),
+            param(
+                "Node splitting with real hash function",
+                node_ids=torch.arange(20, dtype=torch.int64),
+                hash_function=_fast_hash,
+                val_num=0.1,
+                test_num=0.1,
+                expected_train=torch.tensor(
+                    [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 16, 17, 19],
+                    dtype=torch.int64,
+                ),
+                expected_val=torch.tensor([9, 14], dtype=torch.int64),
+                expected_test=torch.tensor([7, 15, 18], dtype=torch.int64),
+            ),
+            param(
+                "Node splitting with duplicates",
+                node_ids=torch.cat(
+                    [
+                        torch.arange(10, dtype=torch.int64),
+                        torch.arange(10, dtype=torch.int64),
+                    ]
+                ),
+                hash_function=lambda x: x,
+                val_num=0.1,
+                test_num=0.1,
+                expected_train=torch.arange(8, dtype=torch.int64),
+                expected_val=torch.tensor([8], dtype=torch.int64),
+                expected_test=torch.tensor([9], dtype=torch.int64),
+            ),
+            param(
+                "Node splitting with non-contiguous IDs",
+                node_ids=torch.arange(2, 22, 2, dtype=torch.int64),
+                hash_function=lambda x: x,
+                val_num=0.1,
+                test_num=0.1,
+                expected_train=torch.tensor(
+                    [2, 4, 6, 8, 10, 12, 14, 16], dtype=torch.int64
+                ),
+                expected_val=torch.tensor([18], dtype=torch.int64),
+                expected_test=torch.tensor([20], dtype=torch.int64),
+            ),
+        ]
+    )
+    def test_hashed_node_splitter(
+        self,
+        _,
+        node_ids,
+        hash_function,
+        val_num,
+        test_num,
+        expected_train,
+        expected_val,
+        expected_test,
+    ):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+        splitter = HashedNodeSplitter(
+            hash_function=hash_function,
+            num_val=val_num,
+            num_test=test_num,
+        )
+
+        train, val, test = splitter(node_ids)
+
+        assert_close(train, expected_train, rtol=0, atol=0)
+        assert_close(val, expected_val, rtol=0, atol=0)
+        assert_close(test, expected_test, rtol=0, atol=0)
+
+    @parameterized.expand(
+        [
+            param(
+                "Single node type heterogeneous",
+                node_ids={_NODE_A: torch.arange(10, dtype=torch.int64)},
+                hash_function=lambda x: x,
+                val_num=0.1,
+                test_num=0.1,
+                expected={
+                    _NODE_A: (
+                        torch.arange(8, dtype=torch.int64),
+                        torch.tensor([8], dtype=torch.int64),
+                        torch.tensor([9], dtype=torch.int64),
+                    )
+                },
+            ),
+            param(
+                "Multiple node types heterogeneous",
+                node_ids={
+                    _NODE_A: torch.arange(10, dtype=torch.int64),
+                    _NODE_B: torch.arange(20, dtype=torch.int64),
+                },
+                hash_function=lambda x: x,
+                val_num=0.1,
+                test_num=0.1,
+                expected={
+                    _NODE_A: (
+                        torch.arange(8, dtype=torch.int64),
+                        torch.tensor([8], dtype=torch.int64),
+                        torch.tensor([9], dtype=torch.int64),
+                    ),
+                    _NODE_B: (
+                        torch.arange(16, dtype=torch.int64),
+                        torch.tensor([16, 17], dtype=torch.int64),
+                        torch.tensor([18, 19], dtype=torch.int64),
+                    ),
+                },
+            ),
+            param(
+                "Multiple node types with different sizes",
+                node_ids={
+                    _NODE_A: torch.arange(5, dtype=torch.int64),
+                    _NODE_B: torch.arange(120, dtype=torch.int64),
+                    _NODE_C: torch.arange(10, dtype=torch.int64),
+                },
+                hash_function=lambda x: x,
+                val_num=0.2,
+                test_num=0.2,
+                expected={
+                    _NODE_A: (
+                        torch.arange(3, dtype=torch.int64),
+                        torch.tensor([3], dtype=torch.int64),
+                        torch.tensor([4], dtype=torch.int64),
+                    ),
+                    _NODE_B: (
+                        torch.arange(0, 72, dtype=torch.int64),
+                        torch.arange(72, 96, dtype=torch.int64),
+                        torch.arange(96, 120, dtype=torch.int64),
+                    ),
+                    _NODE_C: (
+                        torch.arange(6, dtype=torch.int64),
+                        torch.tensor([6, 7], dtype=torch.int64),
+                        torch.tensor([8, 9], dtype=torch.int64),
+                    ),
+                },
+            ),
+        ]
+    )
+    def test_hashed_node_splitter_heterogeneous(
+        self,
+        _,
+        node_ids,
+        hash_function,
+        val_num,
+        test_num,
+        expected,
+    ):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+
+        splitter = HashedNodeSplitter(
+            hash_function=hash_function,
+            num_val=val_num,
+            num_test=test_num,
+        )
+        split = splitter(node_ids)
+
+        assert isinstance(split, Mapping)
+        self.assertEqual(split.keys(), expected.keys())
+        for node_type, (
+            expected_train,
+            expected_val,
+            expected_test,
+        ) in expected.items():
+            train, val, test = split[node_type]
+            assert_close(train, expected_train, rtol=0, atol=0)
+            assert_close(val, expected_val, rtol=0, atol=0)
+            assert_close(test, expected_test, rtol=0, atol=0)
+
+    def test_hashed_node_splitter_requires_process_group(self):
+        node_ids = torch.arange(10, dtype=torch.int64)
+        splitter = HashedNodeSplitter()
+        with self.assertRaises(RuntimeError):
+            splitter(node_ids)
+
+    @parameterized.expand(
+        [
+            param(
+                "Empty homogeneous node IDs",
+                node_ids=torch.tensor([], dtype=torch.int64),
+            ),
+            param(
+                "Empty heterogeneous node IDs",
+                node_ids={},
+            ),
+            param(
+                "Heterogeneous with empty node type",
+                node_ids={_NODE_A: torch.tensor([], dtype=torch.int64)},
+            ),
+        ]
+    )
+    def test_hashed_node_splitter_invalid_inputs(self, _, node_ids):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+        splitter = HashedNodeSplitter()
+        with self.assertRaises(ValueError):
+            splitter(node_ids)
 
 
 class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):

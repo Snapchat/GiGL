@@ -28,13 +28,15 @@ class SerializedTFRecordInfo:
     # Uri Prefix for stored TfRecords
     tfrecord_uri_prefix: Uri
     # Feature names to load for the current entity
-    feature_keys: Sequence[str]
+    feature_keys: list[str]
     # a dict of feature name -> FeatureSpec (eg. FixedLenFeature, VarlenFeature, SparseFeature, RaggedFeature). If entity keys are not present, we insert them during tensor loading
     feature_spec: FeatureSpecDict
     # Feature dimension of current entity
     feature_dim: int
     # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.
     entity_key: Union[str, Tuple[str, str]]
+    # Name of the label column for the current entity, defaults to None.
+    label_key: Optional[str] = None
     # The regex pattern to match the TFRecord files at the specified prefix
     tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$"
 
@@ -78,24 +80,32 @@ class TFDatasetOptions:
 
 def _concatenate_features_by_names(
     feature_key_to_tf_tensor: dict[str, tf.Tensor],
-    feature_keys: Sequence[str],
+    feature_keys: list[str],
+    label_key: Optional[str],
 ) -> tf.Tensor:
     """
     Concatenates feature tensors in the order specified by feature names.
+    Also concatenates labels to the end of the feature list if they are present using the corresponding label key
 
     It is assumed that feature_names is a subset of the keys in feature_name_to_tf_tensor.
 
     Args:
         feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
         feature_keys (list[str]): A list of feature names specifying the order in which tensors should be concatenated.
+        label_key (Optional[str]): Name of the label column for the current entity, defaults to None.
 
     Returns:
-        tf.Tensor: A concatenated tensor of the features in the specified order.
+        tf.Tensor: A concatenated tensor of the features in the specified order, with the label being concatenated at the end if it exists
     """
 
     features: list[tf.Tensor] = []
 
-    for feature_key in feature_keys:
+    feature_iterable = feature_keys.copy()
+
+    if label_key is not None:
+        feature_iterable.append(label_key)
+
+    for feature_key in feature_iterable:
         tensor = feature_key_to_tf_tensor[feature_key]
 
         # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
@@ -171,7 +181,7 @@ class TFRecordDataLoader:
         """
         file_loader = FileLoader()
         uris = sorted(
-            file_loader.list_children(uri, pattern=tfrecord_pattern),
+            file_loader.list_children(uri, pattern=None),
             key=lambda uri: uri.uri,
         )
         if len(uris) == 0:
@@ -285,6 +295,7 @@ class TFRecordDataLoader:
         self,
         serialized_tf_record_info: SerializedTFRecordInfo,
         tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+        should_load_node_labels: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Loads torch tensors from a set of TFRecord files.
@@ -292,6 +303,7 @@ class TFRecordDataLoader:
         Args:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
+            should_load_node_labels (bool): Whether node labels should be loaded. If True, will load node labels as part of the node features. Defaults to False.
 
         Returns:
             Tuple[torch.Tensor, Optional[torch.Tensor]]: The (id_tensor, feature_tensor) for the loaded entities.
@@ -299,9 +311,23 @@ class TFRecordDataLoader:
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
 
+        if should_load_node_labels:
+            label_key = serialized_tf_record_info.label_key
+            if label_key is None:
+                raise ValueError(
+                    "Set `should_load_node_labels` to True, but found no label key to load from in the serailized tfrecord info."
+                )
+        else:
+            label_key = None
+
         # We make a deep copy of the feature spec dict so that future modifications don't redirect to the input
 
         feature_spec_dict = deepcopy(serialized_tf_record_info.feature_spec)
+
+        if label_key is not None:
+            feature_spec_dict[label_key] = tf.io.FixedLenFeature(
+                shape=[], dtype=tf.int64
+            )
 
         if isinstance(entity_key, str):
             assert isinstance(entity_key, str)
@@ -356,11 +382,14 @@ class TFRecordDataLoader:
                 if entity_type == FeatureTypes.NODE
                 else torch.empty(2, 0)
             )
-            empty_feature = (
-                torch.empty(0, serialized_tf_record_info.feature_dim)
-                if feature_keys
-                else None
-            )
+            if label_key:
+                empty_feature = torch.empty(
+                    0, serialized_tf_record_info.feature_dim + 1
+                )
+            elif feature_keys:
+                empty_feature = torch.empty(0, serialized_tf_record_info.feature_dim)
+            else:
+                empty_feature = None
             return empty_entity, empty_feature
 
         dataset = TFRecordDataLoader._build_dataset_for_uris(
@@ -375,9 +404,9 @@ class TFRecordDataLoader:
         feature_tensors = []
         for idx, batch in enumerate(dataset):
             id_tensors.append(proccess_id_tensor(batch))
-            if feature_keys:
+            if feature_keys or label_key:
                 feature_tensors.append(
-                    _concatenate_features_by_names(batch, feature_keys)
+                    _concatenate_features_by_names(batch, feature_keys, label_key)
                 )
             num_entities_processed += (
                 id_tensors[-1].shape[0]

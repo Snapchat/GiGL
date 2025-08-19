@@ -32,7 +32,7 @@ _EdgeType = TypeVar("_EdgeType", EdgeType, tuple[str, str, str])
 # TODO(kmonte, mkolodner): Move SerializedGraphMetadata and maybe convert_pb_to_serialized_graph_metadata here.
 
 
-@dataclass(frozen=True)
+@dataclass
 class FeaturePartitionData:
     """Data and indexing info of a node/edge feature partition."""
 

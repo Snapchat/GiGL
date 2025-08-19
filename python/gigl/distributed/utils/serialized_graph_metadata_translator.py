@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
@@ -20,6 +20,7 @@ def _build_serialized_tfrecord_entity_info(
     feature_spec_dict: FeatureSpecDict,
     entity_key: Union[str, Tuple[str, str]],
     tfrecord_uri_pattern: str,
+    label_key: Optional[str] = None,
 ) -> SerializedTFRecordInfo:
     """
     Populates a SerializedTFRecordInfo field from provided arguments for either a node or edge entity of a single node/edge type.
@@ -30,6 +31,7 @@ def _build_serialized_tfrecord_entity_info(
         feature_spec_dict (FeatureSpecDict): Feature spec to register to SerializedTFRecordInfo
         entity_key (Union[str, Tuple[str, str]]): Entity key to register to SerializedTFRecordInfo, is a str if Node entity or Tuple[str, str] if Edge entity
         tfrecord_uri_pattern (str): Regex pattern for loading serialized tf records
+        label_key (Optional[str]): Optional column name to load for labels, default to None.
     Returns:
         SerializedTFRecordInfo: Stored metadata for current entity
     """
@@ -42,6 +44,7 @@ def _build_serialized_tfrecord_entity_info(
         feature_dim=preprocessed_metadata.feature_dim,
         entity_key=entity_key,
         tfrecord_uri_pattern=tfrecord_uri_pattern,
+        label_key=label_key,
     )
 
 
@@ -85,11 +88,21 @@ def convert_pb_to_serialized_graph_metadata(
 
         node_key = node_metadata.node_id_key
 
+        if hasattr(node_metadata, "label_keys"):
+            if len(node_metadata.label_keys) != 1:
+                raise ValueError(
+                    f"Expected one label for node type {node_type}, got {len(node_metadata.label_keys)}"
+                )
+            label_key = node_metadata.label_keys[0]
+        else:
+            label_key = None
+
         node_entity_info[node_type] = _build_serialized_tfrecord_entity_info(
             preprocessed_metadata=node_metadata,
             feature_spec_dict=node_feature_spec_dict,
             entity_key=node_key,
             tfrecord_uri_pattern=tfrecord_uri_pattern,
+            label_key=label_key,
         )
 
     for edge_type in graph_metadata_pb_wrapper.edge_types:
