@@ -67,12 +67,10 @@ def _process_ssl_positive_labels(
     Processes SSL positive label selection from edge indices.
 
     Args:
-        loaded_graph_tensors: The loaded graph tensors to modify
-        ssl_positive_label_percentage: Percentage of edges to select as self-supervised labels
-        splitter: Optional splitter used for heterogeneous graphs
+        loaded_graph_tensors (LoadedGraphTensors): The loaded graph tensors to modify
+        ssl_positive_label_percentage (float): Percentage of edges to select as self-supervised labels
+        splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter used for heterogeneous graphs
 
-    Raises:
-        ValueError: If positive/negative labels already exist or unknown edge index type
     """
     if (
         loaded_graph_tensors.positive_label is not None
@@ -119,12 +117,12 @@ def _partition_graph_data(
     Partitions graph data using the specified partitioner.
 
     Args:
-        loaded_graph_tensors: The loaded graph tensors containing node_ids, edge_index, features, and labels
-        edge_dir: Edge direction of the provided graph
-        partitioner_class: Partitioner class to partition the graph inputs
+        loaded_graph_tensors (LoadedGraphTensors): The loaded graph tensors containing node_ids, edge_index, features, and labels
+        edge_dir (Literal["in", "out"]): Edge direction of the provided graph
+        partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs
 
     Returns:
-        partition_output: The result of partitioning the graph data
+        PartitionOutput: The result of partitioning the graph data
     """
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
@@ -220,11 +218,11 @@ def _extract_node_labels(
     Extracts node labels from partitioned node features.
 
     Args:
-        partition_output: The partitioned graph data
-        serialized_graph_metadata: Metadata containing label information
+        partition_output (PartitionOutput): The partitioned graph data
+        serialized_graph_metadata (SerializedGraphMetadata): Metadata containing node label information
 
     Returns:
-        node_labels: Extracted node labels or None if no labels are present
+        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Extracted node labels or None if no labels are present
     """
     node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
     if isinstance(partition_output.partitioned_node_features, Mapping):
@@ -339,6 +337,8 @@ def _load_and_build_partitioned_dataset(
         edge_dir=edge_dir,
         partitioner_class=partitioner_class,
     )
+
+    # TODO (mkolodner-sc): Consider moving this to the TFRecordDataLoader if we want the partitioner to be explicitly handle node labels
 
     node_labels: Optional[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]]
