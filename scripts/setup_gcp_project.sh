@@ -38,7 +38,7 @@ SA_NAME="gigl-dev"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # === Resources ===
-GCS_BUCKETS=("gigl_temp_assets_${USER_NAME}" "gigl_perm_assets_${USER_NAME}")
+GCS_BUCKETS=("gigl_temp_assets_${PROJECT_ID}" "gigl_perm_assets_${PROJECT_ID}")
 BQ_DATASETS=(gigl_temp_assets gigl_embeddings)
 PROJECT_ROLES=(
   roles/editor

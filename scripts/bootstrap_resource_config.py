@@ -6,11 +6,12 @@ import pathlib
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from distutils.util import strtobool
 from typing import Optional
 
 import yaml
 
-from gigl.common import HttpUri, LocalUri, UriFactory
+from gigl.common import GcsUri, HttpUri, LocalUri, UriFactory
 from gigl.src.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -77,6 +78,15 @@ class SupportedParams:
             "template_resource_config_uri": Param(
                 default=None,
                 description="URI to the template resource config file to use for bootstrapping. If provided, will be used as the 'Base' for the resource config, with the appropriate fields overwritten by the values provided in this script.",
+            ),
+            "output_resource_config_path": Param(
+                default=None,
+                required=False,
+                description="Path to the output resource config file. If not provided, one will be generated in the `perm_assets_bucket`.",
+            ),
+            "force_shell_config_update": Param(
+                default="False",
+                description="If set to True, will not ask to update the shell configuration file. If False, will prompt the user to update the shell configuration file.",
             ),
         }
 
@@ -273,12 +283,21 @@ if __name__ == "__main__":
     curr_username = getpass.getuser()
     default_resource_config_dest_path = f"{values['perm_assets_bucket']}/{curr_username}/{curr_datetime}/gigl_test_default_resource_config.yaml"
 
-    destination_file_path = (
-        input(
-            f"Output path for resource config (default: {default_resource_config_dest_path}); can be GCS or Local path: "
-        ).strip()
-        or default_resource_config_dest_path
-    )
+    if args.output_resource_config_path:
+        destination_file_path = args.output_resource_config_path
+    else:
+        destination_file_path = (
+            input(
+                f"Output path for resource config (default: {default_resource_config_dest_path}); Must be a GCS path starting with 'gs://': "
+            ).strip()
+            or default_resource_config_dest_path
+        )
+
+    file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
+    if not isinstance(file_uri_dest, GcsUri):
+        raise ValueError(
+            f"Destination file path must be a GCS URI starting with 'gs://'. Please provide a valid GCS path. Recived URI: {file_uri_dest.uri}. We do this prevent leaking sensitive information in the local filesystem."
+        )
 
     print("=======================================================")
     print(f"Will now create the resource config file @ {destination_file_path}.")
@@ -311,20 +330,23 @@ if __name__ == "__main__":
 
     file_loader = FileLoader(project=values["project"])
     file_uri_src = UriFactory.create_uri(uri=tmp_file.name)
-    file_uri_dest = UriFactory.create_uri(uri=destination_file_path)
     file_loader.load_file(file_uri_src=file_uri_src, file_uri_dst=file_uri_dest)
 
     print(f"Updated YAML file saved at '{destination_file_path}'")
 
     # Update the user's shell configuration
-    should_update_shell_config = (
-        input(
-            "Do you want to update your shell configuration file so you can use this new resource config for tests? [y/n] (Default: y): "
+    if args.force_shell_config_update and strtobool(args.force_shell_config_update):
+        should_update_shell_config = "y"
+        print("Forcing shell updated due to --force_shell_config_update flag.")
+    else:
+        should_update_shell_config = (
+            input(
+                "Do you want to update your shell configuration file so you can use this new resource config for tests? [y/n] (Default: y): "
+            )
+            .strip()
+            .lower()
+            or "y"
         )
-        .strip()
-        .lower()
-        or "y"
-    )
     if should_update_shell_config == "y":
         shell_config_path: str = infer_shell_file()
         update_shell_config(

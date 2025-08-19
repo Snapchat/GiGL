@@ -1,0 +1,42 @@
+name: Nightly Release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 19 * * *" # Run daily at 7pm UTC; 12am PST
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+
+# Calls create_release w/ nightly and then run the api tests
+jobs:
+  create-release:
+    uses: snapchat/gigl/.github/workflows/create_release.yml@main
+    secrets: inherit
+    with:
+      bump_type: nightly
+
+
+  api-test:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.create-release.outputs.release_branch_name }}
+    - name: Setup development environment
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run API Tests
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: "make run_api_test"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ vars.GCP_PROJECT_ID }}

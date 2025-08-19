@@ -13,6 +13,32 @@ permissions:
   issues: 'write'
 
 jobs:
+  help:
+    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install PyYAML
+      run: pip install PyYAML
+
+    - name: Generate help text
+      id: parse_commands
+      run: python .github/scripts/get_help_text.py
+
+    - name: Post help comment
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      with:
+        pr_number: ${{ github.event.issue.number }}
+        message: ${{ steps.parse_commands.outputs.help_message }}
+
   unit-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test') }}
     runs-on: ubuntu-latest

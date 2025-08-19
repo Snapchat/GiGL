@@ -4,7 +4,7 @@ SHELL := /bin/bash
 CONDA_ENV_NAME=gnn
 PYTHON_VERSION=3.9
 PIP_VERSION=25.0.1
-DATE:=$(shell /bin/date "+%Y%m%d-%H%M")
+DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
@@ -24,7 +24,7 @@ DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
-PYTHON_DIRS:=examples python scripts testing
+PYTHON_DIRS:=.github/scripts examples python scripts testing
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -134,6 +134,10 @@ generate_dev_linux_cuda_hashed_requirements:
 # installation scripts
 precondition_tests:
 	python testing/dep_vars_check.py
+
+
+run_api_test:
+	cd testing/api_test && make run_api_test
 
 
 assert_yaml_configs_parse:
