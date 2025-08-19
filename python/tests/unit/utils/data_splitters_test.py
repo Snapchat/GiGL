@@ -1,5 +1,6 @@
 import unittest
 from collections.abc import Mapping
+from typing import Union
 
 import torch
 import torch.multiprocessing as mp
@@ -11,8 +12,9 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
+    HashedNodeSplitter,
+    _assert_valid_split_ratios,
     _check_edge_index,
-    _check_val_test_percentage,
     _fast_hash,
     _get_padded_labels,
     get_labels_for_anchor_nodes,
@@ -35,31 +37,32 @@ _TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 2).reshape((2, _NUM_EDGES))
 _INVALID_TEST_EDGE_INDEX = torch.arange(0, _NUM_EDGES * 10).reshape((10, _NUM_EDGES))
 
 
+class _IdentityHash:
+    def __call__(self, x):
+        return x
+
+
 def _run_splitter_distributed(
     process_num: int,
     world_size: int,
     init_method: str,
-    edges: list[torch.Tensor],
+    tensors: list[torch.Tensor],
     expected: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    splitter: Union[HashedNodeSplitter, HashedNodeAnchorLinkSplitter],
 ):
     """Run the splitter in a distributed setting and check the results.
     Args:
         process_num (int): The rank of the current process.
         world_size (int): Total number of processes.
         init_method (str): The method to initialize the process group.
-        edges (list[torch.Tensor]): List of edge tensors for each process.
+        tensors (list[torch.Tensor]): List of edge tensors for each process.
         expected (list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]): Expected train, val, test splits for each process.
+        splitter (Union[HashedNodeSplitter, HashedNodeAnchorLinkSplitter]): The splitter to use for the distributed test
     """
     torch.distributed.init_process_group(
         rank=process_num, world_size=world_size, init_method=init_method
     )
-    splitter = HashedNodeAnchorLinkSplitter(
-        sampling_direction="out",
-        should_convert_labels_to_edges=False,
-        hash_function=lambda x: x,  # Using identity hash function for simplicity
-    )
-
-    train, val, test = splitter(edges[process_num])
+    train, val, test = splitter(tensors[process_num])
     expected_train, expected_val, expected_test = expected[process_num]
     assert_tensor_equality(train, expected_train)
     assert_tensor_equality(val, expected_val)
@@ -113,9 +116,9 @@ class TestDataSplitters(unittest.TestCase):
                     ]
                 ),
                 sampling_direction="out",
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.tensor(
                     [0, 1, 2, 3, 4, 5, 6, 7], dtype=torch.int64
                 ),
@@ -131,9 +134,9 @@ class TestDataSplitters(unittest.TestCase):
                     ]
                 ),
                 sampling_direction="in",
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
                 expected_train=torch.tensor(
                     [0, 1, 2, 3, 4, 5, 6, 7], dtype=torch.int64
                 ),
@@ -141,64 +144,40 @@ class TestDataSplitters(unittest.TestCase):
                 expected_test=torch.tensor([9], dtype=torch.int64),
             ),
             param(
-                "With dups",
+                "Non-contiguous and duplicated source node ids",
                 edges=torch.stack(
                     [
-                        torch.cat(
-                            [
-                                torch.arange(10, dtype=torch.int64),
-                                torch.arange(10, dtype=torch.int64),
-                            ]
+                        torch.tensor(
+                            [1, 2, 20, 5, 200, 1, 5, 20, 200, 2], dtype=torch.int64
                         ),
-                        torch.zeros(20, dtype=torch.int64),
-                    ]
-                ),
-                sampling_direction="out",
-                hash_function=lambda x: x,
-                val_num=0.1,
-                test_num=0.1,
-                expected_train=torch.tensor(
-                    [0, 1, 2, 3, 4, 5, 6, 7], dtype=torch.int64
-                ),
-                expected_val=torch.tensor([8], dtype=torch.int64),
-                expected_test=torch.tensor([9], dtype=torch.int64),
-            ),
-            param(
-                "Real hash fn",
-                edges=torch.stack(
-                    [
-                        torch.zeros(20, dtype=torch.int64),
-                        torch.arange(20, dtype=torch.int64),
-                    ]
-                ),
-                sampling_direction="in",
-                hash_function=_fast_hash,
-                val_num=0.1,
-                test_num=0.1,
-                expected_train=torch.tensor(
-                    [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 16, 17, 19],
-                    dtype=torch.int64,
-                ),
-                expected_val=torch.tensor([9, 14], dtype=torch.int64),
-                expected_test=torch.tensor([7, 15, 18], dtype=torch.int64),
-            ),
-            param(
-                "Start from non-zero",
-                edges=torch.stack(
-                    [
-                        torch.arange(2, 22, 2, dtype=torch.int64),
                         torch.zeros(10, dtype=torch.int64),
                     ]
                 ),
                 sampling_direction="out",
-                hash_function=lambda x: x,
+                val_num=0.2,
+                test_num=0.2,
+                # Since we are using the identity hash with 0.6-0.2-0.2 split, we'd expect values 1-159 to be train, 160-179 to be val, 180 - 200 to be test.
+                # Since there no value between 160-179, val is empty.
+                # Since there is one value between 180-199, test has one item.
+                expected_train=torch.tensor([1, 2, 5, 20], dtype=torch.int64),
+                expected_val=torch.tensor([], dtype=torch.int64),
+                expected_test=torch.tensor([200], dtype=torch.int64),
+            ),
+            param(
+                "One source node id",
+                edges=torch.stack(
+                    [
+                        torch.zeros(10, dtype=torch.int64),
+                        torch.ones(10, dtype=torch.int64),
+                    ]
+                ),
+                sampling_direction="out",
                 val_num=0.1,
                 test_num=0.1,
-                expected_train=torch.tensor(
-                    [2, 4, 6, 8, 10, 12, 14, 16], dtype=torch.int64
-                ),
-                expected_val=torch.tensor([18], dtype=torch.int64),
-                expected_test=torch.tensor([20], dtype=torch.int64),
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0 to be train and val and test to be empty.
+                expected_train=torch.tensor([0], dtype=torch.int64),
+                expected_val=torch.tensor([], dtype=torch.int64),
+                expected_test=torch.tensor([], dtype=torch.int64),
             ),
         ]
     )
@@ -207,19 +186,23 @@ class TestDataSplitters(unittest.TestCase):
         _,
         edges,
         sampling_direction,
-        hash_function,
         val_num,
         test_num,
         expected_train,
         expected_val,
         expected_test,
     ):
+        # We are using the identity function to hash our source/destination nodes. As a result, the maximum node id will be the maximum hash, and the minumum node id will be the minimum hash.
+        # The expected tensors are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
-            hash_function=hash_function,
+            hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
             should_convert_labels_to_edges=False,
@@ -244,9 +227,9 @@ class TestDataSplitters(unittest.TestCase):
                     )
                 },
                 edge_types_to_split=[EdgeType(_NODE_A, _TO, _NODE_B)],
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -274,9 +257,9 @@ class TestDataSplitters(unittest.TestCase):
                 edge_types_to_split=[
                     EdgeType(_NODE_A, _TO, _NODE_B),
                 ],
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -305,9 +288,10 @@ class TestDataSplitters(unittest.TestCase):
                     EdgeType(_NODE_A, _TO, _NODE_B),
                     EdgeType(_NODE_A, _TO, _NODE_C),
                 ],
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_B
+                # We'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for _NODE_C
                 expected={
                     _NODE_B: (
                         torch.arange(8, dtype=torch.int64),
@@ -341,9 +325,9 @@ class TestDataSplitters(unittest.TestCase):
                     EdgeType(_NODE_B, _TO, _NODE_A),
                     EdgeType(_NODE_C, _TO, _NODE_A),
                 ],
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(16, dtype=torch.int64),
@@ -372,9 +356,9 @@ class TestDataSplitters(unittest.TestCase):
                     EdgeType(_NODE_B, _TO, _NODE_A),
                     EdgeType(_NODE_C, _TO, _NODE_A),
                 ],
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(8, dtype=torch.int64),
@@ -403,9 +387,9 @@ class TestDataSplitters(unittest.TestCase):
                     EdgeType(_NODE_B, _TO, _NODE_A),
                     EdgeType(_NODE_C, _TO, _NODE_A),
                 ],
-                hash_function=lambda x: x,
                 val_num=0.1,
                 test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-8 to be train, 9 to be val, and 10-11 to be test for _NODE_A
                 expected={
                     _NODE_A: (
                         torch.arange(9, dtype=torch.int64),
@@ -421,18 +405,23 @@ class TestDataSplitters(unittest.TestCase):
         _,
         edges,
         edge_types_to_split,
-        hash_function,
         val_num,
         test_num,
         expected,
     ):
+        # We are using the identity function to hash our source/destination nodes. As a result, the maximum node id per node type will be the maximum hash for that node type,
+        # and the minumum node id per node type will be the minimum hash for that node type.
+        # The expected tensors for each node type are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in",
-            hash_function=hash_function,
+            hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
             supervision_edge_types=edge_types_to_split,
@@ -454,6 +443,11 @@ class TestDataSplitters(unittest.TestCase):
 
     def test_node_based_link_splitter_parallelized(self):
         init_method = get_process_group_init_method()
+        splitter = HashedNodeAnchorLinkSplitter(
+            sampling_direction="out",
+            should_convert_labels_to_edges=False,
+            hash_function=_IdentityHash(),
+        )
         edges = [
             torch.stack(
                 [
@@ -476,26 +470,28 @@ class TestDataSplitters(unittest.TestCase):
         ]
         # We need to guarantee that a given node id is always selected into the same split, on every rank.
         # _run_splitter_distributed uses the identity hash function, so we can reason about hash values easily.
-        # The way HashedNodeAnchorLinkSplitter works is that it hashes the node ids, and then splits them into train, val, test based on the hash value.
+        # The way HashedNodeAnchorLinkSplitter works here is that it hashes the source node ids for each edge, and then splits them into train, val, test based on the hash value.
         # The splitting is done by first normalizing the hash values to [0, 1], and then selecting the train, val, test splits based on the provided percentages.
         # e.g. test = normalized_hash_value >= (1 - test_percentage)
+
+        # In practice, we will see that for the ids / hashed values which range from 0 to 20, values 0-15 will be in train, values 16 + 17 will be in val, and 18 + 19 will be in test
         expected_splits = [
             (
-                torch.arange(16, dtype=torch.int64),
-                torch.tensor([16, 17], dtype=torch.int64),
-                torch.tensor([18, 19], dtype=torch.int64),
+                torch.arange(16, dtype=torch.int64),  # train_split on process_0
+                torch.tensor([16, 17], dtype=torch.int64),  # val_split on process_0
+                torch.tensor([18, 19], dtype=torch.int64),  # test_split on process_0
             ),
             (
                 # For process 1, all of the nodes would be selected into train for this example,
                 # As the identity hash does not mix, and on process 0 [0, 9] are all train too.
-                torch.arange(10, dtype=torch.int64),
-                torch.tensor([], dtype=torch.int64),
-                torch.tensor([], dtype=torch.int64),
+                torch.arange(10, dtype=torch.int64),  # train_split on process_1
+                torch.tensor([], dtype=torch.int64),  # val_split on process_1
+                torch.tensor([], dtype=torch.int64),  # test_split on process_1
             ),
             (
-                torch.arange(0, 16, 2, dtype=torch.int64),
-                torch.tensor([16], dtype=torch.int64),
-                torch.tensor([18], dtype=torch.int64),
+                torch.arange(0, 16, 2, dtype=torch.int64),  # train_split on process_2
+                torch.tensor([16], dtype=torch.int64),  # val_split on process_2
+                torch.tensor([18], dtype=torch.int64),  # test_split on process_2
             ),
         ]
         # Run the splitter in parallel
@@ -504,8 +500,57 @@ class TestDataSplitters(unittest.TestCase):
             args=(
                 3,  # world_size
                 init_method,  # init_method
-                edges,  # edges
+                edges,  # tensors
                 expected_splits,  # expected
+                splitter,  # splitter
+            ),
+            nprocs=3,
+            join=True,
+        )
+
+    def test_node_based_splitter_parallelized(self):
+        init_method = get_process_group_init_method()
+        splitter = HashedNodeSplitter(hash_function=_IdentityHash())
+        nodes = [
+            torch.arange(0, 20, dtype=torch.int64),
+            torch.arange(0, 10, dtype=torch.int64),
+            torch.arange(0, 20, 2, dtype=torch.int64),
+        ]
+        # We need to guarantee that a given node id is always selected into the same split, on every rank.
+        # _run_splitter_distributed uses the identity hash function, so we can reason about hash values easily.
+        # The way HashedNodeSplitter works is that it hashes the node ids, and then splits them into train, val, test based on the hash value.
+        # The splitting is done by first normalizing the hash values to [0, 1], and then selecting the train, val, test splits based on the provided percentages.
+        # e.g. test = normalized_hash_value >= (1 - test_percentage)
+
+        # In practice, we will see that for the ids / hashed values which range from 0 to 20, values 0-15 will be in train, values 16 + 17 will be in val, and 18 + 19 will be in test
+        expected_splits = [
+            (
+                torch.arange(16, dtype=torch.int64),  # train_split on process_0
+                torch.tensor([16, 17], dtype=torch.int64),  # val_split on process_0
+                torch.tensor([18, 19], dtype=torch.int64),  # test_split on process_0
+            ),
+            (
+                # For process 1, all of the nodes would be selected into train for this example,
+                # As the identity hash does not mix, and on process 0 [0, 9] are all train too.
+                torch.arange(10, dtype=torch.int64),  # train_split on process_1
+                torch.tensor([], dtype=torch.int64),  # val_split on process_1
+                torch.tensor([], dtype=torch.int64),  # test_split on process_1
+            ),
+            (
+                torch.arange(0, 16, 2, dtype=torch.int64),  # train_split on process_2
+                torch.tensor([16], dtype=torch.int64),  # val_split on process_2
+                torch.tensor([18], dtype=torch.int64),  # test_split on process_2
+            ),
+        ]
+        # Run the splitter in parallel
+        mp.spawn(
+            _run_splitter_distributed,
+            args=(
+                3,  # world_size
+                init_method,  # init_method
+                nodes,  # tensors
+                expected_splits,  # expected
+                splitter,  # splitter
             ),
             nprocs=3,
             join=True,
@@ -536,6 +581,9 @@ class TestDataSplitters(unittest.TestCase):
         edges,
         edge_types_to_split,
     ):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
         with self.assertRaises(ValueError):
             splitter = HashedNodeAnchorLinkSplitter(
                 sampling_direction="in",
@@ -556,9 +604,9 @@ class TestDataSplitters(unittest.TestCase):
             param("Negative val percentage", train_percentage=0.8, val_percentage=-1.0),
         ]
     )
-    def test_check_val_test_percentage(self, _, train_percentage, val_percentage):
+    def test_assert_valid_split_ratios(self, _, train_percentage, val_percentage):
         with self.assertRaises(ValueError):
-            _check_val_test_percentage(train_percentage, val_percentage)
+            _assert_valid_split_ratios(train_percentage, val_percentage)
 
     @parameterized.expand(
         [
@@ -727,6 +775,204 @@ class TestDataSplitters(unittest.TestCase):
     def test_get_padded_labels(self, _, node_ids, topo, expected):
         labels = _get_padded_labels(node_ids, topo)
         assert_close(labels, expected, rtol=0, atol=0)
+
+    @parameterized.expand(
+        [
+            param(
+                "Basic node splitting",
+                node_ids=torch.arange(10, dtype=torch.int64),
+                val_num=0.1,
+                test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test
+                expected_train=torch.arange(8, dtype=torch.int64),
+                expected_val=torch.tensor([8], dtype=torch.int64),
+                expected_test=torch.tensor([9], dtype=torch.int64),
+            ),
+            param(
+                "Node splitting with non-contiguous and duplicate IDs",
+                node_ids=torch.tensor(
+                    [1, 2, 20, 5, 200, 1, 5, 20, 200, 2], dtype=torch.int64
+                ),
+                val_num=0.2,
+                test_num=0.2,
+                # Val is empty in this case because, with the identity hash, we expect 1-120 to be in train,
+                # 120-160 to be in val, and 160-200 to be in test, and thus have no IDs which fall in the val range.
+                expected_train=torch.tensor(
+                    [1, 1, 2, 2, 5, 5, 20, 20], dtype=torch.int64
+                ),
+                expected_val=torch.tensor([], dtype=torch.int64),
+                expected_test=torch.tensor([200, 200], dtype=torch.int64),
+            ),
+        ]
+    )
+    def test_hashed_node_splitter(
+        self,
+        _,
+        node_ids,
+        val_num,
+        test_num,
+        expected_train,
+        expected_val,
+        expected_test,
+    ):
+        # We are using the identity function to hash our nodes ids. As a result, the maximum node id per node type will be the maximum hash,
+        # and the minumum node id will be the minimum hash.
+        # The expected tensors are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+        splitter = HashedNodeSplitter(
+            hash_function=_IdentityHash(),
+            num_val=val_num,
+            num_test=test_num,
+        )
+
+        train, val, test = splitter(node_ids)
+
+        assert_tensor_equality(train, expected_train, dim=0)
+        assert_tensor_equality(val, expected_val, dim=0)
+        assert_tensor_equality(test, expected_test, dim=0)
+
+    @parameterized.expand(
+        [
+            param(
+                "Single node type heterogeneous",
+                node_ids={_NODE_A: torch.arange(10, dtype=torch.int64)},
+                val_num=0.1,
+                test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
+                expected={
+                    _NODE_A: (
+                        torch.arange(8, dtype=torch.int64),
+                        torch.tensor([8], dtype=torch.int64),
+                        torch.tensor([9], dtype=torch.int64),
+                    )
+                },
+            ),
+            param(
+                "Multiple node types heterogeneous",
+                node_ids={
+                    _NODE_A: torch.arange(10, dtype=torch.int64),
+                    _NODE_B: torch.arange(20, dtype=torch.int64),
+                },
+                val_num=0.1,
+                test_num=0.1,
+                # Since we are using the identity hash with 0.8-0.1-0.1 split, we'd expect values 0-7 to be train, 8 to be val, and 9 to be test for _NODE_A
+                # We'd expect values 0-15 to be train, 16-17 to be val, and 18-19 to be test for _NODE_B
+                expected={
+                    _NODE_A: (
+                        torch.arange(8, dtype=torch.int64),
+                        torch.tensor([8], dtype=torch.int64),
+                        torch.tensor([9], dtype=torch.int64),
+                    ),
+                    _NODE_B: (
+                        torch.arange(16, dtype=torch.int64),
+                        torch.tensor([16, 17], dtype=torch.int64),
+                        torch.tensor([18, 19], dtype=torch.int64),
+                    ),
+                },
+            ),
+            param(
+                "Multiple node types with different sizes",
+                node_ids={
+                    _NODE_A: torch.arange(5, dtype=torch.int64),
+                    _NODE_B: torch.arange(120, dtype=torch.int64),
+                    _NODE_C: torch.arange(10, dtype=torch.int64),
+                },
+                val_num=0.2,
+                test_num=0.2,
+                # Since we are using the identity hash with 0.6-0.2-0.2 split, we'd expect values 0-2 to be train, 3 to be val, and 4 to be test for _NODE_A
+                # We'd expect values 0-71 to be train, 72-95 to be val, and 96-119 to be test for _NODE_B
+                # We'd expect values 0-5 to be train, 6-7 to be val, and 8-9 to be test
+                expected={
+                    _NODE_A: (
+                        torch.arange(3, dtype=torch.int64),
+                        torch.tensor([3], dtype=torch.int64),
+                        torch.tensor([4], dtype=torch.int64),
+                    ),
+                    _NODE_B: (
+                        torch.arange(0, 72, dtype=torch.int64),
+                        torch.arange(72, 96, dtype=torch.int64),
+                        torch.arange(96, 120, dtype=torch.int64),
+                    ),
+                    _NODE_C: (
+                        torch.arange(6, dtype=torch.int64),
+                        torch.tensor([6, 7], dtype=torch.int64),
+                        torch.tensor([8, 9], dtype=torch.int64),
+                    ),
+                },
+            ),
+        ]
+    )
+    def test_hashed_node_splitter_heterogeneous(
+        self,
+        _,
+        node_ids,
+        val_num,
+        test_num,
+        expected,
+    ):
+        # We are using the identity function to hash our node ids. As a result, the maximum node id per node type will be the maximum hash for that node type,
+        # and the minumum node id per node type will be the minimum hash for that node type.
+        # The expected tensors for each node type are computed as:
+        # train_num = 1 - val_num - test_num
+        # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
+        # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+
+        splitter = HashedNodeSplitter(
+            hash_function=_IdentityHash(),
+            num_val=val_num,
+            num_test=test_num,
+        )
+        split = splitter(node_ids)
+
+        assert isinstance(split, Mapping)
+        self.assertEqual(split.keys(), expected.keys())
+        for node_type, (
+            expected_train,
+            expected_val,
+            expected_test,
+        ) in expected.items():
+            train, val, test = split[node_type]
+            assert_tensor_equality(train, expected_train, dim=0)
+            assert_tensor_equality(val, expected_val, dim=0)
+            assert_tensor_equality(test, expected_test, dim=0)
+
+    def test_hashed_node_splitter_requires_process_group(self):
+        node_ids = torch.arange(10, dtype=torch.int64)
+        splitter = HashedNodeSplitter()
+        with self.assertRaises(RuntimeError):
+            splitter(node_ids)
+
+    @parameterized.expand(
+        [
+            param(
+                "Empty homogeneous node IDs",
+                node_ids=torch.tensor([], dtype=torch.int64),
+            ),
+            param(
+                "Empty heterogeneous node IDs",
+                node_ids={},
+            ),
+            param(
+                "Heterogeneous with empty node type",
+                node_ids={_NODE_A: torch.tensor([], dtype=torch.int64)},
+            ),
+        ]
+    )
+    def test_hashed_node_splitter_invalid_inputs(self, _, node_ids):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+        splitter = HashedNodeSplitter()
+        with self.assertRaises(ValueError):
+            splitter(node_ids)
 
 
 class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
