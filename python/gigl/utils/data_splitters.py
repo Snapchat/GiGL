@@ -309,7 +309,9 @@ class HashedNodeAnchorLinkSplitter:
                 max_node_id, dtype=torch.uint8, device=anchor_nodes.device
             )
             for anchor_nodes in collected_anchor_nodes:
-                node_id_count.add_(torch.bincount(anchor_nodes, minlength=max_node_id))
+                node_id_count.add_(
+                    torch.bincount(anchor_nodes, minlength=max_node_id)
+                ).clamp(max=255)
             # This line takes us from a count of all node ids, e.g. `[0, 2, 0, 1]`
             # To a tensor of the non-zero counts, e.g. `[[1], [3]]`
             # and the `squeeze` converts that to a 1d tensor (`[1, 3]`).

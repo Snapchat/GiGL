@@ -765,9 +765,13 @@ def _append_non_split_node_ids(
     if test_node_ids.numel():
         node_ids_to_get_max.append(test_node_ids)
     max_node_id = int(max(n.max().item() for n in node_ids_to_get_max)) + 1
-    split_counts = torch.bincount(train_node_ids, minlength=max_node_id)
-    split_counts.add_(torch.bincount(val_node_ids, minlength=max_node_id))
-    split_counts.add_(torch.bincount(test_node_ids, minlength=max_node_id))
+    split_counts = torch.bincount(train_node_ids, minlength=max_node_id).clamp(max=255)
+    split_counts.add_(
+        torch.bincount(val_node_ids, minlength=max_node_id).clamp(max=255)
+    )
+    split_counts.add_(
+        torch.bincount(test_node_ids, minlength=max_node_id).clamp(max=255)
+    )
     # Count all instances of node ids, then subtract the counts of the node ids in the split from the ones in the machines.
     # Since splits are not guaranteed to be unique, we check where the count is greater than zero.
     node_id_indices_not_in_split = (
