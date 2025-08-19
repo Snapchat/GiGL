@@ -1,0 +1,196 @@
+---
+description: Testing patterns and conventions for GiGL components
+globs: ["**/test*.py", "**/tests/**/*", "**/testing/**", "**/tests/**"]
+alwaysApply: false
+---
+# Testing Patterns & Conventions
+
+## Python Testing Patterns
+
+### Test Structure
+Use the standard unittest framework with descriptive test organization:
+
+```python
+import unittest
+from pathlib import Path
+from typing import Dict, Any
+
+from gigl.common.utils.test_utils import TestArgs
+from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
+
+class TestDataPreprocessor(unittest.TestCase):
+    """Test suite for DataPreprocessor component."""
+
+    def setUp(self) -> None:
+        """Set up test fixtures before each test method."""
+        self.test_data_dir = Path("tests/test_assets/small_graph")
+        self.config = self._create_test_config()
+
+    def tearDown(self) -> None:
+        """Clean up after each test method."""
+        # Cleanup logic here
+        pass
+
+    def test_config_validation_success(self):
+        """Test that valid configuration passes validation."""
+        # Arrange
+        valid_config = self._create_valid_config()
+
+        # Act
+        result = DataPreprocessor.validate_config(valid_config)
+
+        # Assert
+        self.assertTrue(result)
+
+    def test_config_validation_failure(self):
+        """Test that invalid configuration fails validation."""
+        # Arrange
+        invalid_config = self._create_invalid_config()
+
+        # Act & Assert
+        with self.assertRaises(ValueError):
+            DataPreprocessor.validate_config(invalid_config)
+
+    def _create_test_config(self) -> Dict[str, Any]:
+        """Helper method to create test configuration."""
+        return {
+            "input_path": str(self.test_data_dir),
+            "output_path": "/tmp/test_output"
+        }
+```
+
+### Test Data Management
+Use the `tests/test_assets/` directory for test data:
+
+```python
+class TestWithAssets(unittest.TestCase):
+    """Test class that uses test assets."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Set up test class with shared resources."""
+        cls.test_assets_dir = Path("tests/test_assets")
+        cls.celeb_graph_dir = cls.test_assets_dir / "celeb_test_graph"
+        cls.small_graph_dir = cls.test_assets_dir / "small_graph"
+
+    def test_load_test_graph(self):
+        """Test loading test graph data."""
+        graph_config = self.small_graph_dir / "graph_config.yaml"
+        self.assertTrue(graph_config.exists())
+
+        # Load and validate test graph
+        with open(graph_config) as f:
+            config = yaml.safe_load(f)
+
+        self.assertIn("nodes", config)
+        self.assertIn("edges", config)
+```
+
+### Integration Testing
+For integration tests that require cloud resources:
+
+```python
+from gigl.common.env_config import is_running_in_ci
+
+class TestCloudIntegration(unittest.TestCase):
+    """Integration tests for cloud components."""
+
+    def setUp(self) -> None:
+        if not is_running_in_ci():
+            self.skipTest("Cloud integration tests only run in CI")
+
+    def test_dataflow_pipeline(self):
+        """Test Dataflow pipeline integration."""
+        # Integration test implementation
+        pass
+```
+
+### Mocking External Dependencies
+Use mocking for external services and expensive operations:
+
+```python
+from unittest.mock import Mock, patch, MagicMock
+
+class TestWithMocks(unittest.TestCase):
+    """Test class demonstrating mocking patterns."""
+
+    @patch('gigl.common.services.dataproc.DataprocClient')
+    def test_dataproc_job_submission(self, mock_dataproc):
+        """Test Dataproc job submission with mocked client."""
+        # Arrange
+        mock_client = Mock()
+        mock_dataproc.return_value = mock_client
+        mock_client.submit_job.return_value = {"job_id": "test-job-123"}
+
+        # Act
+        result = submit_spark_job("test-job", "gs://bucket/jar")
+
+        # Assert
+        self.assertEqual(result["job_id"], "test-job-123")
+        mock_client.submit_job.assert_called_once()
+```
+
+
+### Test Configuration Files
+Create minimal test configurations in `tests/test_assets/configs/`:
+
+```yaml
+# tests/test_assets/configs/test_resource_config.yaml
+shared_resource_config:
+  resource_labels:
+    cost_resource_group_tag: unittest_COMPONENT
+    cost_resource_group: gigl_test
+  common_compute_config:
+    project: "test-project"
+    region: "us-central1"
+    temp_assets_bucket: "gs://test-bucket"
+    temp_regional_assets_bucket: "gs://test-bucket"
+    perm_assets_bucket: "gs://test-bucket"
+    temp_assets_bq_dataset_name: "test_dataset"
+    embedding_bq_dataset_name: "test_embeddings"
+    gcp_service_account_email: "test-sa@test-project.iam.gserviceaccount.com"
+    dataflow_runner: "DirectRunner"  # Use DirectRunner for local testing
+```
+
+### Test Graph Data
+Create small, deterministic test graphs:
+
+```python
+# tests/test_assets/small_graph/graph_data.py
+TEST_NODES = [
+    {"node_id": 1, "node_type": "user", "features": [0.1, 0.2, 0.3]},
+    {"node_id": 2, "node_type": "user", "features": [0.4, 0.5, 0.6]},
+    {"node_id": 3, "node_type": "item", "features": [0.7, 0.8, 0.9]},
+]
+
+TEST_EDGES = [
+    {"src_id": 1, "dst_id": 2, "edge_type": "friend", "weight": 1.0},
+    {"src_id": 1, "dst_id": 3, "edge_type": "likes", "weight": 0.8},
+    {"src_id": 2, "dst_id": 3, "edge_type": "likes", "weight": 0.9},
+]
+```
+
+## Test Execution & CI
+
+### Test Organization
+- **Unit tests**: `tests/unit/` - Fast, isolated tests
+- **Integration tests**: `tests/integration/` - Component interaction tests
+- **End-to-end tests**: Test complete workflows
+- **Misc repo wide tests**: `testing`
+
+### Test Execution
+Use the following commands to evaluate a test:
+- unit test: `make unit_test_py`
+   - Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
+   - Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
+   - By default, runs all tests under python/tests/unit.
+- integration test: `make integration_test PY_TEST_FILES="some_test.py"`
+  -  ensure to use `PY_TEST_FILES` and run integration tests one at a time as they take a long time to run
+
+### Test Data Lifecycle
+- Use temporary directories for test outputs
+- Clean up test data after execution
+- Use deterministic test data for reproducible results
+- Version control test configurations and small test datasets
+
+Always write tests that are fast, reliable, deterministic, and provide good coverage of critical functionality.

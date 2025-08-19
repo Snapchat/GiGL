@@ -1,0 +1,170 @@
+---
+description: Python coding patterns and conventions for GiGL
+globs: ["**/*.py"]
+alwaysApply: false
+---
+
+# Key Principles
+
+1. Write concise, technical responses with accurate PyTorch / PyG / GLT examples.
+2. Prioritize clarity, efficiency, and best practices in GNN workflows.
+3. Use OOP for model architectures and functional style for data transforms/pipelines.
+4. Re-use / refactor existing code as a priority instead of implementing new code.
+5. Implement proper GPU utilization, distributed training, and mixed precision.
+6. Use PEP 8–compliant, descriptive names with snake_case; modular code organization.
+
+# Python Coding Patterns & Conventions
+
+## Code Style & Structure
+
+### Import Organization
+Follow the standard import order:
+1. Standard library imports
+2. Third-party imports (torch, numpy, pandas, etc.)
+3. GiGL internal imports starting with `gigl.`
+4. Protocol buffer imports from `snapchat.research.gbml`
+
+Example:
+```python
+import argparse
+import sys
+from pathlib import Path
+from typing import Optional, Tuple
+
+import torch
+import numpy as np
+
+from gigl.common.logger import Logger
+from gigl.common.metrics.decorators import profileit
+from snapchat.research.gbml import gbml_config_pb2
+```
+
+### Class Design
+- Use descriptive class names with proper CamelCase
+- Include comprehensive docstrings for all classes
+- Use `@dataclass(frozen=True)` for immutable data containers
+- Implement `__init__.py` files with proper exports
+
+Example:
+```python
+@dataclass(frozen=True)
+class TestArgs:
+    """Container for CLI arguments to Python tests.
+
+    Attributes:
+        test_file_pattern (str): Glob pattern for filtering test files.
+    """
+    test_file_pattern: str
+```
+
+### Type Annotations
+- Always use type annotations for function parameters and return values
+- Prefer not using typing module imports if it can be done without i.e.
+`arg: dict[str, str]` is prefferect over `arg: typing.Dict[str, str]`.
+- For Protocol Buffer types, import from `snapchat.research.gbml`
+- Use `Final` for constants
+
+Example:
+```python
+from typing import Final, Optional, Dict, List
+
+GIGL_ROOT_DIR: Final[Path] = get_root_directory()
+
+def process_config(
+    config_path: Path,
+    metadata: Optional[Dict[str, str]] = None
+) -> List[str]:
+    """Process configuration file and return processed paths."""
+```
+
+### Error Handling & Logging
+- Use the GiGL logger: `from gigl.common.logger import Logger`
+- Create logger instances: `logger = Logger()`
+- Provide informative error messages with context
+- Use appropriate log levels (info, warning, error, debug)
+
+Example:
+```python
+from gigl.common.logger import Logger
+
+logger = Logger()
+
+def validate_config(config: Dict[str, Any]) -> bool:
+    try:
+        # validation logic
+        logger.info("Configuration validation successful")
+        return True
+    except Exception as e:
+        logger.error(f"Configuration validation failed: {e}")
+        raise
+```
+
+## Component Patterns
+
+### Abstract Base Classes
+Use ABC for component interfaces:
+```python
+from abc import ABC, abstractmethod
+
+class DataPreprocessorConfig(ABC):
+    @abstractmethod
+    def get_feature_spec(self) -> Dict[str, Any]:
+        raise NotImplementedError
+```
+
+### Protocol Buffer Handling
+- Import protocol buffer types from `snapchat.research.gbml`
+- Use wrapper classes for protocol buffer operations located in `python/gigl/src/common/types/pb_wrappers`
+  - `GbmlConfigPbWrapper` is used for `gbml_config_pb2.GbmlConfig`, otherwise known as task config, or template task config
+  - `GiglResourceConfigWrapper` is used for `gigl_resource_config_pb2.GiglResourceConfig`
+- Ensure that all protos are desirialized into their respective wrapper objects or explicit data classes, individual variables as early as possible in the call stack to reduce coupling of protos with low level components.
+- Handle serialization/deserialization properly
+
+Example:
+```python
+from snapchat.research.gbml import gbml_config_pb2
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+
+def process_gbml_config(config_path: str) -> gbml_config_pb2.GbmlConfig:
+    wrapper = GbmlConfigPbWrapper()
+    return wrapper.load_from_file(config_path)
+```
+
+## Performance & Optimization
+
+### Memory Management
+- Use generators for large data processing
+- Implement proper cleanup in `__del__` methods where needed
+- Be mindful of memory usage in distributed settings
+
+### Async/Concurrent Processing
+- Use `concurrent.futures.ProcessPoolExecutor` for CPU-bound tasks
+- Implement proper timeout handling using GiGL's timeout utilities
+
+Example:
+```python
+from gigl.src.common.utils.timeout import timeout
+
+@timeout(seconds=300, error_message="Processing timeout")
+def long_running_task():
+    # implementation
+```
+
+## Configuration & Constants
+
+### Constants Definition
+- Use `Final` type annotations for constants
+- Group related constants in dedicated modules
+- Use descriptive constant names in UPPER_CASE
+
+Example:
+```python
+from typing import Final
+from pathlib import Path
+
+GIGL_ROOT_DIR: Final[Path] = Path(__file__).resolve().parent.parent.parent
+DEFAULT_TIMEOUT_SECONDS: Final[int] = 300
+```
+
+## Remember
+Always prioritize code clarity, maintainability, and consistency with the existing GiGL codebase.
