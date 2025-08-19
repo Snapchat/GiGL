@@ -58,37 +58,56 @@ from gigl.utils.data_splitters import (
 logger = Logger()
 
 
-def _get_labels_from_features(
-    feature_and_label_tensor: torch.Tensor, label_dim: int
-) -> tuple[torch.Tensor, torch.Tensor]:
+def _process_ssl_positive_labels(
+    loaded_graph_tensors: LoadedGraphTensors,
+    ssl_positive_label_percentage: float,
+    splitter: Optional[NodeAnchorLinkSplitter],
+) -> None:
     """
-    Given a combined tensor of features and labels, returns the features and labels separately.
+    Processes SSL positive label selection from edge indices.
+
     Args:
-        feature_and_label_tensor (torch.Tensor): Tensor of features and labels
-        label_dim (int): Dimension of the labels
-    Returns:
-        feature_tensor (torch.Tensor): Tensor of features
-        label_tensor (torch.Tensor): Tensor of labels
+        loaded_graph_tensors: The loaded graph tensors to modify
+        ssl_positive_label_percentage: Percentage of edges to select as self-supervised labels
+        splitter: Optional splitter used for heterogeneous graphs
+
+    Raises:
+        ValueError: If positive/negative labels already exist or unknown edge index type
     """
-
-    if len(feature_and_label_tensor.shape) != 2:
+    if (
+        loaded_graph_tensors.positive_label is not None
+        or loaded_graph_tensors.negative_label is not None
+    ):
         raise ValueError(
-            f"Expected tensor to be 2D for extracting labels, but got shape {feature_and_label_tensor.shape}"
+            "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
         )
 
-    _, feature_and_label_dim = feature_and_label_tensor.shape
-
-    if label_dim > feature_and_label_dim:
+    positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    if isinstance(loaded_graph_tensors.edge_index, Mapping):
+        # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
+        # we can remove this assert.
+        assert isinstance(
+            splitter, HashedNodeAnchorLinkSplitter
+        ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
+        positive_label_edges = {}
+        for supervision_edge_type in splitter._supervision_edge_types:
+            positive_label_edges[
+                supervision_edge_type
+            ] = select_ssl_positive_label_edges(
+                edge_index=loaded_graph_tensors.edge_index[supervision_edge_type],
+                positive_label_percentage=ssl_positive_label_percentage,
+            )
+    elif isinstance(loaded_graph_tensors.edge_index, torch.Tensor):
+        positive_label_edges = select_ssl_positive_label_edges(
+            edge_index=loaded_graph_tensors.edge_index,
+            positive_label_percentage=ssl_positive_label_percentage,
+        )
+    else:
         raise ValueError(
-            f"Got invalid label dim {label_dim} for extracting labels from tensor of shape {feature_and_label_dim}"
+            f"Found an unknown edge index type: {type(loaded_graph_tensors.edge_index)} when attempting to select positive labels"
         )
 
-    feature_dim = feature_and_label_dim - label_dim
-
-    return (
-        feature_and_label_tensor[:, :feature_dim],
-        feature_and_label_tensor[:, feature_dim:],
-    )
+    loaded_graph_tensors.positive_label = positive_label_edges
 
 
 def _partition_graph_data(
@@ -160,6 +179,39 @@ def _partition_graph_data(
     return partition_output
 
 
+def _get_labels_from_features(
+    feature_and_label_tensor: torch.Tensor, label_dim: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Given a combined tensor of features and labels, returns the features and labels separately.
+    Args:
+        feature_and_label_tensor (torch.Tensor): Tensor of features and labels
+        label_dim (int): Dimension of the labels
+    Returns:
+        feature_tensor (torch.Tensor): Tensor of features
+        label_tensor (torch.Tensor): Tensor of labels
+    """
+
+    if len(feature_and_label_tensor.shape) != 2:
+        raise ValueError(
+            f"Expected tensor to be 2D for extracting labels, but got shape {feature_and_label_tensor.shape}"
+        )
+
+    _, feature_and_label_dim = feature_and_label_tensor.shape
+
+    if label_dim > feature_and_label_dim:
+        raise ValueError(
+            f"Got invalid label dim {label_dim} for extracting labels from tensor of shape {feature_and_label_dim}"
+        )
+
+    feature_dim = feature_and_label_dim - label_dim
+
+    return (
+        feature_and_label_tensor[:, :feature_dim],
+        feature_and_label_tensor[:, feature_dim:],
+    )
+
+
 def _extract_node_labels(
     partition_output: PartitionOutput,
     serialized_graph_metadata: SerializedGraphMetadata,
@@ -219,58 +271,6 @@ def _extract_node_labels(
         )
 
     return node_labels
-
-
-def _process_ssl_positive_labels(
-    loaded_graph_tensors: LoadedGraphTensors,
-    ssl_positive_label_percentage: float,
-    splitter: Optional[NodeAnchorLinkSplitter],
-) -> None:
-    """
-    Processes SSL positive label selection from edge indices.
-
-    Args:
-        loaded_graph_tensors: The loaded graph tensors to modify
-        ssl_positive_label_percentage: Percentage of edges to select as self-supervised labels
-        splitter: Optional splitter used for heterogeneous graphs
-
-    Raises:
-        ValueError: If positive/negative labels already exist or unknown edge index type
-    """
-    if (
-        loaded_graph_tensors.positive_label is not None
-        or loaded_graph_tensors.negative_label is not None
-    ):
-        raise ValueError(
-            "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
-        )
-
-    positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    if isinstance(loaded_graph_tensors.edge_index, Mapping):
-        # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
-        # we can remove this assert.
-        assert isinstance(
-            splitter, HashedNodeAnchorLinkSplitter
-        ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
-        positive_label_edges = {}
-        for supervision_edge_type in splitter._supervision_edge_types:
-            positive_label_edges[
-                supervision_edge_type
-            ] = select_ssl_positive_label_edges(
-                edge_index=loaded_graph_tensors.edge_index[supervision_edge_type],
-                positive_label_percentage=ssl_positive_label_percentage,
-            )
-    elif isinstance(loaded_graph_tensors.edge_index, torch.Tensor):
-        positive_label_edges = select_ssl_positive_label_edges(
-            edge_index=loaded_graph_tensors.edge_index,
-            positive_label_percentage=ssl_positive_label_percentage,
-        )
-    else:
-        raise ValueError(
-            f"Found an unknown edge index type: {type(loaded_graph_tensors.edge_index)} when attempting to select positive labels"
-        )
-
-    loaded_graph_tensors.positive_label = positive_label_edges
 
 
 @tf_on_cpu
