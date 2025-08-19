@@ -381,7 +381,7 @@ class PreprocessedMetadataPbWrapper:
             dict[CondensedNodeType, list[str]]: A mapping which stores the feature keys of each CondensedNodeTypes
         """
         return {
-            condensed_node_type: list(feature_keys)
+            condensed_node_type: sorted(list(feature_keys))
             for condensed_node_type, feature_keys in self.preprocessed_metadata_pb.condensed_node_type_to_feature_keys_map.items()
         }
 
