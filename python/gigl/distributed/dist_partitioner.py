@@ -394,6 +394,22 @@ class DistPartitioner:
             ) in gathered_node_info.values():
                 self._num_nodes[node_type] += gathered_node_type_to_num_nodes[node_type]
 
+        total_num_nodes = sum(
+            [self._num_nodes[node_type] for node_type in self._node_types]
+        )
+        for node_type in self._node_types:
+            max_id_on_rank = self._node_ids[node_type].max()  # type: ignore
+            logger.info(
+                f"Found {total_num_nodes} for node type {node_type} across all machines"
+            )
+            logger.info(
+                f"Found max node id {max_id_on_rank} for node type {node_type} on machine {self._rank}"
+            )
+            if max_id_on_rank >= total_num_nodes:
+                raise ValueError(
+                    f"Found max_id_on_rank {max_id_on_rank} which is greater than total number of nodes {total_num_nodes}"
+                )
+
     def register_edge_index(
         self, edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ) -> None:
