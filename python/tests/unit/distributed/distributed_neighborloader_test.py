@@ -1,5 +1,5 @@
 import unittest
-from collections import abc
+from collections.abc import Mapping
 from typing import Optional, Union
 
 import torch
@@ -30,6 +30,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    FeaturePartitionData,
     GraphPartitionData,
     PartitionOutput,
     message_passing_to_negative_label,
@@ -49,6 +50,10 @@ from tests.test_assets.distributed.utils import (
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+
+_USER = NodeType("user")
+_STORY = NodeType("story")
+_USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 
 # TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
 
@@ -91,7 +96,7 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
     context: DistributedContext,
     expected_data_count: int,
 ):
-    assert isinstance(dataset.node_ids, abc.Mapping)
+    assert isinstance(dataset.node_ids, Mapping)
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=to_homogeneous(dataset.node_ids),
@@ -150,7 +155,7 @@ def _run_distributed_heterogeneous_neighbor_loader(
     context: DistributedContext,
     expected_data_count: int,
 ):
-    assert isinstance(dataset.node_ids, abc.Mapping)
+    assert isinstance(dataset.node_ids, Mapping)
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),
@@ -356,6 +361,56 @@ def _run_dblp_supervised(
             )
         count += 1
     assert count == dataset.train_node_ids[anchor_node_type].size(0)
+
+    shutdown_rpc()
+
+
+def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
+    _,
+    dataset: DistLinkPredictionDataset,
+):
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    for datum in loader:
+        assert isinstance(datum, Data)
+        assert hasattr(datum, "y")
+        assert datum.y.size(0) == datum.node.size(0)
+
+    shutdown_rpc()
+
+
+def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
+    _,
+    dataset: DistLinkPredictionDataset,
+):
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
+
+    assert isinstance(dataset.node_ids, Mapping)
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=dataset.node_ids[_USER],
+        num_neighbors=[2, 2],
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        assert hasattr(datum[_USER], "y")
 
     shutdown_rpc()
 
@@ -681,7 +736,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             sample_edge_direction="in",
             splitter=splitter,
         )
-        assert isinstance(dataset.node_ids, abc.Mapping)
+        assert isinstance(dataset.node_ids, Mapping)
         mp.spawn(
             fn=_run_distributed_neighbor_loader_labeled_homogeneous,
             args=(dataset, self._context, to_homogeneous(dataset.node_ids).size(0)),
@@ -818,6 +873,69 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         mp.spawn(
             fn=_run_toy_heterogeneous_ablp,
             args=(dataset, self._context, supervision_edge_types, fanout),
+        )
+
+    def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(10),
+            edge_partition_book=torch.zeros(20),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.ones(20, 2), edge_ids=None
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(10, 2), ids=torch.arange(10)
+            ),
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+        )
+        node_labels = torch.arange(10)
+
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+
+        dataset.build(partition_output=partition_output, node_labels=node_labels)
+
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader_with_node_labels_homogeneous,
+            args=(dataset),
+        )
+
+    def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(10),
+                _STORY: torch.zeros(5),
+            },
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(5),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+                    edge_ids=torch.arange(5),
+                )
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(10, 2), ids=torch.arange(10)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(5, 2), ids=torch.arange(5)
+                ),
+            },
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+        )
+
+        node_labels = {_USER: torch.arange(10), _STORY: torch.arange(5)}
+
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output, node_labels=node_labels)
+
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader_with_node_labels_heterogeneous,
+            args=(dataset),
         )
 
 
