@@ -382,8 +382,17 @@ class DistPartitioner:
             for node_type in sorted(input_node_ids.keys())
         }
 
+        node_type_to_max_id = {
+            node_type: input_node_ids[node_type].max()
+            for node_type in sorted(input_node_ids.keys())
+        }
+
+        max_ids = {node_type: 0 for node_type in self._node_types}
+
         # Gathering to compute the number of nodes on each rank for each node type
         gathered_node_info = glt_rpc.all_gather((self._rank, node_type_to_num_nodes))
+
+        gathered_node_max_info = glt_rpc.all_gather((self._rank, node_type_to_max_id))
 
         # Looping through each of the registered node types in the graph
         for node_type in self._node_types:
@@ -394,20 +403,26 @@ class DistPartitioner:
             ) in gathered_node_info.values():
                 self._num_nodes[node_type] += gathered_node_type_to_num_nodes[node_type]
 
-        total_num_nodes = sum(
-            [self._num_nodes[node_type] for node_type in self._node_types]
-        )
+            for (
+                _,
+                gathered_node_type_to_max_id,
+            ) in gathered_node_max_info.values():
+                max_ids[node_type] = max(
+                    max_ids[node_type], gathered_node_type_to_max_id[node_type]
+                )
+
         for node_type in self._node_types:
-            max_id_on_rank = self._node_ids[node_type].max()  # type: ignore
+            total_num_nodes = self._num_nodes[node_type]
+            max_id_on_all_ranks = max_ids[node_type]
             logger.info(
                 f"Found {total_num_nodes} for node type {node_type} across all machines"
             )
             logger.info(
-                f"Found max node id {max_id_on_rank} for node type {node_type} on machine {self._rank}"
+                f"Found max node id {max_id_on_all_ranks} for node type {node_type} across all machines"
             )
-            if max_id_on_rank >= total_num_nodes:
+            if max_id_on_all_ranks + 1 != total_num_nodes:
                 raise ValueError(
-                    f"Found max_id_on_rank {max_id_on_rank} which is greater than total number of nodes {total_num_nodes}"
+                    f"Found max_id_on_rank which must be exactly smaller than total number of nodes, but got max id: {max_id_on_all_ranks} and total_num_nodes: {total_num_nodes}"
                 )
 
     def register_edge_index(
