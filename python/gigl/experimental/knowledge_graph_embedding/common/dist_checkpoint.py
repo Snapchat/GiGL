@@ -4,20 +4,22 @@ using the Torch Distributed Checkpointing API.
 """
 
 import tempfile
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional, Union
-from concurrent.futures import ThreadPoolExecutor, Future
+
+import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 import torch.optim as optim
-import torch.distributed.checkpoint as dcp
-from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed.checkpoint.metadata import STATE_DICT_TYPE
-
+from torch.distributed.checkpoint.stateful import Stateful
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.local_fs import delete_local_directory
 from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
+
 
 class AppState(Stateful):
     """
@@ -35,7 +37,6 @@ class AppState(Stateful):
     MODEL_KEY = "model"
     OPTIMIZER_KEY = "optimizer"
     APP_STATE_KEY = "app"
-
 
     def __init__(self, model: nn.Module, optimizer: Optional[optim.Optimizer] = None):
         self.model = model
@@ -63,6 +64,7 @@ class AppState(Stateful):
             self.APP_STATE_KEY: self,
         }
 
+
 def load_checkpoint_from_uri(
     state_dict: STATE_DICT_TYPE,
     checkpoint_id: Uri,
@@ -70,20 +72,25 @@ def load_checkpoint_from_uri(
     assert isinstance(checkpoint_id, LocalUri) or isinstance(
         checkpoint_id, GcsUri
     ), "checkpoint_id must be a LocalUri or GcsUri."
-    local_uri = (
-        checkpoint_id
-        if isinstance(checkpoint_id, LocalUri)
-        else LocalUri(tempfile.mkdtemp(prefix="checkpoint"))
-    )
+
+    created_temp_local_uri = False
     if isinstance(checkpoint_id, GcsUri):
         # If the URI is a GCS URI, we need to download it first
+        local_uri = LocalUri(tempfile.mkdtemp(prefix="checkpoint"))
+        created_temp_local_uri = True
         file_loader = FileLoader()
         file_loader.load_directory(dir_uri_src=checkpoint_id, dir_uri_dst=local_uri)
         logger.info(f"Downloaded checkpoint from GCS: {checkpoint_id} to {local_uri}")
+    else:
+        local_uri = checkpoint_id
 
     reader = dcp.FileSystemReader(path=local_uri.uri)
     dcp.load(state_dict=state_dict, storage_reader=reader)
     logger.info(f"Loaded checkpoint from {checkpoint_id}")
+
+    # Clean up the temp local uri if it was created
+    if created_temp_local_uri:
+        delete_local_directory(local_path=local_uri)
 
 
 def save_checkpoint_to_uri(
@@ -113,7 +120,9 @@ def save_checkpoint_to_uri(
     """
 
     def _save_checkpoint(
-        checkpoint_id: Uri, local_uri: LocalUri, checkpoint_future: Optional[Future] = None
+        checkpoint_id: Uri,
+        local_uri: LocalUri,
+        checkpoint_future: Optional[Future] = None,
     ) -> Uri:
         # If we have a checkpoint future, we will wait for it to complete (async save)
         if checkpoint_future:

@@ -54,6 +54,7 @@ class BatchBase(Pipelineable, abc.ABC):
         raise Exception("Could not determine batch size from tensors.")
 
 
+# TODO(nshah-sc): Consider folding BatchBase into this class.
 @dataclass
 class DataclassBatch(BatchBase):
     """
