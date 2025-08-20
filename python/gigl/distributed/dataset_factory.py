@@ -175,7 +175,7 @@ def _load_and_build_partitioned_dataset(
 
         loaded_graph_tensors.positive_label = positive_label_edges
 
-    if splitter is not None and splitter.should_convert_labels_to_edges:
+    if isinstance(splitter, NodeAnchorLinkSplitter) and splitter.should_convert_labels_to_edges:
         loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
@@ -365,9 +365,9 @@ def _build_dataset_process(
         master_port=rpc_port,
         num_rpc_threads=16,
     )
-    # HashedNodeAnchorLinkSplitter requires rpc to be initialized, so we initialize it here.
+    # HashedNodeAnchorLinkSplitter and HashedNodeSplitter require rpc to be initialized, so we initialize it here.
     should_teardown_process_group = False
-    if isinstance(splitter, HashedNodeAnchorLinkSplitter):
+    if isinstance(splitter, HashedNodeAnchorLinkSplitter) or isinstance(splitter, HashedNodeSplitter):
         should_teardown_process_group = True
         torch.distributed.init_process_group(
             backend="gloo",

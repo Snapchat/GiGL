@@ -11,6 +11,7 @@ from typing import (
     Tuple,
     Union,
     overload,
+    runtime_checkable
 )
 
 import torch
@@ -31,7 +32,7 @@ logger = Logger()
 
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
 
-
+@runtime_checkable
 class NodeAnchorLinkSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on edges.
 
@@ -70,7 +71,7 @@ class NodeAnchorLinkSplitter(Protocol):
     def should_convert_labels_to_edges(self):
         ...
 
-
+@runtime_checkable
 class NodeSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on nodes directly.
 
