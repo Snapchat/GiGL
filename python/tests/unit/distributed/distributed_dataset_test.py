@@ -166,9 +166,10 @@ class DistributedDatasetTestCase(unittest.TestCase):
     def test_build_and_split_dataset_homogeneous(self):
         port = gigl.distributed.utils.get_free_port()
         mocked_dataset_info = TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        train_nodes = torch.tensor([1000])
-        val_nodes = torch.tensor([2000, 3000])
-        test_nodes = torch.tensor([3000, 4000, 5000])
+        # Add 256 nodes here to make sure we count properly while deduping.
+        train_nodes = torch.tensor([1000] + [0] * 256)
+        val_nodes = torch.tensor([2000, 3000] + [1] * 256)
+        test_nodes = torch.tensor([3000, 4000, 5000] + [2] * 256)
 
         dataset = run_distributed_dataset(
             rank=0,
@@ -184,7 +185,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
             ),
             _port=port,
         )
-
         self.assert_tensor_equal(dataset.train_node_ids, train_nodes)
         self.assert_tensor_equal(dataset.val_node_ids, val_nodes)
         self.assert_tensor_equal(dataset.test_node_ids, test_nodes)
@@ -193,9 +193,13 @@ class DistributedDatasetTestCase(unittest.TestCase):
             train_nodes.tolist()
             + val_nodes.tolist()
             + test_nodes.tolist()
+            # [0, 1, 2] shouldn't be included as we de-dup and 0, 1, 2 are in the splits.
             + list(
                 range(
-                    mocked_dataset_info.num_nodes[mocked_dataset_info.default_node_type]
+                    3,
+                    mocked_dataset_info.num_nodes[
+                        mocked_dataset_info.default_node_type
+                    ],
                 )
             )
         )
