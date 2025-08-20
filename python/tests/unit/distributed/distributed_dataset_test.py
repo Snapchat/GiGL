@@ -3,6 +3,7 @@ from collections import abc
 from typing import Any, Optional, Type, Union
 
 import torch
+from graphlearn_torch.data import Feature
 from parameterized import param, parameterized
 from torch.testing import assert_close
 
@@ -17,6 +18,7 @@ from gigl.distributed import (
     DistributedContext,
     build_dataset,
 )
+from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -28,14 +30,23 @@ from gigl.src.mocking.lib.versioning import (
     get_mocked_dataset_artifact_metadata,
 )
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
+    CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
     HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
     TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
     TOY_GRAPH_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeatureInfo
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    FeatureInfo,
+    FeaturePartitionData,
+    GraphPartitionData,
+    PartitionOutput,
+)
+from gigl.utils.data_splitters import HashedNodeSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
+from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
 class _FakeSplitter:
@@ -59,6 +70,7 @@ class _FakeSplitter:
 
 _USER = NodeType("user")
 _STORY = NodeType("story")
+_USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 
 
 class DistributedDatasetTestCase(unittest.TestCase):
@@ -516,6 +528,132 @@ class DistributedDatasetTestCase(unittest.TestCase):
         assert isinstance(dataset.edge_pb, abc.Mapping)
         self.assertTrue(labeled_edge_type not in dataset.edge_pb)
         self.assertTrue(message_passing_edge_type in dataset.edge_pb)
+
+    def test_build_homogeneous_dataset_with_node_labels(self):
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(10),
+            edge_partition_book=torch.zeros(20),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.ones(20, 2), edge_ids=None
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(10, 2), ids=torch.arange(10)
+            ),
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+        )
+        node_labels = torch.arange(10)
+
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output, node_labels=node_labels)
+
+        assert isinstance(dataset.node_labels, Feature)
+        assert isinstance(dataset.node_features, Feature)
+
+        assert_tensor_equality(dataset.node_labels.feature_tensor, torch.arange(10))
+
+        assert_tensor_equality(dataset.node_features.feature_tensor, torch.zeros(10, 2))
+
+    def test_build_heterogeneous_dataset_with_node_labels(self):
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(10),
+                _STORY: torch.zeros(5),
+            },
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(5),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.ones(5, 2), edge_ids=None
+                )
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(10, 2), ids=torch.arange(10)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(5, 0), ids=torch.arange(5)
+                ),
+            },
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+        )
+        node_labels = {_USER: torch.arange(10), _STORY: torch.arange(5)}
+
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output, node_labels=node_labels)
+
+        assert isinstance(dataset.node_labels, dict)
+        assert isinstance(dataset.node_features, dict)
+
+        self.assertTrue(_USER in dataset.node_labels)
+        self.assertTrue(_STORY in dataset.node_labels)
+        self.assertTrue(_USER in dataset.node_features)
+        self.assertFalse(_STORY in dataset.node_features)
+
+        assert_tensor_equality(
+            dataset.node_labels[_USER].feature_tensor,
+            torch.arange(10),
+        )
+        assert_tensor_equality(
+            dataset.node_labels[_STORY].feature_tensor,
+            torch.arange(5),
+        )
+
+        assert_tensor_equality(
+            dataset.node_features[_USER].feature_tensor,
+            torch.zeros(10, 2),
+        )
+
+    @parameterized.expand(
+        [
+            param(
+                "Test building homogeneous dataset with no splitter",
+                splitter=None,
+            ),
+            param(
+                "Test building homogeneous dataset with splitter",
+                splitter=HashedNodeSplitter(num_val=0.1, num_test=0.1),
+            ),
+        ]
+    )
+    def test_build_and_split_cora_dataset_with_node_labels(
+        self,
+        _,
+        splitter: Optional[HashedNodeSplitter],
+    ):
+        """Test that node labels are properly loaded and accessible for datasets with node labels."""
+        port = gigl.distributed.utils.get_free_port()
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
+            should_load_tensors_in_parallel=True,
+            partitioner_class=DistRangePartitioner,
+            splitter=splitter,
+            _port=port,
+        )
+        # Check that node labels are present and of the correct type
+        assert isinstance(dataset.node_labels, Feature)
+        assert isinstance(dataset.node_ids, torch.Tensor)
+        dataset.node_labels.lazy_init_with_ipc_handle()
+        self.assertEqual(
+            dataset.node_labels.feature_tensor.shape[0], dataset.node_ids.shape[0]
+        )
+
+        if splitter is not None:
+            assert isinstance(dataset.train_node_ids, torch.Tensor)
+            assert isinstance(dataset.val_node_ids, torch.Tensor)
+            assert isinstance(dataset.test_node_ids, torch.Tensor)
+            self.assertEqual(
+                dataset.train_node_ids.shape[0]
+                + dataset.val_node_ids.shape[0]
+                + dataset.test_node_ids.shape[0],
+                dataset.node_ids.shape[0],
+            )
 
     # This tests that we can build a dataset when manually specifying a port.
     # TODO (mkolodner-sc): Remove this test once we deprecate the `port` field

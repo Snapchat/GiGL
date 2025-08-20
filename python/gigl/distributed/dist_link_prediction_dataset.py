@@ -72,7 +72,7 @@ class DistLinkPredictionDataset(DistDataset):
         edge_feature_info: Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
-        node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
+        node_labels: Optional[Union[Feature, dict[NodeType, Feature]]] = None,
     ) -> None:
         """
         Initializes the fields of the DistLinkPredictionDataset class. This function is called upon each serialization of the DistLinkPredictionDataset instance.
@@ -96,13 +96,13 @@ class DistLinkPredictionDataset(DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
-            node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): The labels of each node on the current machine. Will be a dict if heterogeneous.
+            node_labels (Optional[Union[Feature, dict[NodeType, Feature]]]): The labels of each node on the current machine. Will be a dict if heterogeneous.
         """
         self._rank: int = rank
         self._world_size: int = world_size
         self._edge_dir: Literal["in", "out"] = edge_dir
         self._node_labels: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            Union[Feature, dict[NodeType, Feature]]
         ] = node_labels
 
         super().__init__(
@@ -245,13 +245,13 @@ class DistLinkPredictionDataset(DistDataset):
     @property
     def node_labels(
         self,
-    ) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
+    ) -> Optional[Union[Feature, dict[NodeType, Feature]]]:
         return self._node_labels
 
     @node_labels.setter
     def node_labels(
         self,
-        new_node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+        new_node_labels: Optional[Union[Feature, dict[NodeType, Feature]]],
     ):
         self._node_labels = new_node_labels
 
@@ -746,7 +746,7 @@ class DistLinkPredictionDataset(DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+        Optional[Union[Feature, dict[NodeType, Feature]]],
     ]:
         """
         Serializes the member variables of the DistLinkPredictionDatasetClass
@@ -767,7 +767,7 @@ class DistLinkPredictionDataset(DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
-            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Node labels on the current machine. Will be a dict if heterogeneous.
+            Optional[Union[Feature, dict[NodeType, Feature]]]: Node labels on the current machine. Will be a dict if heterogeneous.
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -887,9 +887,7 @@ def _rebuild_dist_link_prediction_dataset(
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
-        Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-        ],  # Node Label Tensor
+        Optional[Union[Feature, dict[NodeType, Feature]]],  # Node Label Tensor
     ]
 ):
     dataset = DistLinkPredictionDataset.from_ipc_handle(ipc_handle)
