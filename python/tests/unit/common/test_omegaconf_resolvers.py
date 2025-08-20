@@ -33,6 +33,7 @@ class TestNowResolver(unittest.TestCase):
             yesterday: "${now:%Y-%m-%d, days-1}"
             tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,hours+5,days+1,minutes+30,seconds+15}"
             next_week: "${now:%Y-%m-%d, weeks+1}"
+            multiple_args: "${now:%Y%m%d, days-15}:${now:%Y%m%d, days-1}"
         """
 
         expected_name = "exp_20231215_143022"
@@ -44,6 +45,7 @@ class TestNowResolver(unittest.TestCase):
         expected_yesterday = "2023-12-14"
         expected_tomorrow_plus_5_hours_30_min_15_sec = "2023-12-16 20:00:37"
         expected_next_week = "2023-12-22"
+        expected_multiple_args = "20231130:20231214"
 
         config_dict = yaml.safe_load(yaml_config)
         config = OmegaConf.create(config_dict)
@@ -59,6 +61,7 @@ class TestNowResolver(unittest.TestCase):
             expected_tomorrow_plus_5_hours_30_min_15_sec,
         )
         self.assertEqual(config.experiment.next_week, expected_next_week)
+        self.assertEqual(config.experiment.multiple_args, expected_multiple_args)
 
     def test_now_resolver_with_invalid_format(self):
         yaml_config = """
@@ -67,3 +70,6 @@ class TestNowResolver(unittest.TestCase):
         """
         with self.assertRaises(ValueError):
             OmegaConf.create(yaml_config).experiment.name
+
+if __name__ == "__main__":
+    unittest.main()

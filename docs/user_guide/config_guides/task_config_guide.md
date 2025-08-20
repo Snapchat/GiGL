@@ -123,7 +123,7 @@ class implement the protocol defined @ {py:class}`gigl.src.inference.v1.lib.base
 ## Custom resolvers
 
 GiGL makes use of custom [Omegaconf resolvers](https://omegaconf.readthedocs.io/en/latest/custom_resolvers.html) to
-allow us to expose MACROs that are resolved at runtime instead of being hardcoded.
+allow us to expose macros that are resolved at runtime instead of being hardcoded. Our resolvers are defined in [omegaconf_resolvers.py](python/gigl/common/omegaconf_resolvers.py)
 
 ```{note}
 In tabularized GiGL: Subgraph Sampler, and Split Generator do not have support for custom resolvers. In most cases this should not be a problem as the Config Populator should populate any needed custom resolution to your frozen configs.
@@ -148,6 +148,7 @@ tomorrow: "${now:%Y-%m-%d, days+1}"
 yesterday: "${now:%Y-%m-%d, days-1}"
 tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,hours+5,days+1,minutes+30,seconds+15}"
 next_week: "${now:%Y-%m-%d, weeks+1}"
+multiple_args: "${now:%Y%m%d, days-15}:${now:%Y%m%d, days-1}"
 ```
 
 Assuming, the current datetime is `2023-12-15 14:30:22`, this would resolve to something like:
@@ -163,4 +164,5 @@ tomorrow: "2023-12-16"
 yesterday: "2023-12-14"
 tomorrow_plus_5_hours_30_min_15_sec: "2023-12-16 20:00:37"
 next_week: "2023-12-22"
+multiple_args: "20231130:20231214"
 ```

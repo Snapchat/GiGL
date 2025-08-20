@@ -5,6 +5,7 @@ files to provide dynamic values during configuration loading.
 """
 
 from datetime import datetime, timedelta
+from typing import Sequence
 
 from omegaconf import OmegaConf
 
@@ -13,12 +14,10 @@ from gigl.common.logger import Logger
 logger = Logger()
 
 
-# We need to ensure that the bigger length identifers are listed first to avoid parsing issues below.
-
 _SUPPORTED_UNITS = ("weeks", "days", "seconds", "minutes", "hours")
 
 
-def now_resolver(*args) -> str:
+def now_resolver(*args: Sequence[str]) -> str:
     """Resolver that creates a string representing the current time (with optional offset) using strftime.
 
     This resolver supports both time formatting and time offsets with explicit named parameters
@@ -49,6 +48,7 @@ def now_resolver(*args) -> str:
         yesterday: "${now:%Y-%m-%d, days-1}"
         tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,hours+5,days+1,minutes+30,seconds+15}"
         next_week: "${now:%Y-%m-%d, weeks+1}"
+        multiple_args: "${now:%Y%m%d, days-15}:${now:%Y%m%d, days-1}"
 
         This would resolve to something like:
         ```yaml
@@ -62,6 +62,7 @@ def now_resolver(*args) -> str:
         yesterday: "2023-12-14"
         tomorrow_plus_5_hours_30_min_15_sec: "2023-12-16 20:00:37"
         next_week: "2023-12-22"
+        multiple_args: "20231201:20231214"
         ```
     """
     # Default values
@@ -78,25 +79,26 @@ def now_resolver(*args) -> str:
         else:
             # Parse time offset specifications like "days+1", "hours-2", etc.
             arg = arg.strip()
+            _error_could_not_parse_msg = (
+                f"Could not parse time offset '{arg}', it should be of form days+1, hours-2, etc. "
+                f"Provided: {args}. See docs for more details."
+            )
 
             # Try to parse each known unit
             for unit in _SUPPORTED_UNITS:
                 if arg.startswith(unit):
                     value_str = arg[len(unit) :]
-                    if not value_str:
-                        logger.warning(f"Resolver could not parse: {args}")
-                        raise ValueError(
-                            f"Could not parse time offset '{arg}': no value found"
-                        )
+                    if not value_str or not (
+                        value_str.startswith("+") or value_str.startswith("-")
+                    ):
+                        raise ValueError(_error_could_not_parse_msg)
 
                     try:
                         value = int(value_str)
                     except ValueError:
                         # Cleaner error message
-                        logger.warning(f"Resolver could not parse: {args}")
-                        raise ValueError(
-                            f"Could not parse time offset '{arg}', it should be of form days+1, hours-2, m30, etc. See docs for more details."
-                        )
+                        raise ValueError(_error_could_not_parse_msg)
+
                     if unit == "weeks":
                         weeks = value
                     if unit == "days":
@@ -111,10 +113,7 @@ def now_resolver(*args) -> str:
 
             else:  # If loop completes without breaking, then no unit found in this argument
                 if arg:  # Raise an error if the argument is not empty
-                    logger.warning(f"Resolver could not parse: {args}")
-                    raise ValueError(
-                        f"Could not parse time offset '{arg}', it should be of form days+1, hours-2, m30, etc. See docs for more details."
-                    )
+                    raise ValueError(_error_could_not_parse_msg)
 
     # Calculate the target time
     target_time = datetime.now() + timedelta(
@@ -126,7 +125,7 @@ def now_resolver(*args) -> str:
 def register_resolvers() -> None:
     """Register all custom OmegaConf resolvers.
 
-    This function should be called once at application startup to register
+    This function should be called at application startup to register
     all custom resolvers with OmegaConf.
     """
     logger.info("Registering OmegaConf resolvers")

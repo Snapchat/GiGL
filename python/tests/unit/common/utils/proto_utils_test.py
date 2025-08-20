@@ -23,6 +23,7 @@ datasetConfig:
 
 class ProtoUtilsTest(unittest.TestCase):
     def setUp(self):
+        super().setUp()
         self.proto_utils = ProtoUtils()
 
         tmp_file = NamedTemporaryFile(delete=False)
@@ -32,6 +33,7 @@ class ProtoUtilsTest(unittest.TestCase):
         self.test_task_config_path = tmp_file.name
 
     def tearDown(self):
+        super().tearDown()
         # delete the temporary file
         os.remove(self.test_task_config_path)
 
@@ -63,3 +65,7 @@ class ProtoUtilsTest(unittest.TestCase):
             ],
             f"{expected_positive_label_date_range_start}:{expected_positive_label_date_range_end}",
         )
+
+
+if __name__ == "__main__":
+    unittest.main()
