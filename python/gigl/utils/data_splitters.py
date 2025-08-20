@@ -11,7 +11,7 @@ from typing import (
     Tuple,
     Union,
     overload,
-    runtime_checkable
+    runtime_checkable,
 )
 
 import torch
@@ -31,6 +31,7 @@ from gigl.types.graph import (
 logger = Logger()
 
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
+
 
 @runtime_checkable
 class NodeAnchorLinkSplitter(Protocol):
@@ -70,6 +71,7 @@ class NodeAnchorLinkSplitter(Protocol):
     @property
     def should_convert_labels_to_edges(self):
         ...
+
 
 @runtime_checkable
 class NodeSplitter(Protocol):
