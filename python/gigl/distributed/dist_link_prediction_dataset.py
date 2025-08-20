@@ -770,19 +770,31 @@ def _append_non_split_node_ids(
     # We also use clamp to avoid overflow to 0,
     # Without clamp, and if we have 255 nodes in a split,
     # we will asume we have no nodes in that bucket, which is incorrect.
-    def bin_to_uint8(tensor: torch.Tensor, minlength: int) -> torch.Tensor:
+    def clamped_count(
+        tensor: torch.Tensor, max_count: int, dtype=torch.uint8
+    ) -> torch.Tensor:
         return (
-            torch.bincount(tensor, minlength=minlength).clamp(max=255).to(torch.uint8)
+            torch.bincount(tensor, minlength=max_count)
+            .clamp(max=torch.iinfo(dtype).max)
+            .to(dtype)
         )
 
-    split_counts = bin_to_uint8(train_node_ids, minlength=max_node_id)
-    split_counts.add_(bin_to_uint8(val_node_ids, minlength=max_node_id))
-    split_counts.add_(bin_to_uint8(test_node_ids, minlength=max_node_id))
+    def add_clamped_counts(
+        counts: torch.Tensor, to_add: torch.Tensor, max_count: int
+    ) -> torch.Tensor:
+        counts.add_(clamped_count(to_add, max_count)).clamp(max=255)
+        return counts
+
+    split_counts = clamped_count(train_node_ids, max_node_id)
+    add_clamped_counts(split_counts, val_node_ids, max_node_id)
+    add_clamped_counts(split_counts, test_node_ids, max_node_id)
 
     # Count all instances of node ids, then subtract the counts of the node ids in the split from the ones in the machines.
     # Since splits are not guaranteed to be unique, we check where the count is greater than zero.
     node_id_indices_not_in_split = (
-        torch.bincount(node_ids_on_machine, minlength=max_node_id).sub_(split_counts)
+        clamped_count(node_ids_on_machine, max_node_id, dtype=torch.int32).sub_(
+            split_counts
+        )
         > 0
     )
     # Then convert the indices to the original node ids
