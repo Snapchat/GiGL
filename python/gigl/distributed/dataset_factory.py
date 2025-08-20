@@ -43,10 +43,13 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeaturePartitionData
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
+    HashedNodeSplitter,
     NodeAnchorLinkSplitter,
+    NodeSplitter,
     select_ssl_positive_label_edges,
 )
 
@@ -94,7 +97,7 @@ def _load_and_build_partitioned_dataset(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    splitter: Optional[NodeAnchorLinkSplitter] = None,
+    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistLinkPredictionDataset:
     """
@@ -109,7 +112,7 @@ def _load_and_build_partitioned_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
-        splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
+        splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
     Returns:
@@ -304,7 +307,7 @@ def _build_dataset_process(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    splitter: Optional[NodeAnchorLinkSplitter] = None,
+    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
     """
@@ -339,7 +342,7 @@ def _build_dataset_process(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
-        splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
+        splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
     """
@@ -402,7 +405,7 @@ def build_dataset(
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    splitter: Optional[NodeAnchorLinkSplitter] = None,
+    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: Optional[
         int
@@ -433,7 +436,7 @@ def build_dataset(
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
-        splitter (Optional[NodeAnchorLinkSplitter]): Optional splitter to use for splitting the graph data into train, val, and test sets.
+        splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets.
             If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
@@ -600,33 +603,52 @@ def build_dataset_from_task_config_uri(
     )
 
     ssl_positive_label_percentage: Optional[float] = None
+    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
         sample_edge_direction = args.get("sample_edge_direction", "in")
         args_path = "inferencerConfig.inferencerArgs"
-        splitter = None
     else:
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
+        args_path = "trainerConfig.trainerArgs"
+        sample_edge_direction = args.get("sample_edge_direction", "in")
         num_val = float(args.get("num_val", "0.1"))
         num_test = float(args.get("num_test", "0.1"))
-        supervision_edge_types = (
-            gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
-            if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
-            else [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-        )
-        sample_edge_direction = args.get("sample_edge_direction", "in")
-        args_path = "trainerConfig.trainerArgs"
-        # TODO(kmonte): Maybe we should enable `should_convert_labels_to_edges` as a flag?
-        splitter = HashedNodeAnchorLinkSplitter(
-            sampling_direction=sample_edge_direction,
-            supervision_edge_types=supervision_edge_types,
-            should_convert_labels_to_edges=True,
-            num_val=num_val,
-            num_test=num_test,
-        )
-        if "ssl_positive_label_percentage" in args:
-            ssl_positive_label_percentage = float(args["ssl_positive_label_percentage"])
+        task_metadata_pb_wrapper = gbml_config_pb_wrapper.task_metadata_pb_wrapper
+        if (
+            task_metadata_pb_wrapper.task_metadata_type
+            == TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK
+        ):
+            supervision_edge_types = (
+                task_metadata_pb_wrapper.get_supervision_edge_types()
+                if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
+                else [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            )
+            # TODO(kmonte): Maybe we should enable `should_convert_labels_to_edges` as a flag?
+            splitter = HashedNodeAnchorLinkSplitter(
+                sampling_direction=sample_edge_direction,
+                supervision_edge_types=supervision_edge_types,
+                should_convert_labels_to_edges=True,
+                num_val=num_val,
+                num_test=num_test,
+            )
+            if "ssl_positive_label_percentage" in args:
+                ssl_positive_label_percentage = float(
+                    args["ssl_positive_label_percentage"]
+                )
+        elif (
+            task_metadata_pb_wrapper.task_metadata_type
+            == TaskMetadataType.NODE_BASED_TASK
+        ):
+            splitter = HashedNodeSplitter(
+                num_val=num_val,
+                num_test=num_test,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported task metadata type: {task_metadata_pb_wrapper.task_metadata_type}"
+            )
 
     assert sample_edge_direction in (
         "in",
