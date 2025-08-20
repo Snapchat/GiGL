@@ -6,6 +6,7 @@ on:
   # https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
   pull_request:
   merge_group:
+  push:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -118,3 +119,181 @@ jobs:
         source ~/.profile
         make check_format
         make assert_yaml_configs_parse
+
+  check-pr-approvals:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Node.js environment
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    - name: Install codeowners-api
+      run: |
+        npm install codeowners-api
+    - name: Check if PR author is a collaborator
+      id: check-contributor
+      continue-on-error: true
+      uses: snapchat/gigl/.github/actions/assert-is-collaborator@main
+      with:
+        username: ${{ github.event.pull_request.user.login }}
+        initiating-pr-number: ${{ github.event.pull_request.number }}
+
+    - name: Validate PR approvals based on contributor status and CODEOWNERS
+      id: validate-approvals
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const { Codeowner } = require('./node_modules/codeowners-api');
+          
+          // Determine if the PR author is a contributor
+          const isContributor = '${{ steps.check-contributor.outcome }}' === 'success';
+          const requiredApprovals = isContributor ? 1 : 2;
+          
+          console.log(`PR author: ${{ github.event.pull_request.user.login }}`);
+          console.log(`Is contributor: ${isContributor}`);
+          console.log(`Required approvals: ${requiredApprovals}`);
+          
+          // Get PR files
+          const { data: files } = await github.rest.pulls.listFiles({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.issue.number
+          });
+          
+          // Get PR reviews
+          const { data: reviews } = await github.rest.pulls.listReviews({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.issue.number
+          });
+          
+          // Get latest review from each reviewer (only approved ones)
+          const latestReviews = {};
+          reviews.forEach(review => {
+            if (review.state === 'APPROVED') {
+              latestReviews[review.user.login] = review;
+            }
+          });
+          
+          const approvedReviewers = Object.keys(latestReviews);
+          console.log(`Approved reviewers: ${approvedReviewers.join(', ')}`);
+          
+          // Initialize codeowners API
+          const repoParams = { repo: context.repo.repo, owner: context.repo.owner };
+          const authParams = { type: 'token', token: process.env.GITHUB_TOKEN };
+          const codeOwnersApi = new Codeowner(repoParams, authParams);
+          
+          // Get file paths
+          const filePaths = files.map(f => f.filename);
+          
+          // Get CODEOWNERS mapping
+          let codeownersMap;
+          try {
+            codeownersMap = await codeOwnersApi.getCodeownersMap();
+            console.log('CODEOWNERS mapping:', codeownersMap);
+          } catch (error) {
+            console.error('Error getting CODEOWNERS mapping:', error.message);
+            core.setFailed('Failed to parse CODEOWNERS file');
+            return;
+          }
+          
+          // Function to get owners for a file path
+          function getOwnersForFile(filePath, codeownersMap) {
+            // Convert codeowners map patterns to match file paths
+            // The codeowners-api returns patterns as keys, we need to match them
+            const owners = new Set();
+            
+            for (const [pattern, patternOwners] of Object.entries(codeownersMap)) {
+              // Convert GitHub pattern to regex
+              let regexPattern = pattern
+                .replace(/\./g, '\\.')
+                .replace(/\*/g, '.*')
+                .replace(/\?/g, '.');
+              
+              // Handle specific patterns
+              if (pattern === '*') {
+                // Global pattern matches everything
+                patternOwners.forEach(owner => owners.add(owner));
+              } else if (pattern.endsWith('/')) {
+                // Directory pattern
+                regexPattern = pattern + '.*';
+              }
+              
+              const regex = new RegExp('^' + regexPattern + '$');
+              if (regex.test(filePath) || regex.test('/' + filePath)) {
+                patternOwners.forEach(owner => owners.add(owner));
+              }
+            }
+            
+            // Clean up owner names (remove @ prefix)
+            return Array.from(owners).map(owner => owner.startsWith('@') ? owner.substring(1) : owner);
+          }
+          
+          // Check approvals for each file
+          let hasInsufficientApprovals = false;
+          const insufficientFiles = [];
+          
+          for (const filePath of filePaths) {
+            const owners = getOwnersForFile(filePath, codeownersMap);
+            
+            if (owners.length === 0) {
+              console.log(`No specific owners found for ${filePath}`);
+              continue;
+            }
+            
+            // Count approvals from codeowners
+            const ownerApprovals = approvedReviewers.filter(reviewer => 
+              owners.some(owner => owner === reviewer || owner === `${reviewer}-sc`)
+            );
+            
+            console.log(`File: ${filePath}`);
+            console.log(`  Owners: ${owners.join(', ')}`);
+            console.log(`  Owner approvals: ${ownerApprovals.join(', ')} (${ownerApprovals.length})`);
+            
+            if (ownerApprovals.length < requiredApprovals) {
+              hasInsufficientApprovals = true;
+              insufficientFiles.push({
+                file: filePath,
+                owners: owners,
+                approvals: ownerApprovals.length,
+                required: requiredApprovals
+              });
+            }
+          }
+          
+          if (hasInsufficientApprovals) {
+            let errorMessage = `❌ Insufficient approvals for the following files:\\n\\n`;
+            insufficientFiles.forEach(({file, owners, approvals, required}) => {
+              errorMessage += `**${file}**\\n`;
+              errorMessage += `- Code owners: ${owners.join(', ')}\\n`;
+              errorMessage += `- Approvals received: ${approvals}/${required}\\n\\n`;
+            });
+            
+            errorMessage += `\\n**Requirements:**\\n`;
+            errorMessage += `- Contributors need ${isContributor ? '1' : '2'} approval(s) from code owners\\n`;
+            errorMessage += `- Non-contributors need 2 approvals from code owners\\n`;
+            errorMessage += `- PR author is ${isContributor ? '' : 'not '}a repository contributor\\n`;
+            
+            // Set output for error message
+            core.setOutput('approval_status', 'failed');
+            core.setOutput('approval_message', errorMessage);
+            core.setFailed('Insufficient approvals from code owners');
+          } else {
+            console.log('✅ All files have sufficient approvals from code owners');
+            
+            const successMessage = `✅ **Approval requirements satisfied**\\n\\nAll changed files have the required ${requiredApprovals} approval(s) from their respective code owners.`;
+            
+            // Set output for success message
+            core.setOutput('approval_status', 'success');
+            core.setOutput('approval_message', successMessage);
+          }
+    - name: Comment on PR with approval status
+      if: always() && steps.validate-approvals.outputs.approval_message
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      with:
+        pr_number: ${{ github.event.pull_request.number }}
+        message: ${{ steps.validate-approvals.outputs.approval_message }}
