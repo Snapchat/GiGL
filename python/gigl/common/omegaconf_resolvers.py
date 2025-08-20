@@ -13,6 +13,11 @@ from gigl.common.logger import Logger
 logger = Logger()
 
 
+# We need to ensure that the bigger length identifers are listed first to avoid parsing issues below.
+
+_SUPPORTED_UNITS = ("weeks", "days", "seconds", "minutes", "hours")
+
+
 def now_resolver(*args) -> str:
     """Resolver that creates a string representing the current time (with optional offset) using strftime.
 
@@ -21,11 +26,12 @@ def now_resolver(*args) -> str:
 
     Args:
         *args: Variable arguments where:
-               - First argument (optional): strftime format string. If not provided, defaults to "%Y%m%d_%H%M%S"
-               - Subsequent arguments: Time offset specifications in format "unit±value" where:
-                 * unit can be: days, hours, minutes, seconds
-                 * ± can be + or - (+ can be omitted for positive values)
-                 * Examples: "days+1", "hours-2", "minutes30", "seconds-15"
+            - First argument (optional): datetime.datetime compatible strftime format string.
+                If not provided, defaults to "%Y%m%d_%H%M%S"
+            - Subsequent arguments: datetime.timedelta compatible time offset specifications in format "unit±value" where:
+                * unit can be: days, seconds, minutes, hours, weeks
+                * ± can be + or - (+ can be omitted for positive values)
+                * Examples: "days+1", "hours-2", "minutes30", "seconds-15"
 
     Returns:
         Current time (with optional offset) formatted as a string.
@@ -33,44 +39,39 @@ def now_resolver(*args) -> str:
     Example:
         In YAML config:
         ```yaml
-        # Basic usage
-        timestamp: "${now}"  # Uses default format
-        formatted: "${now:%Y-%m-%d %H:%M:%S}"  # Custom format only
+        name: "exp_${now:%Y%m%d_%H%M%S}"
+        start_time: "${now:%Y-%m-%d %H:%M:%S}"
+        log_file: "logs/run_${now:%H-%M-%S}.log"
+        timestamp: "${now:}"  # Uses default format
+        short_date: "${now:%m-%d}"
 
-        # With explicit named time offsets
-        tomorrow: "${now:%Y-%m-%d,days+1}"
-        yesterday: "${now:%Y-%m-%d,days-1}"
-        future_time: "${now:%Y-%m-%d %H:%M:%S,days+1,hours-1}"
-        complex: "${now:%Y%m%d_%H%M%S,days+7,hours-2,minutes+30,seconds-15}"
-
-        # Default format with offsets (no format string)
-        simple_tomorrow: "${now:days+1}"
-        two_hours_ago: "${now:hours-2}"
-        next_week: "${now:days+7}"
-
-        # Multiple offsets
-        complex_default: "${now:days+1,hours-3,minutes+45}"
-        ```
+        tomorrow: "${now:%Y-%m-%d, days+1}"
+        yesterday: "${now:%Y-%m-%d, days-1}"
+        tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,hours+5,days+1,minutes+30,seconds+15}"
+        next_week: "${now:%Y-%m-%d, weeks+1}"
 
         This would resolve to something like:
         ```yaml
+        name: "exp_20231215_143022"
+        start_time: "2023-12-15 14:30:22"
+        log_file: "logs/run_14-30-22.log"
         timestamp: "20231215_143022"
-        formatted: "2023-12-15 14:30:22"
+        short_date: "12-15"
+
         tomorrow: "2023-12-16"
         yesterday: "2023-12-14"
-        future_time: "2023-12-16 13:30:22"
+        tomorrow_plus_5_hours_30_min_15_sec: "2023-12-16 20:00:37"
+        next_week: "2023-12-22"
         ```
     """
     # Default values
     format_str = "%Y%m%d_%H%M%S"
-    days = hours = minutes = seconds = 0
+    weeks = days = hours = minutes = seconds = 0
 
     for i, arg in enumerate(
         args
     ):  # i.e. args = ["%Y%m%d_%H%M%S", "days+1", "hours-2", "minutes30", "seconds-15"]
-        if i == 0 and not any(
-            unit in arg for unit in ["days", "hours", "minutes", "seconds"]
-        ):
+        if i == 0 and not any(unit in arg for unit in _SUPPORTED_UNITS):
             # First argument is format string if it doesn't contain time units
             format_str = arg
 
@@ -79,25 +80,25 @@ def now_resolver(*args) -> str:
             arg = arg.strip()
 
             # Try to parse each known unit
-            for unit in ["days", "hours", "minutes", "seconds"]:
+            for unit in _SUPPORTED_UNITS:
                 if arg.startswith(unit):
                     value_str = arg[len(unit) :]
                     if not value_str:
+                        logger.warning(f"Resolver could not parse: {args}")
                         raise ValueError(
                             f"Could not parse time offset '{arg}': no value found"
                         )
-
-                    # Handle the sign: remove + if present, keep - for negatives
-                    if value_str.startswith("+"):
-                        value_str = value_str[1:]
 
                     try:
                         value = int(value_str)
                     except ValueError:
                         # Cleaner error message
+                        logger.warning(f"Resolver could not parse: {args}")
                         raise ValueError(
-                            f"Could not parse time offset '{arg}': invalid value '{value_str}'"
+                            f"Could not parse time offset '{arg}', it should be of form days+1, hours-2, m30, etc. See docs for more details."
                         )
+                    if unit == "weeks":
+                        weeks = value
                     if unit == "days":
                         days = value
                     elif unit == "hours":
@@ -110,13 +111,14 @@ def now_resolver(*args) -> str:
 
             else:  # If loop completes without breaking, then no unit found in this argument
                 if arg:  # Raise an error if the argument is not empty
+                    logger.warning(f"Resolver could not parse: {args}")
                     raise ValueError(
-                        f"Could not parse time offset '{arg}': unknown format"
+                        f"Could not parse time offset '{arg}', it should be of form days+1, hours-2, m30, etc. See docs for more details."
                     )
 
     # Calculate the target time
     target_time = datetime.now() + timedelta(
-        days=days, hours=hours, minutes=minutes, seconds=seconds
+        weeks=weeks, days=days, hours=hours, minutes=minutes, seconds=seconds
     )
     return target_time.strftime(format_str)
 

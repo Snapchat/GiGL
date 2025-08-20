@@ -16,43 +16,8 @@ sharedConfig:
 datasetConfig:
     dataPreprocessorConfig:
         dataPreprocessorArgs:
-            bq_edges_table_name: "project.dataset.bq_edges_table_name_${now:%Y%m%d}"
-            positive_label_date_range: "${now:%Y%m%d,days-10}:${now:%Y%m%d,days-1}"
-    subgraphSamplerConfig:
-        numHops: 1
-        numNeighborsToSample: 2
-        numPositiveSamples: 1
-    splitGeneratorConfig:
-        assignerArgs:
-            test_split: '0.2'
-            train_split: '0.7'
-            val_split: '0.1'
-        assignerClsPath: splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner
-        splitStrategyClsPath: splitgenerator.lib.split_strategies.TransductiveNodeAnchorBasedLinkPredictionSplitStrategy
-graphMetadata:
-    edgeTypes:
-    - dstNodeType: user
-      relation: is_friends_with
-      srcNodeType: user
-    nodeTypes:
-    - user
-inferencerConfig:
-    inferencerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
-    inferencerArgs:
-        num_layers: '2'
-        hid_dim: '128'
-        out_dim: '128'
-taskMetadata:
-    nodeAnchorBasedLinkPredictionTaskMetadata:
-        supervisionEdgeTypes:
-        - srcNodeType: user
-          relation: is_friends_with
-          dstNodeType: user
-trainerConfig:
-    trainerArgs:
-        margin: '0.3'
-        optim_lr: '0.005'
-    trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
+            bq_edges_table_name: project.dataset.bq_edges_table_name_${now:%Y%m%d}
+            positive_label_date_range: ${now:%Y%m%d,days-10}:${now:%Y%m%d,days-1}
 """
 
 

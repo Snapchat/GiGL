@@ -126,7 +126,7 @@ GiGL makes use of custom [Omegaconf resolvers](https://omegaconf.readthedocs.io/
 allow us to expose MACROs that are resolved at runtime instead of being hardcoded.
 
 ```{note}
-In tabularized GiGL: Subgraph Sampler, and Split Generator do not have no support for custom resolvers. In most cases this should not be a problem as the config populator should populate any needed custom resolution to your frozen configs.
+In tabularized GiGL: Subgraph Sampler, and Split Generator do not have support for custom resolvers. In most cases this should not be a problem as the Config Populator should populate any needed custom resolution to your frozen configs.
 ```
 
 ### Time resolvers
@@ -134,7 +134,7 @@ In tabularized GiGL: Subgraph Sampler, and Split Generator do not have no suppor
 ```yaml
 trainerArgs:
     today: "${now:%Y%m%d-%H:%M:%S}"          # → "20250101-12:00:00
-    tomorrow: "${now:%Y-%m-%d,days+1}"       # → "2023-01-02"
+    tomorrow: "${now:%Y-%m-%d,days+1}"       # → "2025-01-02"
     yesterday: "${now:%Y-%m-%d,days-1}"      # → "2024-12-31"
     future_time: "${now:%Y%m%d %H:%M:%S,days+1,hours-1,minutes+30,seconds+10}"  # → "20250102 11:30:10"
     log_file: "logs/run_${now:%H-%M-%S}.log"  # → "logs/run_12-00-00.log"
