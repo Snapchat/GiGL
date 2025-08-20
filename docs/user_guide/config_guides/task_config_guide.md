@@ -131,11 +131,36 @@ In tabularized GiGL: Subgraph Sampler, and Split Generator do not have support f
 
 ### Time resolvers
 
+You can specify `now:` along with `datetime.datetime` compatible `strftime` format string. Subsequently, you can also
+specify `datetime.timedelta` with compatible time offsets. Specifying these in any of your values in your yamls will
+automatically resolve when loaded into GiGL.
+
+Examples:
+
 ```yaml
-trainerArgs:
-    today: "${now:%Y%m%d-%H:%M:%S}"          # → "20250101-12:00:00
-    tomorrow: "${now:%Y-%m-%d,days+1}"       # → "2025-01-02"
-    yesterday: "${now:%Y-%m-%d,days-1}"      # → "2024-12-31"
-    future_time: "${now:%Y%m%d %H:%M:%S,days+1,hours-1,minutes+30,seconds+10}"  # → "20250102 11:30:10"
-    log_file: "logs/run_${now:%H-%M-%S}.log"  # → "logs/run_12-00-00.log"
+name: "exp_${now:%Y%m%d_%H%M%S}"
+start_time: "${now:%Y-%m-%d %H:%M:%S}"
+log_file: "logs/run_${now:%H-%M-%S}.log"
+timestamp: "${now:}"  # Uses default format "%Y%m%d_%H%M%S"
+short_date: "${now:%m-%d}"
+
+tomorrow: "${now:%Y-%m-%d, days+1}"
+yesterday: "${now:%Y-%m-%d, days-1}"
+tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,hours+5,days+1,minutes+30,seconds+15}"
+next_week: "${now:%Y-%m-%d, weeks+1}"
+```
+
+Assuming, the current datetime is `2023-12-15 14:30:22`, this would resolve to something like:
+
+```yaml
+name: "exp_20231215_143022"
+start_time: "2023-12-15 14:30:22"
+log_file: "logs/run_14-30-22.log"
+timestamp: "20231215_143022"
+short_date: "12-15"
+
+tomorrow: "2023-12-16"
+yesterday: "2023-12-14"
+tomorrow_plus_5_hours_30_min_15_sec: "2023-12-16 20:00:37"
+next_week: "2023-12-22"
 ```
