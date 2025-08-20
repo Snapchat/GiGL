@@ -1,8 +1,10 @@
+sharedConfig:
+  isGraphDirected: true
 datasetConfig:
   dataPreprocessorConfig:
     dataPreprocessorArgs:
-      bq_edges_table_name: external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_node_anchor_lp_user-friend-user_edges_main_2025-06-02--04-42-21-UTC
-      bq_nodes_table_name: external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_node_anchor_lp_user_nodes_2025-06-02--04-42-21-UTC
+      bq_edges_table_name: external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_node_anchor_lp_user-friend-user_edges_main_2025-06-28--02-08-47-UTC
+      bq_nodes_table_name: external-snap-ci-github-gigl.public_gigl.toy_graph_homogeneous_node_anchor_lp_user_nodes_2025-06-28--02-08-47-UTC
     dataPreprocessorConfigClsPath: examples.toy_visual_example.toy_data_preprocessor_config.ToyDataPreprocessorConfig
   subgraphSamplerConfig:
     numHops: 1

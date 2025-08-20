@@ -58,12 +58,16 @@ fossa*.zip
 # ==================== Miscellaneous folders
 proto/
 examples/MAG240M/downloads/
-scripts/
 graphlearn_torch/
 graphlearn_torch.egg-info/
 do_not_open_source
 .github/
 .ipynb_checkpoints/
+
+# We ignore this folder as it is used to test our orchestration api.
+# It simulates how a customer would use GiGL—not as part of a developer workflow.
+# See: testing/api_test/README.md for more details.
+testing/api_test
 
 # https://github.com/google-github-actions/auth/issues/497
 gha-creds-*.json
