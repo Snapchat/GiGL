@@ -17,7 +17,7 @@ logger = Logger()
 _SUPPORTED_UNITS = ("weeks", "days", "seconds", "minutes", "hours")
 
 
-def now_resolver(*args: Sequence[str]) -> str:
+def now_resolver(*args: str) -> str:
     """Resolver that creates a string representing the current time (with optional offset) using strftime.
 
     This resolver supports both time formatting and time offsets with explicit named parameters
