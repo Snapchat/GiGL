@@ -232,6 +232,9 @@ def _load_and_build_partitioned_dataset(
 
     partition_output = partitioner.partition()
 
+    # TODO (mkolodner-sc): Move node label logic to the partitioner once the partitioner accepts and returns
+    # the node labels as separate fields from the node features.
+
     node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
     if isinstance(partition_output.partitioned_node_features, Mapping):
         node_labels = {}
@@ -280,7 +283,9 @@ def _load_and_build_partitioned_dataset(
             f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
         )
 
-    # TODO (mkolodner-sc): Add node labels to the dataset
+    partition_output.partitioned_node_labels = node_labels
+
+    del node_labels
 
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
@@ -289,11 +294,8 @@ def _load_and_build_partitioned_dataset(
         rank=rank, world_size=world_size, edge_dir=edge_dir
     )
 
-    # TODO (mkolodner-sc): Pass in node labels as part of the PartitionOutput dataclass once the partitioner accepts and returns
-    # the node labels as separate fields from the node features.
     dataset.build(
         partition_output=partition_output,
-        node_labels=node_labels,
         splitter=splitter,
     )
 

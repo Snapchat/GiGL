@@ -374,7 +374,6 @@ class DistLinkPredictionDataset(DistDataset):
     def build(
         self,
         partition_output: PartitionOutput,
-        node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     ) -> None:
         """
@@ -389,7 +388,6 @@ class DistLinkPredictionDataset(DistDataset):
 
         Args:
             partition_output (PartitionOutput): Partitioned Graph to be stored in the DistLinkPredictionDataset class
-            node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Node labels to register to the dataset class
             splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): A function that takes in an edge index or node and returns:
                                                             * a tuple of train, val, and test node ids, if heterogeneous
                                                             * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
@@ -494,14 +492,17 @@ class DistLinkPredictionDataset(DistDataset):
                     id2idx=node_id2idx,
                     with_gpu=False,
                 )
-            if node_labels is not None:
+            if partition_output.partitioned_node_labels is not None:
                 assert isinstance(
-                    node_labels, torch.Tensor
+                    partition_output.partitioned_node_labels, torch.Tensor
                 ), "Node labels must be a tensor when using build with homogeneous partitioned features"
                 # We use the same id2idx for node labels as we do for node features, since the node labels have the same
                 # global id -> local index on machine mapping as the node features as a result of how they are partitioned.
                 # This makes it so that we don't need to keep track of two separate id2idx mappings for node features and node labels.
-                self.init_node_labels(node_label_data=node_labels, id2idx=node_id2idx)
+                self.init_node_labels(
+                    node_label_data=partition_output.partitioned_node_labels,
+                    id2idx=node_id2idx,
+                )
             self._node_feature_info = FeatureInfo(
                 dim=partitioned_node_features.size(1),
                 dtype=partitioned_node_features.dtype,
@@ -510,7 +511,6 @@ class DistLinkPredictionDataset(DistDataset):
                 partitioned_node_features,
                 partitioned_node_feature_ids,
                 node_id2idx,
-                node_labels,
             )
         elif isinstance(partition_output.partitioned_node_features, abc.Mapping):
             assert isinstance(partition_output.node_partition_book, abc.Mapping)
@@ -543,19 +543,22 @@ class DistLinkPredictionDataset(DistDataset):
                     id2idx=node_type_to_id2idx,
                     with_gpu=False,
                 )
-            if node_labels is not None:
+            if partition_output.partitioned_node_labels is not None:
                 assert isinstance(
-                    node_labels, abc.Mapping
+                    partition_output.partitioned_node_labels, abc.Mapping
                 ), "Node labels must be a dictionary when using build with heterogeneous partitioned features"
-                assert sorted(node_labels.keys()) == sorted(
+                assert sorted(
+                    partition_output.partitioned_node_labels.keys()
+                ) == sorted(
                     node_type_to_id2idx.keys()
                 ), f"Expected node labels to have same node types \
-                    as node features, got node labels: {sorted(node_labels.keys())} and node features: {sorted(node_type_to_id2idx.keys())}"
+                    as node features, got node labels: {sorted(partition_output.partitioned_node_labels.keys())} and node features: {sorted(node_type_to_id2idx.keys())}"
                 # We use the same node_type_to_id2idx for node labels as we do for node features, since the node labels have the same
                 # global id -> local index on machine mapping as the node features.
                 # This makes it so that we don't need to keep track of two separate id2idx mappings for node features and node labels.
                 self.init_node_labels(
-                    node_label_data=node_labels, id2idx=node_type_to_id2idx
+                    node_label_data=partition_output.partitioned_node_labels,
+                    id2idx=node_type_to_id2idx,
                 )
             self._node_feature_info = {
                 node_type: FeatureInfo(
@@ -568,10 +571,11 @@ class DistLinkPredictionDataset(DistDataset):
                 node_type_to_partitioned_node_features,
                 node_type_to_partitioned_node_feature_ids,
                 node_type_to_id2idx,
-                node_labels,
+                partition_output.partitioned_node_labels,
             )
 
         partition_output.partitioned_node_features = None
+        partition_output.partitioned_node_labels = None
 
         gc.collect()
 

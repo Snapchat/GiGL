@@ -90,6 +90,13 @@ class PartitionOutput:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ]
 
+    # Partitioned node labels, May be None if node labels are not partitioned
+    # TODO (mkolodner-sc): This field currently defaults to None since it is not set as output of the partitioner, but instead is added after.
+    # Once this field is set inside the partitioner, we can remove this default
+    partitioned_node_labels: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ] = None
+
 
 @dataclass(frozen=True)
 class FeatureInfo:

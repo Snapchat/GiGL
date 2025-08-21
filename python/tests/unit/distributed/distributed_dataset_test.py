@@ -542,16 +542,18 @@ class DistributedDatasetTestCase(unittest.TestCase):
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
+            partitioned_node_labels=torch.arange(10).unsqueeze(1),
         )
-        node_labels = torch.arange(10).unsqueeze(1)
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output, node_labels=node_labels)
+        dataset.build(partition_output=partition_output)
 
         assert isinstance(dataset.node_labels, Feature)
         assert isinstance(dataset.node_features, Feature)
 
-        assert_tensor_equality(dataset.node_labels.feature_tensor, node_labels)
+        assert_tensor_equality(
+            dataset.node_labels.feature_tensor, torch.arange(10).unsqueeze(1)
+        )
 
         assert_tensor_equality(dataset.node_features.feature_tensor, torch.zeros(10, 2))
 
@@ -580,14 +582,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
+            partitioned_node_labels={
+                _USER: torch.arange(10).unsqueeze(1),
+                _STORY: torch.arange(5).unsqueeze(1),
+            },
         )
-        node_labels = {
-            _USER: torch.arange(10).unsqueeze(1),
-            _STORY: torch.arange(5).unsqueeze(1),
-        }
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output, node_labels=node_labels)
+        dataset.build(partition_output=partition_output)
 
         assert isinstance(dataset.node_labels, dict)
         assert isinstance(dataset.node_features, dict)
@@ -601,11 +603,11 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
         assert_tensor_equality(
             dataset.node_labels[_USER].feature_tensor,
-            node_labels[_USER],
+            torch.arange(10).unsqueeze(1),
         )
         assert_tensor_equality(
             dataset.node_labels[_STORY].feature_tensor,
-            node_labels[_STORY],
+            torch.arange(5).unsqueeze(1),
         )
 
         assert_tensor_equality(
