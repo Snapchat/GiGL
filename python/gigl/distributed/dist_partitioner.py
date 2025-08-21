@@ -383,7 +383,7 @@ class DistPartitioner:
         }
 
         node_type_to_max_id = {
-            node_type: input_node_ids[node_type].max()
+            node_type: input_node_ids[node_type].max() if input_node_ids[node_type].numel() else 0
             for node_type in sorted(input_node_ids.keys())
         }
 
