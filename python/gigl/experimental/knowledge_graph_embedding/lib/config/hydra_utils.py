@@ -5,7 +5,15 @@ from typing import Any, Type, Union
 def get_fully_qualified_name(cls_or_obj: Union[Type, Any]) -> str:
     """
     Returns the fully qualified name (module.ClassName) for a class or object.
+
     Handles both classes and instances by getting the type of the instance.
+    This is useful for generating Hydra _target_ paths for dynamic instantiation.
+
+    Args:
+        cls_or_obj: Either a class type or an instance of a class.
+
+    Returns:
+        str: The fully qualified name in the format "module.ClassName".
     """
     cls = cls_or_obj if isinstance(cls_or_obj, type) else type(cls_or_obj)
     return f"{cls.__module__}.{cls.__qualname__}"
@@ -13,9 +21,20 @@ def get_fully_qualified_name(cls_or_obj: Union[Type, Any]) -> str:
 
 def build_hydra_dict_from_object(obj: Any) -> Any:
     """
-    Builds a dictionary from a dataclass or namedtuple,
-    recursively processing its attributes and adding '_target_'.
-    Autonomously converts NewType instances to their base string.
+    Builds a Hydra-compatible dictionary from a dataclass or namedtuple.
+
+    Recursively processes object attributes and adds '_target_' fields for
+    Hydra instantiation. Handles nested structures, lists, and various Python types.
+    Autonomously converts NewType instances to their base string representation.
+
+    Args:
+        obj: The object to convert. Can be a dataclass, namedtuple, list, enum,
+            or primitive type (str, int, float, bool, None).
+
+    Returns:
+        Any: A dictionary (for complex objects) or the original value (for primitives)
+            that can be used in Hydra configuration files. Complex objects include
+            a '_target_' field pointing to their fully qualified class name.
     """
     # 1. Handle NamedTuples
     if isinstance(obj, tuple) and hasattr(obj, "_asdict"):

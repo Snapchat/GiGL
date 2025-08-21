@@ -21,12 +21,24 @@ def build_modeling_and_resource_config_from_args(
     mode: Literal["enumerating", "training"]
 ) -> Tuple[AppliedTaskIdentifier, DictConfig, GiglResourceConfigWrapper]:
     """
-    Build the modeling and resource config from the command line arguments.
-    Uses hydra to load the modeling config and a custom function to load the resource config,
-    parsing the necessary URIs from the arguments.
+    Build the modeling and resource config from command line arguments.
+
+    Parses command line arguments to extract configuration URIs, loads the modeling
+    configuration using Hydra, and loads the resource configuration. Handles both
+    local and GCS URI sources, automatically downloading remote configs when needed.
+
+    Args:
+        mode: The execution mode, either "enumerating" (for data preprocessing)
+            or "training" (for model training). Determines fallback config paths.
 
     Returns:
-        Tuple[DictConfig, GiglResourceConfigWrapper]: A tuple containing the modeling config and the resource config.
+        Tuple[AppliedTaskIdentifier, DictConfig, GiglResourceConfigWrapper]: A tuple containing:
+            - Applied task identifier for the current job
+            - Hydra modeling configuration (training hyperparameters, model config, etc.)
+            - Resource configuration wrapper (project info, compute resources, etc.)
+
+    Raises:
+        ValueError: If an unsupported mode is provided.
     """
 
     parser = argparse.ArgumentParser()

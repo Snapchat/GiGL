@@ -27,6 +27,26 @@ logger = Logger()
 
 @dataclass
 class HeterogeneousGraphSparseEmbeddingConfig:
+    """
+    Main configuration class for heterogeneous graph sparse embedding training.
+
+    This configuration orchestrates all aspects of knowledge graph embedding model training,
+    including the graph data structure, model architecture, training parameters, and
+    evaluation settings.
+
+    Attributes:
+        run (RunConfig): Runtime configuration specifying execution environment (GPU/CPU usage).
+        graph (GraphConfig): Graph configuration containing metadata and data references for nodes and edges.
+        model (ModelConfig): Model architecture configuration including embedding dimensions and operators.
+            Defaults to ModelConfig() with standard settings.
+        training (TrainConfig): Training configuration with optimization, sampling, and distributed settings.
+            Defaults to TrainConfig() with standard settings.
+        validation (EvaluationPhaseConfig): Evaluation configuration for validation phase during training.
+            Defaults to EvaluationPhaseConfig() with standard settings.
+        testing (EvaluationPhaseConfig): Evaluation configuration for final model testing phase.
+            Defaults to EvaluationPhaseConfig() with standard settings.
+    """
+
     run: RunConfig
     graph: GraphConfig
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -124,7 +144,17 @@ class HeterogeneousGraphSparseEmbeddingConfig:
 
         return config
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """
+        Post-initialization validation and adjustment of configuration parameters.
+
+        Automatically adjusts the number of processes per machine for distributed training
+        if the requested number exceeds available GPU devices. Issues a warning when
+        reducing the process count to match hardware availability.
+
+        Raises:
+            No exceptions are raised, but warnings are logged for configuration adjustments.
+        """
         num_processes_per_machine = self.training.distributed.num_processes_per_machine
         if (
             self.run.should_use_cuda
