@@ -79,7 +79,7 @@ def now_resolver(*args: Sequence[str]) -> str:
         else:
             # Parse time offset specifications like "days+1", "hours-2", etc.
             arg = arg.strip()
-            _error_could_not_parse_msg = (
+            error_could_not_parse_msg = (
                 f"Could not parse time offset '{arg}', it should be of form days+1, hours-2, etc. "
                 f"Provided: {args}. See docs for more details."
             )
@@ -91,13 +91,13 @@ def now_resolver(*args: Sequence[str]) -> str:
                     if not value_str or not (
                         value_str.startswith("+") or value_str.startswith("-")
                     ):
-                        raise ValueError(_error_could_not_parse_msg)
+                        raise ValueError(error_could_not_parse_msg)
 
                     try:
                         value = int(value_str)
                     except ValueError:
                         # Cleaner error message
-                        raise ValueError(_error_could_not_parse_msg)
+                        raise ValueError(error_could_not_parse_msg)
 
                     if unit == "weeks":
                         weeks = value
@@ -112,8 +112,7 @@ def now_resolver(*args: Sequence[str]) -> str:
                     break  # Exit the unit loop once we find a match
 
             else:  # If loop completes without breaking, then no unit found in this argument
-                if arg:  # Raise an error if the argument is not empty
-                    raise ValueError(_error_could_not_parse_msg)
+                raise ValueError(error_could_not_parse_msg)
 
     # Calculate the target time
     target_time = datetime.now() + timedelta(

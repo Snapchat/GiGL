@@ -71,5 +71,6 @@ class TestNowResolver(unittest.TestCase):
         with self.assertRaises(ValueError):
             OmegaConf.create(yaml_config).experiment.name
 
+
 if __name__ == "__main__":
     unittest.main()
