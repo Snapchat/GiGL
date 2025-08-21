@@ -43,7 +43,8 @@ class SupportedParams:
                 default="nvidia-tesla-t4", description="GPU accelerator type"
             ),
             "accelerator_count": Param(
-                default="4", description="Number of GPUs to attach to the VM"
+                default="4",
+                description="Number of GPUs to attach to the VM, enter '0' if no accelerators should be attached",
             ),
             "machine_boot_image": Param(
                 default="projects/ml-images/global/images/c0-deeplearning-common-cu124-v20250325-debian-11-py310-conda",
@@ -274,6 +275,9 @@ if __name__ == "__main__":
         if values.get("reservation")
         else ""
     )
+    accelerator_clause = ""
+    if values["accelerator_count"] != "0":
+        accelerator_clause = f"--accelerator=count={values['accelerator_count']},type={values['accelerator_type']}"
 
     gcloud_cmd = inspect.cleandoc(
         f"""
@@ -287,13 +291,13 @@ if __name__ == "__main__":
         --provisioning-model=STANDARD \
         --service-account={values['service_account']} \
         --scopes=https://www.googleapis.com/auth/cloud-platform \
-        --accelerator=count={values['accelerator_count']},type={values['accelerator_type']} \
         --create-disk=auto-delete=yes,boot=yes,device-name={values['machine_name']},image={values['machine_boot_image']},mode=rw,size={values['boot_drive_size_gb']},type=pd-ssd \
         --no-shielded-secure-boot \
         --shielded-vtpm \
         --shielded-integrity-monitoring \
         --labels=goog-ec-src=vm_add-gcloud{ops_agent_clause}{extra_labels_clause} \
         --reservation-affinity=any \
+        {accelerator_clause} \
         {reservation_clause}
         """
     ).strip()
