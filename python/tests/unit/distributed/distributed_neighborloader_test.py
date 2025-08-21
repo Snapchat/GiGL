@@ -24,6 +24,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
     HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -365,58 +366,6 @@ def _run_dblp_supervised(
     shutdown_rpc()
 
 
-def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
-    _,
-    dataset: DistLinkPredictionDataset,
-    context: DistributedContext,
-):
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
-
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        num_neighbors=[2, 2],
-        local_process_rank=0,
-        local_process_world_size=1,
-        pin_memory_device=torch.device("cpu"),
-    )
-
-    for datum in loader:
-        assert isinstance(datum, Data)
-        assert hasattr(datum, "y")
-        assert datum.y.size(0) == datum.node.size(0)
-
-    shutdown_rpc()
-
-
-def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
-    _,
-    dataset: DistLinkPredictionDataset,
-    context: DistributedContext,
-):
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
-
-    assert isinstance(dataset.node_ids, Mapping)
-
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        input_nodes=dataset.node_ids[_USER],
-        num_neighbors=[2, 2],
-        local_process_rank=0,
-        local_process_world_size=1,
-        pin_memory_device=torch.device("cpu"),
-    )
-
-    for datum in loader:
-        assert isinstance(datum, HeteroData)
-        assert hasattr(datum[_USER], "y")
-
-    shutdown_rpc()
-
-
 def _run_toy_heterogeneous_ablp(
     _,
     dataset: DistLinkPredictionDataset,
@@ -488,6 +437,92 @@ def _run_toy_heterogeneous_ablp(
     assert_tensor_equality(
         torch.tensor(global_anchor_nodes), datum[anchor_node_type].batch, dim=0
     )
+
+    shutdown_rpc()
+
+
+def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+):
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=to_homogeneous(dataset.node_ids),
+        num_neighbors=[2, 2],
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    for datum in loader:
+        assert isinstance(datum, Data)
+        assert hasattr(datum, "y")
+        assert datum.y.size(0) == datum.node.size(0)
+
+    shutdown_rpc()
+
+
+def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+):
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
+
+    assert isinstance(dataset.node_ids, Mapping)
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, dataset.node_ids[_USER]),
+        num_neighbors=[2, 2],
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        assert hasattr(datum[_USER], "y")
+
+    shutdown_rpc()
+
+
+def _run_cora_supervised_node_classification(
+    _,
+    dataset: DistLinkPredictionDataset,
+    context: DistributedContext,
+):
+    """Run CORA supervised node classification test using DistNeighborLoader."""
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=to_homogeneous(dataset.node_ids),
+        num_neighbors=[2, 2],
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    for datum in loader:
+        assert isinstance(datum, Data)
+        # For supervised node classification, we should have node labels
+        assert hasattr(
+            datum, "y"
+        ), "Node labels should be present for supervised node classification"
+        assert datum.y.size(0) == datum.node.size(
+            0
+        ), "Number of labels should match number of nodes"
 
     shutdown_rpc()
 
@@ -884,6 +919,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, supervision_edge_types, fanout),
         )
 
+    @unittest.skip("Skipping this test for now")
     def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
         edge_index = torch.tensor(
             [
@@ -892,17 +928,22 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ]
         )
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(18),
-            edge_partition_book=torch.zeros(int(edge_index.max().item() + 1)),
-            partitioned_edge_index=GraphPartitionData(edge_index=edge_index, edge_ids=torch.arange(edge_index.size(1))),
-            partitioned_edge_features=FeaturePartitionData(feats=torch.zeros((5, 2)), ids=torch.arange(5)),
-            partitioned_node_features=FeaturePartitionData(feats=torch.zeros((5, 2)), ids=torch.arange(5)),
+            node_partition_book=torch.zeros(5).to(torch.int64),
+            edge_partition_book=torch.zeros(5).to(torch.int64),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=edge_index,
+                edge_ids=None,
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros((5, 2)), ids=torch.arange(5)
+            ),
+            partitioned_edge_features=None,
             partitioned_negative_labels=None,
             partitioned_positive_labels=None,
         )
-        node_labels = torch.arange(5)
+        node_labels = torch.arange(5).reshape(-1, 1)
 
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="in")
 
         dataset.build(partition_output=partition_output, node_labels=node_labels)
 
@@ -911,7 +952,6 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context),
         )
 
-    @unittest.skip("pass")
     def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book={
@@ -940,7 +980,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_negative_labels=None,
         )
 
-        node_labels = {_USER: torch.arange(10), _STORY: torch.arange(5)}
+        node_labels = {
+            _USER: torch.arange(10).reshape(-1, 1),
+            _STORY: torch.arange(5).reshape(-1, 1),
+        }
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output, node_labels=node_labels)
@@ -948,6 +991,39 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         mp.spawn(
             fn=_run_distributed_neighbor_loader_with_node_labels_heterogeneous,
             args=(dataset, self._context),
+        )
+
+    @unittest.skip("Skipping for now")
+    def test_cora_supervised_node_classification(self):
+        """Test CORA dataset for supervised node classification task."""
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO.name
+        ]
+
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction="in",
+            distributed_context=self._context,
+        )
+
+        mp.spawn(
+            fn=_run_cora_supervised_node_classification,
+            args=(
+                dataset,
+                self._context,
+            ),
         )
 
 

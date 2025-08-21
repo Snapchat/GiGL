@@ -543,7 +543,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
         )
-        node_labels = torch.arange(10)
+        node_labels = torch.arange(10).reshape(-1, 1)
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output, node_labels=node_labels)
@@ -551,7 +551,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
         assert isinstance(dataset.node_labels, Feature)
         assert isinstance(dataset.node_features, Feature)
 
-        assert_tensor_equality(dataset.node_labels.feature_tensor, torch.arange(10))
+        assert_tensor_equality(dataset.node_labels.feature_tensor, node_labels)
 
         assert_tensor_equality(dataset.node_features.feature_tensor, torch.zeros(10, 2))
 
@@ -581,7 +581,10 @@ class DistributedDatasetTestCase(unittest.TestCase):
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
         )
-        node_labels = {_USER: torch.arange(10), _STORY: torch.arange(5)}
+        node_labels = {
+            _USER: torch.arange(10).reshape(-1, 1),
+            _STORY: torch.arange(5).reshape(-1, 1),
+        }
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output, node_labels=node_labels)
@@ -596,11 +599,11 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
         assert_tensor_equality(
             dataset.node_labels[_USER].feature_tensor,
-            torch.arange(10),
+            node_labels[_USER],
         )
         assert_tensor_equality(
             dataset.node_labels[_STORY].feature_tensor,
-            torch.arange(5),
+            node_labels[_STORY],
         )
 
         assert_tensor_equality(
