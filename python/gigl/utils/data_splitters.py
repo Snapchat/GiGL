@@ -32,6 +32,9 @@ logger = Logger()
 
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
 
+# We need to make the protocols for the node splitter and node anchor linked spliter runtime checkable so that
+# we can make isinstance() checks on them at runtime.
+
 
 @runtime_checkable
 class NodeAnchorLinkSplitter(Protocol):
@@ -71,10 +74,6 @@ class NodeAnchorLinkSplitter(Protocol):
     @property
     def should_convert_labels_to_edges(self):
         ...
-
-
-# We need to make the protocols for the node splitter and node anchor linked spliter runtime checkable so that
-# we can make isinstance() checks on them at runtime.
 
 
 @runtime_checkable
