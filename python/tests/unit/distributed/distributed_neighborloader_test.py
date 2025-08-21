@@ -39,7 +39,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
-from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
+from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter, HashedNodeSplitter
 from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
@@ -532,6 +532,7 @@ def _run_cora_supervised_node_classification(
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
+        input_nodes=to_homogeneous(dataset.train_node_ids),
         context=context,
         local_process_rank=0,
         local_process_world_size=1,
@@ -1022,10 +1023,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
+        splitter = HashedNodeSplitter()
+
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
             sample_edge_direction="in",
             distributed_context=self._context,
+            splitter=splitter,
         )
 
         mp.spawn(
