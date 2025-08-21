@@ -5,7 +5,6 @@ files to provide dynamic values during configuration loading.
 """
 
 from datetime import datetime, timedelta
-from typing import Sequence
 
 from omegaconf import OmegaConf
 
