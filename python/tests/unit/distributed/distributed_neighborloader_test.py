@@ -452,7 +452,6 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
 
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=to_homogeneous(dataset.node_ids),
         num_neighbors=[2, 2],
         local_process_rank=0,
         local_process_world_size=1,
@@ -460,9 +459,12 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
     )
 
     for datum in loader:
-        assert isinstance(datum, Data)
-        assert hasattr(datum, "y")
-        assert datum.y.size(0) == datum.node.size(0)
+        assert isinstance(
+            datum, Data
+        ), f"Subgraph should be a Data for homogeneous datasets, got {type(datum)}"
+        assert hasattr(datum, "y"), "Subgraph is missing the `y` attribute for labels"
+        # For this mocked data, the value of each label is equal to its Node ID
+        assert_tensor_equality(datum.y, datum.node)
 
     shutdown_rpc()
 
@@ -478,7 +480,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
 
     assert isinstance(dataset.node_ids, Mapping)
 
-    loader = DistNeighborLoader(
+    user_loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=(_USER, dataset.node_ids[_USER]),
         num_neighbors=[2, 2],
@@ -487,9 +489,32 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
         pin_memory_device=torch.device("cpu"),
     )
 
-    for datum in loader:
-        assert isinstance(datum, HeteroData)
-        assert hasattr(datum[_USER], "y")
+    story_loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_STORY, dataset.node_ids[_STORY]),
+        num_neighbors=[2, 2],
+        local_process_rank=0,
+        local_process_world_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    for user_datum, story_datum in zip(user_loader, story_loader):
+        # For this mocked data, the value of each user/story label is equal to its corresponding Node ID
+        assert isinstance(
+            user_datum, HeteroData
+        ), f"User subgraph should be a HeteroData for heterogeneous datasets, got {type(user_datum)}"
+        assert hasattr(
+            user_datum[_USER], "y"
+        ), "User subgraph is missing the 'y' attribute for labels"
+        assert_tensor_equality(user_datum[_USER].y, user_datum[_USER].node)
+
+        assert isinstance(
+            story_datum, HeteroData
+        ), f"Story subgraph should be a HeteroData for heterogeneous datasets, got {type(story_datum)}"
+        assert hasattr(
+            story_datum[_STORY], "y"
+        ), "Story subgraph is missing the 'y' attribute for labels"
+        assert_tensor_equality(story_datum[_STORY].y, story_datum[_STORY].node)
 
     shutdown_rpc()
 
@@ -506,7 +531,6 @@ def _run_cora_supervised_node_classification(
 
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=to_homogeneous(dataset.node_ids),
         num_neighbors=[2, 2],
         context=context,
         local_process_rank=0,
@@ -515,14 +539,15 @@ def _run_cora_supervised_node_classification(
     )
 
     for datum in loader:
-        assert isinstance(datum, Data)
-        # For supervised node classification, we should have node labels
+        assert isinstance(
+            datum, Data
+        ), f"Subgraph should be a Data for homogeneous datasets, got {type(datum)}"
         assert hasattr(
             datum, "y"
         ), "Node labels should be present for supervised node classification"
         assert datum.y.size(0) == datum.node.size(
             0
-        ), "Number of labels should match number of nodes"
+        ), f"Number of labels should match number of nodes, got {datum.y.size(0)} labels and {datum.node.size(0)} nodes"
 
     shutdown_rpc()
 
