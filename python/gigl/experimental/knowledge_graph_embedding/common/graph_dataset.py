@@ -1,13 +1,14 @@
 # This file can probably be gigl-generic utilities.
 # We include a few graph-related IterableDatasets backed by GCS and BigQuery
 
-from typing import Dict, Iterator, List, Optional, TypedDict
+from typing import Any, Iterator, List, Mapping, Optional, TypedDict
 
 import numpy as np
 import orjson
 import pyarrow.parquet as pq
 import torch
-from google.cloud.bigquery_storage import BigQueryReadClient, types
+from google.cloud.bigquery_storage import BigQueryReadClient
+from google.cloud.bigquery_storage_v1.types import DataFormat, ReadSession
 from torch.utils.data._utils.worker import WorkerInfo
 
 from gigl.common.types.uri.gcs_uri import GcsUri
@@ -23,14 +24,10 @@ DST_FIELD = "dst"
 CONDENSED_EDGE_TYPE_FIELD = "condensed_edge_type"
 
 
-HeterogeneousGraphEdgeDict = TypedDict(
-    "HeterogeneousGraphEdgeDict",
-    {
-        SRC_FIELD: str,
-        DST_FIELD: str,
-        CONDENSED_EDGE_TYPE_FIELD: str,
-    },
-)
+class HeterogeneousGraphEdgeDict(TypedDict):
+    src: str
+    dst: str
+    condensed_edge_type: str
 
 
 class GcsIterableDataset(torch.utils.data.IterableDataset):
@@ -52,7 +49,7 @@ class GcsIterableDataset(torch.utils.data.IterableDataset):
         self._file_uris: np.ndarray = np.random.RandomState(seed).permutation(
             np.array([uri.uri for uri in file_uris])
         )
-        self._file_loader = None
+        self._file_loader: Optional[FileLoader] = None
 
     def _iterator_init(self):
         # Initialize it here to avoid client pickling issues for multiprocessing.
@@ -66,7 +63,7 @@ class GcsIterableDataset(torch.utils.data.IterableDataset):
 
         return current_worker_file_uris_to_process
 
-    def __iter__(self) -> Iterator[Dict]:
+    def __iter__(self) -> Iterator[Any]:
         raise NotImplemented
 
 
@@ -87,8 +84,9 @@ class GcsJSONLIterableDataset(GcsIterableDataset):
         """
         super().__init__(file_uris=file_uris, seed=seed)
 
-    def __iter__(self) -> Iterator[Dict]:
+    def __iter__(self) -> Iterator[Mapping[str, Any]]:
         current_worker_file_uris_to_process = self._iterator_init()
+        assert self._file_loader is not None, "File loader not initialized"
 
         for file in current_worker_file_uris_to_process:
             tfh = self._file_loader.load_to_temp_file(
@@ -117,9 +115,10 @@ class GcsParquetIterableDataset(GcsIterableDataset):
         self._iter_batches_kwargs = {"batch_size": batch_size} if batch_size else {}
         super().__init__(file_uris=file_uris, seed=seed)
 
-    def __iter__(self) -> Iterator[Dict]:
+    def __iter__(self) -> Iterator[Mapping[str, Any]]:
         # Need to first split the work based on worker information
         current_worker_file_uris_to_process = self._iterator_init()
+        assert self._file_loader is not None, "File loader not initialized"
 
         for file in current_worker_file_uris_to_process:
             tfh = self._file_loader.load_to_temp_file(
@@ -173,14 +172,14 @@ class BigQueryIterableDataset(torch.utils.data.IterableDataset):
         project, dataset, table = self.table.split(".")
         table_path = f"projects/{project}/datasets/{dataset}/tables/{table}"
 
-        read_options = types.ReadSession.TableReadOptions(
+        read_options = ReadSession.TableReadOptions(
             selected_fields=self.selected_fields,
             row_restriction=row_restriction,
         )
 
-        session = types.ReadSession(
+        session = ReadSession(
             table=table_path,
-            data_format=types.DataFormat.ARROW,
+            data_format=DataFormat.ARROW,
             read_options=read_options,
         )
 
@@ -190,7 +189,7 @@ class BigQueryIterableDataset(torch.utils.data.IterableDataset):
             max_stream_count=1,
         )
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Mapping[str, Any]]:
         client = BigQueryReadClient()
 
         worker_info: Optional[WorkerInfo] = torch.utils.data.get_worker_info()
@@ -234,11 +233,11 @@ class GcsJSONLHeterogeneousGraphIterableDataset(GcsJSONLIterableDataset):
     def __iter__(self) -> Iterator[HeterogeneousGraphEdgeDict]:
         for data in super().__iter__():
             # Convert the data to a filtered dictionary with just essential keys.
-            yield {
-                SRC_FIELD: data[self._src_field],
-                DST_FIELD: data[self._dst_field],
-                CONDENSED_EDGE_TYPE_FIELD: data[self._condensed_edge_type_field],
-            }
+            yield HeterogeneousGraphEdgeDict(
+                src=data[self._src_field],
+                dst=data[self._dst_field],
+                condensed_edge_type=data[self._condensed_edge_type_field],
+            )
 
 
 class GcsParquetHeterogeneousGraphIterableDataset(GcsParquetIterableDataset):
@@ -257,12 +256,11 @@ class GcsParquetHeterogeneousGraphIterableDataset(GcsParquetIterableDataset):
 
     def __iter__(self) -> Iterator[HeterogeneousGraphEdgeDict]:
         for data in super().__iter__():
-            # Convert the data to a filtered dictionary with just essential keys.
-            yield {
-                SRC_FIELD: data[self._src_field],
-                DST_FIELD: data[self._dst_field],
-                CONDENSED_EDGE_TYPE_FIELD: data[self._condensed_edge_type_field],
-            }
+            yield HeterogeneousGraphEdgeDict(
+                src=data[self._src_field],
+                dst=data[self._dst_field],
+                condensed_edge_type=data[self._condensed_edge_type_field],
+            )
 
 
 class BigQueryHeterogeneousGraphIterableDataset(BigQueryIterableDataset):
@@ -290,8 +288,8 @@ class BigQueryHeterogeneousGraphIterableDataset(BigQueryIterableDataset):
     def __iter__(self) -> Iterator[HeterogeneousGraphEdgeDict]:
         for row in super().__iter__():
             # Convert the data to a filtered dictionary with just essential keys.
-            yield {
-                SRC_FIELD: row[self._src_field],
-                DST_FIELD: row[self._dst_field],
-                CONDENSED_EDGE_TYPE_FIELD: row[self._condensed_edge_type_field],
-            }
+            yield HeterogeneousGraphEdgeDict(
+                src=row[self._src_field],
+                dst=row[self._dst_field],
+                condensed_edge_type=row[self._condensed_edge_type_field],
+            )

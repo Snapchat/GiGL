@@ -119,7 +119,7 @@ def get_sharding_plan(
 
 def apply_sparse_optimizer(
     parameters: Iterable[nn.Parameter],
-    optimizer_cls: Type[Optimizer] = None,
+    optimizer_cls: Optional[Type[Optimizer]] = None,
     optimizer_kwargs: Dict[str, Any] = dict(),
 ) -> None:
     """
