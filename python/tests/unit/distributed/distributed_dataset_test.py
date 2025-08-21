@@ -597,6 +597,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertTrue(_USER in dataset.node_features)
         self.assertFalse(_STORY in dataset.node_features)
 
+        # We expect the node labels to be equal to the node labels we passed in
+
         assert_tensor_equality(
             dataset.node_labels[_USER].feature_tensor,
             node_labels[_USER],
@@ -656,6 +658,18 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 + dataset.val_node_ids.shape[0]
                 + dataset.test_node_ids.shape[0],
                 dataset.node_ids.shape[0],
+            )
+            self.assertEqual(
+                len(
+                    torch.cat(
+                        (
+                            dataset.train_node_ids,
+                            dataset.val_node_ids,
+                            dataset.test_node_ids,
+                        )
+                    ).unique()
+                ),
+                dataset.node_ids.size(0),
             )
 
     # This tests that we can build a dataset when manually specifying a port.
