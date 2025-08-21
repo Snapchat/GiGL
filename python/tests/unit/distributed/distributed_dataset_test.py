@@ -69,8 +69,8 @@ class _FakeSplitter:
 
 
 _USER = NodeType("user")
-_STORY = NodeType("story")
-_USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
+_ITEM = NodeType("story")
+_USER_TO_ITEM = EdgeType(_USER, Relation("to"), _ITEM)
 
 
 class DistributedDatasetTestCase(unittest.TestCase):
@@ -252,7 +252,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                             14,
                         ]
                     ),
-                    _STORY: torch.tensor(
+                    _ITEM: torch.tensor(
                         [
                             0,
                             1,
@@ -315,7 +315,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                             14,
                         ]
                     ),
-                    _STORY: torch.tensor(
+                    _ITEM: torch.tensor(
                         [
                             0,
                             1,
@@ -348,7 +348,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                         torch.tensor([2000]),
                         torch.tensor([3000]),
                     ),
-                    _STORY: (
+                    _ITEM: (
                         torch.tensor([4000]),
                         torch.tensor([5000]),
                         torch.tensor([6000]),
@@ -356,15 +356,15 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 },
                 expected_train_node_ids={
                     _USER: torch.tensor([1000]),
-                    _STORY: torch.tensor([4000]),
+                    _ITEM: torch.tensor([4000]),
                 },
                 expected_val_node_ids={
                     _USER: torch.tensor([2000]),
-                    _STORY: torch.tensor([5000]),
+                    _ITEM: torch.tensor([5000]),
                 },
                 expected_test_node_ids={
                     _USER: torch.tensor([3000]),
-                    _STORY: torch.tensor([6000]),
+                    _ITEM: torch.tensor([6000]),
                 },
                 expected_node_ids={
                     _USER: torch.tensor(
@@ -389,7 +389,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                             14,
                         ]
                     ),
-                    _STORY: torch.tensor(
+                    _ITEM: torch.tensor(
                         [
                             4000,
                             5000,
@@ -551,6 +551,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
         assert isinstance(dataset.node_labels, Feature)
         assert isinstance(dataset.node_features, Feature)
 
+        # We expect the dataset's node labels to be equal to the node labels we passed in
+
         assert_tensor_equality(
             dataset.node_labels.feature_tensor, torch.arange(10).unsqueeze(1)
         )
@@ -561,13 +563,13 @@ class DistributedDatasetTestCase(unittest.TestCase):
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(10),
-                _STORY: torch.zeros(5),
+                _ITEM: torch.zeros(5),
             },
             edge_partition_book={
-                _USER_TO_STORY: torch.zeros(5),
+                _USER_TO_ITEM: torch.zeros(5),
             },
             partitioned_edge_index={
-                _USER_TO_STORY: GraphPartitionData(
+                _USER_TO_ITEM: GraphPartitionData(
                     edge_index=torch.ones(5, 2), edge_ids=None
                 )
             },
@@ -575,7 +577,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 _USER: FeaturePartitionData(
                     feats=torch.zeros(10, 2), ids=torch.arange(10)
                 ),
-                _STORY: FeaturePartitionData(
+                _ITEM: FeaturePartitionData(
                     feats=torch.zeros(5, 0), ids=torch.arange(5)
                 ),
             },
@@ -584,7 +586,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
             partitioned_negative_labels=None,
             partitioned_node_labels={
                 _USER: torch.arange(10).unsqueeze(1),
-                _STORY: torch.arange(5).unsqueeze(1),
+                _ITEM: torch.arange(5).unsqueeze(1),
             },
         )
 
@@ -595,18 +597,20 @@ class DistributedDatasetTestCase(unittest.TestCase):
         assert isinstance(dataset.node_features, dict)
 
         self.assertTrue(_USER in dataset.node_labels)
-        self.assertTrue(_STORY in dataset.node_labels)
+        self.assertTrue(_ITEM in dataset.node_labels)
         self.assertTrue(_USER in dataset.node_features)
-        self.assertFalse(_STORY in dataset.node_features)
 
-        # We expect the node labels to be equal to the node labels we passed in
+        # Ensure _ITEM should not be in dataset.node_features since it is provided as an empty tensor.
+        self.assertFalse(_ITEM in dataset.node_features)
+
+        # We expect the dataset's node labels to be equal to the node labels we passed in
 
         assert_tensor_equality(
             dataset.node_labels[_USER].feature_tensor,
             torch.arange(10).unsqueeze(1),
         )
         assert_tensor_equality(
-            dataset.node_labels[_STORY].feature_tensor,
+            dataset.node_labels[_ITEM].feature_tensor,
             torch.arange(5).unsqueeze(1),
         )
 
