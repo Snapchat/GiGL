@@ -919,29 +919,22 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, supervision_edge_types, fanout),
         )
 
-    @unittest.skip("Skipping this test for now")
     def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
-        edge_index = torch.tensor(
-            [
-                [0, 1, 2, 3, 4],
-                [1, 2, 3, 4, 0],
-            ]
-        )
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(5).to(torch.int64),
-            edge_partition_book=torch.zeros(5).to(torch.int64),
+            node_partition_book=torch.zeros(5),
+            edge_partition_book=torch.zeros(5),
             partitioned_edge_index=GraphPartitionData(
-                edge_index=edge_index,
+                edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
                 edge_ids=None,
             ),
             partitioned_node_features=FeaturePartitionData(
-                feats=torch.zeros((5, 2)), ids=torch.arange(5)
+                feats=torch.zeros(10, 2), ids=torch.arange(10)
             ),
             partitioned_edge_features=None,
-            partitioned_negative_labels=None,
             partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
         )
-        node_labels = torch.arange(5).reshape(-1, 1)
+        node_labels = torch.arange(10).unsqueeze(1)
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="in")
 
@@ -981,8 +974,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
         node_labels = {
-            _USER: torch.arange(10).reshape(-1, 1),
-            _STORY: torch.arange(5).reshape(-1, 1),
+            _USER: torch.arange(10).unsqueeze(1),
+            _STORY: torch.arange(5).unsqueeze(1),
         }
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
