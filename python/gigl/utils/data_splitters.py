@@ -73,6 +73,10 @@ class NodeAnchorLinkSplitter(Protocol):
         ...
 
 
+# We need to make the protocols for the node splitter and node anchor linked spliter runtime checkable so that
+# we can make isinstance() checks on them at runtime.
+
+
 @runtime_checkable
 class NodeSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on nodes directly.

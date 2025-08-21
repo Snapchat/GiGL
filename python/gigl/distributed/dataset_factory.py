@@ -289,6 +289,8 @@ def _load_and_build_partitioned_dataset(
         rank=rank, world_size=world_size, edge_dir=edge_dir
     )
 
+    # TODO (mkolodner-sc): Pass in node labels as part of the PartitionOutput dataclass once the partitioner accepts and returns
+    # the node labels as separate fields from the node features.
     dataset.build(
         partition_output=partition_output,
         node_labels=node_labels,
