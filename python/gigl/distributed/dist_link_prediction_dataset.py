@@ -754,7 +754,7 @@ class DistLinkPredictionDataset(DistDataset):
             Optional[Union[Graph, dict[EdgeType, Graph]]]: Partitioned Graph Data
             Optional[Union[Feature, dict[NodeType, Feature]]]: Partitioned Node Feature Data
             Optional[Union[Feature, dict[EdgeType, Feature]]]: Partitioned Edge Feature Data
-            Optional[Union[Feature, dict[NodeType, Feature]]]: Node Labels
+            Optional[Union[Feature, dict[NodeType, Feature]]]: Node labels on the current machine. Will be a dict if heterogeneous.
             Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Node Partition Book Tensor
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Edge Partition Book Tensor
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Positive Edge Label Tensor
@@ -765,7 +765,6 @@ class DistLinkPredictionDataset(DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
-            Optional[Union[Feature, dict[NodeType, Feature]]]: Node labels on the current machine. Will be a dict if heterogeneous.
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
