@@ -444,7 +444,7 @@ def _run_toy_heterogeneous_ablp(
 def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
     _,
     dataset: DistLinkPredictionDataset,
-    context: DistributedContext,
+    batch_size: int,
 ):
     torch.distributed.init_process_group(
         rank=0, world_size=1, init_method=get_process_group_init_method()
@@ -456,6 +456,7 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
+        batch_size=batch_size,
     )
 
     for datum in loader:
@@ -472,7 +473,7 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
 def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
     _,
     dataset: DistLinkPredictionDataset,
-    context: DistributedContext,
+    batch_size: int,
 ):
     torch.distributed.init_process_group(
         rank=0, world_size=1, init_method=get_process_group_init_method()
@@ -487,6 +488,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
+        batch_size=batch_size,
     )
 
     story_loader = DistNeighborLoader(
@@ -496,6 +498,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
+        batch_size=batch_size,
     )
 
     for user_datum, story_datum in zip(user_loader, story_loader):
@@ -522,7 +525,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
 def _run_cora_supervised_node_classification(
     _,
     dataset: DistLinkPredictionDataset,
-    context: DistributedContext,
+    batch_size: int,
 ):
     """Run CORA supervised node classification test using DistNeighborLoader."""
     torch.distributed.init_process_group(
@@ -536,6 +539,7 @@ def _run_cora_supervised_node_classification(
         local_process_rank=0,
         local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
+        batch_size=batch_size,
     )
 
     for datum in loader:
@@ -967,7 +971,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_distributed_neighbor_loader_with_node_labels_homogeneous,
-            args=(dataset, self._context),
+            args=(dataset, 1),  # dataset  # batch_size
         )
 
     def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
@@ -1008,7 +1012,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_distributed_neighbor_loader_with_node_labels_heterogeneous,
-            args=(dataset, self._context),
+            args=(dataset, 1),  # dataset  # batch_size
         )
 
     def test_cora_supervised_node_classification(self):
@@ -1044,8 +1048,8 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         mp.spawn(
             fn=_run_cora_supervised_node_classification,
             args=(
-                dataset,
-                self._context,
+                dataset,  # dataset
+                32,  # batch_size
             ),
         )
 
