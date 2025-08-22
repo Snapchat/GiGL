@@ -374,7 +374,7 @@ class DistPartitioner:
         # This tuple here represents a (rank, (num_nodes_on_rank, max_node_id_on_rank)) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
         # num_nodes_on_rank and max_node_id_on_rank are ints.
         # Gathered_num_nodes is then used to identify the number of nodes and max node id on each rank, allowing us to access the total number of nodes and max node idacross all ranks
-        gathered_node_info: dict[str, Tuple[int, dict[NodeType, int]]]
+        gathered_node_info: dict[str, Tuple[int, dict[NodeType, Tuple[int, int]]]]
         self._num_nodes = defaultdict(int)
 
         node_type_to_node_info: dict[NodeType, Tuple[int, int]] = {
@@ -408,14 +408,13 @@ class DistPartitioner:
             total_num_nodes = self._num_nodes[node_type]
             max_id_on_all_ranks = max_ids[node_type]
             logger.info(
-                f"Found {total_num_nodes} for node type {node_type} across all machines"
-            )
-            logger.info(
-                f"Found max node id {max_id_on_all_ranks} for node type {node_type} across all machines"
+                f"Registered {total_num_nodes} nodes with max node id {max_id_on_all_ranks} for node type {node_type} across all machines"
             )
             if max_id_on_all_ranks + 1 != total_num_nodes:
+                # Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1.
+                # Thus, we require and enforce that the max id is one smaller than the total number of nodes.
                 raise ValueError(
-                    f"Found max_id_on_rank which must be exactly smaller than total number of nodes, but got max id: {max_id_on_all_ranks} and total_num_nodes: {total_num_nodes}"
+                    f"Found max_id_on_rank which must be exactly one smaller than total number of nodes, but got max id: {max_id_on_all_ranks} and total_num_nodes: {total_num_nodes}"
                 )
 
     def register_edge_index(
