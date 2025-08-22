@@ -992,6 +992,53 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             ):
                 partitioner.partition()
 
+    @parameterized.expand(
+        [
+            param(
+                "Missing Node ID -- homogeneous",
+                node_ids=torch.tensor([0, 2, 3]),
+            ),
+            param(
+                "Duplicate Node ID -- homogeneous",
+                node_ids=torch.tensor([0, 0, 1]),
+            ),
+            param(
+                "Missing Node ID -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 2, 3]),
+                },
+            ),
+            param(
+                "Duplicate Node ID -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 0, 1]),
+                },
+            ),
+        ]
+    )
+    def test_partitioning_invalid_node_ids(
+        self, _, node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ) -> None:
+        # We expect node IDs across all machines to be contiguous starting from 0 to total_num_nodes - 1.
+        # This test checks that the partitioner raises an error when this assumption is not met.
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(
+            should_assign_edges_by_src_node=True,
+        )
+
+        with self.assertRaises(ValueError):
+            partitioner.register_node_ids(node_ids=node_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

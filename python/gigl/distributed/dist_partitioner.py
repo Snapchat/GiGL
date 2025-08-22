@@ -380,7 +380,9 @@ class DistPartitioner:
         node_type_to_node_info: dict[NodeType, Tuple[int, int]] = {
             node_type: (
                 input_node_ids[node_type].size(0),
-                int(input_node_ids[node_type].max().item()),
+                int(input_node_ids[node_type].max().item())
+                if input_node_ids[node_type].numel() > 0
+                else 0,
             )
             for node_type in sorted(input_node_ids.keys())
         }
@@ -410,7 +412,7 @@ class DistPartitioner:
             logger.info(
                 f"Registered {total_num_nodes} nodes with max node id {max_id_on_all_ranks} for node type {node_type} across all machines"
             )
-            if max_id_on_all_ranks + 1 != total_num_nodes:
+            if total_num_nodes > 0 and max_id_on_all_ranks + 1 != total_num_nodes:
                 # Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1.
                 # Thus, we require and enforce that the max id is one smaller than the total number of nodes.
                 raise ValueError(
