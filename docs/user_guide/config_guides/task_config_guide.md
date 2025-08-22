@@ -119,3 +119,51 @@ class implement the protocol defined @ {py:class}`gigl.src.inference.v1.lib.base
 :start-after: InferencerConfig
 :end-before: ========
 ```
+
+## Custom resolvers
+
+GiGL makes use of custom [Omegaconf resolvers](https://omegaconf.readthedocs.io/en/latest/custom_resolvers.html) to
+allow us to expose macros that are resolved at runtime instead of being hardcoded. Our resolvers are defined in
+[omegaconf_resolvers.py](python/gigl/common/omegaconf_resolvers.py)
+
+```{note}
+In tabularized GiGL: Subgraph Sampler, and Split Generator do not have support for custom resolvers. In most cases this should not be a problem as the Config Populator should populate any needed custom resolution to your frozen configs.
+```
+
+### Time resolvers
+
+You can specify `now:` along with `datetime.datetime` compatible `strftime` format string. Subsequently, you can also
+specify `datetime.timedelta` with compatible time offsets. Specifying these in any of your values in your yamls will
+automatically resolve when loaded into GiGL.
+
+Examples:
+
+```yaml
+name: "exp_${now:%Y%m%d_%H%M%S}"
+start_time: "${now:%Y-%m-%d %H:%M:%S}"
+log_file: "logs/run_${now:%H-%M-%S}.log"
+timestamp: "${now:}"  # Uses default format "%Y%m%d_%H%M%S"
+short_date: "${now:%m-%d}"
+
+tomorrow: "${now:%Y-%m-%d, days+1}"
+yesterday: "${now:%Y-%m-%d, days-1}"
+tomorrow_plus_5_hours_30_min_15_sec: "${now:%Y-%m-%d %H:%M:%S,hours+5,days+1,minutes+30,seconds+15}"
+next_week: "${now:%Y-%m-%d, weeks+1}"
+multiple_args: "${now:%Y%m%d, days-15}:${now:%Y%m%d, days-1}"
+```
+
+Assuming, the current datetime is `2023-12-15 14:30:22`, this would resolve to something like:
+
+```yaml
+name: "exp_20231215_143022"
+start_time: "2023-12-15 14:30:22"
+log_file: "logs/run_14-30-22.log"
+timestamp: "20231215_143022"
+short_date: "12-15"
+
+tomorrow: "2023-12-16"
+yesterday: "2023-12-14"
+tomorrow_plus_5_hours_30_min_15_sec: "2023-12-16 20:00:37"
+next_week: "2023-12-22"
+multiple_args: "20231130:20231214"
+```

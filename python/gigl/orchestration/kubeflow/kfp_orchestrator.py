@@ -132,6 +132,7 @@ class KfpOrchestrator:
             aiplatform.PipelineJob: The created pipeline job.
         """
         check_if_kfp_pipeline_job_name_valid(str(applied_task_identifier))
+
         file_loader = FileLoader()
         assert file_loader.does_uri_exist(
             compiled_pipeline_path
