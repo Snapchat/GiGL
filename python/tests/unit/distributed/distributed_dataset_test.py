@@ -38,7 +38,7 @@ from tests.test_assets.distributed.run_distributed_dataset import (
 )
 
 
-class _FakeSplitter:
+class _PassthroughSplitter:
     def __init__(
         self,
         splits: Union[
@@ -46,6 +46,7 @@ class _FakeSplitter:
             dict[EdgeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
         ],
     ):
+        """Splitter that passes through input splits when called."""
         self.splits = splits
         self._supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
@@ -166,6 +167,9 @@ class DistributedDatasetTestCase(unittest.TestCase):
     def test_build_and_split_dataset_homogeneous(self):
         port = gigl.distributed.utils.get_free_port()
         mocked_dataset_info = TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
+        num_nodes_in_mocked_dataset = mocked_dataset_info.num_nodes[
+            mocked_dataset_info.default_node_type
+        ]
         # Add 256 nodes here to make sure we count properly while deduping.
         train_nodes = torch.tensor([1000] + [0] * 256)
         val_nodes = torch.tensor([2000, 3000] + [1] * 256)
@@ -176,7 +180,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
             world_size=1,
             mocked_dataset_info=mocked_dataset_info,
             should_load_tensors_in_parallel=True,
-            splitter=_FakeSplitter(
+            splitter=_PassthroughSplitter(
                 (
                     train_nodes,
                     val_nodes,
@@ -189,19 +193,17 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assert_tensor_equal(dataset.val_node_ids, val_nodes)
         self.assert_tensor_equal(dataset.test_node_ids, test_nodes)
 
+        # Our dataset stores node ids, but will de-dupe nodes which are in the splits
+        # from all node ids.
+        # e.g. train = [0], val = [1, 2], test = [3, 4, 5], all_node_ids = [0, 1, 2, 3, 4, 5]
+        # then dataset.node_ids = [0, 1, 2, 3, 4, 5]
+        # So our expected node ids are the splits, and the rest of the nodes (not including 0, 1, 2 which are in the splits)
         expected_node_ids = torch.tensor(
             train_nodes.tolist()
             + val_nodes.tolist()
             + test_nodes.tolist()
             # [0, 1, 2] shouldn't be included as we de-dup and 0, 1, 2 are in the splits.
-            + list(
-                range(
-                    3,
-                    mocked_dataset_info.num_nodes[
-                        mocked_dataset_info.default_node_type
-                    ],
-                )
-            )
+            + list(range(3, num_nodes_in_mocked_dataset))
         )
 
         # Check that the node ids have *all* node ids, including nodes not included in train, val, and test.
@@ -425,7 +427,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
             world_size=self._world_size,
             mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
-            splitter=_FakeSplitter(splits),
+            splitter=_PassthroughSplitter(splits),
             _port=gigl.distributed.utils.get_free_port(),
         )
 
