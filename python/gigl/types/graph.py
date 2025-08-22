@@ -90,11 +90,14 @@ class PartitionOutput:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ]
 
-    # Partitioned node labels, May be None if node labels are not partitioned
+    # Partitioned node labels, May be None if node labels are not partitioned.
+    # In practice, we expect the IDS of the partitioned node labels field to be equal to the ids of the partitioned node features field, if it exists.
+    # This is because the partitioned node labels should be partitioned along with the node features so that we don't need to track two separate node ID stores,
+    # which saves a lot of memory.
     # TODO (mkolodner-sc): This field currently defaults to None since it is not set as output of the partitioner, but instead is added after.
     # Once this field is set inside the partitioner, we can remove this default
     partitioned_node_labels: Optional[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ] = None
 
 

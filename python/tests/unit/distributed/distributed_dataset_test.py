@@ -1,5 +1,5 @@
 import unittest
-from collections import abc
+from collections.abc import Mapping
 from typing import Any, Optional, Type, Union
 
 import torch
@@ -69,7 +69,7 @@ class _FakeSplitter:
 
 
 _USER = NodeType("user")
-_ITEM = NodeType("story")
+_ITEM = NodeType("item")
 _USER_TO_ITEM = EdgeType(_USER, Relation("to"), _ITEM)
 
 
@@ -81,8 +81,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
     def assert_tensor_equal(
         self,
-        actual: Optional[Union[torch.Tensor, abc.Mapping[Any, torch.Tensor]]],
-        expected: Optional[Union[torch.Tensor, abc.Mapping[Any, torch.Tensor]]],
+        actual: Optional[Union[torch.Tensor, Mapping[Any, torch.Tensor]]],
+        expected: Optional[Union[torch.Tensor, Mapping[Any, torch.Tensor]]],
     ):
         if type(actual) != type(expected):
             self.fail(f"Expected type {type(expected)} but got {type(actual)}")
@@ -514,18 +514,18 @@ class DistributedDatasetTestCase(unittest.TestCase):
         )
 
         assert isinstance(
-            dataset.positive_edge_label, abc.Mapping
+            dataset.positive_edge_label, Mapping
         ), f"Positive edge indices must be a dictionary, got {type(dataset.positive_edge_label)}"
         self.assertTrue(labeled_edge_type in dataset.positive_edge_label)
         self.assertTrue(message_passing_edge_type not in dataset.positive_edge_label)
 
         assert isinstance(
-            dataset.negative_edge_label, abc.Mapping
+            dataset.negative_edge_label, Mapping
         ), f"Negative edge indices must be a dictionary, got {type(dataset.negative_edge_label)}"
         self.assertTrue(labeled_edge_type in dataset.negative_edge_label)
         self.assertTrue(message_passing_edge_type not in dataset.negative_edge_label)
 
-        assert isinstance(dataset.edge_pb, abc.Mapping)
+        assert isinstance(dataset.edge_pb, Mapping)
         self.assertTrue(labeled_edge_type not in dataset.edge_pb)
         self.assertTrue(message_passing_edge_type in dataset.edge_pb)
 
@@ -542,7 +542,9 @@ class DistributedDatasetTestCase(unittest.TestCase):
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
-            partitioned_node_labels=torch.arange(10).unsqueeze(1),
+            partitioned_node_labels=FeaturePartitionData(
+                feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
+            ),
         )
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
@@ -577,16 +579,17 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 _USER: FeaturePartitionData(
                     feats=torch.zeros(10, 2), ids=torch.arange(10)
                 ),
-                _ITEM: FeaturePartitionData(
-                    feats=torch.zeros(5, 0), ids=torch.arange(5)
-                ),
             },
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
             partitioned_node_labels={
-                _USER: torch.arange(10).unsqueeze(1),
-                _ITEM: torch.arange(5).unsqueeze(1),
+                _USER: FeaturePartitionData(
+                    feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
+                ),
+                _ITEM: FeaturePartitionData(
+                    feats=torch.arange(5).unsqueeze(1), ids=torch.arange(5)
+                ),
             },
         )
 

@@ -53,7 +53,7 @@ _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 
 _USER = NodeType("user")
-_ITEM = NodeType("story")
+_ITEM = NodeType("item")
 _USER_TO_ITEM = EdgeType(_USER, Relation("to"), _ITEM)
 
 # TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
@@ -453,8 +453,6 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
     )
@@ -485,8 +483,6 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
         dataset=dataset,
         input_nodes=(_USER, dataset.node_ids[_USER]),
         num_neighbors=[2, 2],
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
     )
@@ -495,8 +491,6 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
         dataset=dataset,
         input_nodes=(_ITEM, dataset.node_ids[_ITEM]),
         num_neighbors=[2, 2],
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
     )
@@ -536,8 +530,6 @@ def _run_cora_supervised_node_classification(
         dataset=dataset,
         num_neighbors=[2, 2],
         input_nodes=to_homogeneous(dataset.train_node_ids),
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
     )
@@ -955,7 +947,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
-            partitioned_node_labels=torch.arange(10).unsqueeze(1),
+            partitioned_node_labels=FeaturePartitionData(
+                feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
+            ),
         )
 
         dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="in")
@@ -994,8 +988,12 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
             partitioned_node_labels={
-                _USER: torch.arange(10).unsqueeze(1),
-                _ITEM: torch.arange(5).unsqueeze(1),
+                _USER: FeaturePartitionData(
+                    feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
+                ),
+                _ITEM: FeaturePartitionData(
+                    feats=torch.arange(5).unsqueeze(1), ids=torch.arange(5)
+                ),
             },
         )
 

@@ -2,7 +2,7 @@
 
 import gc
 import time
-from collections import abc
+from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
 from typing import Literal, Optional, Tuple, Union
 
@@ -85,7 +85,7 @@ class DistLinkPredictionDataset(DistDataset):
             graph_partition (Optional[Union[Graph, dict[EdgeType, Graph]]]): Partitioned Graph Data
             node_feature_partition (Optional[Union[Feature, dict[NodeType, Feature]]]): Partitioned Node Feature Data
             edge_feature_partition (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Partitioned Edge Feature Data
-            node_labels (Optional[Union[Feature, dict[NodeType, Feature]]]): The labels of each node on the current machine. Will be a dict if heterogeneous.
+            node_labels (Optional[Union[Feature, dict[NodeType, Feature]]]): The labels of each node on the current machine
             node_partition_book (Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]]): Node Partition Book
             edge_partition_book (Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]): Edge Partition Book
             positive_edge_label (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Positive Edge Label Tensor
@@ -274,15 +274,15 @@ class DistLinkPredictionDataset(DistDataset):
     @property
     def train_node_ids(
         self,
-    ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
+    ) -> Optional[Union[torch.Tensor, Mapping[NodeType, torch.Tensor]]]:
         if self._num_train is None:
             return None
         elif isinstance(self._num_train, int) and isinstance(
             self._node_ids, torch.Tensor
         ):
             return self._node_ids[: self._num_train]
-        elif isinstance(self._num_train, abc.Mapping) and isinstance(
-            self._node_ids, abc.Mapping
+        elif isinstance(self._num_train, Mapping) and isinstance(
+            self._node_ids, Mapping
         ):
             node_ids = {}
             for node_type, num_train in self._num_train.items():
@@ -296,7 +296,7 @@ class DistLinkPredictionDataset(DistDataset):
     @property
     def val_node_ids(
         self,
-    ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
+    ) -> Optional[Union[torch.Tensor, Mapping[NodeType, torch.Tensor]]]:
         if self._num_val is None:
             return None
         if self._num_train is None:
@@ -311,9 +311,9 @@ class DistLinkPredictionDataset(DistDataset):
             idx = slice(self._num_train, self._num_train + self._num_val)
             return self._node_ids[idx]
         elif (
-            isinstance(self._num_train, abc.Mapping)
-            and isinstance(self._num_val, abc.Mapping)
-            and isinstance(self._node_ids, abc.Mapping)
+            isinstance(self._num_train, Mapping)
+            and isinstance(self._num_val, Mapping)
+            and isinstance(self._node_ids, Mapping)
         ):
             node_ids = {}
             for node_type, num_val in self._num_val.items():
@@ -330,7 +330,7 @@ class DistLinkPredictionDataset(DistDataset):
     @property
     def test_node_ids(
         self,
-    ) -> Optional[Union[torch.Tensor, abc.Mapping[NodeType, torch.Tensor]]]:
+    ) -> Optional[Union[torch.Tensor, Mapping[NodeType, torch.Tensor]]]:
         if self._num_test is None:
             return None
         if self._num_train is None or self._num_val is None:
@@ -349,10 +349,10 @@ class DistLinkPredictionDataset(DistDataset):
             )
             return self._node_ids[idx]
         elif (
-            isinstance(self._num_train, abc.Mapping)
-            and isinstance(self._num_val, abc.Mapping)
-            and isinstance(self._num_test, abc.Mapping)
-            and isinstance(self._node_ids, abc.Mapping)
+            isinstance(self._num_train, Mapping)
+            and isinstance(self._num_val, Mapping)
+            and isinstance(self._num_test, Mapping)
+            and isinstance(self._node_ids, Mapping)
         ):
             node_ids = {}
             for node_type, num_test in self._num_test.items():
@@ -454,7 +454,7 @@ class DistLinkPredictionDataset(DistDataset):
                     node_type: get_ids_on_rank(partition_book, rank=self._rank)
                     for node_type, partition_book in self._node_partition_book.items()
                 }
-                if isinstance(self._node_partition_book, abc.Mapping)
+                if isinstance(self._node_partition_book, Mapping)
                 else get_ids_on_rank(self._node_partition_book, rank=self._rank)
             )
             splits = splitter(node_ids=node_ids)
@@ -485,43 +485,19 @@ class DistLinkPredictionDataset(DistDataset):
             else:
                 node_id2idx = id2idx(partitioned_node_feature_ids)
 
-            # Partitioned node features can be empty when there are no features but are
-            # labels, so we only register features if they are nonempty.
-            if partitioned_node_features.numel() > 0:
-                self.init_node_features(
-                    node_feature_data=partitioned_node_features,
-                    id2idx=node_id2idx,
-                    with_gpu=False,
-                )
-            if partition_output.partitioned_node_labels is not None:
-                assert isinstance(
-                    partition_output.partitioned_node_labels, torch.Tensor
-                ), "Node labels must be a tensor when using build with homogeneous partitioned features"
-                # We use the same id2idx for node labels as we do for node features, since the node labels have the same
-                # global id -> local index on machine mapping as the node features as a result of how they are partitioned.
-                # This makes it so that we don't need to keep track of two separate id2idx mappings for node features and node labels.
-                self.init_node_labels(
-                    node_label_data=partition_output.partitioned_node_labels,
-                    id2idx=node_id2idx,
-                )
-            self._node_feature_info = FeatureInfo(
-                dim=partitioned_node_features.size(1),
-                dtype=partitioned_node_features.dtype,
+            self.init_node_features(
+                node_feature_data=partitioned_node_features,
+                id2idx=node_id2idx,
+                with_gpu=False,
             )
-            del (
-                partitioned_node_features,
-                partitioned_node_feature_ids,
-                node_id2idx,
-            )
-        elif isinstance(partition_output.partitioned_node_features, abc.Mapping):
-            assert isinstance(partition_output.node_partition_book, abc.Mapping)
+        elif isinstance(partition_output.partitioned_node_features, Mapping):
+            assert isinstance(partition_output.node_partition_book, Mapping)
 
             # Partitioned node features can be empty when there are no features but are
             # labels, so we only populate the dictionary with non-empty features.
             node_type_to_partitioned_node_features = {
                 node_type: feature_partition_data.feats
                 for node_type, feature_partition_data in partition_output.partitioned_node_features.items()
-                if feature_partition_data.feats.numel() > 0
             }
             node_type_to_partitioned_node_feature_ids = {
                 node_type: feature_partition_data.ids
@@ -538,29 +514,11 @@ class DistLinkPredictionDataset(DistDataset):
                     node_type_to_id2idx[node_type] = id2idx(
                         node_type_to_partitioned_node_feature_ids[node_type]
                     )
-            if node_type_to_partitioned_node_features:
-                self.init_node_features(
-                    node_feature_data=node_type_to_partitioned_node_features,
-                    id2idx=node_type_to_id2idx,
-                    with_gpu=False,
-                )
-            if partition_output.partitioned_node_labels is not None:
-                assert isinstance(
-                    partition_output.partitioned_node_labels, abc.Mapping
-                ), "Node labels must be a dictionary when using build with heterogeneous partitioned features"
-                assert sorted(
-                    partition_output.partitioned_node_labels.keys()
-                ) == sorted(
-                    node_type_to_id2idx.keys()
-                ), f"Expected node labels to have same node types \
-                    as node features, got node labels: {sorted(partition_output.partitioned_node_labels.keys())} and node features: {sorted(node_type_to_id2idx.keys())}"
-                # We use the same node_type_to_id2idx for node labels as we do for node features, since the node labels have the same
-                # global id -> local index on machine mapping as the node features.
-                # This makes it so that we don't need to keep track of two separate id2idx mappings for node features and node labels.
-                self.init_node_labels(
-                    node_label_data=partition_output.partitioned_node_labels,
-                    id2idx=node_type_to_id2idx,
-                )
+            self.init_node_features(
+                node_feature_data=node_type_to_partitioned_node_features,
+                id2idx=node_type_to_id2idx,
+                with_gpu=False,
+            )
             self._node_feature_info = {
                 node_type: FeatureInfo(
                     dim=feature_partition_data.size(1),
@@ -572,10 +530,66 @@ class DistLinkPredictionDataset(DistDataset):
                 node_type_to_partitioned_node_features,
                 node_type_to_partitioned_node_feature_ids,
                 node_type_to_id2idx,
-                partition_output.partitioned_node_labels,
             )
 
         partition_output.partitioned_node_features = None
+
+        gc.collect()
+
+        # Initialize Node Labels
+
+        if isinstance(partition_output.partitioned_node_labels, FeaturePartitionData):
+            assert isinstance(
+                partition_output.node_partition_book, (torch.Tensor, PartitionBook)
+            )
+            partitioned_node_labels = partition_output.partitioned_node_labels.feats
+            partitioned_node_label_ids = partition_output.partitioned_node_labels.ids
+            if isinstance(partition_output.node_partition_book, RangePartitionBook):
+                node_id2idx = partition_output.node_partition_book.id2index
+            else:
+                node_id2idx = id2idx(partitioned_node_label_ids)
+
+            self.init_node_labels(
+                node_feature_data=partitioned_node_labels,
+                id2idx=node_id2idx,
+            )
+            del (
+                partitioned_node_labels,
+                partitioned_node_label_ids,
+                node_id2idx,
+            )
+
+        elif isinstance(partition_output.partitioned_node_labels, Mapping):
+            node_type_to_partitioned_node_labels = {
+                node_type: feature_partition_data.feats
+                for node_type, feature_partition_data in partition_output.partitioned_node_labels.items()
+            }
+            node_type_to_partitioned_node_label_ids = {
+                node_type: feature_partition_data.ids
+                for node_type, feature_partition_data in partition_output.partitioned_node_labels.items()
+            }
+            node_type_to_id2idx = {}
+            for (
+                node_type,
+                node_partition_book,
+            ) in partition_output.node_partition_book.items():
+                if isinstance(node_partition_book, RangePartitionBook):
+                    node_type_to_id2idx[node_type] = node_partition_book.id2index
+                else:
+                    node_type_to_id2idx[node_type] = id2idx(
+                        node_type_to_partitioned_node_label_ids[node_type]
+                    )
+                self.init_node_labels(
+                    node_label_data=node_type_to_partitioned_node_labels,
+                    id2idx=node_type_to_id2idx,
+                )
+
+            del (
+                node_type_to_partitioned_node_labels,
+                node_type_to_partitioned_node_label_ids,
+                node_type_to_id2idx,
+            )
+
         partition_output.partitioned_node_labels = None
 
         gc.collect()
@@ -602,11 +616,11 @@ class DistLinkPredictionDataset(DistDataset):
             )
             del partitioned_edge_features, partition_edge_feat_ids, edge_id2idx
         elif (
-            isinstance(partition_output.partitioned_edge_features, abc.Mapping)
+            isinstance(partition_output.partitioned_edge_features, Mapping)
             and len(partition_output.partitioned_edge_features) > 0
         ):
             assert isinstance(
-                partition_output.edge_partition_book, abc.Mapping
+                partition_output.edge_partition_book, Mapping
             ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book. Got edge partition book of type {type(partition_output.edge_partition_book)}"
             assert (
                 len(partition_output.edge_partition_book) > 0

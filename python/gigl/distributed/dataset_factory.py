@@ -235,7 +235,9 @@ def _load_and_build_partitioned_dataset(
     # TODO (mkolodner-sc): Move node label logic to the partitioner once the partitioner accepts and returns
     # the node labels as separate fields from the node features.
 
-    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
+    node_labels: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ] = None
     if isinstance(partition_output.partitioned_node_features, Mapping):
         node_labels = {}
         for (
@@ -252,12 +254,22 @@ def _load_and_build_partitioned_dataset(
             else:
                 label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
             if label_dim > 0:
-                node_features, node_labels[node_type] = _get_labels_from_features(
-                    node_feature.feats, label_dim=label_dim
+                (
+                    node_features_per_node_type,
+                    node_label_per_node_type,
+                ) = _get_labels_from_features(node_feature.feats, label_dim=label_dim)
+                node_labels[node_type] = FeaturePartitionData(
+                    feats=node_label_per_node_type, ids=node_feature.ids
                 )
-                partition_output.partitioned_node_features[
-                    node_type
-                ] = FeaturePartitionData(feats=node_features, ids=node_feature.ids)
+                if node_features_per_node_type.numel():
+                    partition_output.partitioned_node_features[
+                        node_type
+                    ] = FeaturePartitionData(
+                        feats=node_features_per_node_type, ids=node_feature.ids
+                    )
+                else:
+                    del partition_output.partitioned_node_features[node_type]
+
                 del node_feature
                 gc.collect()
 
@@ -271,12 +283,20 @@ def _load_and_build_partitioned_dataset(
             )
         label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
         if label_dim > 0:
-            node_features, node_labels = _get_labels_from_features(
+            node_features, node_label = _get_labels_from_features(
                 partition_output.partitioned_node_features.feats, label_dim=label_dim
             )
-            partition_output.partitioned_node_features = FeaturePartitionData(
-                feats=node_features, ids=partition_output.partitioned_node_features.ids
+            node_labels = FeaturePartitionData(
+                feats=node_label, ids=partition_output.partitioned_node_features.ids
             )
+            if node_features.numel():
+                partition_output.partitioned_node_features = FeaturePartitionData(
+                    feats=node_features,
+                    ids=partition_output.partitioned_node_features.ids,
+                )
+            else:
+                partition_output.partitioned_node_features = None
+
             gc.collect()
     else:
         raise ValueError(
