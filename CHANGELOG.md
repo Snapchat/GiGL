@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Add support for loading, partitioning, and separate node labels from features
 
+- Add earlier check if invalid Node IDs are provided to the partitioner
+
 ### Changed
 
 ### Deprecated
