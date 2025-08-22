@@ -17,28 +17,6 @@ alwaysApply: false
 
 ## Code Style & Structure
 
-### Import Organization
-Follow the standard import order:
-1. Standard library imports
-2. Third-party imports (torch, numpy, pandas, etc.)
-3. GiGL internal imports starting with `gigl.`
-4. Protocol buffer imports from `snapchat.research.gbml`
-
-Example:
-```python
-import argparse
-import sys
-from pathlib import Path
-from typing import Optional, Tuple
-
-import torch
-import numpy as np
-
-from gigl.common.logger import Logger
-from gigl.common.metrics.decorators import profileit
-from snapchat.research.gbml import gbml_config_pb2
-```
-
 ### Class Design
 - Use descriptive class names with proper CamelCase
 - Include comprehensive docstrings for all classes
@@ -60,26 +38,26 @@ class TestArgs:
 ### Type Annotations
 - Always use type annotations for function parameters and return values
 - Prefer not using typing module imports if it can be done without i.e.
-`arg: dict[str, str]` is prefferect over `arg: typing.Dict[str, str]`.
+`arg: dict[str, str]` is preferred over `arg: typing.Dict[str, str]`.
 - For Protocol Buffer types, import from `snapchat.research.gbml`
 - Use `Final` for constants
 
 Example:
 ```python
-from typing import Final, Optional, Dict, List
+from typing import Final, Optional
 
 GIGL_ROOT_DIR: Final[Path] = get_root_directory()
 
 def process_config(
     config_path: Path,
-    metadata: Optional[Dict[str, str]] = None
-) -> List[str]:
+    metadata: Optional[dict[str, str]] = None
+) -> list[str]:
     """Process configuration file and return processed paths."""
 ```
 
 ### Error Handling & Logging
 - Use the GiGL logger: `from gigl.common.logger import Logger`
-- Create logger instances: `logger = Logger()`
+- Create module-level logger instances as such: `logger = Logger()`
 - Provide informative error messages with context
 - Use appropriate log levels (info, warning, error, debug)
 
@@ -108,7 +86,7 @@ from abc import ABC, abstractmethod
 
 class DataPreprocessorConfig(ABC):
     @abstractmethod
-    def get_feature_spec(self) -> Dict[str, Any]:
+    def get_feature_spec(self) -> dict[str, Any]:
         raise NotImplementedError
 ```
 
@@ -117,8 +95,14 @@ class DataPreprocessorConfig(ABC):
 - Use wrapper classes for protocol buffer operations located in `python/gigl/src/common/types/pb_wrappers`
   - `GbmlConfigPbWrapper` is used for `gbml_config_pb2.GbmlConfig`, otherwise known as task config, or template task config
   - `GiglResourceConfigWrapper` is used for `gigl_resource_config_pb2.GiglResourceConfig`
-- Ensure that all protos are desirialized into their respective wrapper objects or explicit data classes, individual variables as early as possible in the call stack to reduce coupling of protos with low level components.
-- Handle serialization/deserialization properly
+- Ensure that all protos are deserialized into their respective wrapper objects or explicit data classes as early as possible. This should ideally happen inside one of the following entry point files:
+  - Config Populator: gigl.src.config_populator.config_populator.ConfigPopulator
+  - Data Preprocessor: gigl.src.data_preprocessor.data_preprocessor.DataPreprocessor
+  - Subgraph Sampler: gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler
+  - Split Generator: gigl.src.split_generator.split_generator.SplitGenerator
+  - Trainer: gigl.src.training.trainer.Trainer
+  - Inferencer: gigl.src.inference.inferencer.Inferencer
+  Anything that these entrypoint files call should not be passed `GbmlConfigPbWrapper` or `GiglResourceConfigWrapper` directly.
 
 Example:
 ```python

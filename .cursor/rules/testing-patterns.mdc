@@ -24,39 +24,12 @@ class TestDataPreprocessor(unittest.TestCase):
     def setUp(self) -> None:
         """Set up test fixtures before each test method."""
         self.test_data_dir = Path("tests/test_assets/small_graph")
-        self.config = self._create_test_config()
+
 
     def tearDown(self) -> None:
         """Clean up after each test method."""
-        # Cleanup logic here
-        pass
-
-    def test_config_validation_success(self):
-        """Test that valid configuration passes validation."""
-        # Arrange
-        valid_config = self._create_valid_config()
-
-        # Act
-        result = DataPreprocessor.validate_config(valid_config)
-
-        # Assert
-        self.assertTrue(result)
-
-    def test_config_validation_failure(self):
-        """Test that invalid configuration fails validation."""
-        # Arrange
-        invalid_config = self._create_invalid_config()
-
-        # Act & Assert
-        with self.assertRaises(ValueError):
-            DataPreprocessor.validate_config(invalid_config)
-
-    def _create_test_config(self) -> Dict[str, Any]:
-        """Helper method to create test configuration."""
-        return {
-            "input_path": str(self.test_data_dir),
-            "output_path": "/tmp/test_output"
-        }
+        if self.test_data_dir.is_dir():
+            shutil.rmtree(self.test_data_dir)
 ```
 
 ### Test Data Management
@@ -87,23 +60,8 @@ class TestWithAssets(unittest.TestCase):
 ```
 
 ### Integration Testing
-For integration tests that require cloud resources:
+For integration tests that require cloud resources, add them to the `python/tests/integration` directory
 
-```python
-from gigl.common.env_config import is_running_in_ci
-
-class TestCloudIntegration(unittest.TestCase):
-    """Integration tests for cloud components."""
-
-    def setUp(self) -> None:
-        if not is_running_in_ci():
-            self.skipTest("Cloud integration tests only run in CI")
-
-    def test_dataflow_pipeline(self):
-        """Test Dataflow pipeline integration."""
-        # Integration test implementation
-        pass
-```
 
 ### Mocking External Dependencies
 Use mocking for external services and expensive operations:
@@ -153,7 +111,7 @@ shared_resource_config:
 ```
 
 ### Test Graph Data
-Create small, deterministic test graphs:
+Create small, deterministic test graphs if needed:
 
 ```python
 # tests/test_assets/small_graph/graph_data.py
