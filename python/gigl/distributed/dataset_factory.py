@@ -44,7 +44,11 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeaturePartitionData
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    FeaturePartitionData,
+    PartitionOutput,
+)
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     HashedNodeSplitter,
@@ -87,6 +91,92 @@ def _get_labels_from_features(
         feature_and_label_tensor[:, :feature_dim],
         feature_and_label_tensor[:, feature_dim:],
     )
+
+
+# TODO (mkolodner-sc): Move this function to the partitioner once the partitioner accepts and returns
+# the node labels as separate fields from the node features.
+def _extract_node_labels_from_features(
+    partition_output: PartitionOutput,
+    serialized_graph_metadata: SerializedGraphMetadata,
+) -> None:
+    """
+    Extract node labels from node features and set them in partition_output in-place, handling both heterogeneous and homogeneous cases.
+
+    Args:
+        partition_output (PartitionOutput): The partition output containing partitioned_node_features; will have partitioned_node_labels set
+        serialized_graph_metadata (SerializedGraphMetadata): Metadata containing label information
+    """
+    node_labels: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ] = None
+
+    if isinstance(partition_output.partitioned_node_features, Mapping):
+        node_labels = {}
+        for (
+            node_type,
+            node_feature,
+        ) in partition_output.partitioned_node_features.items():
+            # serialized_graph_metadata can be heterogeneous for a heterogeneous node features
+            if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
+                label_dim = len(
+                    serialized_graph_metadata.node_entity_info[node_type].label_keys
+                )
+            # serialized_graph_metadata can be homogeneous for a heterogeneous node features,
+            # since we inject positive and negative label types as edges
+            else:
+                label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
+            if label_dim > 0:
+                (
+                    node_features_per_node_type,
+                    node_label_per_node_type,
+                ) = _get_labels_from_features(node_feature.feats, label_dim=label_dim)
+                node_labels[node_type] = FeaturePartitionData(
+                    feats=node_label_per_node_type, ids=node_feature.ids
+                )
+                if node_features_per_node_type.numel():
+                    partition_output.partitioned_node_features[
+                        node_type
+                    ] = FeaturePartitionData(
+                        feats=node_features_per_node_type, ids=node_feature.ids
+                    )
+                else:
+                    del partition_output.partitioned_node_features[node_type]
+
+                del node_feature
+                gc.collect()
+
+    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
+        # serialized graph metadata must be homogeneous if partitioned node features is homogeneous
+        if not isinstance(
+            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
+        ):
+            raise ValueError(
+                f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
+            )
+        label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
+        if label_dim > 0:
+            node_features, node_label = _get_labels_from_features(
+                partition_output.partitioned_node_features.feats, label_dim=label_dim
+            )
+            node_labels = FeaturePartitionData(
+                feats=node_label, ids=partition_output.partitioned_node_features.ids
+            )
+            if node_features.numel():
+                partition_output.partitioned_node_features = FeaturePartitionData(
+                    feats=node_features,
+                    ids=partition_output.partitioned_node_features.ids,
+                )
+            else:
+                partition_output.partitioned_node_features = None
+
+            gc.collect()
+    else:
+        raise ValueError(
+            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
+        )
+
+    partition_output.partitioned_node_labels = node_labels
+    del node_labels
 
 
 @tf_on_cpu
@@ -232,80 +322,13 @@ def _load_and_build_partitioned_dataset(
 
     partition_output = partitioner.partition()
 
-    # TODO (mkolodner-sc): Move node label logic to the partitioner once the partitioner accepts and returns
+    # TODO (mkolodner-sc): Move this call to the partitioner once the partitioner accepts and returns
     # the node labels as separate fields from the node features.
 
-    node_labels: Optional[
-        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
-    ] = None
-    if isinstance(partition_output.partitioned_node_features, Mapping):
-        node_labels = {}
-        for (
-            node_type,
-            node_feature,
-        ) in partition_output.partitioned_node_features.items():
-            # serialized_graph_metadata can be heterogeneous for a heterogeneous node features
-            if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
-                label_dim = len(
-                    serialized_graph_metadata.node_entity_info[node_type].label_keys
-                )
-            # serialized_graph_metadata can be homogeneous for a heterogeneous node features,
-            # since we inject positive and negative label types as edges
-            else:
-                label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
-            if label_dim > 0:
-                (
-                    node_features_per_node_type,
-                    node_label_per_node_type,
-                ) = _get_labels_from_features(node_feature.feats, label_dim=label_dim)
-                node_labels[node_type] = FeaturePartitionData(
-                    feats=node_label_per_node_type, ids=node_feature.ids
-                )
-                if node_features_per_node_type.numel():
-                    partition_output.partitioned_node_features[
-                        node_type
-                    ] = FeaturePartitionData(
-                        feats=node_features_per_node_type, ids=node_feature.ids
-                    )
-                else:
-                    del partition_output.partitioned_node_features[node_type]
-
-                del node_feature
-                gc.collect()
-
-    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
-        # serialized graph metadata must be homogeneous if partitioned node features is homogeneous
-        if not isinstance(
-            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
-        ):
-            raise ValueError(
-                f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
-            )
-        label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
-        if label_dim > 0:
-            node_features, node_label = _get_labels_from_features(
-                partition_output.partitioned_node_features.feats, label_dim=label_dim
-            )
-            node_labels = FeaturePartitionData(
-                feats=node_label, ids=partition_output.partitioned_node_features.ids
-            )
-            if node_features.numel():
-                partition_output.partitioned_node_features = FeaturePartitionData(
-                    feats=node_features,
-                    ids=partition_output.partitioned_node_features.ids,
-                )
-            else:
-                partition_output.partitioned_node_features = None
-
-            gc.collect()
-    else:
-        raise ValueError(
-            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
-        )
-
-    partition_output.partitioned_node_labels = node_labels
-
-    del node_labels
+    _extract_node_labels_from_features(
+        partition_output=partition_output,
+        serialized_graph_metadata=serialized_graph_metadata,
+    )
 
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
