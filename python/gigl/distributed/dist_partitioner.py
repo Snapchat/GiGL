@@ -373,7 +373,8 @@ class DistPartitioner:
 
         # This tuple here represents a (rank, (num_nodes_on_rank, max_node_id_on_rank)) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
         # num_nodes_on_rank and max_node_id_on_rank are ints.
-        # Gathered_num_nodes is then used to identify the number of nodes and max node id on each rank, allowing us to access the total number of nodes and max node idacross all ranks
+        # Gathered_num_nodes is then used to identify the number of nodes and max node id on each rank,
+        # allowing us to access the total number of nodes and max node id across all ranks
         gathered_node_info: dict[str, Tuple[int, dict[NodeType, Tuple[int, int]]]]
         self._num_nodes = defaultdict(int)
 
