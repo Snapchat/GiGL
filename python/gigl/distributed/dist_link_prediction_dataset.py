@@ -508,12 +508,13 @@ class DistLinkPredictionDataset(DistDataset):
                 node_type,
                 node_partition_book,
             ) in partition_output.node_partition_book.items():
-                if isinstance(node_partition_book, RangePartitionBook):
-                    node_type_to_id2idx[node_type] = node_partition_book.id2index
-                else:
-                    node_type_to_id2idx[node_type] = id2idx(
-                        node_type_to_partitioned_node_feature_ids[node_type]
-                    )
+                if node_type in node_type_to_partitioned_node_features:
+                    if isinstance(node_partition_book, RangePartitionBook):
+                        node_type_to_id2idx[node_type] = node_partition_book.id2index
+                    else:
+                        node_type_to_id2idx[node_type] = id2idx(
+                            node_type_to_partitioned_node_feature_ids[node_type]
+                        )
             self.init_node_features(
                 node_feature_data=node_type_to_partitioned_node_features,
                 id2idx=node_type_to_id2idx,
@@ -550,7 +551,7 @@ class DistLinkPredictionDataset(DistDataset):
                 node_id2idx = id2idx(partitioned_node_label_ids)
 
             self.init_node_labels(
-                node_feature_data=partitioned_node_labels,
+                node_label_data=partitioned_node_labels,
                 id2idx=node_id2idx,
             )
             del (
@@ -561,28 +562,29 @@ class DistLinkPredictionDataset(DistDataset):
 
         elif isinstance(partition_output.partitioned_node_labels, Mapping):
             node_type_to_partitioned_node_labels = {
-                node_type: feature_partition_data.feats
-                for node_type, feature_partition_data in partition_output.partitioned_node_labels.items()
+                node_type: node_label_partition_data.feats
+                for node_type, node_label_partition_data in partition_output.partitioned_node_labels.items()
             }
             node_type_to_partitioned_node_label_ids = {
-                node_type: feature_partition_data.ids
-                for node_type, feature_partition_data in partition_output.partitioned_node_labels.items()
+                node_type: node_label_partition_data.ids
+                for node_type, node_label_partition_data in partition_output.partitioned_node_labels.items()
             }
             node_type_to_id2idx = {}
             for (
                 node_type,
                 node_partition_book,
             ) in partition_output.node_partition_book.items():
-                if isinstance(node_partition_book, RangePartitionBook):
-                    node_type_to_id2idx[node_type] = node_partition_book.id2index
-                else:
-                    node_type_to_id2idx[node_type] = id2idx(
-                        node_type_to_partitioned_node_label_ids[node_type]
-                    )
-                self.init_node_labels(
-                    node_label_data=node_type_to_partitioned_node_labels,
-                    id2idx=node_type_to_id2idx,
-                )
+                if node_type in node_type_to_partitioned_node_labels:
+                    if isinstance(node_partition_book, RangePartitionBook):
+                        node_type_to_id2idx[node_type] = node_partition_book.id2index
+                    else:
+                        node_type_to_id2idx[node_type] = id2idx(
+                            node_type_to_partitioned_node_label_ids[node_type]
+                        )
+            self.init_node_labels(
+                node_label_data=node_type_to_partitioned_node_labels,
+                id2idx=node_type_to_id2idx,
+            )
 
             del (
                 node_type_to_partitioned_node_labels,
