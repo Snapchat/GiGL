@@ -30,6 +30,7 @@ from gigl.utils.share_memory import share_memory
 logger = Logger()
 
 
+# TODO (mkolodner-sc): Change name of this class to be more generic since it is being used for both link prediction and node classification use cases
 class DistLinkPredictionDataset(DistDataset):
     """
     This class is inherited from GraphLearn-for-PyTorch's DistDataset class. We override the __init__ functionality to support positive and
