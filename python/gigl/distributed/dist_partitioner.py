@@ -371,44 +371,37 @@ class DistPartitioner:
 
         self._node_ids = convert_to_tensor(input_node_ids, dtype=torch.int64)
 
-        # This tuple here represents a (rank, num_nodes_on_rank) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
-        # num_nodes_on_rank is a dict[NodeType, int].
-        # Gathered_num_nodes is then used to identify the number of nodes on each rank, allowing us to access the total number of nodes across all ranks
+        # This tuple here represents a (rank, (num_nodes_on_rank, max_node_id_on_rank)) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
+        # num_nodes_on_rank and max_node_id_on_rank are ints.
+        # Gathered_num_nodes is then used to identify the number of nodes and max node id on each rank, allowing us to access the total number of nodes and max node idacross all ranks
         gathered_node_info: dict[str, Tuple[int, dict[NodeType, int]]]
         self._num_nodes = defaultdict(int)
 
-        node_type_to_num_nodes: dict[NodeType, int] = {
-            node_type: input_node_ids[node_type].size(0)
-            for node_type in sorted(input_node_ids.keys())
-        }
-
-        node_type_to_max_id = {
-            node_type: input_node_ids[node_type].max() if input_node_ids[node_type].numel() else 0
+        node_type_to_node_info: dict[NodeType, Tuple[int, int]] = {
+            node_type: (
+                input_node_ids[node_type].size(0),
+                input_node_ids[node_type].max(),
+            )
             for node_type in sorted(input_node_ids.keys())
         }
 
         max_ids = {node_type: 0 for node_type in self._node_types}
 
         # Gathering to compute the number of nodes on each rank for each node type
-        gathered_node_info = glt_rpc.all_gather((self._rank, node_type_to_num_nodes))
-
-        gathered_node_max_info = glt_rpc.all_gather((self._rank, node_type_to_max_id))
+        gathered_node_info = glt_rpc.all_gather((self._rank, node_type_to_node_info))
 
         # Looping through each of the registered node types in the graph
         for node_type in self._node_types:
             # Computing total number of nodes across all ranks of type `node_type`
             for (
                 _,
-                gathered_node_type_to_num_nodes,
+                gathered_node_type_to_node_info,
             ) in gathered_node_info.values():
-                self._num_nodes[node_type] += gathered_node_type_to_num_nodes[node_type]
-
-            for (
-                _,
-                gathered_node_type_to_max_id,
-            ) in gathered_node_max_info.values():
+                self._num_nodes[node_type] += gathered_node_type_to_node_info[
+                    node_type
+                ][0]
                 max_ids[node_type] = max(
-                    max_ids[node_type], gathered_node_type_to_max_id[node_type]
+                    max_ids[node_type], gathered_node_type_to_node_info[node_type][1]
                 )
 
         for node_type in self._node_types:
