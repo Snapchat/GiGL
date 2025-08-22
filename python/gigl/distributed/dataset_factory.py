@@ -2,8 +2,9 @@
 DatasetFactory is responsible for building and returning a DistLinkPredictionDataset class or subclass. It does this by spawning a
 process which initializes rpc + worker group, loads and builds a partitioned dataset, and shuts down the rpc + worker group.
 """
+import gc
 import time
-from collections import abc
+from collections.abc import Mapping
 from distutils.util import strtobool
 from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
 
@@ -19,7 +20,7 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import TFRecordDataLoader
+from gigl.common.data.dataloaders import SerializedTFRecordInfo, TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
@@ -40,9 +41,9 @@ from gigl.distributed.utils import (
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, FeaturePartitionData
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     NodeAnchorLinkSplitter,
@@ -50,6 +51,39 @@ from gigl.utils.data_splitters import (
 )
 
 logger = Logger()
+
+
+def _get_labels_from_features(
+    feature_and_label_tensor: torch.Tensor, label_dim: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Given a combined tensor of features and labels, returns the features and labels separately.
+    Args:
+        feature_and_label_tensor (torch.Tensor): Tensor of features and labels
+        label_dim (int): Dimension of the labels
+    Returns:
+        feature_tensor (torch.Tensor): Tensor of features
+        label_tensor (torch.Tensor): Tensor of labels
+    """
+
+    if len(feature_and_label_tensor.shape) != 2:
+        raise ValueError(
+            f"Expected tensor to be 2D for extracting labels, but got shape {feature_and_label_tensor.shape}"
+        )
+
+    _, feature_and_label_dim = feature_and_label_tensor.shape
+
+    if label_dim > feature_and_label_dim:
+        raise ValueError(
+            f"Got invalid label dim {label_dim} for extracting labels from tensor of shape {feature_and_label_tensor.shape}"
+        )
+
+    feature_dim = feature_and_label_dim - label_dim
+
+    return (
+        feature_and_label_tensor[:, :feature_dim],
+        feature_and_label_tensor[:, feature_dim:],
+    )
 
 
 @tf_on_cpu
@@ -112,7 +146,7 @@ def _load_and_build_partitioned_dataset(
                 "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
             )
         positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        if isinstance(loaded_graph_tensors.edge_index, abc.Mapping):
+        if isinstance(loaded_graph_tensors.edge_index, Mapping):
             # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
             # we can remove this assert.
             assert isinstance(
@@ -191,6 +225,56 @@ def _load_and_build_partitioned_dataset(
     del loaded_graph_tensors
 
     partition_output = partitioner.partition()
+
+    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None
+    if isinstance(partition_output.partitioned_node_features, Mapping):
+        node_labels = {}
+        for (
+            node_type,
+            node_feature,
+        ) in partition_output.partitioned_node_features.items():
+            # serialized_graph_metadata can be heterogeneous for a heterogeneous node features
+            if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
+                label_dim = len(
+                    serialized_graph_metadata.node_entity_info[node_type].label_keys
+                )
+            # serialized_graph_metadata can be homogeneous for a heterogeneous node features,
+            # since we inject positive and negative label types as edges
+            else:
+                label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
+            if label_dim > 0:
+                node_features, node_labels[node_type] = _get_labels_from_features(
+                    node_feature.feats, label_dim=label_dim
+                )
+                partition_output.partitioned_node_features[
+                    node_type
+                ] = FeaturePartitionData(feats=node_features, ids=node_feature.ids)
+                del node_feature
+                gc.collect()
+
+    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
+        # serialized graph metadata must be homogeneous if partitioned node features is homogeneous
+        if not isinstance(
+            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
+        ):
+            raise ValueError(
+                f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
+            )
+        label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
+        if label_dim > 0:
+            node_features, node_labels = _get_labels_from_features(
+                partition_output.partitioned_node_features.feats, label_dim=label_dim
+            )
+            partition_output.partitioned_node_features = FeaturePartitionData(
+                feats=node_features, ids=partition_output.partitioned_node_features.ids
+            )
+            gc.collect()
+    else:
+        raise ValueError(
+            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
+        )
+
+    # TODO (mkolodner-sc): Add node labels to the dataset
 
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
