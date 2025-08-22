@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 import torch
 from google.protobuf.json_format import ParseDict
@@ -114,26 +115,26 @@ class HeterogeneousGraphSparseEmbeddingConfig:
         structured_config = OmegaConf.merge(
             OmegaConf.structured(ModelConfig), config.model
         )
-        model_config: ModelConfig = OmegaConf.to_object(structured_config)
+        model_config: ModelConfig = cast(ModelConfig, OmegaConf.to_object(structured_config))
 
         structured_config = OmegaConf.merge(
             OmegaConf.structured(TrainConfig), config.training
         )
-        train_config: TrainConfig = OmegaConf.to_object(structured_config)
+        train_config: TrainConfig = cast(TrainConfig, OmegaConf.to_object(structured_config))
 
         structured_config = OmegaConf.merge(
             OmegaConf.structured(EvaluationPhaseConfig), config.validation
         )
-        validation_config: EvaluationPhaseConfig = OmegaConf.to_object(
+        validation_config: EvaluationPhaseConfig = cast(EvaluationPhaseConfig, OmegaConf.to_object(
             structured_config
-        )
+        ))
 
         structured_config = OmegaConf.merge(
             OmegaConf.structured(EvaluationPhaseConfig), config.testing
         )
-        testing_config: EvaluationPhaseConfig = OmegaConf.to_object(structured_config)
+        testing_config: EvaluationPhaseConfig = cast(EvaluationPhaseConfig, OmegaConf.to_object(structured_config))
 
-        config = HeterogeneousGraphSparseEmbeddingConfig(
+        final_config = HeterogeneousGraphSparseEmbeddingConfig(
             run=run_config,
             graph=graph_config,
             model=model_config,
@@ -142,7 +143,7 @@ class HeterogeneousGraphSparseEmbeddingConfig:
             testing=testing_config,
         )
 
-        return config
+        return final_config
 
     def __post_init__(self) -> None:
         """

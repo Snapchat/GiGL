@@ -122,8 +122,9 @@ class LinearOperator(RelationwiseOperatorBase):
     def __init__(self, num_edge_types: int, node_emb_dim: int):
         super().__init__(num_edge_types=num_edge_types, node_emb_dim=node_emb_dim)
         self.edge_type_projection = nn.Parameter(
-            torch.tensor(num_edge_types, node_emb_dim, node_emb_dim),
+            torch.empty(num_edge_types, node_emb_dim, node_emb_dim),
         )
+        nn.init.xavier_normal_(self.edge_type_projection)
 
     def forward(self, embeddings: torch.Tensor, condensed_edge_types: torch.Tensor):
         return (
