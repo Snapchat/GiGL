@@ -603,7 +603,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertTrue(_ITEM in dataset.node_labels)
         self.assertTrue(_USER in dataset.node_features)
 
-        # Ensure _ITEM should not be in dataset.node_features since it is provided as an empty tensor.
+        # Ensure _ITEM should not be in dataset.node_features since it does not exist.
         self.assertFalse(_ITEM in dataset.node_features)
 
         # We expect the dataset's node labels to be equal to the node labels we passed in
@@ -659,15 +659,18 @@ class DistributedDatasetTestCase(unittest.TestCase):
         )
 
         if splitter is not None:
+            # Assert that the train, val, and test node ids are present and of the correct type
             assert isinstance(dataset.train_node_ids, torch.Tensor)
             assert isinstance(dataset.val_node_ids, torch.Tensor)
             assert isinstance(dataset.test_node_ids, torch.Tensor)
+            # Assert that the train, val, and test node ids combined make up all the node ids
             self.assertEqual(
                 dataset.train_node_ids.shape[0]
                 + dataset.val_node_ids.shape[0]
                 + dataset.test_node_ids.shape[0],
                 dataset.node_ids.shape[0],
             )
+            # Assert that the train, val, and test node ids do not have any duplicates between them
             self.assertEqual(
                 len(
                     torch.cat(

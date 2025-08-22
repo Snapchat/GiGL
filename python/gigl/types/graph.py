@@ -91,7 +91,7 @@ class PartitionOutput:
     ]
 
     # Partitioned node labels, May be None if node labels are not partitioned.
-    # In practice, we expect the IDS of the partitioned node labels field to be equal to the ids of the partitioned node features field, if it exists.
+    # In practice, we require the IDS of the partitioned node labels field to be equal to the ids of the partitioned node features field, if it exists.
     # This is because the partitioned node labels should be partitioned along with the node features so that we don't need to track two separate node ID stores,
     # which saves a lot of memory.
     # TODO (mkolodner-sc): This field currently defaults to None since it is not set as output of the partitioner, but instead is added after.
