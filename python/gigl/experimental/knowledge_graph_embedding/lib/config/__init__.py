@@ -115,24 +115,30 @@ class HeterogeneousGraphSparseEmbeddingConfig:
         structured_config = OmegaConf.merge(
             OmegaConf.structured(ModelConfig), config.model
         )
-        model_config: ModelConfig = cast(ModelConfig, OmegaConf.to_object(structured_config))
+        model_config: ModelConfig = cast(
+            ModelConfig, OmegaConf.to_object(structured_config)
+        )
 
         structured_config = OmegaConf.merge(
             OmegaConf.structured(TrainConfig), config.training
         )
-        train_config: TrainConfig = cast(TrainConfig, OmegaConf.to_object(structured_config))
+        train_config: TrainConfig = cast(
+            TrainConfig, OmegaConf.to_object(structured_config)
+        )
 
         structured_config = OmegaConf.merge(
             OmegaConf.structured(EvaluationPhaseConfig), config.validation
         )
-        validation_config: EvaluationPhaseConfig = cast(EvaluationPhaseConfig, OmegaConf.to_object(
-            structured_config
-        ))
+        validation_config: EvaluationPhaseConfig = cast(
+            EvaluationPhaseConfig, OmegaConf.to_object(structured_config)
+        )
 
         structured_config = OmegaConf.merge(
             OmegaConf.structured(EvaluationPhaseConfig), config.testing
         )
-        testing_config: EvaluationPhaseConfig = cast(EvaluationPhaseConfig, OmegaConf.to_object(structured_config))
+        testing_config: EvaluationPhaseConfig = cast(
+            EvaluationPhaseConfig, OmegaConf.to_object(structured_config)
+        )
 
         final_config = HeterogeneousGraphSparseEmbeddingConfig(
             run=run_config,
