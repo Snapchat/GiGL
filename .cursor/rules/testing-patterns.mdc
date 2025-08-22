@@ -131,10 +131,10 @@ TEST_EDGES = [
 ## Test Execution & CI
 
 ### Test Organization
-- **Unit tests**: `tests/unit/` - Fast, isolated tests
-- **Integration tests**: `tests/integration/` - Component interaction tests
-- **End-to-end tests**: Test complete workflows
-- **Misc repo wide tests**: `testing`
+- **Unit tests**: Dir: `tests/unit/` - Fast, isolated tests
+- **Integration tests**: Dir: `tests/integration/` - Component interaction tests
+- **End-to-end tests**: Defined in `Makefile` target: `_run_e2e_kfp_test` - Test complete workflows
+- **Misc repo wide tests**: Dir: `testing`
 
 ### Test Execution
 Use the following commands to evaluate a test:
