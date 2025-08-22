@@ -380,7 +380,7 @@ class DistPartitioner:
         node_type_to_node_info: dict[NodeType, Tuple[int, int]] = {
             node_type: (
                 input_node_ids[node_type].size(0),
-                input_node_ids[node_type].max(),
+                int(input_node_ids[node_type].max().item()),
             )
             for node_type in sorted(input_node_ids.keys())
         }
