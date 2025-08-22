@@ -45,6 +45,7 @@ dependencies = [
     "nbconvert==7.16.6",
     "nbformat==5.10.4",
     "numpy==1.24.3",
+    "omegaconf>=2.3.0,<3.0.0",
     "pandas",
     "protobuf",
     "python-dotenv==1.0.0",
