@@ -2,11 +2,11 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import yaml
-from applied_tasks.knowledge_graph_embedding.lib.config.hydra_utils import (
-    build_hydra_dict_from_object,
-)
 from omegaconf import DictConfig, OmegaConf
 
+from gigl.experimental.knowledge_graph_embedding.lib.config.hydra_utils import (
+    build_hydra_dict_from_object,
+)
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.data_preprocessor.lib.enumerate.utils import (
     EnumeratorEdgeTypeMetadata,

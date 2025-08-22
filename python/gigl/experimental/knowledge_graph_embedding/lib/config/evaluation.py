@@ -1,10 +1,12 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from applied_tasks.knowledge_graph_embedding.lib.config.dataloader import (
+from gigl.experimental.knowledge_graph_embedding.lib.config.dataloader import (
     DataloaderConfig,
 )
-from applied_tasks.knowledge_graph_embedding.lib.config.training import SamplingConfig
+from gigl.experimental.knowledge_graph_embedding.lib.config.sampling import (
+    SamplingConfig,
+)
 
 
 @dataclass

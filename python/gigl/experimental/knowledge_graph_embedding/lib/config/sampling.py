@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from applied_tasks.knowledge_graph_embedding.lib.model.types import (
+from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
     NegativeSamplingCorruptionType,
 )
 

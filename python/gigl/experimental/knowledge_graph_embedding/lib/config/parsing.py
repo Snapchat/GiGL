@@ -3,12 +3,13 @@ import os
 import tempfile
 from typing import Literal, Tuple
 
-import applied_tasks.knowledge_graph_embedding.lib.constants.gcs as gcs_constants
-import applied_tasks.knowledge_graph_embedding.lib.constants.local as local_constants
 import hydra
 from omegaconf import DictConfig
 
+import gigl.experimental.knowledge_graph_embedding.lib.constants.gcs as gcs_constants
+import gigl.experimental.knowledge_graph_embedding.lib.constants.local as local_constants
 from gigl.common import GcsUri, LocalUri, UriFactory
+from gigl.common.types.uri.uri import Uri
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -68,6 +69,8 @@ def build_modeling_and_resource_config_from_args(
 
     # Load the hydra config.
     local_config_uri: LocalUri
+    modeling_config_uri: Uri
+
     if not args.modeling_config_uri:
         if mode == "enumerating":
             # If no modeling config URI is provided, use the fallback local config for enumeration.

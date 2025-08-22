@@ -3,22 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import torch
-from applied_tasks.knowledge_graph_embedding.lib.config.evaluation import (
-    EvaluationPhaseConfig,
-)
-from applied_tasks.knowledge_graph_embedding.lib.config.graph import (
-    EnumeratedGraphData,
-    GraphConfig,
-    RawGraphData,
-)
-from applied_tasks.knowledge_graph_embedding.lib.config.model import ModelConfig
-from applied_tasks.knowledge_graph_embedding.lib.config.run import RunConfig
-from applied_tasks.knowledge_graph_embedding.lib.config.training import TrainConfig
 from google.protobuf.json_format import ParseDict
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
 from gigl.common.logger import Logger
+from gigl.experimental.knowledge_graph_embedding.lib.config.evaluation import (
+    EvaluationPhaseConfig,
+)
+from gigl.experimental.knowledge_graph_embedding.lib.config.graph import (
+    EnumeratedGraphData,
+    GraphConfig,
+    RawGraphData,
+)
+from gigl.experimental.knowledge_graph_embedding.lib.config.model import ModelConfig
+from gigl.experimental.knowledge_graph_embedding.lib.config.run import RunConfig
+from gigl.experimental.knowledge_graph_embedding.lib.config.training import TrainConfig
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from snapchat.research.gbml import graph_schema_pb2
 
