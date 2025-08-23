@@ -999,8 +999,16 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 node_ids=torch.tensor([0, 2, 3]),
             ),
             param(
-                "Duplicate Node ID -- homogeneous",
-                node_ids=torch.tensor([0, 0, 1]),
+                "Duplicate Node ID with all node ids present-- homogeneous",
+                node_ids=torch.tensor([0, 0, 1, 2]),
+            ),
+            param(
+                "Duplicate Node ID with node ids missing -- homogeneous",
+                node_ids=torch.tensor([0, 0, 2]),
+            ),
+            param(
+                "Negative Node ID -- homogeneous",
+                node_ids=torch.tensor([-1, 0, 2]),
             ),
             param(
                 "Missing Node ID -- heterogeneous",
@@ -1010,10 +1018,24 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 },
             ),
             param(
-                "Duplicate Node ID -- heterogeneous",
+                "Duplicate Node ID with all node ids present -- heterogeneous",
                 node_ids={
                     USER_NODE_TYPE: torch.tensor([0, 1, 2]),
-                    ITEM_NODE_TYPE: torch.tensor([0, 0, 1]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 0, 1, 2]),
+                },
+            ),
+            param(
+                "Duplicate Node ID with node ids missing -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 0, 2]),
+                },
+            ),
+            param(
+                "Negative Node ID -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([-1, 0, 2]),
                 },
             ),
         ]
@@ -1035,9 +1057,21 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         partitioner = DistPartitioner(
             should_assign_edges_by_src_node=True,
         )
+        node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+
+        if isinstance(node_ids, torch.Tensor):
+            node_features = torch.ones(node_ids.shape[0], 2)
+        else:
+            node_features = {
+                node_type: torch.ones(node_ids[node_type].shape[0], 2)
+                for node_type in node_ids.keys()
+            }
 
         with self.assertRaises(ValueError):
             partitioner.register_node_ids(node_ids=node_ids)
+            partitioner.register_node_features(node_features=node_features)
+            node_pb = partitioner.partition_node()
+            partitioner.partition_node_features(node_pb)
 
 
 if __name__ == "__main__":

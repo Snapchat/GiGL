@@ -378,15 +378,15 @@ class DistPartitioner:
         gathered_node_info: dict[str, Tuple[int, dict[NodeType, Tuple[int, int]]]]
         self._num_nodes = defaultdict(int)
 
-        node_type_to_node_info: dict[NodeType, Tuple[int, int]] = {
-            node_type: (
-                input_node_ids[node_type].size(0),
-                int(input_node_ids[node_type].max().item())
-                if input_node_ids[node_type].numel() > 0
-                else 0,
-            )
-            for node_type in sorted(input_node_ids.keys())
-        }
+        node_type_to_node_info: dict[NodeType, Tuple[int, int]] = {}
+        for node_type in sorted(input_node_ids.keys()):
+            if input_node_ids[node_type].numel() > 0:
+                node_type_to_node_info[node_type] = (
+                    input_node_ids[node_type].size(0),
+                    int(input_node_ids[node_type].max().item()),
+                )
+            else:
+                node_type_to_node_info[node_type] = (0, 0)
 
         max_ids = {node_type: 0 for node_type in self._node_types}
 
@@ -408,16 +408,19 @@ class DistPartitioner:
                 )
 
         for node_type in self._node_types:
+            if self._node_ids is not None and not torch.all(
+                self._node_ids[node_type] >= 0
+            ):
+                raise ValueError(f"Found negative node ids for node type {node_type}")
             total_num_nodes = self._num_nodes[node_type]
             max_id_on_all_ranks = max_ids[node_type]
             logger.info(
                 f"Registered {total_num_nodes} nodes with max node id {max_id_on_all_ranks} for node type {node_type} across all machines"
             )
             if total_num_nodes > 0 and max_id_on_all_ranks + 1 != total_num_nodes:
-                # Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1.
-                # Thus, we require and enforce that the max id is one smaller than the total number of nodes.
                 raise ValueError(
-                    f"Found max_id_on_rank which must be exactly one smaller than total number of nodes, but got max id: {max_id_on_all_ranks} and total_num_nodes: {total_num_nodes}"
+                    f"Found max_id_on_rank which must be exactly one smaller than total number of nodes, but got max id: {max_id_on_all_ranks} and total_num_nodes: {total_num_nodes}. This is beceause \
+                    Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1. Thus, we require and enforce that the max id is one smaller than the total number of nodes."
                 )
 
     def register_edge_index(
@@ -845,6 +848,17 @@ class DistPartitioner:
             self._node_feat_dim = None
 
         partitioned_results.clear()
+
+        gc.collect()
+
+        if (
+            feature_partition_data.ids is not None
+            and feature_partition_data.ids.numel()
+            != torch.unique(feature_partition_data.ids).numel()
+        ):
+            raise ValueError(
+                f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
+            )
 
         gc.collect()
 
