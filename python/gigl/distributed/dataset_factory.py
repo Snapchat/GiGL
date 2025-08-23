@@ -20,7 +20,7 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import SerializedTFRecordInfo, TFRecordDataLoader
+from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
@@ -97,14 +97,14 @@ def _get_labels_from_features(
 # the node labels as separate fields from the node features.
 def _extract_node_labels_from_features(
     partition_output: PartitionOutput,
-    serialized_graph_metadata: SerializedGraphMetadata,
+    feature_dim: Union[int, dict[NodeType, int]],
 ) -> None:
     """
     Extract node labels from node features and set them in partition_output in-place, handling both heterogeneous and homogeneous cases.
 
     Args:
         partition_output (PartitionOutput): The partition output containing partitioned_node_features; will have partitioned_node_labels set
-        serialized_graph_metadata (SerializedGraphMetadata): Metadata containing label information
+        feature_dim (Union[int, dict[NodeType, int]]): Dimension of the node features.
     """
     node_labels: Optional[
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
@@ -116,16 +116,13 @@ def _extract_node_labels_from_features(
             node_type,
             node_feature,
         ) in partition_output.partitioned_node_features.items():
-            # serialized_graph_metadata can be heterogeneous for a heterogeneous node features
-            if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
-                feature_dim = serialized_graph_metadata.node_entity_info[
-                    node_type
-                ].feature_dim
-            # serialized_graph_metadata can be homogeneous for a heterogeneous node features,
-            # since we inject positive and negative label types as edges
+            # feature_dim can be heterogeneous for a heterogeneous node features
+            if isinstance(feature_dim, Mapping):
+                feature_dim_for_current_node_type = feature_dim[node_type]
+            # feature_dim can be homogeneous for a heterogeneous node features, since we inject positive and negative label types as edges
             else:
-                feature_dim = serialized_graph_metadata.node_entity_info.feature_dim
-            label_dim = node_feature.feats.shape[1] - feature_dim
+                feature_dim_for_current_node_type = feature_dim
+            label_dim = node_feature.feats.shape[1] - feature_dim_for_current_node_type
             if label_dim > 0:
                 (
                     node_features_per_node_type,
@@ -149,14 +146,11 @@ def _extract_node_labels_from_features(
             node_labels = None
 
     elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
-        # serialized graph metadata must be homogeneous if partitioned node features is homogeneous
-        if not isinstance(
-            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
-        ):
+        # feature_dim must be homogeneous if partitioned node features is homogeneous
+        if not isinstance(feature_dim, int):
             raise ValueError(
-                f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
+                f"Expected feature dim to be homogeneous for heterogeneous features, got {type(feature_dim)}"
             )
-        feature_dim = serialized_graph_metadata.node_entity_info.feature_dim
         label_dim = (
             partition_output.partitioned_node_features.feats.shape[1] - feature_dim
         )
@@ -333,7 +327,12 @@ def _load_and_build_partitioned_dataset(
 
     _extract_node_labels_from_features(
         partition_output=partition_output,
-        serialized_graph_metadata=serialized_graph_metadata,
+        feature_dim={
+            node_type: node_metadata.feature_dim
+            for node_type, node_metadata in serialized_graph_metadata.node_entity_info.items()
+        }
+        if isinstance(serialized_graph_metadata.node_entity_info, Mapping)
+        else serialized_graph_metadata.node_entity_info.feature_dim,
     )
 
     logger.info(
