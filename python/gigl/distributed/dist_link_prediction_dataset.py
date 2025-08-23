@@ -462,7 +462,7 @@ class DistributedDataset(DistDataset):
         elif isinstance(splitter, NodeSplitter):
             split_start = time.time()
             logger.info("Starting splitting nodes...")
-            # Every node is requires to have a label, so we split among all ids on the current machine.
+            # Every node is required to have a label, so we split among all ids on the current machine.
             node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
                 {
                     node_type: get_ids_on_rank(partition_book, rank=self._rank)
