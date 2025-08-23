@@ -11,6 +11,7 @@ from typing import (
     Tuple,
     Union,
     overload,
+    runtime_checkable,
 )
 
 import torch
@@ -31,7 +32,11 @@ logger = Logger()
 
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
 
+# We need to make the protocols for the node splitter and node anchor linked spliter runtime checkable so that
+# we can make isinstance() checks on them at runtime.
 
+
+@runtime_checkable
 class NodeAnchorLinkSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on edges.
 
@@ -71,6 +76,7 @@ class NodeAnchorLinkSplitter(Protocol):
         ...
 
 
+@runtime_checkable
 class NodeSplitter(Protocol):
     """Protocol that should be satisfied for anything that is used to split on nodes directly.
 

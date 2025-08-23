@@ -1,4 +1,4 @@
-from typing import MutableMapping, Optional, Type
+from typing import MutableMapping, Optional, Type, Union
 
 import torch.distributed as dist
 
@@ -16,7 +16,7 @@ from gigl.src.mocking.lib.versioning import (
     MockedDatasetArtifactMetadata,
     get_mocked_dataset_artifact_metadata,
 )
-from gigl.utils.data_splitters import NodeAnchorLinkSplitter
+from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeSplitter
 
 
 def convert_mocked_dataset_info_to_serialized_graph_metadata(
@@ -51,7 +51,7 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool,
     output_dict: Optional[MutableMapping[int, DistLinkPredictionDataset]] = None,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
-    splitter: Optional[NodeAnchorLinkSplitter] = None,
+    splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
 ) -> DistLinkPredictionDataset:
@@ -65,7 +65,7 @@ def run_distributed_dataset(
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         output_dict (Optional[MutableMapping[int, DistLinkPredictionDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
-        splitter (Optional[NodeAnchorLinkSplitter]): Provided splitter for testing
+        splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
     """
     try:
         distributed_context: Optional[DistributedContext] = None

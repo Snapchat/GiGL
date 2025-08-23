@@ -17,6 +17,7 @@ from gigl.src.mocking.lib.versioning import (
 )
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
@@ -73,6 +74,10 @@ class TranslatorTestCase(unittest.TestCase):
             param(
                 "Test Dataset Metadata Translator with homogeneous CORA UDL NABLP dataset",
                 mocked_dataset_info=CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            ),
+            param(
+                "Test Dataset Metadata Translator with homogeneous CORA node classification dataset",
+                mocked_dataset_info=CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
             ),
             param(
                 "Test Dataset Metadata Translator with heterogeneous DBLP dataset",
@@ -162,6 +167,17 @@ class TranslatorTestCase(unittest.TestCase):
             self.assertEqual(
                 seralized_node_info.feature_spec,
                 target_node_feature_spec,
+            )
+
+            # Validate label_keys field for node labels
+            expected_label_keys = list(
+                preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
+                    condensed_node_type
+                ].label_keys
+            )
+            self.assertEqual(
+                list(seralized_node_info.label_keys),
+                expected_label_keys,
             )
 
         ## Edge Entity Info Correctness
