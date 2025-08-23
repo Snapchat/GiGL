@@ -237,6 +237,21 @@ class DistributedDataset(DistDataset):
 
     @property
     def node_ids(self) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
+        """
+        Node ids local to the current machine.
+
+        May be None if the dataset is not built.
+        Will be a torch.Tensor if the dataset is homogeneous,
+        or a dict[NodeType, torch.Tensor] if the dataset is heterogeneous.
+
+        Note: If the dataset has been split, then the form of this tensor will be:
+            [train_node_ids, val_node_ids, test_node_ids, remaining_node_ids]
+        e.g. if we have 10 nodes, and we split them into
+        train = [0, 1, 2, 3], val = [3, 4], test = [5, 6, 7], then the node_ids will be:
+            [0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9]
+        Note that we *de-dupe* the nodes which are in splits (after all the splits there is just [8, 9])
+        but we *don't* de-dupe per split, e.g. we have [3, 3] in the node_ids tensor.
+        """
         return self._node_ids
 
     @property
@@ -862,13 +877,61 @@ def _append_non_split_node_ids(
     if test_node_ids.numel():
         node_ids_to_get_max.append(test_node_ids)
     max_node_id = int(max(n.max().item() for n in node_ids_to_get_max)) + 1
-    split_counts = torch.bincount(train_node_ids, minlength=max_node_id)
-    split_counts.add_(torch.bincount(val_node_ids, minlength=max_node_id))
-    split_counts.add_(torch.bincount(test_node_ids, minlength=max_node_id))
+
+    def clamped_bin_count(
+        tensor: torch.Tensor, max_node_id: int, dtype=torch.uint8
+    ) -> torch.Tensor:
+        """
+        Counts the number of occurrences of each value in the input tensor.
+
+        We clamp the counts to avoid overflow to 0,
+        Without clamp, and if we have 255 nodes in a split,
+        we will asume we have no nodes in that bucket, which is incorrect.
+
+        Args:
+            tensor: The input tensor to count the occurrences of each value.
+            max_node_id: The maximum value in the input tensor.
+            dtype: The data type of the output tensor.
+
+        Returns:
+            A tensor of the same shape as the input tensor, where each element is the number of occurrences of the corresponding value in the input tensor.
+        """
+        return (
+            torch.bincount(tensor, minlength=max_node_id)
+            .clamp(max=torch.iinfo(dtype).max)
+            .to(dtype)
+        )
+
+    def add_clamped_counts(
+        counts: torch.Tensor, to_add: torch.Tensor, max_node_id: int
+    ) -> torch.Tensor:
+        """
+        Adds the counts of the input tensor to the counts tensor.
+        We clamp the counts to avoid overflow to 0,
+        Without clamp, and if we have 255 nodes in a split,
+        we will asume we have no nodes in that bucket, which is incorrect.
+
+        Args:
+            counts: The tensor to add the counts to.
+            to_add: The tensor to add the counts from.
+            max_node_id: The maximum value in the input tensor.
+
+        Returns:
+            A tensor of the same shape as the input tensor, where each element is the number of occurrences of the corresponding value in the input tensor.
+        """
+        counts.add_(clamped_bin_count(to_add, max_node_id)).clamp(max=255)
+        return counts
+
+    split_counts = clamped_bin_count(train_node_ids, max_node_id)
+    add_clamped_counts(split_counts, val_node_ids, max_node_id)
+    add_clamped_counts(split_counts, test_node_ids, max_node_id)
+
     # Count all instances of node ids, then subtract the counts of the node ids in the split from the ones in the machines.
     # Since splits are not guaranteed to be unique, we check where the count is greater than zero.
     node_id_indices_not_in_split = (
-        torch.bincount(node_ids_on_machine, minlength=max_node_id).sub_(split_counts)
+        clamped_bin_count(node_ids_on_machine, max_node_id, dtype=torch.int32).sub_(
+            split_counts
+        )
         > 0
     )
     # Then convert the indices to the original node ids

@@ -4,9 +4,11 @@ from typing import Optional, Type, TypeVar
 import yaml
 from google.protobuf import message
 from google.protobuf.json_format import MessageToDict, ParseDict
+from omegaconf import OmegaConf
 
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
+from gigl.common.omegaconf_resolvers import register_resolvers
 from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
@@ -17,12 +19,15 @@ T = TypeVar("T", bound=message.Message)
 class ProtoUtils:
     def __init__(self, project: Optional[str] = None) -> None:
         self.__file_loader = FileLoader(project=project)
+        register_resolvers()
 
     def read_proto_from_yaml(self, uri: Uri, proto_cls: Type[T]) -> T:
         tfh = self.__file_loader.load_to_temp_file(file_uri_src=uri, delete=False)
         with open(tfh.name, "r") as file:
-            obj_dict = yaml.load(file, Loader=yaml.FullLoader)
+            raw_data = yaml.safe_load(file)
+            omega_conf_obj = OmegaConf.create(raw_data)
         tfh.close()
+        obj_dict = OmegaConf.to_object(omega_conf_obj)
         proto = ParseDict(js_dict=obj_dict, message=proto_cls())
         return proto
 
