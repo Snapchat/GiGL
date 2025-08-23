@@ -378,33 +378,36 @@ class DistPartitioner:
         gathered_node_info: dict[str, Tuple[int, dict[NodeType, Tuple[int, int]]]]
         self._num_nodes = defaultdict(int)
 
-        node_type_to_node_info: dict[NodeType, Tuple[int, int]] = {}
+        node_type_to_num_nodes_and_max_node: dict[NodeType, Tuple[int, int]] = {}
         for node_type in sorted(input_node_ids.keys()):
             if input_node_ids[node_type].numel() > 0:
-                node_type_to_node_info[node_type] = (
+                node_type_to_num_nodes_and_max_node[node_type] = (
                     input_node_ids[node_type].size(0),
                     int(input_node_ids[node_type].max().item()),
                 )
             else:
-                node_type_to_node_info[node_type] = (0, 0)
+                node_type_to_num_nodes_and_max_node[node_type] = (0, 0)
 
         max_ids = {node_type: 0 for node_type in self._node_types}
 
         # Gathering to compute the number of nodes on each rank for each node type
-        gathered_node_info = glt_rpc.all_gather((self._rank, node_type_to_node_info))
+        gathered_node_info = glt_rpc.all_gather(
+            (self._rank, node_type_to_num_nodes_and_max_node)
+        )
 
         # Looping through each of the registered node types in the graph
         for node_type in self._node_types:
             # Computing total number of nodes across all ranks of type `node_type`
             for (
                 _,
-                gathered_node_type_to_node_info,
+                gathered_node_type_to_num_nodes_and_max_node,
             ) in gathered_node_info.values():
-                self._num_nodes[node_type] += gathered_node_type_to_node_info[
+                self._num_nodes[
                     node_type
-                ][0]
+                ] += gathered_node_type_to_num_nodes_and_max_node[node_type][0]
                 max_ids[node_type] = max(
-                    max_ids[node_type], gathered_node_type_to_node_info[node_type][1]
+                    max_ids[node_type],
+                    gathered_node_type_to_num_nodes_and_max_node[node_type][1],
                 )
 
         for node_type in self._node_types:
