@@ -144,6 +144,8 @@ def _extract_node_labels_from_features(
 
                 del node_feature
                 gc.collect()
+        if not node_labels:
+            node_labels = None
 
     elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
         # serialized graph metadata must be homogeneous if partitioned node features is homogeneous
