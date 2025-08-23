@@ -114,7 +114,7 @@ class GLTTrainer:
             accelerator_count=trainer_resource_config.gpu_limit,
             replica_count=trainer_resource_config.num_replicas,
             labels=resource_config.get_resource_labels(
-                component=GiGLComponents.Inferencer
+                component=GiGLComponents.Trainer
             ),
             timeout_s=trainer_resource_config.timeout
             if trainer_resource_config.timeout
