@@ -30,8 +30,7 @@ from gigl.utils.share_memory import share_memory
 logger = Logger()
 
 
-# TODO (mkolodner-sc): Change name of this class to be more generic since it is being used for both link prediction and node classification use cases
-class DistLinkPredictionDataset(DistDataset):
+class DistributedDataset(DistDataset):
     """
     This class is inherited from GraphLearn-for-PyTorch's DistDataset class. We override the __init__ functionality to support positive and
     negative edges and labels. We also override the share_ipc function to correctly serialize these new fields. We additionally introduce
@@ -76,12 +75,12 @@ class DistLinkPredictionDataset(DistDataset):
         ] = None,
     ) -> None:
         """
-        Initializes the fields of the DistLinkPredictionDataset class. This function is called upon each serialization of the DistLinkPredictionDataset instance.
+        Initializes the fields of the DistributedDataset class. This function is called upon each serialization of the DistributedDataset instance.
         Args:
             rank (int): Rank of the current process
             world_size (int): World size of the current process
             edge_dir (Literal["in", "out"]): Edge direction of the provied graph
-        The below arguments are only expected to be provided when re-serializing an instance of the DistLinkPredictionDataset class after build() has been called
+        The below arguments are only expected to be provided when re-serializing an instance of the DistributedDataset class after build() has been called
             graph_partition (Optional[Union[Graph, dict[EdgeType, Graph]]]): Partitioned Graph Data
             node_feature_partition (Optional[Union[Feature, dict[NodeType, Feature]]]): Partitioned Node Feature Data
             edge_feature_partition (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Partitioned Edge Feature Data
@@ -388,7 +387,7 @@ class DistLinkPredictionDataset(DistDataset):
         We do this to decrease the peak memory usage during the build process by removing these intermediate assets.
 
         Args:
-            partition_output (PartitionOutput): Partitioned Graph to be stored in the DistLinkPredictionDataset class
+            partition_output (PartitionOutput): Partitioned Graph to be stored in the DistributedDataset class
             splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): A function that takes in an edge index or node and returns:
                                                             * a tuple of train, val, and test node ids, if heterogeneous
                                                             * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
@@ -789,7 +788,7 @@ class DistLinkPredictionDataset(DistDataset):
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
     ]:
         """
-        Serializes the member variables of the DistLinkPredictionDatasetClass
+        Serializes the member variables of the DistributedDatasetClass
         Returns:
             int: Rank on current machine
             int: World size across all machines
@@ -826,14 +825,14 @@ class DistLinkPredictionDataset(DistDataset):
             self._node_labels,
             self._node_partition_book,
             self._edge_partition_book,
-            self._positive_edge_label,  # Additional field unique to DistLinkPredictionDataset class
-            self._negative_edge_label,  # Additional field unique to DistLinkPredictionDataset class
-            self._node_ids,  # Additional field unique to DistLinkPredictionDataset class
-            self._num_train,  # Additional field unique to DistLinkPredictionDataset class
-            self._num_val,  # Additional field unique to DistLinkPredictionDataset class
-            self._num_test,  # Additional field unique to DistLinkPredictionDataset class
-            self._node_feature_info,  # Additional field unique to DistLinkPredictionDataset class
-            self._edge_feature_info,  # Additional field unique to DistLinkPredictionDataset class
+            self._positive_edge_label,  # Additional field unique to DistributedDataset class
+            self._negative_edge_label,  # Additional field unique to DistributedDataset class
+            self._node_ids,  # Additional field unique to DistributedDataset class
+            self._num_train,  # Additional field unique to DistributedDataset class
+            self._num_val,  # Additional field unique to DistributedDataset class
+            self._num_test,  # Additional field unique to DistributedDataset class
+            self._node_feature_info,  # Additional field unique to DistributedDataset class
+            self._edge_feature_info,  # Additional field unique to DistributedDataset class
         )
         return ipc_handle
 
@@ -893,7 +892,7 @@ def _append_non_split_node_ids(
 # and cpu-only sampling, we override the `share_ipc` function to handle our custom member variables.
 
 
-def _rebuild_dist_link_prediction_dataset(
+def _rebuild_distributed_dataset(
     ipc_handle: Tuple[
         int,  # Rank on current machine
         int,  # World size across machines
@@ -930,13 +929,25 @@ def _rebuild_dist_link_prediction_dataset(
         ],  # Edge feature dim and its data type
     ]
 ):
-    dataset = DistLinkPredictionDataset.from_ipc_handle(ipc_handle)
+    dataset = DistributedDataset.from_ipc_handle(ipc_handle)
     return dataset
 
 
-def _reduce_dist_link_prediction_dataset(dataset: DistLinkPredictionDataset):
+def _reduce_distributed_dataset(dataset: DistributedDataset):
     ipc_handle = dataset.share_ipc()
-    return (_rebuild_dist_link_prediction_dataset, (ipc_handle,))
+    return (_rebuild_distributed_dataset, (ipc_handle,))
 
 
-ForkingPickler.register(DistLinkPredictionDataset, _reduce_dist_link_prediction_dataset)
+ForkingPickler.register(DistributedDataset, _reduce_distributed_dataset)
+
+
+# TODO (mkolodner-sc): Deprecate this class in favor of DistributedDataset
+class DistLinkPredictionDataset(DistributedDataset):
+    def __init__(self, *args, **kwargs):
+        logger.warning(
+            "DistLinkPredictionDataset is deprecated. Please use DistributedDataset instead."
+        )
+        super().__init__(*args, **kwargs)
+
+
+ForkingPickler.register(DistLinkPredictionDataset, _reduce_distributed_dataset)
