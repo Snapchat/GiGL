@@ -118,14 +118,19 @@ def _extract_node_labels_from_features(
         ) in partition_output.partitioned_node_features.items():
             # serialized_graph_metadata can be heterogeneous for a heterogeneous node features
             if isinstance(serialized_graph_metadata.node_entity_info, Mapping):
-                label_dim = len(
-                    serialized_graph_metadata.node_entity_info[node_type].label_keys
-                )
+                feature_dim = serialized_graph_metadata.node_entity_info[
+                    node_type
+                ].feature_dim
             # serialized_graph_metadata can be homogeneous for a heterogeneous node features,
             # since we inject positive and negative label types as edges
             else:
-                label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
-            if label_dim > 0:
+                feature_dim = serialized_graph_metadata.node_entity_info.feature_dim
+            label_dim = node_feature.feats.shape[1] - feature_dim
+            if label_dim < 0:
+                raise ValueError(
+                    f"Found specified feature dim {feature_dim} larger than node feature dim {node_feature.feats.shape[1]}"
+                )
+            elif label_dim > 0:
                 (
                     node_features_per_node_type,
                     node_label_per_node_type,
@@ -155,8 +160,15 @@ def _extract_node_labels_from_features(
             raise ValueError(
                 f"Expected partitioned node features to be type SerializedTFRecordInfo, got {type(partition_output.partitioned_node_features)}"
             )
-        label_dim = len(serialized_graph_metadata.node_entity_info.label_keys)
-        if label_dim > 0:
+        feature_dim = serialized_graph_metadata.node_entity_info.feature_dim
+        label_dim = (
+            partition_output.partitioned_node_features.feats.shape[1] - feature_dim
+        )
+        if label_dim < 0:
+            raise ValueError(
+                f"Found specified feature dim {feature_dim} larger than node feature dim {partition_output.partitioned_node_features.feats.shape[1]}"
+            )
+        elif label_dim > 0:
             node_features, node_label = _get_labels_from_features(
                 partition_output.partitioned_node_features.feats, label_dim=label_dim
             )
