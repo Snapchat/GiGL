@@ -118,14 +118,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 expected_node_id_type=dict,
                 expected_node_feature_info={
                     NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
-                    NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
+                    NodeType("item"): FeatureInfo(dim=2, dtype=torch.float32),
                 },
                 expected_edge_feature_info={
                     EdgeType(
-                        NodeType("user"), Relation("to"), NodeType("story")
+                        NodeType("user"), Relation("to"), NodeType("item")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                     EdgeType(
-                        NodeType("story"), Relation("to"), NodeType("user")
+                        NodeType("item"), Relation("to"), NodeType("user")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                 },
             ),
@@ -136,14 +136,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 expected_node_id_type=dict,
                 expected_node_feature_info={
                     NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
-                    NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
+                    NodeType("item"): FeatureInfo(dim=2, dtype=torch.float32),
                 },
                 expected_edge_feature_info={
                     EdgeType(
-                        NodeType("user"), Relation("to"), NodeType("story")
+                        NodeType("user"), Relation("to"), NodeType("item")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                     EdgeType(
-                        NodeType("story"), Relation("to"), NodeType("user")
+                        NodeType("item"), Relation("to"), NodeType("user")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                 },
             ),

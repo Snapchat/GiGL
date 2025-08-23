@@ -489,6 +489,11 @@ class DistributedDataset(DistDataset):
                 id2idx=node_id2idx,
                 with_gpu=False,
             )
+            self._node_feature_info = FeatureInfo(
+                dim=partitioned_node_features.size(1),
+                dtype=partitioned_node_features.dtype,
+            )
+            del partitioned_node_features, partitioned_node_feature_ids, node_id2idx
         elif isinstance(partition_output.partitioned_node_features, Mapping):
             assert isinstance(partition_output.node_partition_book, Mapping)
 
