@@ -1,0 +1,9 @@
+dataloader:
+  num_workers: 1
+step_frequency: 100
+num_batches: 10
+sampling:
+  positive_edge_batch_size: 256
+  num_random_negatives_per_edge: 100
+  num_inbatch_negatives_per_edge: 0
+  negative_corruption_side: DST

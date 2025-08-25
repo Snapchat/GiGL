@@ -1,0 +1,29 @@
+# @package _global_
+
+defaults:
+  - override /dataset: cora/cora
+
+model:
+  node_embedding_dim: 128
+
+training:
+  max_steps: 10000
+  checkpointing:
+    save_every: 500
+  sampling:
+    num_random_negatives_per_edge: 0
+    num_inbatch_negatives_per_edge: 16
+  early_stopping:
+    patience: 10
+  optimizer:
+    sparse:
+      lr: 0.01
+      weight_decay: 0.01
+    dense:
+      lr: 0.01
+      weight_decay: 0.001
+
+validation:
+  sampling:
+    num_random_negatives_per_edge: 0
+    num_inbatch_negatives_per_edge: 100

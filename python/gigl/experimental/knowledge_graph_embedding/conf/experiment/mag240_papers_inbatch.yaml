@@ -1,0 +1,52 @@
+# @package _global_
+
+defaults:
+  - override /dataset: mag240_papers
+
+model:
+  node_embedding_dim: 128
+  embedding_similarity_type: COSINE
+  src_operator: IDENTITY
+  dst_operator: IDENTITY
+
+training:
+  max_steps: 50000
+  early_stopping:
+    patience: 3
+  dataloader:
+    num_workers: 16
+  sampling:
+    positive_edge_batch_size: 8192
+    num_inbatch_negatives_per_edge: 1024
+    num_random_negatives_per_edge: 0
+    negative_corruption_side: DST
+  optimizer:
+    sparse:
+      lr: 0.1
+      weight_decay: 0.001
+    dense:
+      lr: 0.001
+      weight_decay: 0.001
+  distributed:
+    num_processes_per_machine: 4
+    storage_reservation_percentage: 0.10
+  checkpointing:
+    save_every: 750
+    should_save_async: true
+  logging:
+    log_every: 1
+
+validation:
+  num_batches: 10
+  step_frequency: 250
+  dataloader:
+    num_workers: 3
+  sampling:
+    positive_edge_batch_size: 8192
+    num_inbatch_negatives_per_edge: 1024
+    num_random_negatives_per_edge: 0
+    negative_corruption_side: DST
+  hit_rates_at_k:
+    - 1
+    - 10
+    - 100

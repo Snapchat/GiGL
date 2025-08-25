@@ -1,0 +1,12 @@
+defaults:
+  - dataset: cora
+  - run: default
+  - model: default
+  - training: default
+  - validation: default
+  - testing: default
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
