@@ -1007,6 +1007,10 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 node_ids=torch.tensor([-1, 0, 2]),
             ),
             param(
+                "Duplicate Node ID with node ids missing -- homogeneous",
+                node_ids=torch.tensor([0, 0, 2]),
+            ),
+            param(
                 "Missing Node ID -- heterogeneous",
                 node_ids={
                     USER_NODE_TYPE: torch.tensor([0, 1, 2]),
@@ -1018,6 +1022,13 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 node_ids={
                     USER_NODE_TYPE: torch.tensor([0, 1, 2]),
                     ITEM_NODE_TYPE: torch.tensor([0, 0, 1, 2]),
+                },
+            ),
+            param(
+                "Duplicate Node ID with node ids missing -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 0, 2]),
                 },
             ),
             param(
@@ -1047,42 +1058,6 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             should_assign_edges_by_src_node=True,
         )
 
-        with self.assertRaises(ValueError):
-            partitioner.register_node_ids(node_ids=node_ids)
-
-    @parameterized.expand(
-        [
-            param(
-                "Duplicate Node ID with node ids missing -- homogeneous",
-                node_ids=torch.tensor([0, 0, 2]),
-            ),
-            param(
-                "Duplicate Node ID with node ids missing -- heterogeneous",
-                node_ids={
-                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
-                    ITEM_NODE_TYPE: torch.tensor([0, 0, 2]),
-                },
-            ),
-        ],
-    )
-    def test_partitioning_with_duplicate_missing_node_ids(
-        self, _, node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    ) -> None:
-        # We include this test separately since this specific failure condition can only occur after the node features have been partitioned.
-        # This is so that we minimize the memory overhead of this check, which is easier to do when any duplicate node ids are guaranteed to be present
-        # on the same machine.
-        master_port = glt.utils.get_free_port(self._master_ip_address)
-
-        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
-        init_rpc(
-            master_addr=self._master_ip_address,
-            master_port=master_port,
-            num_rpc_threads=4,
-        )
-
-        partitioner = DistPartitioner(
-            should_assign_edges_by_src_node=True,
-        )
         node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
 
         if isinstance(node_ids, torch.Tensor):
@@ -1093,10 +1068,11 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 for node_type in node_ids.keys()
             }
 
+        partitioner.register_node_ids(node_ids=node_ids)
+        partitioner.register_node_features(node_features=node_features)
+        node_pb = partitioner.partition_node()
+
         with self.assertRaises(ValueError):
-            partitioner.register_node_ids(node_ids=node_ids)
-            partitioner.register_node_features(node_features=node_features)
-            node_pb = partitioner.partition_node()
             partitioner.partition_node_features(node_pb)
 
 

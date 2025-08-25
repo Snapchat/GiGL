@@ -189,6 +189,7 @@ class DistPartitioner:
         self._num_edges: Optional[dict[EdgeType, int]] = None
 
         self._node_ids: Optional[dict[NodeType, torch.Tensor]] = None
+        self._max_node_ids: Optional[dict[NodeType, int]] = None
         self._node_feat: Optional[dict[NodeType, torch.Tensor]] = None
         self._node_feat_dim: Optional[dict[NodeType, int]] = None
 
@@ -374,9 +375,10 @@ class DistPartitioner:
         self._node_ids = convert_to_tensor(input_node_ids, dtype=torch.int64)
 
         self._num_nodes = defaultdict(int)
+        self._max_node_ids = defaultdict(int)
 
         node_type_to_num_nodes_and_max_node: dict[NodeType, Tuple[int, int]] = {}
-        for node_type in sorted(input_node_ids.keys()):
+        for node_type in self._node_types:
             if input_node_ids[node_type].numel() > 0:
                 node_type_to_num_nodes_and_max_node[node_type] = (
                     input_node_ids[node_type].size(0),
@@ -384,8 +386,6 @@ class DistPartitioner:
                 )
             else:
                 node_type_to_num_nodes_and_max_node[node_type] = (0, 0)
-
-        max_ids = {node_type: 0 for node_type in self._node_types}
 
         # This tuple here represents a (rank, (num_nodes_on_rank, max_node_id_on_rank)) pair on a given partition,
         # specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
@@ -406,25 +406,9 @@ class DistPartitioner:
                 self._num_nodes[
                     node_type
                 ] += gathered_node_type_to_num_nodes_and_max_node[node_type][0]
-                max_ids[node_type] = max(
-                    max_ids[node_type],
+                self._max_node_ids[node_type] = max(
+                    self._max_node_ids[node_type],
                     gathered_node_type_to_num_nodes_and_max_node[node_type][1],
-                )
-
-        for node_type in self._node_types:
-            if self._node_ids is not None and not torch.all(
-                self._node_ids[node_type] >= 0
-            ):
-                raise ValueError(f"Found negative node ids for node type {node_type}")
-            total_num_nodes = self._num_nodes[node_type]
-            max_id_on_all_ranks = max_ids[node_type]
-            logger.info(
-                f"Registered {total_num_nodes} nodes with max node id {max_id_on_all_ranks} for node type {node_type} across all machines"
-            )
-            if total_num_nodes > 0 and max_id_on_all_ranks + 1 != total_num_nodes:
-                raise ValueError(
-                    f"Found max_id_on_rank which must be exactly one smaller than total number of nodes, but got max id: {max_id_on_all_ranks} and total_num_nodes: {total_num_nodes}. This is beceause \
-                    Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1. Thus, we require and enforce that the max id is one smaller than the total number of nodes."
                 )
 
     def register_edge_index(
@@ -500,8 +484,8 @@ class DistPartitioner:
         """
         Registers the node features to the partitioner.
 
-        This function assumes that each node feature corresponds to the same local index as the local index of the node ids provided in register_node_ids,
-        which is why the node ids must be contiguous and unique from 0 to total_num_nodes - 1 for each provided node type across all machines.
+        This function assumes that node feature at index N on the current machine corresponds to the node id at index N
+        on the current machine, which should be registered through `register_node_ids`.
 
         For optimal memory management, it is recommended that the reference to node_features tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
@@ -801,6 +785,7 @@ class DistPartitioner:
             and self._num_nodes is not None
             and self._node_ids is not None
             and self._node_feat_dim is not None
+            and self._max_node_ids is not None
         ), "Node features and ids must be registered prior to partitioning."
 
         target_node_partition_book = node_partition_book[node_type]
@@ -808,6 +793,16 @@ class DistPartitioner:
         node_ids = self._node_ids[node_type]
         num_nodes = self._num_nodes[node_type]
         node_feat_dim = self._node_feat_dim[node_type]
+        max_node_ids = self._max_node_ids[node_type]
+
+        if not torch.all(node_ids >= 0):
+            raise ValueError(f"Found negative node ids for node type {node_type}")
+
+        if num_nodes > 0 and max_node_ids + 1 != num_nodes:
+            raise ValueError(
+                f"Found max_id_on_rank which must be exactly one smaller than total number of nodes, but got max id: {max_node_ids} and total_num_nodes: {num_nodes} for node type {node_type}. This is beceause \
+                Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1. Thus, we require and enforce that the max id is one smaller than the total number of nodes."
+            )
 
         def _node_feature_partition_fn(node_feature_ids, _):
             return target_node_partition_book[node_feature_ids]
@@ -824,18 +819,20 @@ class DistPartitioner:
 
         # Since node features are large, we would like to delete them whenever
         # they are not used to free memory.
-        del node_features, node_ids, num_nodes
+        del node_features, node_ids, num_nodes, max_node_ids
 
         del (
             self._node_feat[node_type],
             self._node_ids[node_type],
             self._num_nodes[node_type],
+            self._max_node_ids[node_type],
         )
 
         if len(self._node_feat) == 0:
             self._node_feat = None
             self._node_ids = None
             self._num_nodes = None
+            self._max_node_ids = None
 
         gc.collect()
 
