@@ -2,7 +2,6 @@
 DatasetFactory is responsible for building and returning a DistLinkPredictionDataset class or subclass. It does this by spawning a
 process which initializes rpc + worker group, loads and builds a partitioned dataset, and shuts down the rpc + worker group.
 """
-import gc
 import time
 from collections.abc import Mapping
 from distutils.util import strtobool
@@ -44,11 +43,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    FeaturePartitionData,
-    PartitionOutput,
-)
+from gigl.types.graph import FeaturePartitionData, PartitionOutput
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     HashedNodeSplitter,
@@ -110,6 +105,8 @@ def _extract_node_labels_from_features(
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ] = None
 
+    label_dim: int
+
     if isinstance(partition_output.partitioned_node_features, Mapping):
         node_labels = {}
         for (
@@ -131,6 +128,8 @@ def _extract_node_labels_from_features(
                 node_labels[node_type] = FeaturePartitionData(
                     feats=node_label_per_node_type, ids=node_feature.ids
                 )
+                # After extracting labels from the combined feature + label tensor, are there any actual features left?
+                # If not, we delete the node type from the partitioned node features.
                 if node_features_per_node_type.numel():
                     partition_output.partitioned_node_features[
                         node_type
@@ -141,9 +140,14 @@ def _extract_node_labels_from_features(
                     del partition_output.partitioned_node_features[node_type]
 
                 del node_feature
-                gc.collect()
+
+        # If there are no node labels across all node types, we set the partitioned node labels to None
         if not node_labels:
             node_labels = None
+
+        # If there are no node features across all node types after removing labels, we set the partitioned node features to None
+        if not partition_output.partitioned_node_features:
+            partition_output.partitioned_node_features = None
 
     elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
         # feature_dim must be homogeneous if partitioned node features is homogeneous
@@ -161,6 +165,8 @@ def _extract_node_labels_from_features(
             node_labels = FeaturePartitionData(
                 feats=node_label, ids=partition_output.partitioned_node_features.ids
             )
+            # After extracting labels from the combined feature + label tensor, are there any actual features left?
+            # If not, we delete the set the partitioned node features to None
             if node_features.numel():
                 partition_output.partitioned_node_features = FeaturePartitionData(
                     feats=node_features,
@@ -169,7 +175,6 @@ def _extract_node_labels_from_features(
             else:
                 partition_output.partitioned_node_features = None
 
-            gc.collect()
     else:
         raise ValueError(
             f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
@@ -244,7 +249,7 @@ def _load_and_build_partitioned_dataset(
             # we can remove this assert.
             assert isinstance(
                 splitter, HashedNodeAnchorLinkSplitter
-            ), f"GiGL only supports {HashedNodeAnchorLinkSplitter.__name__} currently, got {type(splitter)}"
+            ), f"Only {HashedNodeAnchorLinkSplitter.__name__} supports self-supervised positive label selection, got {type(splitter)}"
             positive_label_edges = {}
             for supervision_edge_type in splitter._supervision_edge_types:
                 positive_label_edges[
@@ -423,9 +428,7 @@ def _build_dataset_process(
     )
     # HashedNodeAnchorLinkSplitter and HashedNodeSplitter require rpc to be initialized, so we initialize it here.
     should_teardown_process_group = False
-    if isinstance(splitter, HashedNodeAnchorLinkSplitter) or isinstance(
-        splitter, HashedNodeSplitter
-    ):
+    if splitter is not None and splitter.is_distributed:
         should_teardown_process_group = True
         torch.distributed.init_process_group(
             backend="gloo",
@@ -681,7 +684,7 @@ def build_dataset_from_task_config_uri(
             supervision_edge_types = (
                 task_metadata_pb_wrapper.get_supervision_edge_types()
                 if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
-                else [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+                else None  # Pass in None, which uses the default homogeneous edge type for the splitter
             )
             # TODO(kmonte): Maybe we should enable `should_convert_labels_to_edges` as a flag?
             splitter = HashedNodeAnchorLinkSplitter(

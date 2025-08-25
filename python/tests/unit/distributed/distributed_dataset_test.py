@@ -68,6 +68,10 @@ class _PassthroughSplitter:
     def should_convert_labels_to_edges(self):
         return False
 
+    @property
+    def is_distributed(self) -> bool:
+        return False
+
 
 _USER = NodeType("user")
 _ITEM = NodeType("item")

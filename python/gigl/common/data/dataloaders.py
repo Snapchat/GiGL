@@ -333,6 +333,11 @@ class TFRecordDataLoader:
                     shape=[], dtype=tf.int64
                 )
         else:
+            # We currently do not support training with labels for edge entities
+            if label_keys:
+                raise NotImplementedError(
+                    "Label keys are not supported for edge entities"
+                )
             id_concat_axis = 1
             proccess_id_tensor = lambda t: tf.stack(
                 [t[entity_key[0]], t[entity_key[1]]], axis=0
