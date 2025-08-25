@@ -53,8 +53,8 @@ _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 
 _USER = NodeType("user")
-_ITEM = NodeType("item")
-_USER_TO_ITEM = EdgeType(_USER, Relation("to"), _ITEM)
+_STORY = NodeType("story")
+_USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 
 # TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
 
@@ -489,7 +489,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
 
     story_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_ITEM, dataset.node_ids[_ITEM]),
+        input_nodes=(_STORY, dataset.node_ids[_STORY]),
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
@@ -509,9 +509,9 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
             story_datum, HeteroData
         ), f"Story subgraph should be a HeteroData for heterogeneous datasets, got {type(story_datum)}"
         assert hasattr(
-            story_datum[_ITEM], "y"
+            story_datum[_STORY], "y"
         ), "Story subgraph is missing the 'y' attribute for labels"
-        assert_tensor_equality(story_datum[_ITEM].y, story_datum[_ITEM].node)
+        assert_tensor_equality(story_datum[_STORY].y, story_datum[_STORY].node)
 
     shutdown_rpc()
 
@@ -965,13 +965,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(10),
-                _ITEM: torch.zeros(5),
+                _STORY: torch.zeros(5),
             },
             edge_partition_book={
-                _USER_TO_ITEM: torch.zeros(5),
+                _USER_TO_STORY: torch.zeros(5),
             },
             partitioned_edge_index={
-                _USER_TO_ITEM: GraphPartitionData(
+                _USER_TO_STORY: GraphPartitionData(
                     edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
                     edge_ids=None,
                 )
@@ -980,7 +980,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 _USER: FeaturePartitionData(
                     feats=torch.zeros(10, 2), ids=torch.arange(10)
                 ),
-                _ITEM: FeaturePartitionData(
+                _STORY: FeaturePartitionData(
                     feats=torch.zeros(5, 2), ids=torch.arange(5)
                 ),
             },
@@ -991,7 +991,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                 _USER: FeaturePartitionData(
                     feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
                 ),
-                _ITEM: FeaturePartitionData(
+                _STORY: FeaturePartitionData(
                     feats=torch.arange(5).unsqueeze(1), ids=torch.arange(5)
                 ),
             },
