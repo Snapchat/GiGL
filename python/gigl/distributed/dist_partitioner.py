@@ -350,6 +350,8 @@ class DistPartitioner:
         """
         Registers the node ids to the partitioner. Also computes additional fields for partitioning such as the total number of nodes across all ranks.
 
+        Note that node ids provided must be unique and contiguous from 0 to total_num_nodes - 1 for each provided node type across all machines.
+
         For optimal memory management, it is recommended that the reference to the node_id tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
         Args:
@@ -371,11 +373,6 @@ class DistPartitioner:
 
         self._node_ids = convert_to_tensor(input_node_ids, dtype=torch.int64)
 
-        # This tuple here represents a (rank, (num_nodes_on_rank, max_node_id_on_rank)) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
-        # num_nodes_on_rank and max_node_id_on_rank are ints.
-        # Gathered_num_nodes is then used to identify the number of nodes and max node id on each rank,
-        # allowing us to access the total number of nodes and max node id across all ranks
-        gathered_node_info: dict[str, Tuple[int, dict[NodeType, Tuple[int, int]]]]
         self._num_nodes = defaultdict(int)
 
         node_type_to_num_nodes_and_max_node: dict[NodeType, Tuple[int, int]] = {}
@@ -390,10 +387,14 @@ class DistPartitioner:
 
         max_ids = {node_type: 0 for node_type in self._node_types}
 
-        # Gathering to compute the number of nodes on each rank for each node type
-        gathered_node_info = glt_rpc.all_gather(
-            (self._rank, node_type_to_num_nodes_and_max_node)
-        )
+        # This tuple here represents a (rank, (num_nodes_on_rank, max_node_id_on_rank)) pair on a given partition,
+        # specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`.
+        # num_nodes_on_rank and max_node_id_on_rank are ints.
+        # Gathered_node_info is then used to identify the number of nodes and max node id on each rank,
+        # allowing us to access the total number of nodes and max node id across all ranks
+        gathered_node_info: dict[
+            str, Tuple[int, dict[NodeType, Tuple[int, int]]]
+        ] = glt_rpc.all_gather((self._rank, node_type_to_num_nodes_and_max_node))
 
         # Looping through each of the registered node types in the graph
         for node_type in self._node_types:
@@ -498,6 +499,9 @@ class DistPartitioner:
     ) -> None:
         """
         Registers the node features to the partitioner.
+
+        This function assumes that each node feature corresponds to the same local index as the local index of the node ids provided in register_node_ids,
+        which is why the node ids must be contiguous and unique from 0 to total_num_nodes - 1 for each provided node type across all machines.
 
         For optimal memory management, it is recommended that the reference to node_features tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
@@ -854,6 +858,9 @@ class DistPartitioner:
 
         gc.collect()
 
+        # We include this input data correctness check for duplicate node ids here instead of in `register_node_ids`.
+        # This is so that we minimize the memory overhead of this check,  which is easier to do when any duplicate node
+        # ids are guaranteed to be present on the same machine.
         if (
             feature_partition_data.ids is not None
             and feature_partition_data.ids.numel()
