@@ -176,16 +176,19 @@ if __name__ == "__main__":
         "--job_name",
         type=str,
         help="Unique identifier for the job name",
+        required=True,
     )
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        help="Gbml config uri",
+        help="A URI pointing to a GbmlConfig proto serialized as YAML",
+        required=True,
     )
     parser.add_argument(
         "--resource_config_uri",
         type=str,
-        help="Runtime argument for resource and env specifications of each component",
+        help="A URI pointing to a GiGLResourceConfig proto serialized as YAML",
+        required=True,
     )
     parser.add_argument(
         "--cpu_docker_uri",
@@ -201,9 +204,6 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
-    if not args.job_name or not args.task_config_uri or not args.resource_config_uri:
-        raise RuntimeError("Missing command-line arguments")
 
     applied_task_identifier = AppliedTaskIdentifier(args.job_name)
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
