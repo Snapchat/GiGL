@@ -396,19 +396,17 @@ class DistPartitioner:
             str, Tuple[int, dict[NodeType, Tuple[int, int]]]
         ] = glt_rpc.all_gather((self._rank, node_type_to_num_nodes_and_max_node))
 
-        # Looping through each of the registered node types in the graph
-        for node_type in self._node_types:
-            # Computing total number of nodes across all ranks of type `node_type`
-            for (
-                _,
-                gathered_node_type_to_num_nodes_and_max_node,
-            ) in gathered_node_info.values():
-                self._num_nodes[
-                    node_type
-                ] += gathered_node_type_to_num_nodes_and_max_node[node_type][0]
+        for (
+            _,
+            gathered_node_type_to_num_nodes_and_max_node,
+        ) in gathered_node_info.values():
+            for node_type, (
+                num_nodes,
+                max_id,
+            ) in gathered_node_type_to_num_nodes_and_max_node.items():
+                self._num_nodes[node_type] += num_nodes
                 self._max_node_ids[node_type] = max(
-                    self._max_node_ids[node_type],
-                    gathered_node_type_to_num_nodes_and_max_node[node_type][1],
+                    self._max_node_ids[node_type], max_id
                 )
 
     def register_edge_index(
