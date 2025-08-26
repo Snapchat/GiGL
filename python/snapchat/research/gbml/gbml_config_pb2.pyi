@@ -445,7 +445,7 @@ class GbmlConfig(google.protobuf.message.Message):
         GRAPH_DB_ARGS_FIELD_NUMBER: builtins.int
         GRAPH_DB_SAMPLER_CONFIG_FIELD_NUMBER: builtins.int
         graph_db_ingestion_cls_path: builtins.str
-        """Python class path pointing to user-written 
+        """Python class path pointing to user-written
         `BaseIngestion`` class definition. e.g. `my.team.graph_db.BaseInjectionImpl`.
         This class is currently, as an implementation detail, used for injestion only.
         We document this *purely* for information purposes and may change the implementation at any time.

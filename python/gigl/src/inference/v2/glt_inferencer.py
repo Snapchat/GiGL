@@ -122,9 +122,17 @@ class GLTInferencer:
             if inferencer_resource_config.timeout
             else None,
         )
+
+        if inferencer_resource_config.gcp_region_override:
+            region = inferencer_resource_config.gcp_region_override
+            logger.info(
+                f"Overriding region to {region} based on GiglResourceConfig.inferencer_resource_config.vertex_ai_inferencer_config.gcp_region_override"
+            )
+        else:
+            region = resource_config_wrapper.region
         vertex_ai_service = VertexAIService(
             project=resource_config_wrapper.project,
-            location=resource_config_wrapper.region,
+            location=region,
             service_account=resource_config_wrapper.service_account_email,
             staging_bucket=resource_config_wrapper.temp_assets_regional_bucket_path.uri,
         )

@@ -120,9 +120,16 @@ class GLTTrainer:
             if trainer_resource_config.timeout
             else None,
         )
+        if trainer_resource_config.gcp_region_override:
+            region = trainer_resource_config.gcp_region_override
+            logger.info(
+                f"Overriding region to {region} based on GiglResourceConfig.trainer_resource_config.vertex_ai_trainer_config.gcp_region_override"
+            )
+        else:
+            region = resource_config.region
         vertex_ai_service = VertexAIService(
             project=resource_config.project,
-            location=resource_config.region,
+            location=region,
             service_account=resource_config.service_account_email,
             staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
         )
@@ -169,19 +176,16 @@ if __name__ == "__main__":
         "--job_name",
         type=str,
         help="Unique identifier for the job name",
-        required=True,
     )
     parser.add_argument(
         "--task_config_uri",
         type=str,
-        help="A URI pointing to a GbmlConfig proto serialized as YAML",
-        required=True,
+        help="Gbml config uri",
     )
     parser.add_argument(
         "--resource_config_uri",
         type=str,
-        help="A URI pointing to a GiGLResourceConfig proto serialized as YAML",
-        required=True,
+        help="Runtime argument for resource and env specifications of each component",
     )
     parser.add_argument(
         "--cpu_docker_uri",
@@ -198,6 +202,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if not args.job_name or not args.task_config_uri or not args.resource_config_uri:
+        raise RuntimeError("Missing command-line arguments")
+
     applied_task_identifier = AppliedTaskIdentifier(args.job_name)
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
@@ -205,8 +212,8 @@ if __name__ == "__main__":
 
     initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
 
-    glt_inferencer = GLTTrainer()
-    glt_inferencer.run(
+    glt_trainer = GLTTrainer()
+    glt_trainer.run(
         applied_task_identifier=applied_task_identifier,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
