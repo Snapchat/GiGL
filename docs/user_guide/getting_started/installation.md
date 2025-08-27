@@ -24,14 +24,13 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   ```
   Next, ssh into your instance. It might ask you to install gpu drivers, follow instructions and do so.
 
-  Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click
-  the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
-
   2. Install some pre-reqs on your instance. The script below tries to automate installation of the following pre-reqs:
   `make, unzip, qemu-user-static, docker, docker-buildx, mamba/conda`
   ```bash
     bash -c "$(curl -s https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/scripts/scripts/startup_dev_instance.sh)"
   ```
+
+  3. Once you are done, make sure to restart the instance. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
 
   Next, Follow instructions to [install GiGL](#install-gigl)
 
