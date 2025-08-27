@@ -9,10 +9,8 @@ username=$(whoami)
 sa_account=$(gcloud config list account --format "value(core.account)")
 
 MAMBA_RELEASE="25.3.1-0" # https://github.com/conda-forge/miniforge/releases/tag/25.3.1-0
-
-# Some of our scripts make use of make 4.4+.
-REQUIRED_MAKE_VERSION="4.4"
-CURRENT_MAKE_VERSION=$(make --version | head -n 1 | awk '{print $3}')
+REQUIRED_MIN_MAKE_VERSION="4.4" # Some of our scripts make use of make 4.4+.
+INSTALL_GNU_MAKE_VERSION="4.4.1" # We install this version from source if make version is less than REQUIRED_MIN_MAKE_VERSION
 
 has_mamba_installed() {
     if ! mamba --version > /dev/null 2>&1; then
@@ -51,11 +49,11 @@ get_min_make_version() {
 }
 
 # Ubuntu versions may not have 4.4+ available even w/ apt-get; so we need to install from source.
-# Checking if min(REQUIRED_MAKE_VERSION, CURRENT_MAKE_VERSION) != REQUIRED_MAKE_VERSION,
+# Checking if min(REQUIRED_MIN_MAKE_VERSION, current_make_version) != REQUIRED_MIN_MAKE_VERSION,
 # If so, we will update make version
-if [ "$(get_min_make_version "$CURRENT_MAKE_VERSION" "$REQUIRED_MAKE_VERSION")" != "$REQUIRED_MAKE_VERSION" ]; then
-    echo "Current make version ($CURRENT_MAKE_VERSION) is less than ($REQUIRED_MAKE_VERSION)"
-    INSTALL_GNU_MAKE_VERSION="4.4.1"
+current_make_version=$(make --version | head -n 1 | awk '{print $3}')
+if [ "$(get_min_make_version "$current_make_version" "$REQUIRED_MIN_MAKE_VERSION")" != "$REQUIRED_MIN_MAKE_VERSION" ]; then
+    echo "Current make version ($current_make_version) is less than ($REQUIRED_MIN_MAKE_VERSION)"
     echo "Installing GNU MAKE v${INSTALL_GNU_MAKE_VERSION}"
 
     wget https://ftp.gnu.org/gnu/make/make-${INSTALL_GNU_MAKE_VERSION}.tar.gz
@@ -75,7 +73,7 @@ if [ "$(get_min_make_version "$CURRENT_MAKE_VERSION" "$REQUIRED_MAKE_VERSION")" 
     rm -rf make-${INSTALL_GNU_MAKE_VERSION}
     rm make-${INSTALL_GNU_MAKE_VERSION}.tar.gz
 else
-    echo "Current make version ($CURRENT_MAKE_VERSION) is greater than or equal to ($REQUIRED_MAKE_VERSION)"
+    echo "Current make version ($current_make_version) is greater than or equal to ($REQUIRED_MIN_MAKE_VERSION)"
 fi
 
 # We still install docker for backwards compatibility of older projects
