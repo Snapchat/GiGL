@@ -34,7 +34,7 @@ def get_pipeline() -> int:
 
 
 class VertexAIPipelineIntegrationTest(unittest.TestCase):
-    def _test_launch_job(self):
+    def test_launch_job(self):
         resource_config = get_resource_config()
         project = resource_config.project
         location = resource_config.region
