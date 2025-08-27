@@ -155,6 +155,12 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
             f"Missing values for the following flags for a {args.action} command: {missing_values}. "
             + f"All required flags are: {list(required_flags)}."
         )
+    if args.action == Action.COMPILE and args.labels:
+        raise ValueError(
+            "Labels are not supported for the compile action. "
+            "Please use the run action to run a pipeline with labels."
+            f"Labels provided: {args.labels}"
+        )
 
 
 logger = Logger()
@@ -206,6 +212,7 @@ def _parse_labels(labels: list[str]) -> dict[str, str]:
     for label in labels:
         label_name, label_value = label.split("=", 1)
         result[label_name] = label_value
+    logger.info(f"Parsed labels: {result}")
     return result
 
 
@@ -318,10 +325,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logger.info(f"Beginning runner.py with args: {args}")
 
-    parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
-    parsed_labels = _parse_labels(args.labels)
     # Assert correctness of args
     _assert_required_flags(args)
+
+    parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
+    parsed_labels = _parse_labels(args.labels)
 
     # Set the default value for compiled_pipeline_path as we cannot set it in argparse as
     # for compile action this is a required flag so we cannot provide it a default value.
@@ -385,12 +393,6 @@ if __name__ == "__main__":
             orchestrator.wait_for_completion(run=run)
 
     elif args.action == Action.COMPILE:
-        if parsed_labels:
-            raise ValueError(
-                "Labels are not supported for the compile action. "
-                "Please use the run action to run a pipeline with labels."
-                f"Labels provided: {parsed_labels}"
-            )
         pipeline_bundle_path = KfpOrchestrator.compile(
             cuda_container_image=cuda_container_image,
             cpu_container_image=cpu_container_image,
