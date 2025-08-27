@@ -16,14 +16,12 @@ class Param:
     required: bool = True
 
 
+GCP_DL_IMAGES_REPO = "projects/deeplearning-platform-release/global/images"
 # Support for the default GCP DL image used below ends on August 1, 2026
 # It becomes not available after August 1, 2027.
 # See `machine_boot_image` arg description for more details.
+DEFAULT_GCP_DL_IMAGE = f"common-cu128-ubuntu-2204-nvidia-570-v20250728"
 DEFAULT_GCP_DL_IMAGE_SUPPORT_END_DATE = datetime.datetime(2026, 8, 1)
-GCP_DL_IMAGES_REPO = "projects/deeplearning-platform-release/global/images"
-DEFAULT_GCP_DL_IMAGE = (
-    f"{GCP_DL_IMAGES_REPO}/common-cu128-ubuntu-2204-nvidia-570-v20250728"
-)
 
 
 class SupportedParams:
@@ -71,7 +69,7 @@ class SupportedParams:
                 + "   If using GiGL, see the following for GiGL supported cuda versions: \n"
                 + "   https://snapchat.github.io/GiGL/docs/user_guide/getting_started/installation.html#supported-environments \n"
                 + "   To find images available, run: \n"
-                + "   gcloud compute images list \ \n\t--project deeplearning-platform-release \ \n\t--format='value(NAME)' \ \n\t--no-standard-images"
+                + "   `gcloud compute images list --project deeplearning-platform-release --no-standard-images`"
                 + "   See: https://cloud.google.com/deep-learning-vm/docs/images for more info.",
             ),
             "boot_drive_size_gb": Param(
@@ -308,6 +306,7 @@ if __name__ == "__main__":
                 + "See: https://cloud.google.com/deep-learning-vm/docs/images for more info."
             )
             raise RuntimeError("Default GCP DL image is no longer supported.")
+    machine_boot_full_name = f"{GCP_DL_IMAGES_REPO}/{values['machine_boot_image']}"
 
     gcloud_cmd = inspect.cleandoc(
         f"""
@@ -321,7 +320,7 @@ if __name__ == "__main__":
         --provisioning-model=STANDARD \
         --service-account={values['service_account']} \
         --scopes=https://www.googleapis.com/auth/cloud-platform \
-        --create-disk=auto-delete=yes,boot=yes,device-name={values['machine_name']},image={values['machine_boot_image']},mode=rw,size={values['boot_drive_size_gb']},type=pd-ssd \
+        --create-disk=auto-delete=yes,boot=yes,device-name={values['machine_name']},image={machine_boot_full_name},mode=rw,size={values['boot_drive_size_gb']},type=pd-ssd \
         --no-shielded-secure-boot \
         --shielded-vtpm \
         --shielded-integrity-monitoring \
