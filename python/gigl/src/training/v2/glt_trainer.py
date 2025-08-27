@@ -120,13 +120,7 @@ class GLTTrainer:
             if trainer_resource_config.timeout
             else None,
         )
-        if trainer_resource_config.gcp_region_override:
-            region = trainer_resource_config.gcp_region_override
-            logger.info(
-                f"Overriding region to {region} based on GiglResourceConfig.trainer_resource_config.vertex_ai_trainer_config.gcp_region_override"
-            )
-        else:
-            region = resource_config.region
+        region = resource_config.vertex_ai_trainer_region
         vertex_ai_service = VertexAIService(
             project=resource_config.project,
             location=region,
