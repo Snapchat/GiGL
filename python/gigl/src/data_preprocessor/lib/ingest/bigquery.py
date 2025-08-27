@@ -17,7 +17,7 @@ def _get_bigquery_ptransform(
         InstanceDictPTransform,
         beam.io.ReadFromBigQuery(
             table=table_name,
-            method=beam.io.ReadFromBigQuery.Method.EXPORT,  # type: ignore
+            method=beam.io.ReadFromBigQuery.Method.DIRECT_READ,  # type: ignore
             *args,
             **kwargs,
         ),
