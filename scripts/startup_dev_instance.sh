@@ -116,5 +116,4 @@ sudo chmod -R 755 /opt/conda/
 sudo chmod 777 /opt/conda/pkgs/
 sudo chmod 777 /opt/conda/envs/
 
-echo "\n=========================\n"
 echo "Done! Please restart your machine to ensure setup is complete"
