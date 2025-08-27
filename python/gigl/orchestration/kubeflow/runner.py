@@ -27,6 +27,9 @@ RUNNING A PIPELINE:
             --additional_job_args=split_generator.some_other_arg='value'
             This passes additional_spark35_jar_file_uris="gs://path/to/jar" to subgraph_sampler at compile time and
             some_other_arg="value" to split_generator at compile time.
+        --labels: Labels to associate with the pipeline run.
+            The value has to be of form: "<label_name>=<label_value>".
+            Example: --labels=gigl-integration-test=true --labels=user=me
 
     You can alternatively run_no_compile if you have a precompiled pipeline somewhere.
     python gigl.orchestration.kubeflow.runner --action=run_no_compile ...args
@@ -191,7 +194,25 @@ def _parse_additional_job_args(
     return dict(result)  # Ensure the default dict is converted to a regular dict
 
 
-if __name__ == "__main__":
+def _parse_labels(labels: list[str]) -> dict[str, str]:
+    """
+    Parse the labels for the pipeline run.
+    Args:
+        labels list[str]: Each element is of form: "<label_name>=<label_value>"
+            Example: ["gigl-integration-test=true", "user=me"].
+    Returns dict[str, str]: The parsed labels.
+    """
+    result: dict[str, str] = {}
+    for label in labels:
+        label_name, label_value = label.split("=", 1)
+        result[label_name] = label_value
+    return result
+
+
+def _get_parser() -> argparse.ArgumentParser:
+    """
+    Get the parser for the runner.py script.
+    """
     parser = argparse.ArgumentParser(
         description="Create the KF pipeline for GNN preprocessing/training/inference"
     )
@@ -278,12 +299,27 @@ if __name__ == "__main__":
         some_other_arg="value" to split_generator at compile time.
         """,
     )
+    parser.add_argument(
+        "--labels",
+        action="append",
+        default=[],
+        help="""Labels to associate with the pipeline run, of the form: --labels=label_name=label_value.
+        Only applicable for run and run_no_compile actions.
+        Example: --labels=gigl-integration-test=true --labels=user=me
+        Which will taget the pipeline run with gigl-integration-test=true and user=me.
+        """,
+    )
 
+    return parser
+
+
+if __name__ == "__main__":
+    parser = _get_parser()
     args = parser.parse_args()
     logger.info(f"Beginning runner.py with args: {args}")
 
     parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
-
+    parsed_labels = _parse_labels(args.labels)
     # Assert correctness of args
     _assert_required_flags(args)
 
@@ -342,12 +378,19 @@ if __name__ == "__main__":
             start_at=args.start_at,
             stop_after=args.stop_after,
             compiled_pipeline_path=compiled_pipeline_path,
+            labels=parsed_labels if parsed_labels else None,
         )
 
         if args.wait:
             orchestrator.wait_for_completion(run=run)
 
     elif args.action == Action.COMPILE:
+        if parsed_labels:
+            raise ValueError(
+                "Labels are not supported for the compile action. "
+                "Please use the run action to run a pipeline with labels."
+                f"Labels provided: {parsed_labels}"
+            )
         pipeline_bundle_path = KfpOrchestrator.compile(
             cuda_container_image=cuda_container_image,
             cpu_container_image=cpu_container_image,

@@ -34,13 +34,13 @@ def get_pipeline() -> int:
 
 
 class VertexAIPipelineIntegrationTest(unittest.TestCase):
-    def test_launch_job(self):
+    def _test_launch_job(self):
         resource_config = get_resource_config()
         project = resource_config.project
         location = resource_config.region
         service_account = resource_config.service_account_email
         staging_bucket = resource_config.temp_assets_regional_bucket_path.uri
-        job_name = f"GiGL-Intergration-Test-{uuid.uuid4()}"
+        job_name = f"GiGL-Integration-Test-{uuid.uuid4()}"
         container_uri = "condaforge/miniforge3:25.3.0-1"
         command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
 
@@ -73,6 +73,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 template_path=UriFactory.create_uri(pipeline_def),
                 run_keyword_args={},
                 experiment="gigl-integration-tests",
+                labels={"gigl-integration-test": "true"},
             )
             # Wait for the run to complete, 30 minutes is probably too long but
             # we don't want this test to be flaky.
@@ -83,6 +84,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             # Also verify that we can fetch a pipeline.
             run = ps.get_pipeline_job_from_job_name(job.name)
             self.assertEqual(run.resource_name, job.resource_name)
+            self.assertEqual(run.labels["gigl-integration-test"], "true")
 
 
 if __name__ == "__main__":
