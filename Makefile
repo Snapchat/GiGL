@@ -300,6 +300,8 @@ _run_e2e_kfp_test: compile_jars push_new_docker_images
 					$(if $(filter ${should_wait_for_job_to_finish},true),--wait,) \
 					--job_name='$${job_name}' \
 					--start_at='config_populator' \
+					--labels="gigl_commit=$(GIT_HASH)" \
+					--labels="gigl_version=$(GIGL_VERSION)" \
 					--task_config_uri='$${task_config_uris[$$i]}' \
 					--resource_config_uri='$${resource_config_uris[$$i]}' \
 					--compiled_pipeline_path='$${compiled_pipeline_path}'"; \
@@ -315,7 +317,6 @@ _run_e2e_kfp_test: compile_jars push_new_docker_images
 					--start_at='config_populator' \
 					--pipeline_tag=$(GIT_HASH) \
 					--labels="gigl_commit=$(GIT_HASH)" \
-					--labels="gigl_branch=$(GIT_BRANCH)" \
 					--labels="gigl_version=$(GIGL_VERSION)" \
 					--task_config_uri='$${task_config_uris[$$i]}' \
 					--resource_config_uri='$${resource_config_uris[$$i]}'"; \
@@ -458,7 +459,6 @@ run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps,
 		--resource_config_uri=$(resource_config_uri) \
 		--pipeline_tag=$(GIT_HASH) \
 		--labels="gigl_commit=$(GIT_HASH)" \
-		--labels="gigl_branch=$(GIT_BRANCH)" \
 		--labels="gigl_version=$(GIGL_VERSION)" \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
 
