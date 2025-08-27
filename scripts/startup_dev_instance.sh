@@ -10,6 +10,10 @@ sa_account=$(gcloud config list account --format "value(core.account)")
 
 MAMBA_RELEASE="25.3.1-0" # https://github.com/conda-forge/miniforge/releases/tag/25.3.1-0
 
+# Some of our scripts make use of make 4.4+.
+REQUIRED_MAKE_VERSION="4.4"
+CURRENT_MAKE_VERSION=$(make --version | head -n 1 | awk '{print $3}')
+
 has_mamba_installed() {
     if ! mamba --version > /dev/null 2>&1; then
         echo "Mamba not found, will try again, trying to see if it is installed but not initialized"
@@ -35,6 +39,44 @@ sudo apt-get update
 # unzip: Simple but necessary utility for decompressing files from the common .zip archive format.
 # podman: Alternate to docker, daemonless container engine that allows you to build, run, and manage OCI-compatible containers.
 sudo apt-get install -y build-essential make unzip podman
+
+
+# Function to compare semantic versions; using sort -V to compare semantic versions seems to be the most reliable
+get_min_make_version() {
+    if [ "$1" != "$2" ]; then
+        printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1
+    else
+        echo "$1"
+    fi
+}
+
+# Ubuntu versions may not have 4.4+ available even w/ apt-get; so we need to install from source.
+# Checking if min(REQUIRED_MAKE_VERSION, CURRENT_MAKE_VERSION) != REQUIRED_MAKE_VERSION,
+# If so, we will update make version
+if [ "$(get_min_make_version "$CURRENT_MAKE_VERSION" "$REQUIRED_MAKE_VERSION")" != "$REQUIRED_MAKE_VERSION" ]; then
+    echo "Current make version ($CURRENT_MAKE_VERSION) is less than ($REQUIRED_MAKE_VERSION)"
+    INSTALL_GNU_MAKE_VERSION="4.4.1"
+    echo "Installing GNU MAKE v${INSTALL_GNU_MAKE_VERSION}"
+
+    wget https://ftp.gnu.org/gnu/make/make-${INSTALL_GNU_MAKE_VERSION}.tar.gz
+    tar xvf  make-${INSTALL_GNU_MAKE_VERSION}.tar.gz
+    cd make-${INSTALL_GNU_MAKE_VERSION}
+    ./configure # Setup required deps
+    make # Generate the relevant resources
+    if ! command -v sudo 2>&1 >/dev/null
+    then
+        echo "Sudo not found, this is expected if we're being built by docker."
+        make install # Install the new make version
+    else
+        echo "Sudo found, installing make with sudo."
+        sudo make install # Install the new make version
+    fi
+    cd ..
+    rm -rf make-${INSTALL_GNU_MAKE_VERSION}
+    rm make-${INSTALL_GNU_MAKE_VERSION}.tar.gz
+else
+    echo "Current make version ($CURRENT_MAKE_VERSION) is greater than or equal to ($REQUIRED_MAKE_VERSION)"
+fi
 
 # We still install docker for backwards compatibility of older projects
 if ! command -v docker >/dev/null 2>&1; then
