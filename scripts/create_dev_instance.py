@@ -305,7 +305,7 @@ if __name__ == "__main__":
                 + "gcloud compute images list \ \n\t--project deeplearning-platform-release \ \n\t--format='value(NAME)' \ \n\t--no-standard-images\n"
                 + "See: https://cloud.google.com/deep-learning-vm/docs/images for more info."
             )
-            raise RuntimeError("Default GCP DL image is no longer supported.")
+            raise RuntimeError(f"Default GCP DL image is no longer supported: {DEFAULT_GCP_DL_IMAGE}")
     machine_boot_full_name = f"{GCP_DL_IMAGES_REPO}/{values['machine_boot_image']}"
 
     gcloud_cmd = inspect.cleandoc(
