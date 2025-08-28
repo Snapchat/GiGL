@@ -120,10 +120,10 @@ class GLTTrainer:
             if trainer_resource_config.timeout
             else None,
         )
-        region = resource_config.vertex_ai_trainer_region
+
         vertex_ai_service = VertexAIService(
             project=resource_config.project,
-            location=region,
+            location=resource_config.vertex_ai_trainer_region,
             service_account=resource_config.service_account_email,
             staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
         )

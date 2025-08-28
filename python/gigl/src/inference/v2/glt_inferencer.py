@@ -123,11 +123,9 @@ class GLTInferencer:
             else None,
         )
 
-        region = resource_config_wrapper.vertex_ai_inferencer_region
-
         vertex_ai_service = VertexAIService(
             project=resource_config_wrapper.project,
-            location=region,
+            location=resource_config_wrapper.vertex_ai_inferencer_region,
             service_account=resource_config_wrapper.service_account_email,
             staging_bucket=resource_config_wrapper.temp_assets_regional_bucket_path.uri,
         )
