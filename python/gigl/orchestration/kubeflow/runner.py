@@ -27,9 +27,10 @@ RUNNING A PIPELINE:
             --additional_job_args=split_generator.some_other_arg='value'
             This passes additional_spark35_jar_file_uris="gs://path/to/jar" to subgraph_sampler at compile time and
             some_other_arg="value" to split_generator at compile time.
-        --labels: Labels to associate with the pipeline run.
+        --run_labels: Labels to associate with the pipeline run.
             The value has to be of form: "<label_name>=<label_value>".
-            Example: --labels=gigl-integration-test=true --labels=user=me
+            NOTE: unlike SharedResourceConfig.resource_labels, these are *only* applied to the vertex ai pipeline run.
+            Example: --run_labels=gigl-integration-test=true --run_labels=user=me
 
     You can alternatively run_no_compile if you have a precompiled pipeline somewhere.
     python gigl.orchestration.kubeflow.runner --action=run_no_compile ...args
@@ -307,12 +308,13 @@ def _get_parser() -> argparse.ArgumentParser:
         """,
     )
     parser.add_argument(
-        "--labels",
+        "--run_labels",
         action="append",
         default=[],
-        help="""Labels to associate with the pipeline run, of the form: --labels=label_name=label_value.
+        help="""Labels to associate with the pipeline run, of the form: --run_labels=label_name=label_value.
         Only applicable for run and run_no_compile actions.
-        Example: --labels=gigl-integration-test=true --labels=user=me
+        NOTE: unlike SharedResourceConfig.resource_labels, these are *only* applied to the vertex ai pipeline run.
+        Example: --run_labels=gigl-integration-test=true --run_labels=user=me
         Which will taget the pipeline run with gigl-integration-test=true and user=me.
         """,
     )
@@ -329,7 +331,7 @@ if __name__ == "__main__":
     _assert_required_flags(args)
 
     parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
-    parsed_labels = _parse_labels(args.labels)
+    parsed_labels = _parse_labels(args.run_labels)
 
     # Set the default value for compiled_pipeline_path as we cannot set it in argparse as
     # for compile action this is a required flag so we cannot provide it a default value.

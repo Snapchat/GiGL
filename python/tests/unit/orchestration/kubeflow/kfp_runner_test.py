@@ -47,12 +47,12 @@ class KFPRunnerTest(unittest.TestCase):
                 "--additional_job_args=subgraph_sampler.additional_spark35_jar_file_uris=gs://path/to/jar",
                 "--additional_job_args=subgraph_sampler.arg_2=value=10.243,123",
                 "--additional_job_args=split_generator.some_other_arg=value",
-                "--labels=gigl-integration-test=true",
-                "--labels=user=me",
+                "--run_labels=gigl-integration-test=true",
+                "--run_labels=user=me",
             ]
         )
         parsed_args = _parse_additional_job_args(args.additional_job_args)
-        parsed_labels = _parse_labels(args.labels)
+        parsed_labels = _parse_labels(args.run_labels)
         expected_parsed_args = {
             GiGLComponents.SubgraphSampler: {
                 "additional_spark35_jar_file_uris": "gs://path/to/jar",
