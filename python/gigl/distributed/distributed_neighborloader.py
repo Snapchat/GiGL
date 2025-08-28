@@ -9,6 +9,7 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
+from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
@@ -37,10 +38,10 @@ DEFAULT_NUM_CPU_THREADS = 2
 class DistNeighborLoader(DistLoader):
     def __init__(
         self,
-        dataset: DistLinkPredictionDataset,
+        dataset: Optional[DistLinkPredictionDataset],
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
-            Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
+            Union[torch.Tensor, Tuple[NodeType, torch.Tensor], list[Uri]]
         ] = None,
         num_workers: int = 1,
         batch_size: int = 1,
@@ -193,6 +194,8 @@ class DistNeighborLoader(DistLoader):
         )
 
         if input_nodes is None:
+            if dataset is None:
+                raise ValueError("Dataset must be provided if input_nodes are not provided.")
             if dataset.node_ids is None:
                 raise ValueError(
                     "Dataset must have node ids if input_nodes are not provided."
@@ -223,11 +226,12 @@ class DistNeighborLoader(DistLoader):
                     )
             else:
                 node_type = None
-        else:
+        elif isinstance(input_nodes, tuple):
             node_type, node_ids = input_nodes
             assert isinstance(
                 dataset.node_ids, abc.Mapping
             ), "Dataset must be heterogeneous if provided input nodes are a tuple."
+        elif isinstance(input_nodes, list):
 
         num_neighbors = patch_fanout_for_sampling(
             dataset.get_edge_types(), num_neighbors

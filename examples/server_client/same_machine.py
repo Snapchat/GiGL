@@ -3,6 +3,7 @@ import os
 # Suppress TensorFlow logs
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
 
+import argparse
 import time
 import uuid
 from pathlib import Path
@@ -85,6 +86,7 @@ def run_client(
             master_addr=host,
             master_port=get_free_port(),
         ),
+        to_device=current_device,
     )
 
     for batch in loader:
@@ -96,11 +98,20 @@ def run_client(
 
 
 def main():
-    output_dir = f"/tmp/gigl/server_client/output/{uuid.uuid4()}"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_servers", type=int, default=1)
+    parser.add_argument("--num_clients", type=int, default=2)
+    parser.add_argument("--output_dir", type=str, default=f"/tmp/gigl/server_client/output/{uuid.uuid4()}")
+    parser.add_argument("--host", type=str, default="localhost")
+    args = parser.parse_args()
+    logger.info(f"Arguments: {args}")
+
+    # Parse arguments
+    num_servers = args.num_servers
+    num_clients = args.num_clients
+    output_dir = args.output_dir
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    num_servers = 1
-    num_clients = 2
     server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
     server_client_port = get_free_port()
@@ -112,7 +123,7 @@ def main():
                 server_rank,
                 num_servers,
                 num_clients,
-                "localhost",
+                args.host,
                 server_client_port,
                 output_dir,
             ),
@@ -139,7 +150,7 @@ def main():
                 client_rank,
                 num_clients,
                 num_servers,
-                "localhost",
+                args.host,
                 server_client_port,
                 output_dir,
             ),
