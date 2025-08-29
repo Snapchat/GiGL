@@ -1,8 +1,6 @@
----
-description: Python coding patterns and conventions for GiGL
-globs: ["**/*.py"]
-alwaysApply: false
----
+______________________________________________________________________
+
+## description: Python coding patterns and conventions for GiGL globs: ["\*\*/\*.py"] alwaysApply: false
 
 # Key Principles
 
@@ -18,12 +16,15 @@ alwaysApply: false
 ## Code Style & Structure
 
 ### Class Design
+
 - Use descriptive class names with proper CamelCase
 - Include comprehensive docstrings for all classes
 - Use `@dataclass(frozen=True)` for immutable data containers
-- Implement `__init__.py` files that define a minimal, consistent, and well-documented public API. Only expose stable, user-facing classes and functions through __init__.py using __all__. Keep helpers/internal logic in private modules.
+- Implement `__init__.py` files that define a minimal, consistent, and well-documented public API. Only expose stable,
+  user-facing classes and functions through __init__.py using __all__. Keep helpers/internal logic in private modules.
 
 Example:
+
 ```python
 @dataclass(frozen=True)
 class TestArgs:
@@ -36,14 +37,18 @@ class TestArgs:
 ```
 
 ### Type Annotations and DocStrings
+
 - Always use type annotations for function parameters and return values
-- Prefer not using typing module imports if it can be done without i.e.
-`arg: dict[str, str]` is preferred over `arg: typing.Dict[str, str]`.
+- Prefer not using typing module imports if it can be done without i.e. `arg: dict[str, str]` is preferred over
+  `arg: typing.Dict[str, str]`.
 - For Protocol Buffer types, import from `snapchat.research.gbml`
 - Use `Final` for constants
-- Always add pydoc-style docstrings for all public functions and methods. Include a one-line summary, optional details, Example with >>> for doctests, Args, Returns, and Raises if applicable. Docstrings should be clear, consistent, testable, and Sphinx-compatible.
+- Always add pydoc-style docstrings for all public functions and methods. Include a one-line summary, optional details,
+  Example with >>> for doctests, Args, Returns, and Raises if applicable. Docstrings should be clear, consistent,
+  testable, and Sphinx-compatible.
 
 Example:
+
 ```python
 from typing import Final, Optional
 
@@ -73,14 +78,15 @@ def add_to_magic_number(
     return MAGIC_NUMBER + number_1 + sum(numbers)
 ```
 
-
 ### Error Handling & Logging
+
 - Use the GiGL logger: `from gigl.common.logger import Logger`
 - Create module-level logger instances as such: `logger = Logger()`
 - Provide informative error messages with context
 - Use appropriate log levels (info, warning, error, debug)
 
 Example:
+
 ```python
 from gigl.common.logger import Logger
 
@@ -99,7 +105,9 @@ def validate_config(config: Dict[str, Any]) -> bool:
 ## Component Patterns
 
 ### Abstract Base Classes
+
 Use ABC for component interfaces:
+
 ```python
 from abc import ABC, abstractmethod
 
@@ -110,20 +118,24 @@ class DataPreprocessorConfig(ABC):
 ```
 
 ### Protocol Buffer Handling
+
 - Import protocol buffer types from `snapchat.research.gbml`
 - Use wrapper classes for protocol buffer operations located in `python/gigl/src/common/types/pb_wrappers`
-  - `GbmlConfigPbWrapper` is used for `gbml_config_pb2.GbmlConfig`, otherwise known as task config, or template task config
+  - `GbmlConfigPbWrapper` is used for `gbml_config_pb2.GbmlConfig`, otherwise known as task config, or template task
+    config
   - `GiglResourceConfigWrapper` is used for `gigl_resource_config_pb2.GiglResourceConfig`
-- Ensure that all protos are deserialized into their respective wrapper objects or explicit data classes as early as possible. This should ideally happen inside one of the following entry point files:
+- Ensure that all protos are deserialized into their respective wrapper objects or explicit data classes as early as
+  possible. This should ideally happen inside one of the following entry point files:
   - Config Populator: gigl.src.config_populator.config_populator.ConfigPopulator
   - Data Preprocessor: gigl.src.data_preprocessor.data_preprocessor.DataPreprocessor
   - Subgraph Sampler: gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler
   - Split Generator: gigl.src.split_generator.split_generator.SplitGenerator
   - Trainer: gigl.src.training.trainer.Trainer
-  - Inferencer: gigl.src.inference.inferencer.Inferencer
-  Anything that these entrypoint files call should not be passed `GbmlConfigPbWrapper` or `GiglResourceConfigWrapper` directly.
+  - Inferencer: gigl.src.inference.inferencer.Inferencer Anything that these entrypoint files call should not be passed
+    `GbmlConfigPbWrapper` or `GiglResourceConfigWrapper` directly.
 
 Example:
+
 ```python
 from snapchat.research.gbml import gbml_config_pb2
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -136,15 +148,18 @@ def process_gbml_config(config_path: str) -> gbml_config_pb2.GbmlConfig:
 ## Performance & Optimization
 
 ### Memory Management
+
 - Use generators for large data processing
 - Implement proper cleanup in `__del__` methods where needed
 - Be mindful of memory usage in distributed settings
 
 ### Async/Concurrent Processing
+
 - Use `concurrent.futures.ProcessPoolExecutor` for CPU-bound tasks
 - Implement proper timeout handling using GiGL's timeout utilities
 
 Example:
+
 ```python
 from gigl.src.common.utils.timeout import timeout
 
@@ -156,11 +171,13 @@ def long_running_task():
 ## Configuration & Constants
 
 ### Constants Definition
+
 - Use `Final` type annotations for constants
 - Group related constants in dedicated modules
 - Use descriptive constant names in UPPER_CASE
 
 Example:
+
 ```python
 from typing import Final
 from pathlib import Path
@@ -170,4 +187,5 @@ DEFAULT_TIMEOUT_SECONDS: Final[int] = 300
 ```
 
 ## Remember
+
 Always prioritize code clarity, maintainability, and consistency with the existing GiGL codebase.

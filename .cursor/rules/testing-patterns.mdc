@@ -1,13 +1,13 @@
----
-description: Testing patterns and conventions for GiGL components
-globs: ["**/test*.py", "**/tests/**/*", "**/testing/**", "**/tests/**"]
-alwaysApply: false
----
+______________________________________________________________________
+
+## description: Testing patterns and conventions for GiGL components globs: \["**/test\*.py", "**/tests/**/\*", "**/testing/**", "**/tests/\*\*"\] alwaysApply: false
+
 # Testing Patterns & Conventions
 
 ## Python Testing Patterns
 
 ### Test Structure
+
 Use the standard unittest framework with descriptive test organization:
 
 ```python
@@ -33,6 +33,7 @@ class TestDataPreprocessor(unittest.TestCase):
 ```
 
 ### Test Data Management
+
 Use the `tests/test_assets/` directory for test data:
 
 ```python
@@ -60,10 +61,11 @@ class TestWithAssets(unittest.TestCase):
 ```
 
 ### Integration Testing
+
 For integration tests that require cloud resources, add them to the `python/tests/integration` directory
 
-
 ### Mocking External Dependencies
+
 Use mocking for external services and expensive operations:
 
 ```python
@@ -88,8 +90,8 @@ class TestWithMocks(unittest.TestCase):
         mock_client.submit_job.assert_called_once()
 ```
 
-
 ### Test Configuration Files
+
 Create minimal test configurations in `tests/test_assets/configs/`:
 
 ```yaml
@@ -111,6 +113,7 @@ shared_resource_config:
 ```
 
 ### Test Graph Data
+
 Create small, deterministic test graphs if needed:
 
 ```python
@@ -131,21 +134,25 @@ TEST_EDGES = [
 ## Test Execution & CI
 
 ### Test Organization
+
 - **Unit tests**: Dir: `tests/unit/` - Fast, isolated tests
 - **Integration tests**: Dir: `tests/integration/` - Component interaction tests
 - **End-to-end tests**: Defined in `Makefile` target: `_run_e2e_kfp_test` - Test complete workflows
 - **Misc repo wide tests**: Dir: `testing`
 
 ### Test Execution
+
 Use the following commands to evaluate a test:
+
 - unit test: `make unit_test_py`
-   - Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
-   - Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
-   - By default, runs all tests under python/tests/unit.
+  - Set PY_TEST_FILES=\<TEST_FILE_NAME_GLOB> to test a specifc file.
+  - Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
+  - By default, runs all tests under python/tests/unit.
 - integration test: `make integration_test PY_TEST_FILES="some_test.py"`
-  -  ensure to use `PY_TEST_FILES` and run integration tests one at a time as they take a long time to run
+  - ensure to use `PY_TEST_FILES` and run integration tests one at a time as they take a long time to run
 
 ### Test Data Lifecycle
+
 - Use temporary directories for test outputs
 - Clean up test data after execution
 - Use deterministic test data for reproducible results
