@@ -508,6 +508,3 @@ stop_toaster:
 build_docs:
 	sphinx-build -M clean . gh_pages_build
 	sphinx-build -M html . gh_pages_build
-
-test:
-	echo "Running tests"
