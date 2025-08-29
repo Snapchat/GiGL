@@ -2,6 +2,8 @@ include dep_vars.env
 
 SHELL := /bin/bash
 CONDA_ENV_NAME=gnn
+# Ensure that python, pip, and pip-tools versions are consistent with the ones in:
+# .github/actions/setup-python-tools/action.yml
 PYTHON_VERSION=3.9
 PIP_VERSION=25.0.1
 PIP_TOOLS_VERSION=7.4.1
@@ -90,8 +92,6 @@ install_deps:
 
 # Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
 generate_mac_arm64_cpu_hashed_requirements:
-	python -c "import platform; print('SV DEBUG: ', platform.system())"
-
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/darwin_arm64_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra experimental \
@@ -99,8 +99,6 @@ generate_mac_arm64_cpu_hashed_requirements:
 
 # Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong.
 generate_dev_mac_arm64_cpu_hashed_requirements:
-	python -c "import platform; print('SV DEBUG: ', platform.system())"
-
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_darwin_arm64_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra dev --extra experimental \

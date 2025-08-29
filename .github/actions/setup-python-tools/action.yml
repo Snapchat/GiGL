@@ -46,11 +46,14 @@ runs:
           python-version: '3.9.13'
 
       # Step 2: Install pip-tools, which is used to generate hashed requirements.
-      # Note: pip 25.1 has a bug that causes pip-tools to fail with the following error:
+      # Note_1: pip 25.1 has a bug that causes pip-tools to fail with the following error:
       # File ".../python3.9/site-packages/piptools/repositories/pypi.py", line 452, in allow_all_wheels
       #   self.finder.find_all_candidates.cache_clear()
       #   AttributeError: 'function' object has no attribute 'cache_clear'
-      # Thus, we fix the pip version to 25.0.1.
+      # Note_2: Even though some wheels are garded behind conditionals i.e. only use this if platform = linux;
+      # pip-tools 7.5.0 fails with the following error:
+      # pip._internal.exceptions.UnsupportedWheel: pyg_lib-0.4....linux_x86_64.whl is not a supported wheel on this platform.
+      # Thus, we fix the pip version to 25.0.1 and pip-tools version to 7.4.1.
       - name: Install pip-tools
         shell: bash
         run: |
