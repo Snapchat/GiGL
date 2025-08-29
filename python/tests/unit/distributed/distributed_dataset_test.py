@@ -29,7 +29,7 @@ from gigl.src.mocking.lib.versioning import (
     MockedDatasetArtifactMetadata,
     get_mocked_dataset_artifact_metadata,
 )
-from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (  # This toy heterogeneous dataset is mocked to align with python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml; The subsequent toy datasets are mocked to align with python/gigl/src/mocking/mocking_assets/toy_graph_data.yaml
+from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
     HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
     TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -669,25 +669,21 @@ class DistributedDatasetTestCase(unittest.TestCase):
             assert isinstance(dataset.train_node_ids, torch.Tensor)
             assert isinstance(dataset.val_node_ids, torch.Tensor)
             assert isinstance(dataset.test_node_ids, torch.Tensor)
-            # Assert that the train, val, and test node ids combined make up all the node ids
-            self.assertEqual(
-                dataset.train_node_ids.shape[0]
-                + dataset.val_node_ids.shape[0]
-                + dataset.test_node_ids.shape[0],
-                dataset.node_ids.shape[0],
-            )
-            # Assert that the train, val, and test node ids do not have any duplicates between them
-            self.assertEqual(
-                len(
+
+            # Checks that the sorted version train, val, and test node ids are equal to the sorted version of all the node ids.
+            # Note that torch.sort() returns a tuple of (sorted_values, sorted_indices),
+            # which is why we index into the first element of the tuple.
+            assert_tensor_equality(
+                torch.sort(
                     torch.cat(
                         (
                             dataset.train_node_ids,
                             dataset.val_node_ids,
                             dataset.test_node_ids,
                         )
-                    ).unique()
-                ),
-                dataset.node_ids.size(0),
+                    )
+                )[0],
+                torch.sort(dataset.node_ids)[0],
             )
 
     # This tests that we can build a dataset when manually specifying a port.

@@ -472,6 +472,7 @@ class DistDataset(glt.distributed.DistDataset):
                 else get_ids_on_rank(self._node_partition_book, rank=self._rank)
             )
             splits = splitter(node_ids=node_ids)
+            del node_ids
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )
