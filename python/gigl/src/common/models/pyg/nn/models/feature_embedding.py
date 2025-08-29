@@ -123,14 +123,14 @@ class FeatureEmbeddingLayer(nn.Module):
             self.__out_dim += emb_dim - feat_dim  # adjust out_dim based on emb_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        logger.info(f"Doing forward pass for FeatureEmbeddingLayer with feature schema: {self.__feature_schema}")
-        logger.info(f"x: {x}")
+        # logger.info(f"Doing forward pass for FeatureEmbeddingLayer with feature schema: {self.__feature_schema}")
+        # logger.info(f"x: {x}")
         logger.info(f"features_to_embed: {self.__features_to_embed}")
         logger.info(f"non_embed_features: {self.__non_embed_features}")
-        logger.info(f"aggregation: {self.__aggregation}")
-        logger.info(f"plus_one: {self.__plus_one}")
-        logger.info(f"oov_idx: {self.__oov_idx}")
-        logger.info(f"padding_idx: {self.__padding_idx}")
+        # logger.info(f"aggregation: {self.__aggregation}")
+        # logger.info(f"plus_one: {self.__plus_one}")
+        # logger.info(f"oov_idx: {self.__oov_idx}")
+        # logger.info(f"padding_idx: {self.__padding_idx}")
         logger.info(f"feature_padding_value_map: {self.__feature_padding_value_map}")
         x_non_embed = filter_features(
             feature_schema=self.__feature_schema,
@@ -139,11 +139,12 @@ class FeatureEmbeddingLayer(nn.Module):
         )
         x_emb = [x_non_embed]
         for feature in self.__features_to_embed:
-            logger.info(f"feature: {feature}")
+            # logger.info(f"feature: {feature}")
             x_to_emb = filter_features(
                 feature_schema=self.__feature_schema, feature_names=[feature], x=x
             ).long()  # embedding layer takes LongTensor
             logger.info(f"x_to_emb: {x_to_emb}")
+            logger.info(f"x_to_emb shape: {x_to_emb.shape}")
             logger.info(f"plus_one: {self.__plus_one}")
             if self.__plus_one:
                 x_to_emb = x_to_emb + 1
@@ -151,6 +152,7 @@ class FeatureEmbeddingLayer(nn.Module):
             logger.info(f"{feature}: min={x_to_emb.min().item()}, max={x_to_emb.max().item()}, num_embeddings={emb_layer.num_embeddings}")
             emb = emb_layer(x_to_emb)
             logger.info(f"emb: {emb}")
+            logger.info(f"emb shape: {emb.shape}")
             if self.__aggregation == "mean":
                 # when taking the mean, we ignore 0 values since they represent padding_idx values
                 mask = torch.all(emb != 0, dim=2)  # mask for not all 0 rows
