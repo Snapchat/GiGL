@@ -29,7 +29,7 @@ from gigl.src.mocking.lib.versioning import (
     MockedDatasetArtifactMetadata,
     get_mocked_dataset_artifact_metadata,
 )
-from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
+from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (  # This toy heterogeneous dataset is mocked to align with python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml; The subsequent toy datasets are mocked to align with python/gigl/src/mocking/mocking_assets/toy_graph_data.yaml
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
     HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
     TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -123,14 +123,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 expected_node_id_type=dict,
                 expected_node_feature_info={
                     NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
-                    NodeType("item"): FeatureInfo(dim=2, dtype=torch.float32),
+                    NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
                 },
                 expected_edge_feature_info={
                     EdgeType(
-                        NodeType("user"), Relation("to"), NodeType("item")
+                        NodeType("user"), Relation("to"), NodeType("story")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                     EdgeType(
-                        NodeType("item"), Relation("to"), NodeType("user")
+                        NodeType("story"), Relation("to"), NodeType("user")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                 },
             ),
@@ -141,14 +141,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 expected_node_id_type=dict,
                 expected_node_feature_info={
                     NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
-                    NodeType("item"): FeatureInfo(dim=2, dtype=torch.float32),
+                    NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
                 },
                 expected_edge_feature_info={
                     EdgeType(
-                        NodeType("user"), Relation("to"), NodeType("item")
+                        NodeType("user"), Relation("to"), NodeType("story")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                     EdgeType(
-                        NodeType("item"), Relation("to"), NodeType("user")
+                        NodeType("story"), Relation("to"), NodeType("user")
                     ): FeatureInfo(dim=2, dtype=torch.float32),
                 },
             ),
@@ -539,7 +539,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
         self.assertTrue(labeled_edge_type not in dataset.edge_pb)
         self.assertTrue(message_passing_edge_type in dataset.edge_pb)
 
-    def test_build_homogeneous_dataset_with_node_labels(self):
+    def test_building_homogeneous_dataset_preserves_node_features_and_labels(self):
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(10),
             edge_partition_book=torch.zeros(20),
@@ -571,7 +571,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
         assert_tensor_equality(dataset.node_features.feature_tensor, torch.zeros(10, 2))
 
-    def test_build_heterogeneous_dataset_with_node_labels(self):
+    def test_building_heterogeneous_dataset_preserves_node_features_and_labels(self):
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(10),

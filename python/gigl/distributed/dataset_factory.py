@@ -75,9 +75,9 @@ def _get_labels_from_features(
 
     _, feature_and_label_dim = feature_and_label_tensor.shape
 
-    if label_dim < 0 or label_dim > feature_and_label_dim:
+    if not (0 <= label_dim <= feature_and_label_dim):
         raise ValueError(
-            f"Got invalid label dim {label_dim} for extracting labels from tensor of shape {feature_and_label_tensor.shape}"
+            f"Got invalid label dim {label_dim} for extracting labels which must inclusively be between 0 and {feature_and_label_dim} for tensor of shape {feature_and_label_tensor.shape}"
         )
 
     feature_dim = feature_and_label_dim - label_dim
@@ -116,25 +116,26 @@ def _extract_node_labels_from_features(
             # feature_dim can be heterogeneous for a heterogeneous node features
             if isinstance(feature_dim, Mapping):
                 feature_dim_for_current_node_type = feature_dim[node_type]
-            # feature_dim can be homogeneous for a heterogeneous node features, since we inject positive and negative label types as edges
+            # feature_dim can be homogeneous for a dictionary of node features, since we inject positive and negative label
+            # types as edge types, thus storing the homogeneous graph internally as heterogeneous
             else:
                 feature_dim_for_current_node_type = feature_dim
             label_dim = node_feature.feats.shape[1] - feature_dim_for_current_node_type
             if label_dim > 0:
                 (
-                    node_features_per_node_type,
-                    node_label_per_node_type,
+                    node_features_for_node_type,
+                    node_label_for_node_type,
                 ) = _get_labels_from_features(node_feature.feats, label_dim=label_dim)
                 node_labels[node_type] = FeaturePartitionData(
-                    feats=node_label_per_node_type, ids=node_feature.ids
+                    feats=node_label_for_node_type, ids=node_feature.ids
                 )
                 # After extracting labels from the combined feature + label tensor, are there any actual features left?
                 # If not, we delete the node type from the partitioned node features.
-                if node_features_per_node_type.numel():
+                if node_features_for_node_type.numel():
                     partition_output.partitioned_node_features[
                         node_type
                     ] = FeaturePartitionData(
-                        feats=node_features_per_node_type, ids=node_feature.ids
+                        feats=node_features_for_node_type, ids=node_feature.ids
                     )
                 else:
                     del partition_output.partitioned_node_features[node_type]

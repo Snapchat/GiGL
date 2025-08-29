@@ -317,7 +317,7 @@ class TFRecordDataLoader:
 
         feature_spec_dict = deepcopy(serialized_tf_record_info.feature_spec)
 
-        if isinstance(entity_key, str):
+        if serialized_tf_record_info.is_node_entity:
             assert isinstance(entity_key, str)
             id_concat_axis = 0
             proccess_id_tensor = lambda t: t[entity_key]
@@ -333,11 +333,6 @@ class TFRecordDataLoader:
                     shape=[], dtype=tf.int64
                 )
         else:
-            # We currently do not support training with labels for edge entities
-            if label_keys:
-                raise NotImplementedError(
-                    "Label keys are not supported for edge entities"
-                )
             id_concat_axis = 1
             proccess_id_tensor = lambda t: tf.stack(
                 [t[entity_key[0]], t[entity_key[1]]], axis=0
