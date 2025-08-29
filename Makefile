@@ -89,6 +89,8 @@ install_deps:
 
 # Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
 generate_mac_arm64_cpu_hashed_requirements:
+	python -c "import platform; print('SV DEBUG: ', platform.system())"
+
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/darwin_arm64_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra experimental \
@@ -96,6 +98,8 @@ generate_mac_arm64_cpu_hashed_requirements:
 
 # Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong.
 generate_dev_mac_arm64_cpu_hashed_requirements:
+	python -c "import platform; print('SV DEBUG: ', platform.system())"
+
 	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
 	--output-file=requirements/dev_darwin_arm64_requirements_unified.txt \
 	--extra torch25-cpu --extra transform --extra dev --extra experimental \
