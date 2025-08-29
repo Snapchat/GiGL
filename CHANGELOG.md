@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Add earlier check if invalid Node IDs are provided to the partitioner
 
+- Add support for labeling VAI pipeline runs
+
 ### Changed
 
 ### Deprecated
