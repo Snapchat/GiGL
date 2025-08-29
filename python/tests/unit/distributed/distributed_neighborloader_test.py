@@ -55,7 +55,6 @@ _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE
 _USER = NodeType("user")
 _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
-_STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
 # TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
 
@@ -965,7 +964,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book={
-                _USER: torch.zeros(10),
+                _USER: torch.zeros(5),
                 _STORY: torch.zeros(5),
             },
             edge_partition_book={
@@ -976,14 +975,10 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                     edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
                     edge_ids=None,
                 ),
-                _STORY_TO_USER: GraphPartitionData(
-                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
-                    edge_ids=None,
-                ),
             },
             partitioned_node_features={
                 _USER: FeaturePartitionData(
-                    feats=torch.zeros(10, 2), ids=torch.arange(10)
+                    feats=torch.zeros(5, 2), ids=torch.arange(5)
                 ),
                 _STORY: FeaturePartitionData(
                     feats=torch.zeros(5, 2), ids=torch.arange(5)
@@ -994,7 +989,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_negative_labels=None,
             partitioned_node_labels={
                 _USER: FeaturePartitionData(
-                    feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
+                    feats=torch.arange(5).unsqueeze(1), ids=torch.arange(5)
                 ),
                 _STORY: FeaturePartitionData(
                     feats=torch.arange(5).unsqueeze(1), ids=torch.arange(5)
