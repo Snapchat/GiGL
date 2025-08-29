@@ -30,7 +30,7 @@ jobs:
       # Step 1: Check out the repository code.
       - uses: actions/checkout@v4
       # Step 2: Check out the repository code and set up the Python environment.
-      - uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      - uses: .github/actions/setup-python-tools
       # Step 3: Generate a hashed requirements file from pyproject.toml using pip-compile.
       - name: Generate all hashed requirements for Linux Platform
         uses: snapchat/gigl/.github/actions/run-command-on-pr@main
