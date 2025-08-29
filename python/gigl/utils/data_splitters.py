@@ -75,10 +75,6 @@ class NodeAnchorLinkSplitter(Protocol):
     def should_convert_labels_to_edges(self):
         ...
 
-    @property
-    def is_distributed(self) -> bool:
-        ...
-
 
 @runtime_checkable
 class NodeSplitter(Protocol):
@@ -110,10 +106,6 @@ class NodeSplitter(Protocol):
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
-        ...
-
-    @property
-    def is_distributed(self) -> bool:
         ...
 
 
@@ -403,10 +395,6 @@ class HashedNodeAnchorLinkSplitter:
     def should_convert_labels_to_edges(self):
         return self._should_convert_labels_to_edges
 
-    @property
-    def is_distributed(self) -> bool:
-        return True
-
 
 class HashedNodeSplitter:
     """Selects train, val, and test nodes based on provided node IDs directly.
@@ -510,10 +498,6 @@ class HashedNodeSplitter:
             return splits
         else:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
-
-    @property
-    def is_distributed(self) -> bool:
-        return True
 
 
 def _create_distributed_splits_from_hash(

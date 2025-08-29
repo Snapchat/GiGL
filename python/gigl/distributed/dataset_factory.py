@@ -429,7 +429,12 @@ def _build_dataset_process(
     )
     # HashedNodeAnchorLinkSplitter and HashedNodeSplitter require rpc to be initialized, so we initialize it here.
     should_teardown_process_group = False
-    if splitter is not None and splitter.is_distributed:
+
+    # TODO (mkolodner-sc): Address this code smell to better determine whether we have a distributed splitter without referencing
+    # the protocol derivatives directly.
+    if isinstance(splitter, HashedNodeAnchorLinkSplitter) or isinstance(
+        splitter, HashedNodeSplitter
+    ):
         should_teardown_process_group = True
         torch.distributed.init_process_group(
             backend="gloo",
