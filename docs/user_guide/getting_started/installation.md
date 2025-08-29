@@ -15,22 +15,24 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 ````{dropdown} (Recommended) Developing/experimenting on a GCP cloud instance.
 :color: primary
 
+  1. Create dev instance
   We will need to create a GCP instance and setup needed pre-requisites to install and use GiGL.
 
   You can use our `create_dev_instance.py` script to automatically create an instance for you:
   ```bash
     python <(curl -s https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/scripts/create_dev_instance.py)
   ```
-  Next, ssh into your instance. It will most likely ask you to install gpu drivers, follow instructions and do so.
-  Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click
-  the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
+  Next, ssh into your instance. It might ask you to install gpu drivers, follow instructions and do so.
 
-  Once done, ensure you can run multiarch docker builds by running following command:
+  2. Install some pre-reqs on your instance. The script below tries to automate installation of the following pre-reqs:
+  `make, unzip, qemu-user-static, docker, docker-buildx, mamba/conda`
+  ```bash
+    bash -c "$(curl -s https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/scripts/scripts/startup_dev_instance.sh)"
   ```
-  docker buildx create --driver=docker-container --use
-  sudo apt-get install qemu-user-static
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
+
+  3. Once you are done, make sure to restart the instance. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
+
+  Next, Follow instructions to [install GiGL](#install-gigl)
 
 ````
 
