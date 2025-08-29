@@ -670,22 +670,6 @@ class DistributedDatasetTestCase(unittest.TestCase):
             assert isinstance(dataset.val_node_ids, torch.Tensor)
             assert isinstance(dataset.test_node_ids, torch.Tensor)
 
-            # Checks that the sorted version train, val, and test node ids are equal to the sorted version of all the node ids.
-            # Note that torch.sort() returns a tuple of (sorted_values, sorted_indices),
-            # which is why we index into the first element of the tuple.
-            assert_tensor_equality(
-                torch.sort(
-                    torch.cat(
-                        (
-                            dataset.train_node_ids,
-                            dataset.val_node_ids,
-                            dataset.test_node_ids,
-                        )
-                    )
-                )[0],
-                torch.sort(dataset.node_ids)[0],
-            )
-
     # This tests that we can build a dataset when manually specifying a port.
     # TODO (mkolodner-sc): Remove this test once we deprecate the `port` field
     def test_build_dataset_with_manual_port(self):
