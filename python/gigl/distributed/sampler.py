@@ -1,9 +1,44 @@
 from typing import Any, Optional, Union
+from dataclasses import asdict, dataclass
+import ast
+
 
 import torch
-from graphlearn_torch.sampler import NodeSamplerInput
+from graphlearn_torch.sampler import NodeSamplerInput, RemoteSamplerInput
 
-from gigl.src.common.types.graph_data import NodeType
+from gigl.common import Uri
+from gigl.types.graph import FeatureInfo
+from gigl.src.common.types.graph_data import NodeType, EdgeType
+from gigl.src.common.utils.file_loader import FileLoader
+
+
+@dataclass
+class RemoteNodeInfo:
+    node_type: NodeType
+    edge_types: list[tuple[NodeType, NodeType, NodeType]]
+    num_nodes: int
+    node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
+    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
+
+    def dump(self) -> str:
+        return str(asdict(self))
+
+    @classmethod
+    def load(cls, uri: Uri) -> "RemoteNodeInfo":
+        with FileLoader().load_to_temp_file(uri) as temp_file:
+            s = temp_file.read()
+        return cls(**ast.literal_eval(s))
+
+class RemoteUriSamplerInput(RemoteSamplerInput):
+    def __init__(self, uri: Uri, input_type: Optional[Union[str, NodeType]]):
+        self._uri = uri
+        self._input_type = input_type
+
+    def to_local_sampler_input(self, dataset, **kwargs) -> NodeSamplerInput:
+        file_loader = FileLoader()
+        with file_loader.load_to_temp_file(self._uri) as temp_file:
+            tensor = torch.load(temp_file)
+        return NodeSamplerInput(node=tensor, input_type=self._input_type)
 
 
 class ABLPNodeSamplerInput(NodeSamplerInput):

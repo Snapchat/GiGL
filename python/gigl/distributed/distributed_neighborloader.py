@@ -21,6 +21,7 @@ from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
     strip_label_edges,
 )
+from gigl.distributed.sampler import RemoteUriSamplerInput
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -41,7 +42,7 @@ class DistNeighborLoader(DistLoader):
         dataset: Optional[DistLinkPredictionDataset],
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
-            Union[torch.Tensor, Tuple[NodeType, torch.Tensor], list[Uri]]
+            Union[torch.Tensor, Tuple[NodeType, torch.Tensor], Uri]
         ] = None,
         num_workers: int = 1,
         batch_size: int = 1,
@@ -208,45 +209,55 @@ class DistNeighborLoader(DistLoader):
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         self._is_labeled_heterogeneous = False
-        if isinstance(input_nodes, torch.Tensor):
-            node_ids = input_nodes
+        if dataset is None:
+            if not isinstance(input_nodes, tuple):
+                raise ValueError("input_nodes must be a tuple if dataset is None.")
+            node_type, uri = input_nodes
+            if not isinstance(uri, Uri):
+                raise ValueError(f"uri must be a Uri, received {uri} of type {type(uri)}")
+            if not isinstance(node_type, NodeType):
+                raise ValueError(f"node_type must be a NodeType, received {node_type} of type {type(node_type)}")
+            input_data = RemoteUriSamplerInput(uri, node_type)
+        else:
+            if isinstance(input_nodes, torch.Tensor):
+                node_ids = input_nodes
 
-            # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
-            # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
-            if isinstance(dataset.node_ids, abc.Mapping):
-                if (
-                    len(dataset.node_ids) == 1
-                    and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
-                ):
-                    node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-                    self._is_labeled_heterogeneous = True
+                # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
+                # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
+                if isinstance(dataset.node_ids, abc.Mapping):
+                    if (
+                        len(dataset.node_ids) == 1
+                        and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
+                    ):
+                        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                        self._is_labeled_heterogeneous = True
+                    else:
+                        raise ValueError(
+                            f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
+                        )
                 else:
-                    raise ValueError(
-                        f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
-                    )
-            else:
-                node_type = None
-        elif isinstance(input_nodes, tuple):
-            node_type, node_ids = input_nodes
-            assert isinstance(
-                dataset.node_ids, abc.Mapping
-            ), "Dataset must be heterogeneous if provided input nodes are a tuple."
-        elif isinstance(input_nodes, list):
+                    node_type = None
+            elif isinstance(input_nodes, tuple):
+                node_type, node_ids = input_nodes
+                if not isinstance(node_type, NodeType):
+                    raise ValueError(f"node_type must be a NodeType, received {node_type} of type {type(node_type)}")
+                if not isinstance(node_ids, torch.Tensor):
+                    raise ValueError(f"node_ids must be a torch.Tensor, received {node_ids} of type {type(node_ids)}")
 
-        num_neighbors = patch_fanout_for_sampling(
-            dataset.get_edge_types(), num_neighbors
-        )
+            num_neighbors = patch_fanout_for_sampling(
+                dataset.get_edge_types(), num_neighbors
+            )
 
-        curr_process_nodes = shard_nodes_by_process(
-            input_nodes=node_ids,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-        )
+            curr_process_nodes = shard_nodes_by_process(
+                input_nodes=node_ids,
+                local_process_rank=local_rank,
+                local_process_world_size=local_world_size,
+            )
 
-        self._node_feature_info = dataset.node_feature_info
-        self._edge_feature_info = dataset.edge_feature_info
+            self._node_feature_info = dataset.node_feature_info
+            self._edge_feature_info = dataset.edge_feature_info
 
-        input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
+            input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.

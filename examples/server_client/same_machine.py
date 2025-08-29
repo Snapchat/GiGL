@@ -103,6 +103,7 @@ def main():
     parser.add_argument("--num_clients", type=int, default=2)
     parser.add_argument("--output_dir", type=str, default=f"/tmp/gigl/server_client/output/{uuid.uuid4()}")
     parser.add_argument("--host", type=str, default="localhost")
+    parser.add_argument("--port", type=int, default=get_free_port())
     args = parser.parse_args()
     logger.info(f"Arguments: {args}")
 
@@ -114,7 +115,6 @@ def main():
 
     server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
-    server_client_port = get_free_port()
 
     for server_rank in range(num_servers):
         server_process = mp_context.Process(
@@ -124,7 +124,7 @@ def main():
                 num_servers,
                 num_clients,
                 args.host,
-                server_client_port,
+                args.port,
                 output_dir,
             ),
         )
@@ -151,7 +151,7 @@ def main():
                 num_clients,
                 num_servers,
                 args.host,
-                server_client_port,
+                args.port,
                 output_dir,
             ),
         )
