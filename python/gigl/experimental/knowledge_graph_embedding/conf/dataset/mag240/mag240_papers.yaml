@@ -1,0 +1,31 @@
+metadata:  # The yaml corresponding to the GraphMetadata protobuf.
+  node_types:
+    - paper
+  edge_types:
+    - dst_node_type: paper
+      relation: cites
+      src_node_type: paper
+  condensed_edge_type_map:
+    0:
+      dst_node_type: paper
+      relation: cites
+      src_node_type: paper
+  condensed_node_type_map:
+    0: paper
+
+raw_graph_data:
+  node_data:
+    - _target_: gigl.src.data_preprocessor.lib.ingest.bigquery.BigqueryNodeDataReference
+      node_type: paper
+      reference_uri: external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper
+      identifier: paper
+  edge_data:
+    - _target_: gigl.src.data_preprocessor.lib.ingest.bigquery.BigqueryEdgeDataReference
+      edge_type:
+        _target_: gigl.src.common.types.graph_data.EdgeType
+        src_node_type: paper
+        relation: cites
+        dst_node_type: paper
+      reference_uri: external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper_cites_paper_copy
+      src_identifier: paper1
+      dst_identifier: paper2
