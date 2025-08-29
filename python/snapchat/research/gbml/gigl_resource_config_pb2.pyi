@@ -216,6 +216,7 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     GPU_LIMIT_FIELD_NUMBER: builtins.int
     NUM_REPLICAS_FIELD_NUMBER: builtins.int
     TIMEOUT_FIELD_NUMBER: builtins.int
+    GCP_REGION_OVERRIDE_FIELD_NUMBER: builtins.int
     machine_type: builtins.str
     """Machine type for job"""
     gpu_type: builtins.str
@@ -225,8 +226,14 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     num_replicas: builtins.int
     """Num workers for job"""
     timeout: builtins.int
-    """Timeout in seconds for the job. If unset or zero, will use the default @ google.cloud.aiplatform.CustomJob, which is 7 days: 
+    """Timeout in seconds for the job. If unset or zero, will use the default @ google.cloud.aiplatform.CustomJob, which is 7 days:
     https://github.com/googleapis/python-aiplatform/blob/58fbabdeeefd1ccf1a9d0c22eeb5606aeb9c2266/google/cloud/aiplatform/jobs.py#L2252-L2253
+    """
+    gcp_region_override: builtins.str
+    """Region override.
+    If provided, then the Vertex AI Job will be launched in the provided region.
+    ex: "us-west1"
+    NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
     """
     def __init__(
         self,
@@ -236,8 +243,9 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
         gpu_limit: builtins.int = ...,
         num_replicas: builtins.int = ...,
         timeout: builtins.int = ...,
+        gcp_region_override: builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing_extensions.Literal["gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "timeout", b"timeout"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "timeout", b"timeout"]) -> None: ...
 
 global___VertexAiResourceConfig = VertexAiResourceConfig
 
