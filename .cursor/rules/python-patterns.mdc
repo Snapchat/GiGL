@@ -21,7 +21,7 @@ alwaysApply: false
 - Use descriptive class names with proper CamelCase
 - Include comprehensive docstrings for all classes
 - Use `@dataclass(frozen=True)` for immutable data containers
-- Implement `__init__.py` files with proper exports
+- Implement `__init__.py` files that define a minimal, consistent, and well-documented public API. Only expose stable, user-facing classes and functions through __init__.py using __all__. Keep helpers/internal logic in private modules.
 
 Example:
 ```python
@@ -35,25 +35,44 @@ class TestArgs:
     test_file_pattern: str
 ```
 
-### Type Annotations
+### Type Annotations and DocStrings
 - Always use type annotations for function parameters and return values
 - Prefer not using typing module imports if it can be done without i.e.
 `arg: dict[str, str]` is preferred over `arg: typing.Dict[str, str]`.
 - For Protocol Buffer types, import from `snapchat.research.gbml`
 - Use `Final` for constants
+- Always add pydoc-style docstrings for all public functions and methods. Include a one-line summary, optional details, Example with >>> for doctests, Args, Returns, and Raises if applicable. Docstrings should be clear, consistent, testable, and Sphinx-compatible.
 
 Example:
 ```python
 from typing import Final, Optional
 
-GIGL_ROOT_DIR: Final[Path] = get_root_directory()
+MAGIC_NUMBER: Final[int] = 42
 
-def process_config(
-    config_path: Path,
-    metadata: Optional[dict[str, str]] = None
-) -> list[str]:
-    """Process configuration file and return processed paths."""
+def add_to_magic_number(
+    number_1: int,
+    numbers: Optional[list[int]] = None
+) -> int:
+    """
+    Add a number and a list of numbers to MAGIC_NUMBER.
+
+    Example:
+        >>> MAGIC_NUMBER = 10
+        >>> add_to_magic_number(5, [1, 2, 3])
+        21
+        >>> add_to_magic_number(2)
+        12
+
+    Args:
+        number_1 (int): A single number to add.
+        numbers (Optional[list[int]]): List of numbers to sum and add. Default is None.
+
+    Returns:
+        int: The sum of MAGIC_NUMBER, number_1, and the numbers in the list.
+    """
+    return MAGIC_NUMBER + number_1 + sum(numbers)
 ```
+
 
 ### Error Handling & Logging
 - Use the GiGL logger: `from gigl.common.logger import Logger`
