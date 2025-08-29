@@ -156,11 +156,11 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
             f"Missing values for the following flags for a {args.action} command: {missing_values}. "
             + f"All required flags are: {list(required_flags)}."
         )
-    if args.action == Action.COMPILE and args.labels:
+    if args.action == Action.COMPILE and args.run_labels:
         raise ValueError(
             "Labels are not supported for the compile action. "
             "Please use the run action to run a pipeline with labels."
-            f"Labels provided: {args.labels}"
+            f"Labels provided: {args.run_labels}"
         )
 
 
