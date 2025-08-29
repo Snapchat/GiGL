@@ -1,0 +1,28 @@
+# Combined e2e test configurations for GiGL
+# This file contains all the test specifications that can be run via the e2e test script
+
+tests:
+  - name: "cora_glt_udl_test_on"
+    task_config_uri: "examples/distributed/configs/e2e_cora_udl_glt_task_config.yaml"
+    resource_config_uri: "deployment/configs/e2e_glt_resource_config.yaml"
+    uses_in_memory_sampling: "True"
+
+  - name: "cora_nalp_test_on"
+    task_config_uri: "gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml"
+    resource_config_uri: "deployment/configs/e2e_cicd_resource_config.yaml"
+    uses_in_memory_sampling: "False"
+
+  - name: "cora_snc_test_on"
+    task_config_uri: "gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml"
+    resource_config_uri: "deployment/configs/e2e_cicd_resource_config.yaml"
+    uses_in_memory_sampling: "False"
+
+  - name: "cora_udl_test_on"
+    task_config_uri: "gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml"
+    resource_config_uri: "deployment/configs/e2e_cicd_resource_config.yaml"
+    uses_in_memory_sampling: "False"
+
+  - name: "dblp_nalp_test_on"  # Fixed: was incorrectly named "cora_udl_test_on"
+    task_config_uri: "gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml"
+    resource_config_uri: "deployment/configs/e2e_cicd_resource_config.yaml"
+    uses_in_memory_sampling: "False"
