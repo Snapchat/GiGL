@@ -15,7 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Add support for loading, partitioning, and separate node labels from features
 
-- Node classification support in dataset factory and dataloaders
+- Add earlier check if invalid Node IDs are provided to the partitioner
+
+- Add support for labeling VAI pipeline runs
+
+- Add Node classification support in dataset factory and dataloaders
 
 ### Changed
 
