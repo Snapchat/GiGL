@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Add support for labeling VAI pipeline runs
 
+- Add Node classification support in dataset factory and dataloaders
+
 ### Changed
 
 ### Deprecated
