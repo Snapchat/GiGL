@@ -288,6 +288,7 @@ class GraphTypesTyest(unittest.TestCase):
         graph_tensors = LoadedGraphTensors(
             node_ids=node_ids,
             node_features=node_features,
+            node_labels=None,
             edge_index=edge_index,
             edge_features=edge_features,
             positive_label=positive_label,

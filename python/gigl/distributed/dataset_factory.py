@@ -40,10 +40,9 @@ from gigl.distributed.utils import (
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
-from gigl.types.graph import FeaturePartitionData, PartitionOutput
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     HashedNodeSplitter,
@@ -53,136 +52,6 @@ from gigl.utils.data_splitters import (
 )
 
 logger = Logger()
-
-
-def _get_labels_from_features(
-    feature_and_label_tensor: torch.Tensor, label_dim: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Given a combined tensor of features and labels, returns the features and labels separately.
-    Args:
-        feature_and_label_tensor (torch.Tensor): Tensor of features and labels
-        label_dim (int): Dimension of the labels
-    Returns:
-        feature_tensor (torch.Tensor): Tensor of features
-        label_tensor (torch.Tensor): Tensor of labels
-    """
-
-    if len(feature_and_label_tensor.shape) != 2:
-        raise ValueError(
-            f"Expected tensor to be 2D for extracting labels, but got shape {feature_and_label_tensor.shape}"
-        )
-
-    _, feature_and_label_dim = feature_and_label_tensor.shape
-
-    if not (0 <= label_dim <= feature_and_label_dim):
-        raise ValueError(
-            f"Got invalid label dim {label_dim} for extracting labels which must inclusively be between 0 and {feature_and_label_dim} for tensor of shape {feature_and_label_tensor.shape}"
-        )
-
-    feature_dim = feature_and_label_dim - label_dim
-
-    return (
-        feature_and_label_tensor[:, :feature_dim],
-        feature_and_label_tensor[:, feature_dim:],
-    )
-
-
-# TODO (mkolodner-sc): Move this function to the partitioner once the partitioner accepts and returns
-# the node labels as separate fields from the node features.
-def _extract_node_labels_from_features(
-    partition_output: PartitionOutput,
-    feature_dim: Union[int, dict[NodeType, int]],
-) -> None:
-    """
-    Extract node labels from node features and set them in partition_output in-place, handling both heterogeneous and homogeneous cases.
-
-    Args:
-        partition_output (PartitionOutput): The partition output containing partitioned_node_features; will have partitioned_node_labels set
-        feature_dim (Union[int, dict[NodeType, int]]): Dimension of the node features.
-    """
-    node_labels: Optional[
-        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
-    ] = None
-
-    label_dim: int
-
-    if isinstance(partition_output.partitioned_node_features, Mapping):
-        node_labels = {}
-        for (
-            node_type,
-            node_feature,
-        ) in partition_output.partitioned_node_features.items():
-            # feature_dim can be heterogeneous for a heterogeneous node features
-            if isinstance(feature_dim, Mapping):
-                feature_dim_for_current_node_type = feature_dim[node_type]
-            # feature_dim can be homogeneous for a dictionary of node features, since we inject positive and negative label
-            # types as edge types, thus storing the homogeneous graph internally as heterogeneous
-            else:
-                feature_dim_for_current_node_type = feature_dim
-            label_dim = node_feature.feats.shape[1] - feature_dim_for_current_node_type
-            if label_dim > 0:
-                (
-                    node_features_for_node_type,
-                    node_label_for_node_type,
-                ) = _get_labels_from_features(node_feature.feats, label_dim=label_dim)
-                node_labels[node_type] = FeaturePartitionData(
-                    feats=node_label_for_node_type, ids=node_feature.ids
-                )
-                # After extracting labels from the combined feature + label tensor, are there any actual features left?
-                # If not, we delete the node type from the partitioned node features.
-                if node_features_for_node_type.numel():
-                    partition_output.partitioned_node_features[
-                        node_type
-                    ] = FeaturePartitionData(
-                        feats=node_features_for_node_type, ids=node_feature.ids
-                    )
-                else:
-                    del partition_output.partitioned_node_features[node_type]
-
-                del node_feature
-
-        # If there are no node labels across all node types, we set the partitioned node labels to None
-        if not node_labels:
-            node_labels = None
-
-        # If there are no node features across all node types after removing labels, we set the partitioned node features to None
-        if not partition_output.partitioned_node_features:
-            partition_output.partitioned_node_features = None
-
-    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
-        # feature_dim must be homogeneous if partitioned node features is homogeneous
-        if not isinstance(feature_dim, int):
-            raise ValueError(
-                f"Expected feature dim to be homogeneous for heterogeneous features, got {type(feature_dim)}"
-            )
-        label_dim = (
-            partition_output.partitioned_node_features.feats.shape[1] - feature_dim
-        )
-        if label_dim > 0:
-            node_features, node_label = _get_labels_from_features(
-                partition_output.partitioned_node_features.feats, label_dim=label_dim
-            )
-            node_labels = FeaturePartitionData(
-                feats=node_label, ids=partition_output.partitioned_node_features.ids
-            )
-            # After extracting labels from the combined feature + label tensor, are there any actual features left?
-            # If not, we delete the set the partitioned node features to None
-            if node_features.numel():
-                partition_output.partitioned_node_features = FeaturePartitionData(
-                    feats=node_features,
-                    ids=partition_output.partitioned_node_features.ids,
-                )
-            else:
-                partition_output.partitioned_node_features = None
-
-    else:
-        raise ValueError(
-            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
-        )
-
-    partition_output.partitioned_node_labels = node_labels
-    del node_labels
 
 
 @tf_on_cpu
@@ -327,19 +196,6 @@ def _load_and_build_partitioned_dataset(
     del loaded_graph_tensors
 
     partition_output = partitioner.partition()
-
-    # TODO (mkolodner-sc): Move this call to the partitioner once the partitioner accepts and returns
-    # the node labels as separate fields from the node features.
-
-    _extract_node_labels_from_features(
-        partition_output=partition_output,
-        feature_dim={
-            node_type: node_metadata.feature_dim
-            for node_type, node_metadata in serialized_graph_metadata.node_entity_info.items()
-        }
-        if isinstance(serialized_graph_metadata.node_entity_info, Mapping)
-        else serialized_graph_metadata.node_entity_info.feature_dim,
-    )
 
     logger.info(
         f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
