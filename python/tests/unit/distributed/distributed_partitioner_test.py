@@ -936,9 +936,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 partitioner.partition()
 
         node_partition_book = partitioner.partition_node()
-        partitioner.partition_node_features(node_partition_book)
+        partitioner.partition_node_features_and_labels(node_partition_book)
 
-        # Assert that calling partition_node after calling partition() and partition_node_features raises error, as the inputs have been cleaned up at this point
+        # Assert that calling partition_node after calling partition() and partition_node_features_and_labels raises error, as the inputs have been cleaned up at this point
         with self.subTest(partitioner=partitioner):
             with self.assertRaisesRegex(
                 AssertionError, "Must have registered nodes prior to partitioning them"
@@ -1073,7 +1073,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         node_pb = partitioner.partition_node()
 
         with self.assertRaises(ValueError):
-            partitioner.partition_node_features(node_pb)
+            partitioner.partition_node_features_and_labels(node_pb)
 
 
 if __name__ == "__main__":

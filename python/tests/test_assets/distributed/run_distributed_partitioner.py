@@ -97,7 +97,10 @@ def run_distributed_partitioner(
 
         dist_partitioner.register_node_features(node_features=node_features)
         del node_features
-        output_node_features = dist_partitioner.partition_node_features(
+        (
+            output_node_features,
+            output_node_labels,
+        ) = dist_partitioner.partition_node_features_and_labels(
             node_partition_book=output_node_partition_book
         )
 
@@ -122,6 +125,7 @@ def run_distributed_partitioner(
             edge_partition_book=output_edge_partition_book,
             partitioned_edge_index=output_edge_index,
             partitioned_node_features=output_node_features,
+            partitioned_node_labels=output_node_labels,
             partitioned_edge_features=output_edge_features,
             partitioned_positive_labels=output_positive_labels,
             partitioned_negative_labels=output_negative_labels,
@@ -150,6 +154,7 @@ def run_distributed_partitioner(
             edge_partition_book=output_edge_partition_book,
             partitioned_edge_index=output_graph,
             partitioned_node_features=None,
+            partitioned_node_labels=None,
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,

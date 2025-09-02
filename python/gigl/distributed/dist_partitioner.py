@@ -192,6 +192,8 @@ class DistPartitioner:
         self._max_node_ids: Optional[dict[NodeType, int]] = None
         self._node_feat: Optional[dict[NodeType, torch.Tensor]] = None
         self._node_feat_dim: Optional[dict[NodeType, int]] = None
+        self._node_labels: Optional[dict[NodeType, torch.Tensor]] = None
+        self._node_labels_dim: Optional[dict[NodeType, int]] = None
 
         self._edge_index: Optional[dict[EdgeType, torch.Tensor]] = None
         self._edge_ids: Optional[dict[EdgeType, tuple[int, int]]] = None
@@ -510,6 +512,41 @@ class DistPartitioner:
         for node_type in input_node_features:
             self._node_feat_dim[node_type] = input_node_features[node_type].shape[1]
 
+    def register_node_labels(
+        self, node_labels: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ) -> None:
+        """
+        Registers the node labels to the partitioner.
+
+        This function assumes that node label at index N on the current machine corresponds to the node id at index N
+        on the current machine, which should be registered through `register_node_ids`.
+
+        For optimal memory management, it is recommended that the reference to node_labels tensor be deleted
+        after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
+        We do not need to perform `all_gather` calls here since register_node_ids is responsible for determining total number of nodes
+        across all ranks.
+        Args:
+            node_labels (Union[torch.Tensor, dict[NodeType, torch.Tensor]]): Input node labels which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
+        """
+
+        self._assert_and_get_rpc_setup()
+
+        logger.info("Registering Node Labels ...")
+
+        input_node_labels = self._convert_node_entity_to_heterogeneous_format(
+            input_node_entity=node_labels
+        )
+
+        assert (
+            input_node_labels
+        ), "Node labels is an empty dictionary. Please provide node labels to register."
+
+        self._node_labels = convert_to_tensor(input_node_labels, dtype=torch.float32)
+
+        self._node_labels_dim = {}
+        for node_type in input_node_labels:
+            self._node_labels_dim[node_type] = input_node_labels[node_type].shape[1]
+
     def register_edge_features(
         self, edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ) -> None:
@@ -582,7 +619,7 @@ class DistPartitioner:
 
     def _partition_single_chunk_data(
         self,
-        input_data: Optional[Tuple[torch.Tensor, ...]],
+        input_data: Optional[Tuple[Optional[torch.Tensor], ...]],
         rank_indices: torch.Tensor,
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         chunk_start_pos: int,
@@ -628,7 +665,7 @@ class DistPartitioner:
 
     def _partition_by_chunk(
         self,
-        input_data: Optional[Tuple[torch.Tensor, ...]],
+        input_data: Optional[Tuple[Optional[torch.Tensor], ...]],
         rank_indices: torch.Tensor,
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         total_val_size: int = 0,
@@ -760,38 +797,57 @@ class DistPartitioner:
 
         return node_partition_book
 
-    def _partition_node_features(
+    def _partition_node_features_and_labels(
         self,
         node_partition_book: dict[NodeType, PartitionBook],
         node_type: NodeType,
-    ) -> FeaturePartitionData:
+    ) -> tuple[Optional[FeaturePartitionData], Optional[FeaturePartitionData]]:
         """
-        Partitions node features according to the node partition book.
+        Partitions node features and labels according to the node partition book.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
             node_type (NodeType): Node type of input data
 
         Returns:
-            FeaturePartitionData: Ids and Features of input nodes
+            Optional[FeaturePartitionData]: Partitioned data of node features for current node type.
+            Optional[FeaturePartitionData]: Partitioned data of node labels for current node type.
         """
 
         start_time = time.time()
 
         assert (
-            self._node_feat is not None
-            and self._num_nodes is not None
+            self._num_nodes is not None
             and self._node_ids is not None
-            and self._node_feat_dim is not None
             and self._max_node_ids is not None
-        ), "Node features and ids must be registered prior to partitioning."
+        ), "Node ids must be registered prior to partitioning."
 
         target_node_partition_book = node_partition_book[node_type]
-        node_features = self._node_feat[node_type]
         node_ids = self._node_ids[node_type]
         num_nodes = self._num_nodes[node_type]
-        node_feat_dim = self._node_feat_dim[node_type]
         max_node_ids = self._max_node_ids[node_type]
+
+        node_features = (
+            self._node_feat[node_type]
+            if self._node_feat is not None and node_type in self._node_feat
+            else None
+        )
+        node_feat_dim = (
+            self._node_feat_dim[node_type]
+            if self._node_feat_dim is not None and node_type in self._node_feat_dim
+            else None
+        )
+
+        node_labels = (
+            self._node_labels[node_type]
+            if self._node_labels is not None and node_type in self._node_labels
+            else None
+        )
+        node_labels_dim = (
+            self._node_labels_dim[node_type]
+            if self._node_labels_dim is not None and node_type in self._node_labels_dim
+            else None
+        )
 
         if not torch.all(node_ids >= 0):
             raise ValueError(f"Found negative node ids for node type {node_type}")
@@ -808,7 +864,7 @@ class DistPartitioner:
         # partitioned_results is a list of tuples. Each tuple correpsonds
         # to a chunk of data. A tuple contains node features and node ids.
         partitioned_results, _ = self._partition_by_chunk(
-            input_data=(node_features, node_ids),
+            input_data=(node_features, node_labels, node_ids),
             rank_indices=node_ids,
             partition_function=_node_feature_partition_fn,
             total_val_size=num_nodes,
@@ -817,61 +873,84 @@ class DistPartitioner:
 
         # Since node features are large, we would like to delete them whenever
         # they are not used to free memory.
-        del node_features, node_ids, num_nodes, max_node_ids
+        del node_features, node_labels, node_ids, num_nodes, max_node_ids
 
         del (
-            self._node_feat[node_type],
             self._node_ids[node_type],
             self._num_nodes[node_type],
             self._max_node_ids[node_type],
         )
 
-        if len(self._node_feat) == 0:
-            self._node_feat = None
+        if len(self._node_ids) == 0:
             self._node_ids = None
             self._num_nodes = None
             self._max_node_ids = None
 
-        gc.collect()
+        if self._node_feat is not None and node_type in self._node_feat:
+            del self._node_feat[node_type]
+            if len(self._node_feat) == 0:
+                self._node_feat = None
 
-        if len(partitioned_results) == 0:
-            feature_partition_data = FeaturePartitionData(
-                feats=torch.empty((0, node_feat_dim)),
-                ids=torch.empty(0),
-            )
-        else:
-            feature_partition_data = FeaturePartitionData(
-                feats=torch.cat([r[0] for r in partitioned_results]),
-                ids=torch.cat([r[1] for r in partitioned_results]),
-            )
+            if len(partitioned_results) == 0:
+                assert (
+                    node_feat_dim is not None
+                ), "Node features must be registered prior to partitioning"
+                node_feature_partition_data = FeaturePartitionData(
+                    feats=torch.empty((0, node_feat_dim)),
+                    ids=torch.empty(0),
+                )
+            else:
+                node_feature_partition_data = FeaturePartitionData(
+                    feats=torch.cat([r[0] for r in partitioned_results]),
+                    ids=torch.cat([r[2] for r in partitioned_results]),
+                )
 
-        del self._node_feat_dim[node_type], node_feat_dim
-        if len(self._node_feat_dim) == 0:
-            self._node_feat_dim = None
+            gc.collect()
+
+            # We include this input data correctness check for duplicate node ids here instead of in `register_node_ids`.
+            # This is so that we minimize the memory overhead of this check,  which is easier to do when any duplicate node
+            # ids are guaranteed to be present on the same machine.
+            if (
+                node_feature_partition_data.ids is not None
+                and node_feature_partition_data.ids.numel()
+                != torch.unique(node_feature_partition_data.ids).numel()
+            ):
+                raise ValueError(
+                    f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
+                )
+
+            gc.collect()
+
+        if self._node_labels is not None and node_type in self._node_labels:
+            del self._node_labels[node_type]
+            if len(self._node_labels) == 0:
+                self._node_labels = None
+
+            if len(partitioned_results) == 0:
+                assert (
+                    node_labels_dim is not None
+                ), "Node label dimensions must be registered prior to partitioning"
+                node_label_partition_data = FeaturePartitionData(
+                    feats=torch.empty((0, node_labels_dim)),
+                    ids=torch.empty(0),
+                )
+            else:
+                node_label_partition_data = FeaturePartitionData(
+                    feats=torch.cat([r[1] for r in partitioned_results]),
+                    ids=torch.cat([r[2] for r in partitioned_results]),
+                )
+
+            gc.collect()
 
         partitioned_results.clear()
 
         gc.collect()
 
-        # We include this input data correctness check for duplicate node ids here instead of in `register_node_ids`.
-        # This is so that we minimize the memory overhead of this check,  which is easier to do when any duplicate node
-        # ids are guaranteed to be present on the same machine.
-        if (
-            feature_partition_data.ids is not None
-            and feature_partition_data.ids.numel()
-            != torch.unique(feature_partition_data.ids).numel()
-        ):
-            raise ValueError(
-                f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
-            )
-
-        gc.collect()
-
         logger.info(
-            f"Node Feature Partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
+            f"Node feature and label partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
         )
 
-        return feature_partition_data
+        return node_feature_partition_data, node_label_partition_data
 
     def _partition_edge_index_and_edge_features(
         self,
@@ -1177,27 +1256,29 @@ class DistPartitioner:
             logger.info(f"Partitioned {formatted_num_nodes} nodes per node type")
             return node_partition_book
 
-    def partition_node_features(
+    def partition_node_features_and_labels(
         self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
-    ) -> Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]:
+    ) -> tuple[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]],
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]],
+    ]:
         """
-        Partitions node features of a graph. If heterogeneous, partitions features for all node type.
+        Partitions node features and labels of a graph. If heterogeneous, partitions features and labels for all node type.
         Must call `partition_node` first to get the node partition book as input.
 
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The Computed Node Partition Book
         Returns:
-            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]: Feature Partition Data of ids and features or Dict if heterogeneous.
+            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]: Partitioned data of node features.
+            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]: Partitioned data of node labels.
         """
         assert (
-            self._node_feat is not None
-            and self._num_nodes is not None
-            and self._node_ids is not None
-        ), "Node features and ids must be registered prior to partitioning."
+            self._num_nodes is not None and self._node_ids is not None
+        ), "Node ids must be registered prior to partitioning."
 
         self._assert_and_get_rpc_setup()
 
-        logger.info("Partitioning Node Feats ...")
+        logger.info("Partitioning Node Features and Labels ...")
         start_time = time.time()
 
         transformed_node_partition_book = (
@@ -1212,27 +1293,55 @@ class DistPartitioner:
             is_subset=False,
         )
         self._assert_data_type_consistency(
-            input_entity=self._node_feat, is_node_entity=True, is_subset=True
-        )
-        self._assert_data_type_consistency(
             input_entity=self._node_ids, is_node_entity=True, is_subset=False
         )
 
-        node_feature_types = sorted(self._node_feat.keys())
+        node_feature_types = set()
+        if self._node_feat is not None:
+            self._assert_data_type_consistency(
+                input_entity=self._node_feat, is_node_entity=True, is_subset=True
+            )
+            for node_type in self._node_feat.keys():
+                node_feature_types.add(node_type)
+        elif self._node_labels is not None:
+            self._assert_data_type_consistency(
+                input_entity=self._node_labels, is_node_entity=True, is_subset=True
+            )
+            for node_type in self._node_labels.keys():
+                node_feature_types.add(node_type)
+        else:
+            raise ValueError(
+                "Node features or labels must be registered prior to partitioning."
+            )
 
         partitioned_node_features: dict[NodeType, FeaturePartitionData] = {}
-        for node_type in node_feature_types:
-            partitioned_node_features[node_type] = self._partition_node_features(
+        partitioned_node_labels: dict[NodeType, FeaturePartitionData] = {}
+        for node_type in sorted(list(node_feature_types)):
+            (
+                partitioned_node_features_for_node_type,
+                partitioned_node_labels_for_node_type,
+            ) = self._partition_node_features_and_labels(
                 node_partition_book=transformed_node_partition_book, node_type=node_type
             )
+            if partitioned_node_features_for_node_type is not None:
+                partitioned_node_features[
+                    node_type
+                ] = partitioned_node_features_for_node_type
+            if partitioned_node_labels_for_node_type is not None:
+                partitioned_node_labels[
+                    node_type
+                ] = partitioned_node_labels_for_node_type
 
         elapsed_time = time.time() - start_time
         logger.info(f"Node Feature Partitioning finished, took {elapsed_time:.3f}s")
 
         if self._is_input_homogeneous:
-            return partitioned_node_features[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+            return (
+                partitioned_node_features[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                partitioned_node_labels[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            )
         else:
-            return partitioned_node_features
+            return partitioned_node_features, partitioned_node_labels
 
     def partition_edge_index_and_edge_features(
         self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
@@ -1447,7 +1556,10 @@ class DistPartitioner:
         )
 
         if self._node_feat is not None:
-            partitioned_node_features = self.partition_node_features(
+            (
+                partitioned_node_features,
+                partitioned_node_labels,
+            ) = self.partition_node_features_and_labels(
                 node_partition_book=node_partition_book
             )
         else:
@@ -1479,4 +1591,5 @@ class DistPartitioner:
             partitioned_edge_features=partitioned_edge_features,
             partitioned_positive_labels=partitioned_positive_edge_index,
             partitioned_negative_labels=partitioned_negative_edge_index,
+            partitioned_node_labels=partitioned_node_labels,
         )

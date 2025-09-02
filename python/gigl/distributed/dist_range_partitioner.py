@@ -139,11 +139,11 @@ class DistRangePartitioner(DistPartitioner):
 
         return node_partition_book
 
-    def _partition_node_features(
+    def _partition_node_features_and_labels(
         self,
         node_partition_book: dict[NodeType, PartitionBook],
         node_type: NodeType,
-    ) -> FeaturePartitionData:
+    ) -> tuple[Optional[FeaturePartitionData], Optional[FeaturePartitionData]]:
         """
         Partitions node features according to the node partition book. We rely on the functionality from the parent tensor-based partitioner here,
         and add logic to sort the node features by node indices which is specific to range-based partitioning. This is done so that the range-based
@@ -156,17 +156,43 @@ class DistRangePartitioner(DistPartitioner):
         Returns:
             FeaturePartitionData: Ids and Features of input nodes
         """
-        features_partition_data = super()._partition_node_features(
+        (
+            feature_partition_data,
+            labels_partition_data,
+        ) = super()._partition_node_features_and_labels(
             node_partition_book=node_partition_book, node_type=node_type
         )
+
         # The parent class always returns ids in the feature_partition_data, but we don't need to store the partitioned node feature ids for
         # range-based partitioning, since this is available from the node partition book.
-        assert features_partition_data.ids is not None
-        sorted_node_ids_indices = torch.argsort(features_partition_data.ids)
-        partitioned_node_features = features_partition_data.feats[
-            sorted_node_ids_indices
-        ]
-        return FeaturePartitionData(feats=partitioned_node_features, ids=None)
+
+        if feature_partition_data is not None:
+            ids = feature_partition_data.ids
+            assert ids is not None
+            sorted_node_ids_indices = torch.argsort(ids)
+            partitioned_node_features = feature_partition_data.feats[
+                sorted_node_ids_indices
+            ]
+            partitioned_node_feature_data = FeaturePartitionData(
+                feats=partitioned_node_features, ids=None
+            )
+        else:
+            partitioned_node_feature_data = None
+
+        if labels_partition_data is not None:
+            ids = labels_partition_data.ids
+            assert ids is not None
+            sorted_node_ids_indices = torch.argsort(ids)
+            partitioned_node_labels = labels_partition_data.feats[
+                sorted_node_ids_indices
+            ]
+            partitioned_node_label_data = FeaturePartitionData(
+                feats=partitioned_node_labels, ids=None
+            )
+        else:
+            partitioned_node_label_data = None
+
+        return partitioned_node_feature_data, partitioned_node_label_data
 
     def _partition_edge_index_and_edge_features(
         self,
