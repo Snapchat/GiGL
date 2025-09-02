@@ -116,6 +116,7 @@ class KfpOrchestrator:
         start_at: str = DEFAULT_START_AT_COMPONENT,
         stop_after: Optional[str] = None,
         compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
+        labels: Optional[dict[str, str]] = None,
     ) -> aiplatform.PipelineJob:
         """
         Runs the GiGL Kubeflow pipeline.
@@ -127,7 +128,7 @@ class KfpOrchestrator:
             start_at (str): Component to start the pipeline at. Defaults to 'config_populator'.
             stop_after (Optional[str]): Component to stop the pipeline after. Defaults to None i.e. run entire pipeline.
             compiled_pipeline_path (Uri): Path to the compiled pipeline YAML file.
-
+            labels (Optional[dict[str, str]]): Labels to associate with the run.
         Returns:
             aiplatform.PipelineJob: The created pipeline job.
         """
@@ -161,6 +162,7 @@ class KfpOrchestrator:
             template_path=compiled_pipeline_path,
             run_keyword_args=run_keyword_args,
             job_id=str(applied_task_identifier).replace("_", "-"),
+            labels=labels,
         )
         return run
 

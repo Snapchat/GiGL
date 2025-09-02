@@ -54,7 +54,7 @@ message VertexAiTrainerConfig {
   // Num workers for training job
   uint32 num_replicas = 4;
  }
- 
+
  // (deprecated)
  // Configuration for KFP training resources
  message KFPTrainerConfig {
@@ -86,11 +86,17 @@ message VertexAiResourceConfig {
   uint32 gpu_limit = 3;
   // Num workers for job
   uint32 num_replicas = 4;
-  // Timeout in seconds for the job. If unset or zero, will use the default @ google.cloud.aiplatform.CustomJob, which is 7 days: 
+  // Timeout in seconds for the job. If unset or zero, will use the default @ google.cloud.aiplatform.CustomJob, which is 7 days:
   // https://github.com/googleapis/python-aiplatform/blob/58fbabdeeefd1ccf1a9d0c22eeb5606aeb9c2266/google/cloud/aiplatform/jobs.py#L2252-L2253
   uint32 timeout = 5;
+  // Region override
+  // If provided, then the Vertex AI Job will be launched in the provided region.
+  // Otherwise, will launch jobs in the region specified at CommonComputeConfig.region
+  // ex: "us-west1"
+  // NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
+  string gcp_region_override = 6;
  }
- 
+
  // Configuration for KFP job resources
  message KFPResourceConfig {
   // Num CPU requested for job (str) which can be a number or a number followed by "m", which means 1/1000
@@ -187,7 +193,7 @@ message GiglResourceConfig {
  // (deprecated)
  // Configuration for inferencer
  DataflowResourceConfig inferencer_config = 16 [deprecated=true];
- 
+
  // Configuration for distributed trainer
  TrainerResourceConfig trainer_resource_config = 17;
  // Configuration for distributed inferencer

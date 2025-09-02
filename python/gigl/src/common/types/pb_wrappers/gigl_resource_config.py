@@ -231,6 +231,42 @@ class GiglResourceConfigWrapper:
         return self.shared_resource_config.common_compute_config.region
 
     @property
+    def vertex_ai_trainer_region(self) -> str:
+        """
+        Returns the region specified in the resource config for Vertex AI trainer. (e.g. us-central1)
+        By default this will be set to shared_resource_config.common_compute_config.region
+        But if trainer_resource_config.vertex_ai_trainer_config.vertex_ai_trainer_config.gcp_region_override is set, it will return that instead.
+        Raises an error if the trainer is *not* a Vertex AI trainer.
+        """
+        trainer_config = self.trainer_config
+        if not isinstance(trainer_config, VertexAiResourceConfig):
+            raise ValueError(
+                "Vertex AI trainer region is only supported for Vertex AI trainers."
+            )
+        if trainer_config.gcp_region_override:
+            return trainer_config.gcp_region_override
+        else:
+            return self.region
+
+    @property
+    def vertex_ai_inferencer_region(self) -> str:
+        """
+        Returns the region specified in the resource config for Vertex AI inferencer. (e.g. us-central1)
+        By default this will be set to shared_resource_config.common_compute_config.region
+        But if inferencer_resource_config.vertex_ai_inferencer_config.vertex_ai_inferencer_config.gcp_region_override is set, it will return that instead.
+        Raises an error if the inferencer is *not* a Vertex AI inferencer.
+        """
+        inferencer_config = self.inferencer_config
+        if not isinstance(inferencer_config, VertexAiResourceConfig):
+            raise ValueError(
+                "Vertex AI inferencer region is only supported for Vertex AI inferencers."
+            )
+        if inferencer_config.gcp_region_override:
+            return inferencer_config.gcp_region_override
+        else:
+            return self.region
+
+    @property
     def trainer_config(
         self,
     ) -> Union[VertexAiResourceConfig, KFPResourceConfig, LocalResourceConfig]:
