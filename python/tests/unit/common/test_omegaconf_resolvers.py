@@ -1,6 +1,7 @@
+import subprocess
 import unittest
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import yaml
 from omegaconf import OmegaConf
@@ -70,6 +71,63 @@ class TestNowResolver(unittest.TestCase):
         """
         with self.assertRaises(ValueError):
             OmegaConf.create(yaml_config).experiment.name
+
+    @patch("gigl.common.omegaconf_resolvers.subprocess.run")
+    def test_git_hash_resolver_success(self, mock_subprocess_run):
+        # Mock successful git command
+        mock_result = MagicMock()
+        mocked_hash = "abc123def456789012345678901234567890abcd\n"
+        mock_result.stdout = mocked_hash
+        mock_subprocess_run.return_value = mock_result
+
+        yaml_config = """
+        experiment:
+            commit: "${git_hash}"
+            model_version: "model_${git_hash}"
+        """
+
+        config = OmegaConf.create(yaml.safe_load(yaml_config))
+        # Verify subprocess was called with the correct git command
+        mock_subprocess_run.assert_called()
+
+        self.assertEqual(config.experiment.commit, mocked_hash)
+        self.assertEqual(config.experiment.model_version, f"model_{mocked_hash}")
+
+    @patch("gigl.common.omegaconf_resolvers.subprocess.run")
+    def test_git_hash_resolver_command_not_found(self, mock_subprocess_run):
+        # Command not found throws a 127 exit code.
+        mock_subprocess_run.side_effect = subprocess.CalledProcessError(
+            127, ["git", "rev-parse", "HEAD"], "command not found: hello"
+        )
+        yaml_config = """
+        experiment:
+            commit: "${git_hash}"
+        """
+
+        config = OmegaConf.create(yaml.safe_load(yaml_config))
+
+        # Should return empty string when git is not available
+        self.assertEqual(config.experiment.commit, "")
+
+    @patch("gigl.common.omegaconf_resolvers.subprocess.run")
+    def test_git_hash_resolver_not_git_repo(self, mock_subprocess_run):
+        # When calling git rev-parse HEAD on a non-git directory, it will return a
+        # CalledProcessError with exit code 128.
+        mock_subprocess_run.side_effect = subprocess.CalledProcessError(
+            128,
+            ["git", "rev-parse", "HEAD"],
+            "fatal: not a git repository (or any of the parent directories): .git",
+        )
+
+        yaml_config = """
+        experiment:
+            commit: "${git_hash}"
+        """
+
+        config = OmegaConf.create(yaml.safe_load(yaml_config))
+
+        # Should return empty string when not in a git repository
+        self.assertEqual(config.experiment.commit, "")
 
 
 if __name__ == "__main__":

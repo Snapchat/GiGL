@@ -4,6 +4,7 @@ This module contains custom OmegaConf resolvers that can be used in YAML configu
 files to provide dynamic values during configuration loading.
 """
 
+import subprocess
 from datetime import datetime, timedelta
 
 from omegaconf import OmegaConf
@@ -120,6 +121,42 @@ def now_resolver(*args: str) -> str:
     return target_time.strftime(format_str)
 
 
+def git_hash_resolver() -> str:
+    """Resolver that returns the current git hash.
+
+    This resolver returns the current git hash if one is available.
+    Takes no arguments and returns the git hash as a string.
+
+    Returns:
+        Current git hash as a string, or empty string if not available.
+
+    Example:
+        In YAML config:
+        ```yaml
+        model_version: "model_${git_hash}"
+        experiment_id: "exp_${git_hash}_${now:%Y%m%d}"
+        ```
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        return result.stdout.strip()
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
+        logger.warning(
+            "Could not retrieve git hash - git command failed or not in a git repository"
+        )
+        return ""
+
+
 def register_resolvers() -> None:
     """Register all custom OmegaConf resolvers.
 
@@ -132,4 +169,11 @@ def register_resolvers() -> None:
     else:
         logger.info(
             "OmegaConf resolver 'now' already registered, skipping registration"
+        )
+
+    if not OmegaConf.has_resolver("git_hash"):
+        OmegaConf.register_new_resolver("git_hash", git_hash_resolver)
+    else:
+        logger.info(
+            "OmegaConf resolver 'git_hash' already registered, skipping registration"
         )

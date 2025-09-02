@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, overload
 
 from google.cloud import aiplatform
 from kfp.compiler import Compiler
@@ -164,7 +165,28 @@ class KfpOrchestrator:
         )
         return run
 
-    def wait_for_completion(self, run: Union[aiplatform.PipelineJob, str]):
+    @overload
+    def wait_for_completion(self, runs: list[aiplatform.PipelineJob]):
+        ...
+
+    @overload
+    def wait_for_completion(self, run: list[str]):
+        ...
+
+    @overload
+    def wait_for_completion(self, run: aiplatform.PipelineJob):
+        ...
+
+    @overload
+    def wait_for_completion(self, run: str):
+        ...
+
+    def wait_for_completion(
+        self,
+        run: Union[
+            aiplatform.PipelineJob, str, list[aiplatform.PipelineJob], list[str]
+        ],
+    ):
         """
         Waits for the completion of a pipeline run.
 
@@ -174,6 +196,32 @@ class KfpOrchestrator:
         Returns:
             None
         """
-        resource_name = run if isinstance(run, str) else run.resource_name
-        VertexAIService.wait_for_run_completion(resource_name)
-        logger.info(f"Pipeline run {resource_name} completed successfully.")
+        resource_names: list[str]
+        if isinstance(run, str):
+            resource_names = [run]
+        elif isinstance(run, aiplatform.PipelineJob):
+            resource_names = [run.resource_name]
+        else:
+            resource_names = [
+                run.resource_name if isinstance(run, aiplatform.PipelineJob) else run
+                for run in run
+            ]
+
+        logger.info(
+            f"Waiting for {len(resource_names)} pipeline runs to complete: {resource_names}"
+        )
+
+        def wait_for_run_completion(resource_name: str) -> str:
+            VertexAIService.wait_for_run_completion(resource_name=resource_name)
+            return resource_name  # Convenience to return the run name for logging
+
+        with ThreadPoolExecutor(max_workers=len(resource_names)) as executor:
+            futures = [
+                executor.submit(wait_for_run_completion, resource_name=resource_name)
+                for resource_name in resource_names
+            ]
+            for future in as_completed(futures):
+                resource_name = future.result()
+                logger.info(f"Pipeline run {resource_name} completed successfully.")
+
+        logger.info(f"All {len(resource_names)} pipeline runs completed successfully.")
