@@ -110,15 +110,15 @@ class DistPartitioner:
     Option 2: User wants to partition all parts of a graph together and in sequence
 
     ```
-    partitioner = DistPartitioner(node_ids, edge_index, node_features, edge_features, positive_edge_labels, negative_edge_labels)
+    partitioner = DistPartitioner(node_ids, edge_index, node_features, edge_features, pos_labels, neg_labels)
     # Register is called in the __init__ functions and doesn't need to be called at all outside the class.
     del (
         node_ids,
         edge_index,
         node_features,
         edge_features,
-        positive_edge_labels,
-        negative_edge_labels,
+        pos_labels,
+        neg_labels,
         node_labels,
     ) # Del reference to tensors outside of DistPartitioner to allow memory cleanup within the class
     partitioner.partition()
@@ -154,10 +154,10 @@ class DistPartitioner:
         edge_features: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
-        positive_edge_labels: Optional[
+        positive_labels: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
-        negative_edge_labels: Optional[
+        negative_labels: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
         node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
@@ -173,8 +173,8 @@ class DistPartitioner:
             node_features (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node feats from input. Tensors should be of shope [num_nodes_on_current_rank, node_feat_dim]
             edge_index (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge indexes from input. Tensors should be of shape [2, num_edges_on_current_rank]
             edge_features (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge features from input. Tensors should be of shape [num_edges_on_current_rank, edge_feat_dim]
-            positive_edge_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_positive_edge_labels_on_current_rank]
-            negative_edge_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_negative_edge_labels_on_current_rank]
+            positive_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_positive_labels_on_current_rank]
+            negative_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_negative_labels_on_current_rank]
             node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node labels from input. Tensors should be of shape [num_nodes_on_current_rank, node_label_dim]
         """
 
@@ -220,15 +220,11 @@ class DistPartitioner:
         if edge_features is not None:
             self.register_edge_features(edge_features=edge_features)
 
-        if positive_edge_labels is not None:
-            self.register_edge_labels(
-                label_edge_index=positive_edge_labels, is_positive=True
-            )
+        if positive_labels is not None:
+            self.register_labels(label_edge_index=positive_labels, is_positive=True)
 
-        if negative_edge_labels is not None:
-            self.register_edge_labels(
-                label_edge_index=negative_edge_labels, is_positive=False
-            )
+        if negative_labels is not None:
+            self.register_labels(label_edge_index=negative_labels, is_positive=False)
         if node_labels is not None:
             self.register_node_labels(node_labels=node_labels)
 
@@ -587,7 +583,7 @@ class DistPartitioner:
         for edge_type in input_edge_features:
             self._edge_feat_dim[edge_type] = input_edge_features[edge_type].shape[1]
 
-    def register_edge_labels(
+    def register_labels(
         self,
         label_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         is_positive: bool,
@@ -1588,14 +1584,14 @@ class DistPartitioner:
             partitioned_node_features = None
 
         if self._positive_label_edge_index is not None:
-            partitioned_positive_edge_index = self.partition_edge_labels(
+            partitioned_positive_edge_index = self.partition_labels(
                 node_partition_book=node_partition_book, is_positive=True
             )
         else:
             partitioned_positive_edge_index = None
 
         if self._negative_label_edge_index is not None:
-            partitioned_negative_edge_index = self.partition_edge_labels(
+            partitioned_negative_edge_index = self.partition_labels(
                 node_partition_book=node_partition_book, is_positive=False
             )
         else:
@@ -1611,7 +1607,7 @@ class DistPartitioner:
             partitioned_edge_index=partitioned_edge_index,
             partitioned_node_features=partitioned_node_features,
             partitioned_edge_features=partitioned_edge_features,
-            partitioned_positive_edge_labels=partitioned_positive_edge_index,
-            partitioned_negative_edge_labels=partitioned_negative_edge_index,
+            partitioned_positive_labels=partitioned_positive_edge_index,
+            partitioned_negative_labels=partitioned_negative_edge_index,
             partitioned_node_labels=partitioned_node_labels,
         )

@@ -81,12 +81,12 @@ class PartitionOutput:
     ]
 
     # Positive edge indices on current rank, May be None if positive edge labels are not partitioned
-    partitioned_positive_edge_labels: Optional[
+    partitioned_positive_labels: Optional[
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ]
 
     # Negative edge indices on current rank, May be None if negative edge labels are not partitioned
-    partitioned_negative_edge_labels: Optional[
+    partitioned_negative_labels: Optional[
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ]
 
