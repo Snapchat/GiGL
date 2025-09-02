@@ -550,11 +550,11 @@ class DistPartitioner:
             input_node_labels
         ), "Node labels is an empty dictionary. Please provide node labels to register."
 
-        self._node_labels = convert_to_tensor(input_node_labels, dtype=torch.float32)
+        self._node_labels = convert_to_tensor(input_node_labels, dtype=torch.int64)
 
         self._node_labels_dim = {}
         for node_type in input_node_labels:
-            self._node_labels_dim[node_type] = input_node_labels[node_type].shape[1]
+            self._node_labels_dim[node_type] = input_node_labels[node_type].size(1)
 
     def register_edge_features(
         self, edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
@@ -930,6 +930,9 @@ class DistPartitioner:
 
             gc.collect()
 
+        else:
+            node_feature_partition_data = None
+
         if self._node_labels is not None and node_type in self._node_labels:
             del self._node_labels[node_type]
             if len(self._node_labels) == 0:
@@ -950,6 +953,9 @@ class DistPartitioner:
                 )
 
             gc.collect()
+
+        else:
+            node_label_partition_data = None
 
         partitioned_results.clear()
 
@@ -1268,8 +1274,8 @@ class DistPartitioner:
     def partition_node_features_and_labels(
         self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
     ) -> tuple[
-        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]],
-        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]],
+        Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]],
+        Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]],
     ]:
         """
         Partitions node features and labels of a graph. If heterogeneous, partitions features and labels for all node type.
@@ -1278,8 +1284,8 @@ class DistPartitioner:
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The Computed Node Partition Book
         Returns:
-            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]: Partitioned data of node features.
-            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]: Partitioned data of node labels.
+            Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]: Partitioned data of node features.
+            Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]: Partitioned data of node labels.
         """
         assert (
             self._num_nodes is not None and self._node_ids is not None
@@ -1346,11 +1352,18 @@ class DistPartitioner:
 
         if self._is_input_homogeneous:
             return (
-                partitioned_node_features[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                partitioned_node_labels[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                partitioned_node_features[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+                if partitioned_node_features
+                else None,
+                partitioned_node_labels[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+                if partitioned_node_labels
+                else None,
             )
         else:
-            return partitioned_node_features, partitioned_node_labels
+            return (
+                partitioned_node_features if partitioned_node_features else None,
+                partitioned_node_labels if partitioned_node_labels else None,
+            )
 
     def partition_edge_index_and_edge_features(
         self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
@@ -1464,7 +1477,7 @@ class DistPartitioner:
                 edge_partition_book,
             )
 
-    def partition_labels(
+    def partition_edge_labels(
         self,
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         is_positive: bool,
@@ -1564,7 +1577,7 @@ class DistPartitioner:
             node_partition_book=node_partition_book
         )
 
-        if self._node_feat is not None:
+        if self._node_feat is not None or self._node_labels is not None:
             (
                 partitioned_node_features,
                 partitioned_node_labels,
@@ -1575,14 +1588,14 @@ class DistPartitioner:
             partitioned_node_features = None
 
         if self._positive_label_edge_index is not None:
-            partitioned_positive_edge_index = self.partition_labels(
+            partitioned_positive_edge_index = self.partition_edge_labels(
                 node_partition_book=node_partition_book, is_positive=True
             )
         else:
             partitioned_positive_edge_index = None
 
         if self._negative_label_edge_index is not None:
-            partitioned_negative_edge_index = self.partition_labels(
+            partitioned_negative_edge_index = self.partition_edge_labels(
                 node_partition_book=node_partition_book, is_positive=False
             )
         else:

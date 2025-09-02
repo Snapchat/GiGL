@@ -114,7 +114,7 @@ def run_distributed_partitioner(
             label_edge_index=positive_edge_labels, is_positive=True
         )
         del positive_edge_labels
-        output_positive_labels = dist_partitioner.partition_labels(
+        output_positive_labels = dist_partitioner.partition_edge_labels(
             node_partition_book=output_node_partition_book, is_positive=True
         )
 
@@ -122,7 +122,7 @@ def run_distributed_partitioner(
             label_edge_index=negative_edge_labels, is_positive=False
         )
         del negative_edge_labels
-        output_negative_labels = dist_partitioner.partition_labels(
+        output_negative_labels = dist_partitioner.partition_edge_labels(
             node_partition_book=output_node_partition_book, is_positive=False
         )
 

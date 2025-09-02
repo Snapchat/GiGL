@@ -65,17 +65,17 @@ MOCKED_ITEM_NODES_IDS_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor([3, 2]).to
 
 MOCKED_USER_NODE_LABELS_ON_RANK_ZERO: Final[
     torch.Tensor
-] = MOCKED_USER_NODES_IDS_ON_RANK_ZERO
+] = MOCKED_USER_NODES_IDS_ON_RANK_ZERO.unsqueeze(1)
 MOCKED_USER_NODE_LABELS_ON_RANK_ONE: Final[
     torch.Tensor
-] = MOCKED_USER_NODES_IDS_ON_RANK_ONE
+] = MOCKED_USER_NODES_IDS_ON_RANK_ONE.unsqueeze(1)
 
 MOCKED_ITEM_NODE_LABELS_ON_RANK_ZERO: Final[
     torch.Tensor
-] = MOCKED_ITEM_NODES_IDS_ON_RANK_ZERO
+] = MOCKED_ITEM_NODES_IDS_ON_RANK_ZERO.unsqueeze(1)
 MOCKED_ITEM_NODE_LABELS_ON_RANK_ONE: Final[
     torch.Tensor
-] = MOCKED_ITEM_NODES_IDS_ON_RANK_ONE
+] = MOCKED_ITEM_NODES_IDS_ON_RANK_ONE.unsqueeze(1)
 
 ## Node Features
 # Node features are set to be the corresponding node index divided by 10, repeated twice for user nodes and once for item nodes.
