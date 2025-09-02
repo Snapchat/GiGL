@@ -169,6 +169,8 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_node_features(
             node_features=loaded_graph_tensors.node_features
         )
+    if loaded_graph_tensors.node_labels is not None:
+        partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
     if loaded_graph_tensors.edge_features is not None:
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
