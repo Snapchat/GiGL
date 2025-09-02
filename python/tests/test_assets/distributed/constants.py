@@ -60,6 +60,23 @@ MOCKED_ITEM_NODES_IDS_ON_RANK_ONE: Final[torch.Tensor] = torch.Tensor([3, 2]).to
     torch.int64
 )
 
+## Node Labels
+# Each node label tensor is of shape [num_nodes_on_rank] and has the same values as the node IDs.
+
+MOCKED_USER_NODE_LABELS_ON_RANK_ZERO: Final[
+    torch.Tensor
+] = MOCKED_USER_NODES_IDS_ON_RANK_ZERO
+MOCKED_USER_NODE_LABELS_ON_RANK_ONE: Final[
+    torch.Tensor
+] = MOCKED_USER_NODES_IDS_ON_RANK_ONE
+
+MOCKED_ITEM_NODE_LABELS_ON_RANK_ZERO: Final[
+    torch.Tensor
+] = MOCKED_ITEM_NODES_IDS_ON_RANK_ZERO
+MOCKED_ITEM_NODE_LABELS_ON_RANK_ONE: Final[
+    torch.Tensor
+] = MOCKED_ITEM_NODES_IDS_ON_RANK_ONE
+
 ## Node Features
 # Node features are set to be the corresponding node index divided by 10, repeated twice for user nodes and once for item nodes.
 # Each node feature tensor is of shape [num_nodes_on_rank, node_feat_dim]
@@ -144,7 +161,7 @@ MOCKED_U2I_NEG_EDGE_INDEX_ON_RANK_ONE: Final[torch.Tensor] = torch.empty((2, 0))
 @dataclass(frozen=True)
 class TestGraphData:
     """
-    This class exists as a convenience to hold inputs to the Partitioner class for smaller graphs for testing. This class should not be used for partitioning on
+    This class exists as a convenience to hold heterogeneous inputs to the Partitioner class for smaller graphs for testing. This class should not be used for partitioning on
     large graphs, as this can lead to the reference count of tensors and resulting gc.collect() calls more complex. The homogeneous graph uses only node type
     `USER_NODE_TYPE` and edge type `USER_TO_USER_EDGE_TYPE`, while the heterogeneous graph additionally uses node type `ITEM_NODE_TYPE` and edge type `USER_TO_ITEM_EDGE_TYPE`.
     """
@@ -162,10 +179,13 @@ class TestGraphData:
     edge_features: dict[EdgeType, torch.Tensor]
 
     # Positive edge label tensor for mocked data
-    positive_labels: dict[EdgeType, torch.Tensor]
+    positive_edge_labels: dict[EdgeType, torch.Tensor]
 
     # Input negative edge label tensor to partitioner for mocked data
-    negative_labels: dict[EdgeType, torch.Tensor]
+    negative_edge_labels: dict[EdgeType, torch.Tensor]
+
+    # Node label tensor for mocked data
+    node_labels: dict[NodeType, torch.Tensor]
 
 
 RANK_TO_MOCKED_GRAPH: Final[dict[int, TestGraphData]] = {
@@ -173,6 +193,10 @@ RANK_TO_MOCKED_GRAPH: Final[dict[int, TestGraphData]] = {
         node_ids={
             USER_NODE_TYPE: MOCKED_USER_NODES_IDS_ON_RANK_ZERO,
             ITEM_NODE_TYPE: MOCKED_ITEM_NODES_IDS_ON_RANK_ZERO,
+        },
+        node_labels={
+            USER_NODE_TYPE: MOCKED_USER_NODE_LABELS_ON_RANK_ZERO,
+            ITEM_NODE_TYPE: MOCKED_ITEM_NODE_LABELS_ON_RANK_ZERO,
         },
         edge_index={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_EDGE_INDEX_ON_RANK_ZERO,
@@ -185,11 +209,11 @@ RANK_TO_MOCKED_GRAPH: Final[dict[int, TestGraphData]] = {
         edge_features={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_EDGE_FEATURES_ON_RANK_ZERO,
         },
-        positive_labels={
+        positive_edge_labels={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_POS_EDGE_INDEX_ON_RANK_ZERO,
             USER_TO_ITEM_EDGE_TYPE: MOCKED_U2I_POS_EDGE_INDEX_ON_RANK_ZERO,
         },
-        negative_labels={
+        negative_edge_labels={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_NEG_EDGE_INDEX_ON_RANK_ZERO,
             USER_TO_ITEM_EDGE_TYPE: MOCKED_U2I_NEG_EDGE_INDEX_ON_RANK_ZERO,
         },
@@ -198,6 +222,10 @@ RANK_TO_MOCKED_GRAPH: Final[dict[int, TestGraphData]] = {
         node_ids={
             USER_NODE_TYPE: MOCKED_USER_NODES_IDS_ON_RANK_ONE,
             ITEM_NODE_TYPE: MOCKED_ITEM_NODES_IDS_ON_RANK_ONE,
+        },
+        node_labels={
+            USER_NODE_TYPE: MOCKED_USER_NODE_LABELS_ON_RANK_ONE,
+            ITEM_NODE_TYPE: MOCKED_ITEM_NODE_LABELS_ON_RANK_ONE,
         },
         edge_index={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_EDGE_INDEX_ON_RANK_ONE,
@@ -210,11 +238,11 @@ RANK_TO_MOCKED_GRAPH: Final[dict[int, TestGraphData]] = {
         edge_features={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_EDGE_FEATURES_ON_RANK_ONE,
         },
-        positive_labels={
+        positive_edge_labels={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_POS_EDGE_INDEX_ON_RANK_ONE,
             USER_TO_ITEM_EDGE_TYPE: MOCKED_U2I_POS_EDGE_INDEX_ON_RANK_ONE,
         },
-        negative_labels={
+        negative_edge_labels={
             USER_TO_USER_EDGE_TYPE: MOCKED_U2U_NEG_EDGE_INDEX_ON_RANK_ONE,
             USER_TO_ITEM_EDGE_TYPE: MOCKED_U2I_NEG_EDGE_INDEX_ON_RANK_ONE,
         },
@@ -237,6 +265,16 @@ MOCKED_UNIFIED_GRAPH: Final[TestGraphData] = TestGraphData(
         ),
         ITEM_NODE_TYPE: torch.cat(
             (MOCKED_ITEM_NODES_IDS_ON_RANK_ZERO, MOCKED_ITEM_NODES_IDS_ON_RANK_ONE),
+            dim=0,
+        ),
+    },
+    node_labels={
+        USER_NODE_TYPE: torch.cat(
+            (MOCKED_USER_NODE_LABELS_ON_RANK_ZERO, MOCKED_USER_NODE_LABELS_ON_RANK_ONE),
+            dim=0,
+        ),
+        ITEM_NODE_TYPE: torch.cat(
+            (MOCKED_ITEM_NODE_LABELS_ON_RANK_ZERO, MOCKED_ITEM_NODE_LABELS_ON_RANK_ONE),
             dim=0,
         ),
     },
@@ -275,7 +313,7 @@ MOCKED_UNIFIED_GRAPH: Final[TestGraphData] = TestGraphData(
             dim=0,
         ),
     },
-    positive_labels={
+    positive_edge_labels={
         USER_TO_USER_EDGE_TYPE: torch.cat(
             (
                 MOCKED_U2U_POS_EDGE_INDEX_ON_RANK_ZERO,
@@ -291,7 +329,7 @@ MOCKED_UNIFIED_GRAPH: Final[TestGraphData] = TestGraphData(
             dim=1,
         ),
     },
-    negative_labels={
+    negative_edge_labels={
         USER_TO_USER_EDGE_TYPE: torch.cat(
             (
                 MOCKED_U2U_NEG_EDGE_INDEX_ON_RANK_ZERO,

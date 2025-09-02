@@ -722,8 +722,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             ):
                 self.assertIsNone(partition_output.partitioned_edge_features)
                 self.assertIsNone(partition_output.partitioned_node_features)
-                self.assertIsNone(partition_output.partitioned_positive_labels)
-                self.assertIsNone(partition_output.partitioned_negative_labels)
+                self.assertIsNone(partition_output.partitioned_positive_edge_labels)
+                self.assertIsNone(partition_output.partitioned_negative_edge_labels)
             else:
                 assert (
                     partition_output.partitioned_node_features is not None
@@ -733,11 +733,11 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 ), f"Must partition edge features for strategy {input_data_strategy.value}"
 
                 assert (
-                    partition_output.partitioned_positive_labels is not None
+                    partition_output.partitioned_positive_edge_labels is not None
                 ), f"Must partition positive labels for strategy {input_data_strategy.value}"
 
                 assert (
-                    partition_output.partitioned_negative_labels is not None
+                    partition_output.partitioned_negative_edge_labels is not None
                 ), f"Must partition negative labels for strategy {input_data_strategy.value}"
 
                 self._assert_node_feature_outputs(
@@ -789,22 +789,22 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     is_heterogeneous=is_heterogeneous,
                     output_node_partition_book=partition_output.node_partition_book,
                     should_assign_edges_by_src_node=True,
-                    output_labeled_edge_index=partition_output.partitioned_positive_labels,
+                    output_labeled_edge_index=partition_output.partitioned_positive_edge_labels,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                     expected_pb_dtype=expected_pb_dtype,
                 )
 
                 if isinstance(
-                    partition_output.partitioned_positive_labels, abc.Mapping
+                    partition_output.partitioned_positive_edge_labels, abc.Mapping
                 ):
                     for (
                         edge_type,
                         pos_edge_label,
-                    ) in partition_output.partitioned_positive_labels.items():
+                    ) in partition_output.partitioned_positive_edge_labels.items():
                         unified_output_pos_label[edge_type].append(pos_edge_label)
                 else:
                     unified_output_pos_label[USER_TO_USER_EDGE_TYPE].append(
-                        partition_output.partitioned_positive_labels
+                        partition_output.partitioned_positive_edge_labels
                     )
 
                 self._assert_label_outputs(
@@ -812,22 +812,22 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     is_heterogeneous=is_heterogeneous,
                     output_node_partition_book=partition_output.node_partition_book,
                     should_assign_edges_by_src_node=True,
-                    output_labeled_edge_index=partition_output.partitioned_negative_labels,
+                    output_labeled_edge_index=partition_output.partitioned_negative_edge_labels,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                     expected_pb_dtype=expected_pb_dtype,
                 )
 
                 if isinstance(
-                    partition_output.partitioned_negative_labels, abc.Mapping
+                    partition_output.partitioned_negative_edge_labels, abc.Mapping
                 ):
                     for (
                         edge_type,
                         neg_edge_labels,
-                    ) in partition_output.partitioned_negative_labels.items():
+                    ) in partition_output.partitioned_negative_edge_labels.items():
                         unified_output_neg_label[edge_type].append(neg_edge_labels)
                 else:
                     unified_output_neg_label[USER_TO_USER_EDGE_TYPE].append(
-                        partition_output.partitioned_negative_labels
+                        partition_output.partitioned_negative_edge_labels
                     )
 
         ## Checking that the union of edge indices across all ranks equals to the full set from the input
@@ -876,7 +876,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         for edge_type in unified_output_pos_label:
             # First, we get the expected pos edge label from the mocked input for this edge type
-            expected_positive_labels = MOCKED_UNIFIED_GRAPH.positive_labels[edge_type]
+            expected_positive_labels = MOCKED_UNIFIED_GRAPH.positive_edge_labels[
+                edge_type
+            ]
 
             # We combine the output pos labels across all the ranks
             output_pos_label = torch.cat(unified_output_pos_label[edge_type], dim=1)
@@ -888,7 +890,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         for edge_type in unified_output_neg_label:
             # First, we get the expected neg edge label from the mocked input for this edge type
-            expected_negative_labels = MOCKED_UNIFIED_GRAPH.negative_labels[edge_type]
+            expected_negative_labels = MOCKED_UNIFIED_GRAPH.negative_edge_labels[
+                edge_type
+            ]
 
             # We combine the output neg labels across all the ranks
             output_neg_label = torch.cat(unified_output_neg_label[edge_type], dim=1)
@@ -960,8 +964,12 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         partitioner.register_edge_index(edge_index=empty_edge_index)
         partitioner.register_node_features(node_features=empty_node_features)
         partitioner.register_edge_features(edge_features=empty_edge_features)
-        partitioner.register_labels(label_edge_index=empty_pos_label, is_positive=True)
-        partitioner.register_labels(label_edge_index=empty_neg_label, is_positive=False)
+        partitioner.register_edge_labels(
+            label_edge_index=empty_pos_label, is_positive=True
+        )
+        partitioner.register_edge_labels(
+            label_edge_index=empty_neg_label, is_positive=False
+        )
 
         partitioned_output = partitioner.partition()
         assert not isinstance(

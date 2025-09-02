@@ -174,11 +174,11 @@ def _load_and_build_partitioned_dataset(
             edge_features=loaded_graph_tensors.edge_features
         )
     if loaded_graph_tensors.positive_label is not None:
-        partitioner.register_labels(
+        partitioner.register_edge_labels(
             label_edge_index=loaded_graph_tensors.positive_label, is_positive=True
         )
     if loaded_graph_tensors.negative_label is not None:
-        partitioner.register_labels(
+        partitioner.register_edge_labels(
             label_edge_index=loaded_graph_tensors.negative_label, is_positive=False
         )
 

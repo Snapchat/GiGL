@@ -690,8 +690,8 @@ class DistDataset(glt.distributed.DistDataset):
         gc.collect()
 
         # Initializing Positive and Negative Edge Labels
-        self._positive_edge_label = partition_output.partitioned_positive_labels
-        self._negative_edge_label = partition_output.partitioned_negative_labels
+        self._positive_edge_label = partition_output.partitioned_positive_edge_labels
+        self._negative_edge_label = partition_output.partitioned_negative_edge_labels
 
         # TODO (mkolodner-sc): Enable custom params for init_graph, init_node_features, and init_edge_features
 
