@@ -744,6 +744,7 @@ def _check_node_ids(node_ids: torch.Tensor):
         raise ValueError("Expected non-empty node_ids tensor.")
 
 
+# TODO (mkolodner-sc): Change positive/negative label name to positive/negative supervision edges
 def select_ssl_positive_label_edges(
     edge_index: torch.Tensor, positive_label_percentage: float
 ) -> torch.Tensor:

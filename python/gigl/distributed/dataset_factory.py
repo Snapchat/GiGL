@@ -306,12 +306,12 @@ def _load_and_build_partitioned_dataset(
         )
     if loaded_graph_tensors.positive_supervision_edges is not None:
         partitioner.register_supervision_edges(
-            label_edge_index=loaded_graph_tensors.positive_supervision_edges,
+            supervision_edge_index=loaded_graph_tensors.positive_supervision_edges,
             is_positive=True,
         )
     if loaded_graph_tensors.negative_supervision_edges is not None:
         partitioner.register_supervision_edges(
-            label_edge_index=loaded_graph_tensors.negative_supervision_edges,
+            supervision_edge_index=loaded_graph_tensors.negative_supervision_edges,
             is_positive=False,
         )
 

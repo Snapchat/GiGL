@@ -83,7 +83,7 @@ class DistPartitioner:
     This class is based on GLT's DistRandomPartitioner class (https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_random_partitioner.py)
     and has been optimized for better flexibility and memory management. We assume that init_rpc() and init_worker_group have been called to initialize the rpc and context,
     respectively, prior to this class. This class aims to partition homogeneous and heterogeneous input data, such as nodes,
-    node features, edges, edge features, and any supervision labels across multiple machines. This class also produces partition books for edges and
+    node features, edges, edge features, and any supervision edges across multiple machines. This class also produces partition books for edges and
     nodes, which are 1-d tensors that indicate which rank each node id and edge id are stored on. For example, the node partition book
 
     [0, 0, 1, 2]
@@ -103,7 +103,8 @@ class DistPartitioner:
     partitioner.register_nodes(node_ids)
     del node_ids # Del reference to node_ids outside of DistPartitioner to allow memory cleanup within the class
     partitioner.partition_nodes()
-    # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up, which may happen in cases where only a subset of inputs are partitioned (i.e no feats or labels)
+    # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up,
+    # which may happen in cases where only a subset of inputs are partitioned (i.e no feats or supervision edges)
     gc.collect()
     ```
 
@@ -121,7 +122,8 @@ class DistPartitioner:
         negative_supervision_edges
     ) # Del reference to tensors outside of DistPartitioner to allow memory cleanup within the class
     partitioner.partition()
-    # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up, which may happen in cases where only a subset of inputs are partitioned (i.e no feats or labels)
+    # We may optionally want to call gc.collect() to ensure that any lingering memory is cleaned up,
+    # which may happen in cases where only a subset of inputs are partitioned (i.e no feats or supervision edges)
     gc.collect()
     ```
 
@@ -171,9 +173,9 @@ class DistPartitioner:
             node_features (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node feats from input. Tensors should be of shope [num_nodes_on_current_rank, node_feat_dim]
             edge_index (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge indexes from input. Tensors should be of shape [2, num_edges_on_current_rank]
             edge_features (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge features from input. Tensors should be of shape [num_edges_on_current_rank, edge_feat_dim]
-            positive_supervision_edges (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input.
+            positive_supervision_edges (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive supervision edges from input.
                 Tensors should be of shape [2, num_positive_supervision_edges_on_current_rank]
-            negative_supervision_edges (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input.
+            negative_supervision_edges (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative supervision edges from input.
                 Tensors should be of shape [2, num_negative_supervision_edges_on_current_rank]
         """
 
@@ -200,10 +202,14 @@ class DistPartitioner:
         self._edge_feat: Optional[dict[EdgeType, torch.Tensor]] = None
         self._edge_feat_dim: Optional[dict[EdgeType, int]] = None
 
-        # TODO (mkolodner-sc): Deprecate the need for explicitly storing labels are part of this class, leveraging
+        # TODO (mkolodner-sc): Deprecate the need for explicitly storing supervision edges are part of this class, leveraging
         # heterogeneous support instead
-        self._positive_label_edge_index: Optional[dict[EdgeType, torch.Tensor]] = None
-        self._negative_label_edge_index: Optional[dict[EdgeType, torch.Tensor]] = None
+        self._positive_supervision_edge_index: Optional[
+            dict[EdgeType, torch.Tensor]
+        ] = None
+        self._negative_supervision_edge_index: Optional[
+            dict[EdgeType, torch.Tensor]
+        ] = None
 
         if node_ids is not None:
             self.register_node_ids(node_ids=node_ids)
@@ -219,12 +225,12 @@ class DistPartitioner:
 
         if positive_supervision_edges is not None:
             self.register_supervision_edges(
-                label_edge_index=positive_supervision_edges, is_positive=True
+                supervision_edge_index=positive_supervision_edges, is_positive=True
             )
 
         if negative_supervision_edges is not None:
             self.register_supervision_edges(
-                label_edge_index=negative_supervision_edges, is_positive=False
+                supervision_edge_index=negative_supervision_edges, is_positive=False
             )
 
     def _assert_data_type_consistency(
@@ -549,41 +555,43 @@ class DistPartitioner:
 
     def register_supervision_edges(
         self,
-        label_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        supervision_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         is_positive: bool,
     ) -> None:
         """
-        Registers the positive or negative label to the partitioner. Note that for the homogeneous case,
-        all edge types of the graph must be present in the label edge index dictionary.
+        Registers the positive or negative supervision edges to the partitioner. Note that for the homogeneous case,
+        all edge types of the graph must be present in the supervision edge index dictionary.
 
-        For optimal memory management, it is recommended that the reference to the label tensor be deleted
+        For optimal memory management, it is recommended that the reference to the supervision edges tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
         We do not need to perform `all_gather` calls here since register_edge_index is responsible for determining total number of edges
         across all ranks and inferring edge ids.
         Args:
-            label_edge_index (Union[torch.Tensor, dict[EdgeType, torch.Tensor]]): Input positive or negative labels which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
-            is_positive (bool): Whether positive labels are currently being registered. If False, labels will be registered as negative
+            supervision_edge_index (Union[torch.Tensor, dict[EdgeType, torch.Tensor]]): Input positive or negative supervision edges which is either a torch.Tensor if homogeneous or a Dict if heterogeneous
+            is_positive (bool): Whether positive supervision edges are currently being registered. If False, supervision edges will be registered as negative
         """
 
         self._assert_and_get_rpc_setup()
 
-        input_label_edge_index = self._convert_edge_entity_to_heterogeneous_format(
-            input_edge_entity=label_edge_index
+        input_supervision_edge_index = (
+            self._convert_edge_entity_to_heterogeneous_format(
+                input_edge_entity=supervision_edge_index
+            )
         )
 
         assert (
-            input_label_edge_index
-        ), "Label edge index is an empty dictionary. Please provide label edge indices to register."
+            input_supervision_edge_index
+        ), "Supervision edge index is an empty dictionary. Please provide supervision edge indices to register."
 
         if is_positive:
-            logger.info("Registering Positive Labels ...")
-            self._positive_label_edge_index = convert_to_tensor(
-                input_label_edge_index, dtype=torch.int64
+            logger.info("Registering Positive Supervision Edges ...")
+            self._positive_supervision_edge_index = convert_to_tensor(
+                input_supervision_edge_index, dtype=torch.int64
             )
         else:
-            logger.info("Registering Negative Labels ...")
-            self._negative_label_edge_index = convert_to_tensor(
-                input_label_edge_index, dtype=torch.int64
+            logger.info("Registering Negative Supervision Edges ...")
+            self._negative_supervision_edge_index = convert_to_tensor(
+                input_supervision_edge_index, dtype=torch.int64
             )
 
     def _partition_single_chunk_data(
@@ -1068,16 +1076,16 @@ class DistPartitioner:
         target_node_partition_book = node_partition_book[edge_type.src_node_type]
         if is_positive:
             assert (
-                self._positive_label_edge_index is not None
-            ), "Must register positive labels prior to partitioning them"
-            label_edge_index = self._positive_label_edge_index[edge_type]
+                self._positive_supervision_edge_index is not None
+            ), "Must register positive supervision edges prior to partitioning them"
+            supervision_edge_index = self._positive_supervision_edge_index[edge_type]
         else:
             assert (
-                self._negative_label_edge_index is not None
-            ), "Must register negative labels prior to partitioning them"
-            label_edge_index = self._negative_label_edge_index[edge_type]
+                self._negative_supervision_edge_index is not None
+            ), "Must register negative supervision edges prior to partitioning them"
+            supervision_edge_index = self._negative_supervision_edge_index[edge_type]
 
-        def _label_pfn(source_node_ids, _):
+        def _supervision_edge_pfn(source_node_ids, _):
             return target_node_partition_book[source_node_ids]
 
         # partitioned_chunks is a list of tuples. Each tuple is the the partitioned
@@ -1086,45 +1094,45 @@ class DistPartitioner:
         # node IDs.
         partitioned_chunks, _ = self._partition_by_chunk(
             input_data=(
-                label_edge_index[0],
-                label_edge_index[1],
+                supervision_edge_index[0],
+                supervision_edge_index[1],
             ),
             # 'partition_fn' takes 'val_indices' as input, uses it as keys for partition,
             # and returns the partition index.
-            rank_indices=label_edge_index[0],
-            partition_function=_label_pfn,
-            total_val_size=label_edge_index[0].size(0),
+            rank_indices=supervision_edge_index[0],
+            partition_function=_supervision_edge_pfn,
+            total_val_size=supervision_edge_index[0].size(0),
             generate_pb=False,
         )
 
-        del label_edge_index
+        del supervision_edge_index
 
         if is_positive:
             # This assert is added to pass mypy type check, in practice we will not see this fail
             assert (
-                self._positive_label_edge_index is not None
-            ), "Must register positive labels prior to partitioning them"
+                self._positive_supervision_edge_index is not None
+            ), "Must register positive supervision edges prior to partitioning them"
 
-            del self._positive_label_edge_index[edge_type]
-            if len(self._positive_label_edge_index) == 0:
-                self._positive_label_edge_index = None
+            del self._positive_supervision_edge_index[edge_type]
+            if len(self._positive_supervision_edge_index) == 0:
+                self._positive_supervision_edge_index = None
         else:
             # This assert is added to pass mypy type check, in practice we will not see this fail
             assert (
-                self._negative_label_edge_index is not None
-            ), "Must register negative labels prior to partitioning them"
+                self._negative_supervision_edge_index is not None
+            ), "Must register negative supervision edges prior to partitioning them"
 
-            del self._negative_label_edge_index[edge_type]
-            if len(self._negative_label_edge_index) == 0:
-                self._negative_label_edge_index = None
+            del self._negative_supervision_edge_index[edge_type]
+            if len(self._negative_supervision_edge_index) == 0:
+                self._negative_supervision_edge_index = None
 
         gc.collect()
 
         # Combine the partitioned source and destination node IDs into a single 2D tensor
         if len(partitioned_chunks) == 0:
-            partitioned_label_edge_index = torch.empty((2, 0))
+            partitioned_supervision_edge_index = torch.empty((2, 0))
         else:
-            partitioned_label_edge_index = torch.stack(
+            partitioned_supervision_edge_index = torch.stack(
                 [
                     torch.cat([src_ids for src_ids, _ in partitioned_chunks]),
                     torch.cat([dst_ids for _, dst_ids in partitioned_chunks]),
@@ -1137,10 +1145,10 @@ class DistPartitioner:
         gc.collect()
 
         logger.info(
-            f"Edge label partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
+            f"Edge supervision edge partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
         )
 
-        return partitioned_label_edge_index
+        return partitioned_supervision_edge_index
 
     def partition_node(self) -> Union[PartitionBook, dict[NodeType, PartitionBook]]:
         """
@@ -1359,35 +1367,40 @@ class DistPartitioner:
         is_positive: bool,
     ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """
-        Partitions positive or negative labels of a graph. If heterogeneous, partitions labels for all edge type.
+        Partitions positive or negative supervision edges of a graph. If heterogeneous, partitions supervision edges for all edge type.
         Must call `partition_node` first to get the node partition book as input.
-        Note that labels are always partitioned by the source node, since the edges are always assumed to be anchor_node -> to -> supervision node.
+        Note that supervision edges are always partitioned by the source node, since the edges are always assumed to be anchor_node -> to -> supervision node.
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
-            is_positive (bool): Whether positive labels are currently being registered. If False, negative labels will be partitioned.
+            is_positive (bool): Whether positive supervision edges are currently being registered. If False, negative supervision edges will be partitioned.
         Returns:
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: Returns the edge indices for partitioned positive or negative label, dependent on the is_positive flag
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: Returns the edge indices for partitioned positive or
+                negative supervision edges, dependent on the is_positive flag
         """
 
         self._assert_and_get_rpc_setup()
 
         if is_positive:
             assert (
-                self._positive_label_edge_index is not None
-            ), "Must register positive labels prior to partitioning them"
+                self._positive_supervision_edge_index is not None
+            ), "Must register positive supervision edges prior to partitioning them"
 
-            edge_label_types = sorted(self._positive_label_edge_index.keys())
+            supervision_edge_types = sorted(
+                self._positive_supervision_edge_index.keys()
+            )
 
-            logger.info("Partitioning Positive Labels ...")
+            logger.info("Partitioning Positive Supervision Edges ...")
 
         else:
             assert (
-                self._negative_label_edge_index is not None
-            ), "Must register negative labels partitioning them"
+                self._negative_supervision_edge_index is not None
+            ), "Must register negative supervision edges partitioning them"
 
-            edge_label_types = sorted(self._negative_label_edge_index.keys())
+            supervision_edge_types = sorted(
+                self._negative_supervision_edge_index.keys()
+            )
 
-            logger.info("Partitioning Negative Labels ...")
+            logger.info("Partitioning Negative Supervision Edges ...")
 
         start_time = time.time()
 
@@ -1403,9 +1416,11 @@ class DistPartitioner:
             is_subset=False,
         )
 
-        partitioned_label_edge_index: dict[EdgeType, torch.Tensor] = {}
-        for edge_type in edge_label_types:
-            partitioned_label_edge_index[edge_type] = self._partition_supervision_edges(
+        partitioned_supervision_edge_index: dict[EdgeType, torch.Tensor] = {}
+        for edge_type in supervision_edge_types:
+            partitioned_supervision_edge_index[
+                edge_type
+            ] = self._partition_supervision_edges(
                 node_partition_book=transformed_node_partition_book,
                 is_positive=is_positive,
                 edge_type=edge_type,
@@ -1422,9 +1437,9 @@ class DistPartitioner:
             )
 
         if self._is_input_homogeneous:
-            return partitioned_label_edge_index[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            return partitioned_supervision_edge_index[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         else:
-            return partitioned_label_edge_index
+            return partitioned_supervision_edge_index
 
     def partition(
         self,
@@ -1441,7 +1456,7 @@ class DistPartitioner:
         start_time = time.time()
 
         # Node partition should happen at the very beginning, as edge partition
-        # and label partition depends on node partition book.
+        # and supervision edge partition depends on node partition book.
         node_partition_book = self.partition_node()
 
         # Partition edge and clean up input edge data.
@@ -1460,14 +1475,14 @@ class DistPartitioner:
         else:
             partitioned_node_features = None
 
-        if self._positive_label_edge_index is not None:
+        if self._positive_supervision_edge_index is not None:
             partitioned_positive_edge_index = self.partition_supervision_edges(
                 node_partition_book=node_partition_book, is_positive=True
             )
         else:
             partitioned_positive_edge_index = None
 
-        if self._negative_label_edge_index is not None:
+        if self._negative_supervision_edge_index is not None:
             partitioned_negative_edge_index = self.partition_supervision_edges(
                 node_partition_book=node_partition_book, is_positive=False
             )

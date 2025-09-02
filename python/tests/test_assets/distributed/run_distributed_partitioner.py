@@ -106,7 +106,7 @@ def run_distributed_partitioner(
         )
 
         dist_partitioner.register_supervision_edges(
-            label_edge_index=positive_supervision_edges, is_positive=True
+            supervision_edge_index=positive_supervision_edges, is_positive=True
         )
         del positive_supervision_edges
         output_positive_supervision_edges = (
@@ -116,7 +116,7 @@ def run_distributed_partitioner(
         )
 
         dist_partitioner.register_supervision_edges(
-            label_edge_index=negative_supervision_edges, is_positive=False
+            supervision_edge_index=negative_supervision_edges, is_positive=False
         )
         del negative_supervision_edges
         output_negative_supervision_edges = (

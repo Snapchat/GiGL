@@ -32,6 +32,7 @@ _POSITIVE_SUPERVISION_EDGES_KEY = "positive_supervision_edges"
 _NEGATIVE_SUPERVISION_EDGES_KEY = "negative_supervision_edges"
 
 
+# TODO (mkolodner-sc): Change positive/negative label name to positive/negative supervision edges
 @dataclass(frozen=True)
 class SerializedGraphMetadata:
     """

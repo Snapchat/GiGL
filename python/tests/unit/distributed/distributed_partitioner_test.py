@@ -989,10 +989,10 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         partitioner.register_node_features(node_features=empty_node_features)
         partitioner.register_edge_features(edge_features=empty_edge_features)
         partitioner.register_supervision_edges(
-            label_edge_index=empty_positive_supervision_edges, is_positive=True
+            supervision_edge_index=empty_positive_supervision_edges, is_positive=True
         )
         partitioner.register_supervision_edges(
-            label_edge_index=empty_negative_supervision_edges, is_positive=False
+            supervision_edge_index=empty_negative_supervision_edges, is_positive=False
         )
 
         partitioned_output = partitioner.partition()
