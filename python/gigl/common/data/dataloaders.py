@@ -447,6 +447,8 @@ class TFRecordDataLoader:
         id_tensor = _tf_tensor_to_torch_tensor(
             tf.concat(id_tensors, axis=id_concat_axis)
         )
+        feature_tensor: Optional[torch.Tensor] = None
+        label_tensor: Optional[torch.Tensor] = None
         if feature_tensors:
             feature_tensor = _tf_tensor_to_torch_tensor(
                 tf.concat(feature_tensors, axis=0)
@@ -455,9 +457,10 @@ class TFRecordDataLoader:
             feature_tensor, label_tensor = _get_labels_from_features(
                 feature_tensor, label_dim
             )
-        else:
-            feature_tensor = None
-            label_tensor = None
+            if not feature_tensor.numel():
+                feature_tensor = None
+            if not label_tensor.numel():
+                label_tensor = None
 
         end = time.perf_counter()
         logger.info(
