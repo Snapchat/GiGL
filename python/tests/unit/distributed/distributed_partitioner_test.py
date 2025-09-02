@@ -678,9 +678,13 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         unified_output_edge_feat: dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
 
-        unified_output_pos_label: dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
+        unified_positive_supervision_edges: dict[
+            EdgeType, list[torch.Tensor]
+        ] = defaultdict(list)
 
-        unified_output_neg_label: dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
+        unified_negative_supervision_edges: dict[
+            EdgeType, list[torch.Tensor]
+        ] = defaultdict(list)
 
         is_range_based_partition = partitioner_class is DistRangePartitioner
 
@@ -722,8 +726,12 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             ):
                 self.assertIsNone(partition_output.partitioned_edge_features)
                 self.assertIsNone(partition_output.partitioned_node_features)
-                self.assertIsNone(partition_output.partitioned_positive_labels)
-                self.assertIsNone(partition_output.partitioned_negative_labels)
+                self.assertIsNone(
+                    partition_output.partitioned_positive_supervision_edges
+                )
+                self.assertIsNone(
+                    partition_output.partitioned_negative_supervision_edges
+                )
             else:
                 assert (
                     partition_output.partitioned_node_features is not None
@@ -733,11 +741,11 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 ), f"Must partition edge features for strategy {input_data_strategy.value}"
 
                 assert (
-                    partition_output.partitioned_positive_labels is not None
+                    partition_output.partitioned_positive_supervision_edges is not None
                 ), f"Must partition positive labels for strategy {input_data_strategy.value}"
 
                 assert (
-                    partition_output.partitioned_negative_labels is not None
+                    partition_output.partitioned_negative_supervision_edges is not None
                 ), f"Must partition negative labels for strategy {input_data_strategy.value}"
 
                 self._assert_node_feature_outputs(
@@ -789,22 +797,26 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     is_heterogeneous=is_heterogeneous,
                     output_node_partition_book=partition_output.node_partition_book,
                     should_assign_edges_by_src_node=True,
-                    output_labeled_edge_index=partition_output.partitioned_positive_labels,
+                    output_labeled_edge_index=partition_output.partitioned_positive_supervision_edges,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                     expected_pb_dtype=expected_pb_dtype,
                 )
 
                 if isinstance(
-                    partition_output.partitioned_positive_labels, abc.Mapping
+                    partition_output.partitioned_positive_supervision_edges, abc.Mapping
                 ):
                     for (
                         edge_type,
                         pos_edge_label,
-                    ) in partition_output.partitioned_positive_labels.items():
-                        unified_output_pos_label[edge_type].append(pos_edge_label)
+                    ) in (
+                        partition_output.partitioned_positive_supervision_edges.items()
+                    ):
+                        unified_positive_supervision_edges[edge_type].append(
+                            pos_edge_label
+                        )
                 else:
-                    unified_output_pos_label[USER_TO_USER_EDGE_TYPE].append(
-                        partition_output.partitioned_positive_labels
+                    unified_positive_supervision_edges[USER_TO_USER_EDGE_TYPE].append(
+                        partition_output.partitioned_positive_supervision_edges
                     )
 
                 self._assert_label_outputs(
@@ -812,22 +824,26 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     is_heterogeneous=is_heterogeneous,
                     output_node_partition_book=partition_output.node_partition_book,
                     should_assign_edges_by_src_node=True,
-                    output_labeled_edge_index=partition_output.partitioned_negative_labels,
+                    output_labeled_edge_index=partition_output.partitioned_negative_supervision_edges,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                     expected_pb_dtype=expected_pb_dtype,
                 )
 
                 if isinstance(
-                    partition_output.partitioned_negative_labels, abc.Mapping
+                    partition_output.partitioned_negative_supervision_edges, abc.Mapping
                 ):
                     for (
                         edge_type,
                         neg_edge_labels,
-                    ) in partition_output.partitioned_negative_labels.items():
-                        unified_output_neg_label[edge_type].append(neg_edge_labels)
+                    ) in (
+                        partition_output.partitioned_negative_supervision_edges.items()
+                    ):
+                        unified_negative_supervision_edges[edge_type].append(
+                            neg_edge_labels
+                        )
                 else:
-                    unified_output_neg_label[USER_TO_USER_EDGE_TYPE].append(
-                        partition_output.partitioned_negative_labels
+                    unified_negative_supervision_edges[USER_TO_USER_EDGE_TYPE].append(
+                        partition_output.partitioned_negative_supervision_edges
                     )
 
         ## Checking that the union of edge indices across all ranks equals to the full set from the input
@@ -874,28 +890,40 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 tensor_a=expected_edge_feat, tensor_b=partitioned_edge_feat, dim=0
             )
 
-        for edge_type in unified_output_pos_label:
+        for edge_type in unified_positive_supervision_edges:
             # First, we get the expected pos edge label from the mocked input for this edge type
-            expected_positive_labels = MOCKED_UNIFIED_GRAPH.positive_labels[edge_type]
-
-            # We combine the output pos labels across all the ranks
-            output_pos_label = torch.cat(unified_output_pos_label[edge_type], dim=1)
-
-            # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 1
-            assert_tensor_equality(
-                tensor_a=expected_positive_labels, tensor_b=output_pos_label, dim=1
+            expected_positive_supervision_edges = (
+                MOCKED_UNIFIED_GRAPH.positive_supervision_edges[edge_type]
             )
 
-        for edge_type in unified_output_neg_label:
-            # First, we get the expected neg edge label from the mocked input for this edge type
-            expected_negative_labels = MOCKED_UNIFIED_GRAPH.negative_labels[edge_type]
-
-            # We combine the output neg labels across all the ranks
-            output_neg_label = torch.cat(unified_output_neg_label[edge_type], dim=1)
+            # We combine the output pos labels across all the ranks
+            output_positive_supervision_edges = torch.cat(
+                unified_positive_supervision_edges[edge_type], dim=1
+            )
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 1
             assert_tensor_equality(
-                tensor_a=expected_negative_labels, tensor_b=output_neg_label, dim=1
+                tensor_a=expected_positive_supervision_edges,
+                tensor_b=output_positive_supervision_edges,
+                dim=1,
+            )
+
+        for edge_type in unified_negative_supervision_edges:
+            # First, we get the expected neg edge label from the mocked input for this edge type
+            expected_negative_supervision_edges = (
+                MOCKED_UNIFIED_GRAPH.negative_supervision_edges[edge_type]
+            )
+
+            # We combine the output neg labels across all the ranks
+            output_negative_supervision_edges = torch.cat(
+                unified_negative_supervision_edges[edge_type], dim=1
+            )
+
+            # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 1
+            assert_tensor_equality(
+                tensor_a=expected_negative_supervision_edges,
+                tensor_b=output_negative_supervision_edges,
+                dim=1,
             )
 
     def test_partitioning_failure(self) -> None:
@@ -952,16 +980,20 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         empty_edge_index = torch.empty((2, 0))
         empty_node_features = torch.empty((0, 5))
         empty_edge_features = torch.empty((0, 10))
-        empty_pos_label = torch.empty((2, 0))
-        empty_neg_label = torch.empty((2, 0))
+        empty_positive_supervision_edges = torch.empty((2, 0))
+        empty_negative_supervision_edges = torch.empty((2, 0))
 
         # Test partitioning with empty node_ids, empty node_feats, empty edge_feats, and empty edge index
         partitioner.register_node_ids(node_ids=empty_node_ids)
         partitioner.register_edge_index(edge_index=empty_edge_index)
         partitioner.register_node_features(node_features=empty_node_features)
         partitioner.register_edge_features(edge_features=empty_edge_features)
-        partitioner.register_labels(label_edge_index=empty_pos_label, is_positive=True)
-        partitioner.register_labels(label_edge_index=empty_neg_label, is_positive=False)
+        partitioner.register_supervision_edges(
+            label_edge_index=empty_positive_supervision_edges, is_positive=True
+        )
+        partitioner.register_supervision_edges(
+            label_edge_index=empty_negative_supervision_edges, is_positive=False
+        )
 
         partitioned_output = partitioner.partition()
         assert not isinstance(

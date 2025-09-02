@@ -202,7 +202,7 @@ def _load_and_build_partitioned_dataset(
     set up beforehand, this function will throw an error.
     Args:
         serialized_graph_metadata (SerializedGraphMetadata): Serialized Graph Metadata contains serialized information for loading TFRecords across node and edge types
-        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
+        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, positive_supervision_edges, negative_supervision_edges] entity types.
         edge_dir (Literal["in", "out"]): Edge direction of the provided graph
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
@@ -238,8 +238,8 @@ def _load_and_build_partitioned_dataset(
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
         if (
-            loaded_graph_tensors.positive_label is not None
-            or loaded_graph_tensors.negative_label is not None
+            loaded_graph_tensors.positive_supervision_edges is not None
+            or loaded_graph_tensors.negative_supervision_edges is not None
         ):
             raise ValueError(
                 "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
@@ -269,7 +269,7 @@ def _load_and_build_partitioned_dataset(
                 f"Found an unknown edge index type: {type(loaded_graph_tensors.edge_index)} when attempting to select positive labels"
             )
 
-        loaded_graph_tensors.positive_label = positive_label_edges
+        loaded_graph_tensors.positive_supervision_edges = positive_label_edges
 
     if (
         isinstance(splitter, NodeAnchorLinkSplitter)
@@ -304,13 +304,15 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
         )
-    if loaded_graph_tensors.positive_label is not None:
-        partitioner.register_labels(
-            label_edge_index=loaded_graph_tensors.positive_label, is_positive=True
+    if loaded_graph_tensors.positive_supervision_edges is not None:
+        partitioner.register_supervision_edges(
+            label_edge_index=loaded_graph_tensors.positive_supervision_edges,
+            is_positive=True,
         )
-    if loaded_graph_tensors.negative_label is not None:
-        partitioner.register_labels(
-            label_edge_index=loaded_graph_tensors.negative_label, is_positive=False
+    if loaded_graph_tensors.negative_supervision_edges is not None:
+        partitioner.register_supervision_edges(
+            label_edge_index=loaded_graph_tensors.negative_supervision_edges,
+            is_positive=False,
         )
 
     # We call del so that the reference count of these registered fields is 1,
@@ -321,8 +323,8 @@ def _load_and_build_partitioned_dataset(
         loaded_graph_tensors.node_features,
         loaded_graph_tensors.edge_index,
         loaded_graph_tensors.edge_features,
-        loaded_graph_tensors.positive_label,
-        loaded_graph_tensors.negative_label,
+        loaded_graph_tensors.positive_supervision_edges,
+        loaded_graph_tensors.negative_supervision_edges,
     )
     del loaded_graph_tensors
 
@@ -399,7 +401,8 @@ def _build_dataset_process(
         node_rank (int): Rank of the node (machine) on which this process is running
         node_world_size (int): World size (total #) of the nodes participating in hosting the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
-        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
+        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or
+            in sequence across the [node, edge, positive_supervision_edges, negative_supervision_edges] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
@@ -498,7 +501,8 @@ def build_dataset(
             you need not initialized a process_group, one will be initialized.
         sample_edge_direction (Union[Literal["in", "out"], str]): Whether edges in the graph are directed inward or outward. Note that this is
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
-        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
+        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge,
+            positive_supervision_edges, negative_supervision_edges] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
             DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
