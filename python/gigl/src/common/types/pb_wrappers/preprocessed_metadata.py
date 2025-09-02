@@ -68,8 +68,8 @@ class PreprocessedMetadataPbWrapper:
             condensed_node_type_to_feature_dim_map[
                 CondensedNodeType(condensed_node_type)
             ] = node_metadata.feature_dim
-            node_feature_keys = sorted(list(node_metadata.feature_keys))
-            label_keys = sorted(list(node_metadata.label_keys))
+            node_feature_keys = list(node_metadata.feature_keys)
+            label_keys = list(node_metadata.label_keys)
             node_feature_schema = self.__build_feature_schema(
                 schema_uri=UriFactory.create_uri(node_metadata.schema_uri),
                 transform_fn_assets_uri=UriFactory.create_uri(
@@ -381,7 +381,7 @@ class PreprocessedMetadataPbWrapper:
             dict[CondensedNodeType, list[str]]: A mapping which stores the feature keys of each CondensedNodeTypes
         """
         return {
-            CondensedNodeType(condensed_node_type): sorted(
+            CondensedNodeType(condensed_node_type): (
                 list(preprocessed_metadata.feature_keys)
             )
             for condensed_node_type, preprocessed_metadata in self.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata.items()
