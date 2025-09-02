@@ -2,7 +2,7 @@
 
 import unittest
 from collections import abc, defaultdict
-from typing import Iterable, MutableMapping, Optional, Tuple, Type, Union
+from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import graphlearn_torch as glt
 import torch
@@ -260,7 +260,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         ],
         expected_node_types: list[NodeType],
         expected_edge_types: list[EdgeType],
-        is_labels: bool = False,
+        entity_name: Literal["features", "labels"],
     ) -> None:
         """
         Checks correctness for node feature or label outputs of partitioning
@@ -273,9 +273,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             output_node_data (Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]): Output node features or labels from partitioning, either a FeaturePartitionData if homogeneous or a dict[NodeType, FeaturePartitionData] if heterogeneous
             expected_node_types (list[NodeType]): Expected node types for heterogeneous input
             expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
-            is_labels (bool): If True, validates as node labels; if False, validates as node features
+            entity_name (Literal["features", "labels"]): The name of the entity to validate
         """
-        data_type_name = "labels" if is_labels else "features"
 
         self._assert_data_type_correctness(
             output_data=output_graph,
@@ -294,12 +293,12 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         if is_heterogeneous:
             assert isinstance(
                 output_graph, abc.Mapping
-            ), f"Homogeneous output detected from node {data_type_name} for heterogeneous input"
+            ), f"Homogeneous output detected from node {entity_name} for heterogeneous input"
             entity_iterable = list(output_graph.items())
         else:
             assert isinstance(
                 output_graph, GraphPartitionData
-            ), f"Heterogeneous output detected from node {data_type_name} for homogeneous input"
+            ), f"Heterogeneous output detected from node {entity_name} for homogeneous input"
             entity_iterable = [(USER_TO_USER_EDGE_TYPE, output_graph)]
 
         for edge_type, graph in entity_iterable:
@@ -319,12 +318,12 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             if is_heterogeneous:
                 assert isinstance(
                     output_node_data, abc.Mapping
-                ), f"Found homogeneous node {data_type_name} for heterogeneous input"
+                ), f"Found homogeneous node {entity_name} for heterogeneous input"
                 node_data = output_node_data[target_node_type]
             else:
                 assert isinstance(
                     output_node_data, FeaturePartitionData
-                ), f"Found heterogeneous node {data_type_name} for homogeneous input"
+                ), f"Found heterogeneous node {entity_name} for homogeneous input"
                 node_data = output_node_data
 
             # We expect the number of output node data to be the same as the number of nodes input to the partitioner on the current rank, as the input and output node ids per rank
@@ -345,7 +344,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 assert_tensor_equality(tensor_a=node_ids, tensor_b=node_data.ids, dim=0)
 
             # Validate dimensions and values based on whether this is labels or features
-            if is_labels:
+            if entity_name == "labels":
                 # We expect the shape of the node labels to have one label per node
                 self.assertEqual(
                     node_data.feats.size(1),
@@ -773,8 +772,19 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     output_node_data=partition_output.partitioned_node_features,
                     expected_node_types=MOCKED_HETEROGENEOUS_NODE_TYPES,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
-                    is_labels=False,
+                    entity_name="features",
                 )
+
+                if isinstance(partition_output.partitioned_node_features, abc.Mapping):
+                    for (
+                        node_type,
+                        node_features,
+                    ) in partition_output.partitioned_node_features.items():
+                        unified_output_node_feat[node_type].append(node_features.feats)
+                else:
+                    unified_output_node_feat[USER_NODE_TYPE].append(
+                        partition_output.partitioned_node_features.feats
+                    )
 
                 assert (
                     partition_output.partitioned_node_labels is not None
@@ -789,19 +799,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     output_node_data=partition_output.partitioned_node_labels,
                     expected_node_types=MOCKED_HETEROGENEOUS_NODE_TYPES,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
-                    is_labels=True,
+                    entity_name="labels",
                 )
-
-                if isinstance(partition_output.partitioned_node_features, abc.Mapping):
-                    for (
-                        node_type,
-                        node_features,
-                    ) in partition_output.partitioned_node_features.items():
-                        unified_output_node_feat[node_type].append(node_features.feats)
-                else:
-                    unified_output_node_feat[USER_NODE_TYPE].append(
-                        partition_output.partitioned_node_features.feats
-                    )
 
                 if isinstance(partition_output.partitioned_node_labels, abc.Mapping):
                     for (
