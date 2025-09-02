@@ -76,22 +76,22 @@ class TestNowResolver(unittest.TestCase):
     def test_git_hash_resolver_success(self, mock_subprocess_run):
         # Mock successful git command
         mock_result = MagicMock()
-        mocked_hash = "abc123def456789012345678901234567890abcd\n"
+        mocked_hash = "abc123def456789012345678901234567890abcd"
         mock_result.stdout = mocked_hash
         mock_subprocess_run.return_value = mock_result
 
         yaml_config = """
         experiment:
-            commit: "${git_hash}"
-            model_version: "model_${git_hash}"
+            commit: "${git_hash:}"
+            model_version: "model_${git_hash:}"
         """
 
         config = OmegaConf.create(yaml.safe_load(yaml_config))
         # Verify subprocess was called with the correct git command
-        mock_subprocess_run.assert_called()
 
         self.assertEqual(config.experiment.commit, mocked_hash)
         self.assertEqual(config.experiment.model_version, f"model_{mocked_hash}")
+        mock_subprocess_run.assert_called()
 
     @patch("gigl.common.omegaconf_resolvers.subprocess.run")
     def test_git_hash_resolver_command_not_found(self, mock_subprocess_run):
@@ -101,7 +101,7 @@ class TestNowResolver(unittest.TestCase):
         )
         yaml_config = """
         experiment:
-            commit: "${git_hash}"
+            commit: "${git_hash:}"
         """
 
         config = OmegaConf.create(yaml.safe_load(yaml_config))
@@ -121,7 +121,7 @@ class TestNowResolver(unittest.TestCase):
 
         yaml_config = """
         experiment:
-            commit: "${git_hash}"
+            commit: "${git_hash:}"
         """
 
         config = OmegaConf.create(yaml.safe_load(yaml_config))

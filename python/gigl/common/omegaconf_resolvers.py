@@ -163,8 +163,8 @@ def register_resolvers() -> None:
     This function should be called at application startup to register
     all custom resolvers with OmegaConf.
     """
-    logger.info("Registering OmegaConf resolvers")
     if not OmegaConf.has_resolver("now"):
+        logger.info("Registering OmegaConf resolver 'now'")
         OmegaConf.register_new_resolver("now", now_resolver)
     else:
         logger.info(
@@ -172,6 +172,7 @@ def register_resolvers() -> None:
         )
 
     if not OmegaConf.has_resolver("git_hash"):
+        logger.info("Registering OmegaConf resolver 'git_hash'")
         OmegaConf.register_new_resolver("git_hash", git_hash_resolver)
     else:
         logger.info(
