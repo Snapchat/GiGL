@@ -29,4 +29,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fix bug introduced when we sort the feature keys in the preprocessed metadata pb wrapper
+
 ## [0.0.7] - TODO
