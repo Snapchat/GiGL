@@ -24,7 +24,6 @@ from gigl.src.mocking.lib.versioning import (
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
     "node_id": tf.io.FixedLenFeature([], tf.int64),
@@ -564,18 +563,8 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         features, labels = _get_labels_from_features(
             feature_and_label_tensor, label_dim
         )
-        if expected_features is None:
-            self.assertIsNone(features)
-        else:
-            assert (
-                features is not None
-            ), "Expected features was None, but expected a tensor"
-            assert_tensor_equality(features, expected_features)
-        if expected_labels is None:
-            self.assertIsNone(labels)
-        else:
-            assert labels is not None, "Expected labels was None, but expected a tensor"
-            assert_tensor_equality(labels, expected_labels)
+        assert_close(features, expected_features)
+        assert_close(labels, expected_labels)
 
 
 if __name__ == "__main__":
