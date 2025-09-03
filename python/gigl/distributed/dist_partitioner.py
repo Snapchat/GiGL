@@ -1,7 +1,6 @@
 import gc
 import time
 from collections import abc, defaultdict
-from collections.abc import Mapping
 from typing import Callable, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
@@ -637,7 +636,7 @@ class DistPartitioner:
         """
         field = getattr(self, field_name)
         assert isinstance(
-            field, Mapping
+            field, dict
         ), f"Field {field_name} is not a dict, got {type(field)}"
         if field is not None and entity_key in field:
             del field[entity_key]
