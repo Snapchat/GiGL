@@ -173,8 +173,8 @@ class DistPartitioner:
             node_features (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node feats from input. Tensors should be of shope [num_nodes_on_current_rank, node_feat_dim]
             edge_index (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge indexes from input. Tensors should be of shape [2, num_edges_on_current_rank]
             edge_features (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge features from input. Tensors should be of shape [num_edges_on_current_rank, edge_feat_dim]
-            positive_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_positive_labels_on_current_rank]
-            negative_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_negative_labels_on_current_rank]
+            positive_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_pos_labels_on_current_rank]
+            negative_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_neg_labels_on_current_rank]
             node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node labels from input. Tensors should be of shape [num_nodes_on_current_rank, node_label_dim]
         """
 
@@ -589,7 +589,7 @@ class DistPartitioner:
         is_positive: bool,
     ) -> None:
         """
-        Registers the positive or negative edge label to the partitioner. Note that for the homogeneous case,
+        Registers the positive or negative label to the partitioner. Note that for the homogeneous case,
         all edge types of the graph must be present in the label edge index dictionary.
 
         For optimal memory management, it is recommended that the reference to the label tensor be deleted
@@ -1473,7 +1473,7 @@ class DistPartitioner:
                 edge_partition_book,
             )
 
-    def partition_edge_labels(
+    def partition_labels(
         self,
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         is_positive: bool,

@@ -546,8 +546,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 feats=torch.zeros(10, 2), ids=torch.arange(10)
             ),
             partitioned_edge_features=None,
-            partitioned_positive_edge_labels=None,
-            partitioned_negative_edge_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
             partitioned_node_labels=FeaturePartitionData(
                 feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
             ),
@@ -587,8 +587,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
                 ),
             },
             partitioned_edge_features=None,
-            partitioned_positive_edge_labels=None,
-            partitioned_negative_edge_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
             partitioned_node_labels={
                 _USER: FeaturePartitionData(
                     feats=torch.arange(10).unsqueeze(1), ids=torch.arange(10)
