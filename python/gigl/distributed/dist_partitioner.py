@@ -891,26 +891,12 @@ class DistPartitioner:
             else None
         )
 
-        assert not (
-            node_features is None and node_labels is None
+        has_node_features = node_features is not None
+        has_node_labels = node_labels is not None
+
+        assert (
+            has_node_features or has_node_labels
         ), "Cannot partition node features and labels if both are None"
-
-        def _node_feature_partition_fn(node_feature_ids, _):
-            return target_node_partition_book[node_feature_ids]
-
-        # partitioned_results is a list of tuples. Each tuple correpsonds
-        # to a chunk of data. A tuple contains node features and node ids.
-        partitioned_results, _ = self._partition_by_chunk(
-            input_data=(node_features, node_labels, node_ids),
-            rank_indices=node_ids,
-            partition_function=_node_feature_partition_fn,
-            total_val_size=num_nodes,
-            generate_pb=False,
-        )
-
-        # Since node features are large, we would like to delete them whenever
-        # they are not used to free memory.
-        del node_ids, num_nodes, max_node_ids, node_features, node_labels
 
         self._remove_key_from_member_dict("_node_ids", node_type)
         self._remove_key_from_member_dict("_num_nodes", node_type)
@@ -919,6 +905,23 @@ class DistPartitioner:
         self._remove_key_from_member_dict("_node_feat_dim", node_type)
         self._remove_key_from_member_dict("_node_labels", node_type)
         self._remove_key_from_member_dict("_node_labels_dim", node_type)
+
+        def _node_feature_partition_fn(node_feature_ids, _):
+            return target_node_partition_book[node_feature_ids]
+
+        # partitioned_results is a list of tuples. Each tuple correpsonds
+        # to a chunk of data. A tuple contains node features, node labels, and node ids.
+        partitioned_results, _ = self._partition_by_chunk(
+            input_data=(node_features, node_labels, node_ids),
+            rank_indices=node_ids,
+            partition_function=_node_feature_partition_fn,
+            total_val_size=num_nodes,
+            generate_pb=False,
+        )
+
+        # Since the unpartitioned node ids, features and labels are large, we would like to delete them when
+        # they are no longer needed to free memory.
+        del node_ids, num_nodes, max_node_ids, node_features, node_labels
 
         gc.collect()
 
@@ -933,11 +936,7 @@ class DistPartitioner:
             gc.collect()
 
             # Partitioned node features are stored at the 0th index ineach tuple of the partitioned results.
-            # We use the first tuple to determine whether partitioned node features exist. We do it this way so
-            # that we can remove the original unpartitioned node features field prior to concatenating the partitioned
-            # results, leading to a lower memory footprint.
-
-            if partitioned_results[0][0] is not None:
+            if has_node_features:
                 node_feature_partition_data = FeaturePartitionData(
                     feats=torch.cat([r[0] for r in partitioned_results]),
                     ids=partitioned_ids,
@@ -949,11 +948,7 @@ class DistPartitioner:
                 node_feature_partition_data = None
 
             # Partitioned node labels are stored at the 1st index in each tuple of the partitioned results.
-            # We use the first tuple to determine whether partitioned node labels exist. We do it this way so
-            # that we can remove the original unpartitioned node labels field prior to concatenating the partitioned
-            # results, leading to a lower memory footprint.
-
-            if partitioned_results[0][1] is not None:
+            if has_node_labels:
                 node_label_partition_data = FeaturePartitionData(
                     feats=torch.cat([r[1] for r in partitioned_results]),
                     ids=partitioned_ids,
