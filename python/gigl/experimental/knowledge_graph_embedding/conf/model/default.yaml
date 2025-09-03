@@ -1,0 +1,4 @@
+node_embedding_dim: 128
+embedding_similarity_type: COSINE
+src_operator: IDENTITY
+dst_operator: IDENTITY
