@@ -1,6 +1,7 @@
 import gc
 import time
 from collections import abc, defaultdict
+from collections.abc import Mapping
 from typing import Callable, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
@@ -622,19 +623,22 @@ class DistPartitioner:
                 input_label_edge_index, dtype=torch.int64
             )
 
-    def _remove_key_from_field_in_partitioner_class(
+    def _remove_key_from_member_dict(
         self, field_name: str, entity_key: Union[NodeType, EdgeType]
     ) -> None:
         """
-        Removes a key from a partitioner class given a field name. If the dictionary becomes empty after removal, sets the field to None.
+        Removes a key from a member dictionary of the partitioner class given a field name. If the dictionary becomes empty after removal, sets the field to None.
 
         Args:
-            field_name (str): The name of the instance attribute (e.g., '_node_features')
+            field_name (str): The name of the instance attribute (e.g., '_node_feat')
             entity_key (Union[NodeType, EdgeType]): The key to remove from the dictionary
         Raises:
             AttributeError: If the field_name does not exist in the class
         """
         field = getattr(self, field_name)
+        assert isinstance(
+            field, Mapping
+        ), f"Field {field_name} is not a dict, got {type(field)}"
         if field is not None and entity_key in field:
             del field[entity_key]
             if len(field) == 0:
@@ -909,12 +913,13 @@ class DistPartitioner:
         # they are not used to free memory.
         del node_ids, num_nodes, max_node_ids, node_features, node_labels
 
-        self._remove_key_from_field_in_partitioner_class("_node_ids", node_type)
-        self._remove_key_from_field_in_partitioner_class("_num_nodes", node_type)
-        self._remove_key_from_field_in_partitioner_class("_max_node_ids", node_type)
-        self._remove_key_from_field_in_partitioner_class("_node_features", node_type)
-        self._remove_key_from_field_in_partitioner_class("_node_labels", node_type)
-        self._remove_key_from_field_in_partitioner_class("_node_labels_dim", node_type)
+        self._remove_key_from_member_dict("_node_ids", node_type)
+        self._remove_key_from_member_dict("_num_nodes", node_type)
+        self._remove_key_from_member_dict("_max_node_ids", node_type)
+        self._remove_key_from_member_dict("_node_feat", node_type)
+        self._remove_key_from_member_dict("_node_feat_dim", node_type)
+        self._remove_key_from_member_dict("_node_labels", node_type)
+        self._remove_key_from_member_dict("_node_labels_dim", node_type)
 
         gc.collect()
 
