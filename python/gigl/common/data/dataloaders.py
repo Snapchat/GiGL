@@ -158,7 +158,7 @@ def _build_example_parser(
 
 def _get_labels_from_features(
     feature_and_label_tensor: torch.Tensor, label_dim: int
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
     """
     Given a combined tensor of features and labels, returns the features and labels separately.
     Args:
