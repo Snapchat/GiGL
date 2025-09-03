@@ -564,7 +564,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         features, labels = _get_labels_from_features(
             feature_and_label_tensor, label_dim
         )
-        if features is None:
+        if expected_features is None:
             self.assertIsNone(features)
         else:
             assert (
