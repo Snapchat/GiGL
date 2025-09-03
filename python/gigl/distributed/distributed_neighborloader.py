@@ -221,20 +221,34 @@ class DistNeighborLoader(DistLoader):
             uri = input_nodes
             remote_node_info = RemoteNodeInfo.load(uri)
 
-            input_data = RemoteUriSamplerInput(
-                UriFactory.create_uri(remote_node_info.node_tensor_uris[rank]),
-                remote_node_info.node_type or DEFAULT_HOMOGENEOUS_NODE_TYPE,
-            )
+            num_shards = remote_node_info.num_servers
+            input_data = []
+            for shard_rank in range(num_shards):
+                input_data.append(
+                    RemoteUriSamplerInput(
+                        UriFactory.create_uri(
+                            remote_node_info.node_tensor_uris[
+                                shard_rank + remote_node_info.num_servers * node_rank
+                            ]
+                        ),
+                        remote_node_info.node_type or DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                    )
+                )
             self._node_feature_info = remote_node_info.node_feature_info
             self._edge_feature_info = remote_node_info.edge_feature_info
             num_partitions = remote_node_info.num_partitions
             edge_dir = remote_node_info.edge_dir
             worker_options = RemoteDistSamplingWorkerOptions(
-                server_rank=list(range(remote_node_info.num_servers)),
+                server_rank=[
+                    server_rank for server_rank in range(remote_node_info.num_servers)
+                ],
                 num_workers=num_workers,
                 worker_devices=[torch.device("cpu") for i in range(num_workers)],
                 master_addr=master_ip_address,
-                master_port=remote_node_info.master_port,
+                master_port=42192,
+            )
+            num_neighbors = patch_fanout_for_sampling(
+                remote_node_info.edge_types, num_neighbors
             )
         else:
             if isinstance(input_nodes, torch.Tensor):

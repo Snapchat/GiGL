@@ -4,7 +4,6 @@ import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
 
 import argparse
-import time
 import uuid
 from pathlib import Path
 

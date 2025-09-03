@@ -45,7 +45,10 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         command = ["printenv"]
 
         job_config = VertexAiJobConfig(
-            job_name=job_name, container_uri=container_uri, command=command, replica_count=2
+            job_name=job_name,
+            container_uri=container_uri,
+            command=command,
+            replica_count=2,
         )
 
         vertex_ai_service = VertexAIService(

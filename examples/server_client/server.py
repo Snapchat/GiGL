@@ -29,8 +29,13 @@ def run_server(
     port: int,
     output_dir: str,
 ) -> None:
-
-    torch.distributed.init_process_group(backend="gloo", world_size=num_servers, rank=server_rank, init_method=f"tcp://{host}:{43002}", group_name="gigl_server_comms")
+    torch.distributed.init_process_group(
+        backend="gloo",
+        world_size=num_servers,
+        rank=server_rank,
+        init_method=f"tcp://{host}:{43002}",
+        group_name="gigl_server_comms",
+    )
     dataset = gd.build_dataset_from_task_config_uri(
         task_config_uri="gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features_user_defined_labels/frozen_gbml_config.yaml",
         is_inference=True,
@@ -47,16 +52,25 @@ def run_server(
         else:
             raise ValueError(f"Unsupported node partition book type: {type(node_pb)}")
 
-        for client_rank in range(num_clients):
-            node_tensor_uri = f"{output_dir}/node_ids_{client_rank}.pt"
+        num_shards = num_servers * num_clients
+        for shard_rank in range(num_shards):
+            node_tensor_uri = f"{output_dir}/node_ids_{shard_rank}.pt"
             node_tensor_uris.append(node_tensor_uri)
             logger.info(
-                f"Dumping {total_node_ids // num_clients} node_ids to {node_tensor_uri}"
+                f"Dumping {total_node_ids // num_shards} node_ids to {node_tensor_uri}"
             )
             bytes_io = io.BytesIO()
-            torch.save(torch.arange(start=client_rank * (total_node_ids // num_clients), end=(client_rank + 1) * (total_node_ids // num_clients)), bytes_io)
+            torch.save(
+                torch.arange(
+                    start=shard_rank * (total_node_ids // num_shards),
+                    end=(shard_rank + 1) * (total_node_ids // num_shards),
+                ),
+                bytes_io,
+            )
             bytes_io.seek(0)
-            FileLoader().load_from_filelike(UriFactory.create_uri(node_tensor_uri), bytes_io)
+            FileLoader().load_from_filelike(
+                UriFactory.create_uri(node_tensor_uri), bytes_io
+            )
             bytes_io.close()
 
         remote_node_info = RemoteNodeInfo(

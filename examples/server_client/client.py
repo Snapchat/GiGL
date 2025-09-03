@@ -45,16 +45,19 @@ def run_client(
     # loader = glt.distributed.DistNeighborLoader(
     #     data=None,
     #     num_neighbors=[2, 2],
-    #     input_nodes=f"{output_dir}/node_ids.pt",
+    #     input_nodes=f"{output_dir}/node_ids_{client_rank}.pt",
     #     worker_options=glt.distributed.RemoteDistSamplingWorkerOptions(
-    #         server_rank=0,
+    #         server_rank=[server_rank for server_rank in range(num_servers)],
     #         num_workers=num_workers,
     #         worker_devices=[torch.device("cpu") for i in range(num_workers)],
     #         master_addr=host,
-    #         master_port=get_free_port(),
+    #         master_port=32421,
     #     ),
     #     to_device=current_device,
     # )
+
+    # for batch in loader:
+    #     logger.info(f"Batch: {batch}")
     torch.distributed.init_process_group(
         backend="gloo",
         world_size=num_clients,
@@ -71,12 +74,9 @@ def run_client(
         pin_memory_device=current_device,
         worker_concurrency=num_workers,
     )
-
-    # for batch in loader:
-    #     logger.info(f"Batch: {batch}")
-
-    for batch in gigl_loader:
-        logger.info(f"Gigl Batch: {batch}")
+    for i, batch in enumerate(gigl_loader):
+        if i % 100 == 0:
+            logger.info(f"Gigl Batch: {batch}")
 
     logger.info(f"Shutting down client")
     glt.distributed.shutdown_client()
