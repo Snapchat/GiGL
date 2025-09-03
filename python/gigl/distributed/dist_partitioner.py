@@ -831,8 +831,8 @@ class DistPartitioner:
         """
         Partitions node features and labels according to the node partition book.
 
-        We should partition node features and labels together, since the ids of the partitioned node features and labels
-        should be the same for overall lower memory footprint, easier maintenance, and faster partitioning.
+        We should partition node features and labels together so that the ids of the partitioned node features and labels
+        are the same, leading to an overall smaller memory footprint and faster partitioning.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
@@ -1299,8 +1299,8 @@ class DistPartitioner:
         Partitions node features and labels of a graph. If heterogeneous, partitions features and labels for all node type.
         Must call `partition_node` first to get the node partition book as input.
 
-        We should partition node features and labels together, since the ids of the partitioned node features and labels
-        should be the same for overall lower memory footprint, easier maintenance, and faster partitioning.
+        We should partition node features and labels together so that the ids of the partitioned node features and labels
+        are the same, leading to an overall smaller memory footprint and faster partitioning.
 
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The Computed Node Partition Book
