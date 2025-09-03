@@ -165,8 +165,8 @@ def _get_labels_from_features(
         feature_and_label_tensor (torch.Tensor): Tensor of features and labels
         label_dim (int): Dimension of the labels
     Returns:
-        feature_tensor (torch.Tensor): Tensor of features
-        label_tensor (torch.Tensor): Tensor of labels
+        feature_tensor (Optional[torch.Tensor]): Tensor of features
+        label_tensor (Optional[torch.Tensor]): Tensor of labels
     """
 
     if len(feature_and_label_tensor.shape) != 2:
@@ -183,9 +183,19 @@ def _get_labels_from_features(
 
     feature_dim = feature_and_label_dim - label_dim
 
+    if feature_dim == 0:
+        feature_tensor = None
+    else:
+        feature_tensor = feature_and_label_tensor[:, :feature_dim]
+
+    if label_dim == 0:
+        label_tensor = None
+    else:
+        label_tensor = feature_and_label_tensor[:, feature_dim:]
+
     return (
-        feature_and_label_tensor[:, :feature_dim],
-        feature_and_label_tensor[:, feature_dim:],
+        feature_tensor,
+        label_tensor,
     )
 
 
@@ -457,10 +467,6 @@ class TFRecordDataLoader:
             feature_tensor, label_tensor = _get_labels_from_features(
                 feature_tensor, label_dim
             )
-            if not feature_tensor.numel():
-                feature_tensor = None
-            if not label_tensor.numel():
-                label_tensor = None
 
         end = time.perf_counter()
         logger.info(

@@ -541,7 +541,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                 "Test with no features and labels",
                 feature_and_label_tensor=torch.tensor([[3.0], [6.0]]),
                 label_dim=1,
-                expected_features=torch.empty((2, 0)),
+                expected_features=None,
                 expected_labels=torch.tensor([[3.0], [6.0]]),
             ),
         ]
