@@ -832,6 +832,15 @@ class DistPartitioner:
         num_nodes = self._num_nodes[node_type]
         max_node_ids = self._max_node_ids[node_type]
 
+        if not torch.all(node_ids >= 0):
+            raise ValueError(f"Found negative node ids for node type {node_type}")
+
+        if num_nodes > 0 and max_node_ids + 1 != num_nodes:
+            raise ValueError(
+                f"Found max_id_on_rank which must be exactly one smaller than total number of nodes, but got max id: {max_node_ids} and total_num_nodes: {num_nodes} for node type {node_type}. This is beceause \
+                Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1. Thus, we require and enforce that the max id is one smaller than the total number of nodes."
+            )
+
         node_features = (
             self._node_feat[node_type]
             if self._node_feat is not None and node_type in self._node_feat
@@ -853,15 +862,6 @@ class DistPartitioner:
             if self._node_labels_dim is not None and node_type in self._node_labels_dim
             else None
         )
-
-        if not torch.all(node_ids >= 0):
-            raise ValueError(f"Found negative node ids for node type {node_type}")
-
-        if num_nodes > 0 and max_node_ids + 1 != num_nodes:
-            raise ValueError(
-                f"Found max_id_on_rank which must be exactly one smaller than total number of nodes, but got max id: {max_node_ids} and total_num_nodes: {num_nodes} for node type {node_type}. This is beceause \
-                Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1. Thus, we require and enforce that the max id is one smaller than the total number of nodes."
-            )
 
         def _node_feature_partition_fn(node_feature_ids, _):
             return target_node_partition_book[node_feature_ids]
@@ -891,67 +891,60 @@ class DistPartitioner:
             self._num_nodes = None
             self._max_node_ids = None
 
-        if self._node_feat is not None and node_type in self._node_feat:
-            del self._node_feat[node_type]
-            if len(self._node_feat) == 0:
-                self._node_feat = None
-
-            if len(partitioned_results) == 0:
-                assert (
-                    node_feat_dim is not None
-                ), "Node features must be registered prior to partitioning"
-                node_feature_partition_data = FeaturePartitionData(
-                    feats=torch.empty((0, node_feat_dim)),
-                    ids=torch.empty(0),
-                )
-            else:
-                node_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[0] for r in partitioned_results]),
-                    ids=torch.cat([r[2] for r in partitioned_results]),
-                )
-
-            gc.collect()
-
-            # We include this input data correctness check for duplicate node ids here instead of in `register_node_ids`.
-            # This is so that we minimize the memory overhead of this check,  which is easier to do when any duplicate node
-            # ids are guaranteed to be present on the same machine.
-            if (
-                node_feature_partition_data.ids is not None
-                and node_feature_partition_data.ids.numel()
-                != torch.unique(node_feature_partition_data.ids).numel()
-            ):
+        if len(partitioned_results) > 0:
+            partitioned_ids = torch.cat([r[2] for r in partitioned_results])
+            if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
                     f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
                 )
 
             gc.collect()
 
+            if self._node_feat is not None and node_type in self._node_feat:
+                del self._node_feat[node_type]
+                if len(self._node_feat) == 0:
+                    self._node_feat = None
+
+                node_feature_partition_data = FeaturePartitionData(
+                    feats=torch.cat([r[0] for r in partitioned_results]),
+                    ids=partitioned_ids,
+                )
+
+                gc.collect()
+
+            else:
+                node_feature_partition_data = None
+
+            if self._node_labels is not None and node_type in self._node_labels:
+                del self._node_labels[node_type]
+                if len(self._node_labels) == 0:
+                    self._node_labels = None
+                node_label_partition_data = FeaturePartitionData(
+                    feats=torch.cat([r[1] for r in partitioned_results]),
+                    ids=partitioned_ids,
+                )
+
+                gc.collect()
+
+            else:
+                node_label_partition_data = None
+
         else:
-            node_feature_partition_data = None
+            if node_feat_dim is not None:
+                node_feature_partition_data = FeaturePartitionData(
+                    feats=torch.empty((0, node_feat_dim)),
+                    ids=torch.empty(0),
+                )
+            else:
+                node_feature_partition_data = None
 
-        if self._node_labels is not None and node_type in self._node_labels:
-            del self._node_labels[node_type]
-            if len(self._node_labels) == 0:
-                self._node_labels = None
-
-            if len(partitioned_results) == 0:
-                assert (
-                    node_labels_dim is not None
-                ), "Node label dimensions must be registered prior to partitioning"
+            if node_labels_dim is not None:
                 node_label_partition_data = FeaturePartitionData(
                     feats=torch.empty((0, node_labels_dim)),
                     ids=torch.empty(0),
                 )
             else:
-                node_label_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[1] for r in partitioned_results]),
-                    ids=torch.cat([r[2] for r in partitioned_results]),
-                )
-
-            gc.collect()
-
-        else:
-            node_label_partition_data = None
+                node_label_partition_data = None
 
         partitioned_results.clear()
 

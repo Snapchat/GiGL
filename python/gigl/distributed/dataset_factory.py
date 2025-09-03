@@ -194,6 +194,7 @@ def _load_and_build_partitioned_dataset(
         loaded_graph_tensors.edge_features,
         loaded_graph_tensors.positive_label,
         loaded_graph_tensors.negative_label,
+        loaded_graph_tensors.node_labels,
     )
     del loaded_graph_tensors
 
