@@ -3,7 +3,11 @@ from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
+from graphlearn_torch.distributed import (
+    DistLoader,
+    MpDistSamplingWorkerOptions,
+    RemoteDistSamplingWorkerOptions,
+)
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -14,7 +18,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
-from gigl.distributed.sampler import RemoteNodeInfo
+from gigl.distributed.sampler import RemoteNodeInfo, RemoteUriSamplerInput
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -22,7 +26,6 @@ from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
     strip_label_edges,
 )
-from gigl.distributed.sampler import RemoteUriSamplerInput
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -197,7 +200,9 @@ class DistNeighborLoader(DistLoader):
 
         if input_nodes is None:
             if dataset is None:
-                raise ValueError("Dataset must be provided if input_nodes are not provided.")
+                raise ValueError(
+                    "Dataset must be provided if input_nodes are not provided."
+                )
             if dataset.node_ids is None:
                 raise ValueError(
                     "Dataset must have node ids if input_nodes are not provided."
@@ -216,11 +221,21 @@ class DistNeighborLoader(DistLoader):
             uri = input_nodes
             remote_node_info = RemoteNodeInfo.load(uri)
 
-            input_data = RemoteUriSamplerInput(UriFactory.create_uri(remote_node_info.node_tensor_uri), remote_node_info.node_type or DEFAULT_HOMOGENEOUS_NODE_TYPE)
+            input_data = RemoteUriSamplerInput(
+                UriFactory.create_uri(remote_node_info.node_tensor_uri),
+                remote_node_info.node_type or DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            )
             self._node_feature_info = remote_node_info.node_feature_info
             self._edge_feature_info = remote_node_info.edge_feature_info
             num_partitions = remote_node_info.num_partitions
             edge_dir = remote_node_info.edge_dir
+            worker_options = RemoteDistSamplingWorkerOptions(
+                server_rank=0,
+                num_workers=num_workers,
+                worker_devices=[torch.device("cpu") for i in range(num_workers)],
+                master_addr=master_ip_address,
+                master_port=remote_node_info.master_port,
+            )
         else:
             if isinstance(input_nodes, torch.Tensor):
                 node_ids = input_nodes
@@ -243,9 +258,13 @@ class DistNeighborLoader(DistLoader):
             elif isinstance(input_nodes, tuple):
                 node_type, node_ids = input_nodes
                 if not isinstance(node_type, str):
-                    raise ValueError(f"node_type must be a NodeType, received {node_type} of type {type(node_type)}")
+                    raise ValueError(
+                        f"node_type must be a NodeType, received {node_type} of type {type(node_type)}"
+                    )
                 if not isinstance(node_ids, torch.Tensor):
-                    raise ValueError(f"node_ids must be a torch.Tensor, received {node_ids} of type {type(node_ids)}")
+                    raise ValueError(
+                        f"node_ids must be a torch.Tensor, received {node_ids} of type {type(node_ids)}"
+                    )
 
             num_neighbors = patch_fanout_for_sampling(
                 dataset.get_edge_types(), num_neighbors
@@ -263,67 +282,68 @@ class DistNeighborLoader(DistLoader):
             edge_dir = dataset.edge_dir
 
             input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
-
-        # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
-        # the memory overhead and CPU contention.
-        logger.info(
-            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {device}"
-        )
-        should_use_cpu_workers = device.type == "cpu"
-        if should_use_cpu_workers and num_cpu_threads is None:
-            logger.info(
-                "Using CPU workers, but found num_cpu_threads to be None. "
-                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
+            worker_options = MpDistSamplingWorkerOptions(
+                num_workers=num_workers,
+                worker_devices=[torch.device("cpu") for _ in range(num_workers)],
+                worker_concurrency=worker_concurrency,
+                # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
+                # need to be connected. Thus, we need master ip address and master port to
+                # initate the connection.
+                # Note that different groups of workers are independent, and thus
+                # the sampling processes in different groups should be independent, and should
+                # use different master ports.
+                master_addr=master_ip_address,
+                master_port=dist_sampling_port_for_current_rank,
+                # Load testing show that when num_rpc_threads exceed 16, the performance
+                # will degrade.
+                num_rpc_threads=min(num_partitions, 16),
+                rpc_timeout=600,
+                channel_size=channel_size,
+                pin_memory=device.type == "cuda",
             )
-            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
 
-        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
+            # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
+            # the memory overhead and CPU contention.
+            logger.info(
+                f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {device}"
+            )
+            should_use_cpu_workers = device.type == "cpu"
+            if should_use_cpu_workers and num_cpu_threads is None:
+                logger.info(
+                    "Using CPU workers, but found num_cpu_threads to be None. "
+                    f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
+                )
+                num_cpu_threads = DEFAULT_NUM_CPU_THREADS
 
-        gigl.distributed.utils.init_neighbor_loader_worker(
-            master_ip_address=master_ip_address,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-            rank=node_rank,
-            world_size=node_world_size,
-            master_worker_port=neighbor_loader_port_for_current_rank,
-            device=device,
-            should_use_cpu_workers=should_use_cpu_workers,
-            # Lever to explore tuning for CPU based inference
-            num_cpu_threads=num_cpu_threads,
-            process_start_gap_seconds=process_start_gap_seconds,
-        )
-        logger.info(
-            f"Finished initializing neighbor loader worker:  {local_rank}/{local_world_size}"
-        )
+            neighbor_loader_ports = (
+                gigl.distributed.utils.get_free_ports_from_master_node(
+                    num_ports=local_world_size
+                )
+            )
+            neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
+
+            gigl.distributed.utils.init_neighbor_loader_worker(
+                master_ip_address=master_ip_address,
+                local_process_rank=local_rank,
+                local_process_world_size=local_world_size,
+                rank=node_rank,
+                world_size=node_world_size,
+                master_worker_port=neighbor_loader_port_for_current_rank,
+                device=device,
+                should_use_cpu_workers=should_use_cpu_workers,
+                # Lever to explore tuning for CPU based inference
+                num_cpu_threads=num_cpu_threads,
+                process_start_gap_seconds=process_start_gap_seconds,
+            )
+            logger.info(
+                f"Finished initializing neighbor loader worker:  {local_rank}/{local_world_size}"
+            )
 
         # Sets up worker options for the dataloader
         dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(
             num_ports=local_world_size
         )
         dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
-
-        worker_options = MpDistSamplingWorkerOptions(
-            num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
-            worker_concurrency=worker_concurrency,
-            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
-            # need to be connected. Thus, we need master ip address and master port to
-            # initate the connection.
-            # Note that different groups of workers are independent, and thus
-            # the sampling processes in different groups should be independent, and should
-            # use different master ports.
-            master_addr=master_ip_address,
-            master_port=dist_sampling_port_for_current_rank,
-            # Load testing show that when num_rpc_threads exceed 16, the performance
-            # will degrade.
-            num_rpc_threads=min(num_partitions, 16),
-            rpc_timeout=600,
-            channel_size=channel_size,
-            pin_memory=device.type == "cuda",
-        )
 
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
@@ -345,6 +365,7 @@ class DistNeighborLoader(DistLoader):
             )
             torch.distributed.destroy_process_group()
 
+        print(f"Using worker options: {worker_options}")
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
