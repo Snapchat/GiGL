@@ -828,6 +828,9 @@ class DistPartitioner:
         """
         Partitions node features and labels according to the node partition book.
 
+        We should partition node features and labels together, since the ids of the partitioned node features and labels
+        should be the same for overall lower memory footprint, easier maintenance, and faster partitioning.
+
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
             node_type (NodeType): Node type of input data
@@ -859,6 +862,10 @@ class DistPartitioner:
                 Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1. Thus, we require and enforce that the max id is one smaller than the total number of nodes."
             )
 
+        # Although we partition node features and labels together for each node type, there are possible scenarios where a
+        # given node type may have features but not labels or labels but not features. Therefore, we need to check for these
+        # scenarios and still partition the existing node type.
+
         node_features = (
             self._node_feat[node_type]
             if self._node_feat is not None and node_type in self._node_feat
@@ -880,6 +887,10 @@ class DistPartitioner:
             if self._node_labels_dim is not None and node_type in self._node_labels_dim
             else None
         )
+
+        assert not (
+            node_features is None and node_labels is None
+        ), "Cannot partition node features and labels if both are None"
 
         def _node_feature_partition_fn(node_feature_ids, _):
             return target_node_partition_book[node_feature_ids]
@@ -908,6 +919,7 @@ class DistPartitioner:
         gc.collect()
 
         if len(partitioned_results) > 0:
+            # Partitioned node ids are stored at the 2nd index in each tuple of the partitioned results.
             partitioned_ids = torch.cat([r[2] for r in partitioned_results])
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
@@ -1287,6 +1299,9 @@ class DistPartitioner:
         """
         Partitions node features and labels of a graph. If heterogeneous, partitions features and labels for all node type.
         Must call `partition_node` first to get the node partition book as input.
+
+        We should partition node features and labels together, since the ids of the partitioned node features and labels
+        should be the same for overall lower memory footprint, easier maintenance, and faster partitioning.
 
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The Computed Node Partition Book

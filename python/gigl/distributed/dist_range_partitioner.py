@@ -176,6 +176,9 @@ class DistRangePartitioner(DistPartitioner):
             partitioned_node_feature_data = FeaturePartitionData(
                 feats=partitioned_node_features, ids=None
             )
+
+            del sorted_node_ids_indices
+            gc.collect()
         else:
             partitioned_node_feature_data = None
 
@@ -189,6 +192,9 @@ class DistRangePartitioner(DistPartitioner):
             partitioned_node_label_data = FeaturePartitionData(
                 feats=partitioned_node_labels, ids=None
             )
+
+            del sorted_node_ids_indices
+            gc.collect()
         else:
             partitioned_node_label_data = None
 
