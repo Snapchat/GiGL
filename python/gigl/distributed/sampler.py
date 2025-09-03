@@ -19,12 +19,13 @@ logger = Logger()
 class RemoteNodeInfo:
     node_type: Optional[NodeType]
     edge_types: Optional[list[tuple[NodeType, NodeType, NodeType]]]
-    node_tensor_uri: str
+    node_tensor_uris: list[str]
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
     num_partitions: int
     edge_dir: str
     master_port: int
+    num_servers: int
 
     def serialize(self) -> str:
         """Serialize the RemoteNodeInfo to a JSON string."""
@@ -40,10 +41,11 @@ class RemoteNodeInfo:
             out_dict["edge_types"] = None
 
         # Handle simple fields
-        out_dict["node_tensor_uri"] = self.node_tensor_uri
+        out_dict["node_tensor_uris"] = self.node_tensor_uris
         out_dict["num_partitions"] = self.num_partitions
         out_dict["edge_dir"] = self.edge_dir
         out_dict["master_port"] = self.master_port
+        out_dict["num_servers"] = self.num_servers
 
         def serialize_feature_info(feature_info: FeatureInfo) -> dict:
             """Serialize FeatureInfo with proper torch.dtype handling."""
@@ -98,10 +100,11 @@ class RemoteNodeInfo:
         # Validate required fields
         required_fields = [
             "edge_types",
-            "node_tensor_uri",
+            "node_tensor_uris",
             "num_partitions",
             "edge_dir",
             "master_port",
+            "num_servers",
         ]
         for field in required_fields:
             if field not in data:
@@ -182,12 +185,13 @@ class RemoteNodeInfo:
             if data["node_type"] is not None
             else None,
             edge_types=edge_types,
-            node_tensor_uri=data["node_tensor_uri"],
+            node_tensor_uris=data["node_tensor_uris"],
             node_feature_info=node_feature_info,
             edge_feature_info=edge_feature_info,
             num_partitions=data["num_partitions"],
             edge_dir=data["edge_dir"],
             master_port=data["master_port"],
+            num_servers=data["num_servers"],
         )
 
     @classmethod

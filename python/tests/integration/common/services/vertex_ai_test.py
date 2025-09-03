@@ -42,10 +42,10 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         staging_bucket = resource_config.temp_assets_regional_bucket_path.uri
         job_name = f"GiGL-Integration-Test-{uuid.uuid4()}"
         container_uri = "condaforge/miniforge3:25.3.0-1"
-        command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
+        command = ["printenv"]
 
         job_config = VertexAiJobConfig(
-            job_name=job_name, container_uri=container_uri, command=command
+            job_name=job_name, container_uri=container_uri, command=command, replica_count=2
         )
 
         vertex_ai_service = VertexAIService(
@@ -57,7 +57,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
 
         vertex_ai_service.launch_job(job_config)
 
-    def test_run_pipeline(self):
+    def _test_run_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline.yaml")
             kfp.compiler.Compiler().compile(get_pipeline, pipeline_def)

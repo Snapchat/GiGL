@@ -29,35 +29,51 @@ def run_server(
     port: int,
     output_dir: str,
 ) -> None:
+
+    torch.distributed.init_process_group(backend="gloo", world_size=num_servers, rank=server_rank, init_method=f"tcp://{host}:{43002}", group_name="gigl_server_comms")
     dataset = gd.build_dataset_from_task_config_uri(
         task_config_uri="gs://public-gigl/mocked_assets/2024-07-15--21-30-07-UTC/cora_homogeneous_node_anchor_edge_features_user_defined_labels/frozen_gbml_config.yaml",
         is_inference=True,
         _tfrecord_uri_pattern=".*tfrecord",
     )
     node_id_uri = f"{output_dir}/node_ids.pt"
-    logger.info(
-        f"Dumping {to_homogeneous(dataset.node_ids).numel()} node_ids to {node_id_uri}"
-    )
-    bytes_io = io.BytesIO()
-    torch.save(to_homogeneous(dataset.node_ids), bytes_io)
-    bytes_io.seek(0)
-    FileLoader().load_from_filelike(UriFactory.create_uri(node_id_uri), bytes_io)
-    bytes_io.close()
+    if server_rank == 0:
+        node_tensor_uris = []
+        node_pb = to_homogeneous(dataset.node_pb)
+        if isinstance(node_pb, torch.Tensor):
+            total_node_ids = node_pb.numel()
+        elif isinstance(node_pb, glt.partition.RangePartitionBook):
+            total_node_ids = node_pb.partition_bounds[-1]
+        else:
+            raise ValueError(f"Unsupported node partition book type: {type(node_pb)}")
 
-    remote_node_info = RemoteNodeInfo(
-        node_type=None,
-        edge_types=dataset.get_edge_types(),
-        node_tensor_uri=node_id_uri,
-        node_feature_info=dataset.node_feature_info,
-        edge_feature_info=dataset.edge_feature_info,
-        num_partitions=dataset.num_partitions,
-        edge_dir=dataset.edge_dir,
-        master_port=get_free_port(),
-    )
-    with open(f"{output_dir}/remote_node_info.pyast", "w") as f:
-        f.write(remote_node_info.dump())
-    print(f"Wrote remote node info to {output_dir}/remote_node_info.pyast")
-    logger.info(f"Initializing server")
+        for client_rank in range(num_clients):
+            node_tensor_uri = f"{output_dir}/node_ids_{client_rank}.pt"
+            node_tensor_uris.append(node_tensor_uri)
+            logger.info(
+                f"Dumping {total_node_ids // num_clients} node_ids to {node_tensor_uri}"
+            )
+            bytes_io = io.BytesIO()
+            torch.save(torch.arange(start=client_rank * (total_node_ids // num_clients), end=(client_rank + 1) * (total_node_ids // num_clients)), bytes_io)
+            bytes_io.seek(0)
+            FileLoader().load_from_filelike(UriFactory.create_uri(node_tensor_uri), bytes_io)
+            bytes_io.close()
+
+        remote_node_info = RemoteNodeInfo(
+            node_type=None,
+            edge_types=dataset.get_edge_types(),
+            node_tensor_uris=node_tensor_uris,
+            node_feature_info=dataset.node_feature_info,
+            edge_feature_info=dataset.edge_feature_info,
+            num_partitions=dataset.num_partitions,
+            edge_dir=dataset.edge_dir,
+            master_port=get_free_port(),
+            num_servers=num_servers,
+        )
+        with open(f"{output_dir}/remote_node_info.pyast", "w") as f:
+            f.write(remote_node_info.dump())
+        print(f"Wrote remote node info to {output_dir}/remote_node_info.pyast")
+    logger.info(f"Initializing serve {server_rank} / {num_servers}")
     glt.distributed.init_server(
         num_servers=num_servers,
         server_rank=server_rank,
@@ -67,7 +83,7 @@ def run_server(
         num_clients=num_clients,
     )
 
-    logger.info(f"Waiting for server rank {server_rank} to exit")
+    logger.info(f"Waiting for server rank {server_rank} / {num_servers} to exit")
     glt.distributed.wait_and_shutdown_server()
     logger.info(f"Server rank {server_rank} exited")
 

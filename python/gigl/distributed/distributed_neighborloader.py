@@ -222,7 +222,7 @@ class DistNeighborLoader(DistLoader):
             remote_node_info = RemoteNodeInfo.load(uri)
 
             input_data = RemoteUriSamplerInput(
-                UriFactory.create_uri(remote_node_info.node_tensor_uri),
+                UriFactory.create_uri(remote_node_info.node_tensor_uris[rank]),
                 remote_node_info.node_type or DEFAULT_HOMOGENEOUS_NODE_TYPE,
             )
             self._node_feature_info = remote_node_info.node_feature_info
@@ -230,7 +230,7 @@ class DistNeighborLoader(DistLoader):
             num_partitions = remote_node_info.num_partitions
             edge_dir = remote_node_info.edge_dir
             worker_options = RemoteDistSamplingWorkerOptions(
-                server_rank=0,
+                server_rank=list(range(remote_node_info.num_servers)),
                 num_workers=num_workers,
                 worker_devices=[torch.device("cpu") for i in range(num_workers)],
                 master_addr=master_ip_address,

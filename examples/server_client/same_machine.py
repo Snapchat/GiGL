@@ -60,11 +60,11 @@ def main():
 
     output_file = Path(f"{output_dir}/node_ids.pt")
 
-    while not output_file.exists():
-        time.sleep(5)
-        logger.info(
-            f"Waiting for server rank {server_rank} to dump node_ids to {output_dir}/node_ids.pt"
-        )
+    # while not output_file.exists():
+    #     time.sleep(5)
+    #     logger.info(
+    #         f"Waiting for server rank {server_rank} to dump node_ids to {output_dir}/node_ids.pt"
+    #     )
 
     client_processes = []
 

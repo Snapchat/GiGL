@@ -37,9 +37,9 @@ def run_client(
     current_device = torch.device(current_ctx.rank % torch.cuda.device_count())
     logger.info(f"Client rank {client_rank} initialized on device {current_device}")
 
-    logger.info(f"Loading node_ids from {output_dir}/node_ids.pt")
-    node_ids = torch.load(f"{output_dir}/node_ids.pt")
-    logger.info(f"Loaded {node_ids.numel()} node_ids")
+    # logger.info(f"Loading node_ids from {output_dir}/node_ids.pt")
+    # node_ids = torch.load(f"{output_dir}/node_ids.pt")
+    # logger.info(f"Loaded {node_ids.numel()} node_ids")
     num_workers = 4
 
     # loader = glt.distributed.DistNeighborLoader(
@@ -57,10 +57,10 @@ def run_client(
     # )
     torch.distributed.init_process_group(
         backend="gloo",
-        world_size=1,
-        rank=0,
-        init_method=f"tcp://{host}:{get_free_port()}",
-        group_name="gigl_comms",
+        world_size=num_clients,
+        rank=client_rank,
+        group_name="gigl_loader_comms",
+        init_method=f"tcp://{host}:{42132}",
     )
     gigl_loader = gd.DistNeighborLoader(
         dataset=None,
