@@ -865,9 +865,9 @@ class DistPartitioner:
                 Node IDS provided must be unique and contiguous from 0 to total_num_nodes - 1. Thus, we require and enforce that the max id is one smaller than the total number of nodes."
             )
 
-        # Although we partition node features and labels together for each node type, there are possible scenarios where a
+        # Since we partition node features and labels together for each node type, there are possible scenarios where a
         # given node type may have features but not labels or labels but not features. Therefore, we need to check for these
-        # scenarios and still partition the existing node type.
+        # scenarios and still partition the entity which exists.
 
         node_features = (
             self._node_feat[node_type]
