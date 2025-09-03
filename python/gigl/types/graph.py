@@ -141,6 +141,8 @@ class LoadedGraphTensors:
     node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     # Unpartitioned Node Features
     node_features: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
+    # Unpartitioned Node Labels
+    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
     # Unpartitioned Edge Index
     edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     # Unpartitioned Edge Features
