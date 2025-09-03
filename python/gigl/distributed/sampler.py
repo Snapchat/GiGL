@@ -1,6 +1,7 @@
 from typing import Any, Optional, Union
 from dataclasses import asdict, dataclass
 import ast
+import json
 
 
 import torch
@@ -10,23 +11,35 @@ from gigl.common import Uri
 from gigl.types.graph import FeatureInfo
 from gigl.src.common.types.graph_data import NodeType, EdgeType
 from gigl.src.common.utils.file_loader import FileLoader
+from gigl.common.logger import Logger
+
+logger = Logger()
 
 
 @dataclass
 class RemoteNodeInfo:
-    node_type: NodeType
+    node_type: Optional[NodeType]
     edge_types: list[tuple[NodeType, NodeType, NodeType]]
-    num_nodes: int
+    node_tensor_uri: str
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
+    num_partitions: int
+    edge_dir: str
 
     def dump(self) -> str:
+        print(f"{asdict(self)=}")
+        print(f"{json.dumps(asdict(self))=}")
         return str(asdict(self))
 
     @classmethod
     def load(cls, uri: Uri) -> "RemoteNodeInfo":
-        with FileLoader().load_to_temp_file(uri) as temp_file:
-            s = temp_file.read()
+        logger.info(f"{uri=}")
+        tf = FileLoader().load_to_temp_file(uri, should_create_symlinks_if_possible=False)
+        with open(tf.name, "r") as f:
+            s = f.read()
+            logger.info(f"{s=}")
+        tf.close()
+        logger.info(f"{s=}")
         return cls(**ast.literal_eval(s))
 
 class RemoteUriSamplerInput(RemoteSamplerInput):

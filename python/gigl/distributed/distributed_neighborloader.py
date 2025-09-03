@@ -9,11 +9,12 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
-from gigl.common import Uri
+from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.sampler import RemoteNodeInfo
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -210,14 +211,16 @@ class DistNeighborLoader(DistLoader):
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         self._is_labeled_heterogeneous = False
         if dataset is None:
-            if not isinstance(input_nodes, tuple):
-                raise ValueError("input_nodes must be a tuple if dataset is None.")
-            node_type, uri = input_nodes
-            if not isinstance(uri, Uri):
-                raise ValueError(f"uri must be a Uri, received {uri} of type {type(uri)}")
-            if not isinstance(node_type, NodeType):
-                raise ValueError(f"node_type must be a NodeType, received {node_type} of type {type(node_type)}")
-            input_data = RemoteUriSamplerInput(uri, node_type)
+            if not isinstance(input_nodes, Uri):
+                raise ValueError("input_nodes must be a Uri if dataset is None.")
+            uri = input_nodes
+            remote_node_info = RemoteNodeInfo.load(uri)
+
+            input_data = RemoteUriSamplerInput(UriFactory.create_uri(remote_node_info.node_tensor_uri), remote_node_info.node_type or DEFAULT_HOMOGENEOUS_NODE_TYPE)
+            self._node_feature_info = remote_node_info.node_feature_info
+            self._edge_feature_info = remote_node_info.edge_feature_info
+            num_partitions = remote_node_info.num_partitions
+            edge_dir = remote_node_info.edge_dir
         else:
             if isinstance(input_nodes, torch.Tensor):
                 node_ids = input_nodes
@@ -239,7 +242,7 @@ class DistNeighborLoader(DistLoader):
                     node_type = None
             elif isinstance(input_nodes, tuple):
                 node_type, node_ids = input_nodes
-                if not isinstance(node_type, NodeType):
+                if not isinstance(node_type, str):
                     raise ValueError(f"node_type must be a NodeType, received {node_type} of type {type(node_type)}")
                 if not isinstance(node_ids, torch.Tensor):
                     raise ValueError(f"node_ids must be a torch.Tensor, received {node_ids} of type {type(node_ids)}")
@@ -256,6 +259,8 @@ class DistNeighborLoader(DistLoader):
 
             self._node_feature_info = dataset.node_feature_info
             self._edge_feature_info = dataset.edge_feature_info
+            num_partitions = dataset.num_partitions
+            edge_dir = dataset.edge_dir
 
             input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
@@ -314,7 +319,7 @@ class DistNeighborLoader(DistLoader):
             master_port=dist_sampling_port_for_current_rank,
             # Load testing show that when num_rpc_threads exceed 16, the performance
             # will degrade.
-            num_rpc_threads=min(dataset.num_partitions, 16),
+            num_rpc_threads=min(num_partitions, 16),
             rpc_timeout=600,
             channel_size=channel_size,
             pin_memory=device.type == "cuda",
@@ -330,7 +335,7 @@ class DistNeighborLoader(DistLoader):
             collect_features=True,
             with_neg=False,
             with_weight=False,
-            edge_dir=dataset.edge_dir,
+            edge_dir=edge_dir,
             seed=None,  # it's actually optional - None means random.
         )
 

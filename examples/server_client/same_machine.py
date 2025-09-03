@@ -12,8 +12,10 @@ import graphlearn_torch as glt
 import torch
 
 import gigl.distributed as gd
+from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.utils import get_free_port
+from gigl.distributed.sampler import RemoteNodeInfo
 from gigl.types.graph import to_homogeneous
 
 logger = Logger()
@@ -32,10 +34,23 @@ def run_server(
         is_inference=True,
         _tfrecord_uri_pattern=".*tfrecord",
     )
+    node_id_uri = f"{output_dir}/node_ids.pt"
     logger.info(
-        f"Dumping {to_homogeneous(dataset.node_ids).numel()} node_ids to {output_dir}/node_ids.pt"
+        f"Dumping {to_homogeneous(dataset.node_ids).numel()} node_ids to {node_id_uri}"
     )
-    torch.save(to_homogeneous(dataset.node_ids), f"{output_dir}/node_ids.pt")
+    torch.save(to_homogeneous(dataset.node_ids), node_id_uri)
+    remote_node_info = RemoteNodeInfo(
+        node_type=None,
+        edge_types=dataset.get_edge_types(),
+        node_tensor_uri=node_id_uri,
+        node_feature_info=dataset.node_feature_info,
+        edge_feature_info=dataset.edge_feature_info,
+        num_partitions=dataset.num_partitions,
+        edge_dir=dataset.edge_dir,
+    )
+    with open(f"{output_dir}/remote_node_info.pyast", "w") as f:
+        f.write(remote_node_info.dump())
+    print(f"Wrote remote node info to {output_dir}/remote_node_info.pyast")
     logger.info(f"Initializing server")
     glt.distributed.init_server(
         num_servers=num_servers,
@@ -75,22 +90,35 @@ def run_client(
     logger.info(f"Loaded {node_ids.numel()} node_ids")
     num_workers = 4
 
-    loader = glt.distributed.DistNeighborLoader(
-        data=None,
+    # loader = glt.distributed.DistNeighborLoader(
+    #     data=None,
+    #     num_neighbors=[2, 2],
+    #     input_nodes=f"{output_dir}/node_ids.pt",
+    #     worker_options=glt.distributed.RemoteDistSamplingWorkerOptions(
+    #         server_rank=0,
+    #         num_workers=num_workers,
+    #         worker_devices=[torch.device("cpu") for i in range(num_workers)],
+    #         master_addr=host,
+    #         master_port=get_free_port(),
+    #     ),
+    #     to_device=current_device,
+    # )
+    torch.distributed.init_process_group(backend="gloo")
+    gigl_loader = gd.DistNeighborLoader(
+        dataset=None,
         num_neighbors=[2, 2],
-        input_nodes=f"{output_dir}/node_ids.pt",
-        worker_options=glt.distributed.RemoteDistSamplingWorkerOptions(
-            server_rank=0,
-            num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for i in range(num_workers)],
-            master_addr=host,
-            master_port=get_free_port(),
-        ),
-        to_device=current_device,
+        input_nodes=UriFactory.create_uri(f"{output_dir}/remote_node_info.pyast"),
+        num_workers=num_workers,
+        batch_size=1,
+        pin_memory_device=current_device,
+        worker_concurrency=num_workers,
     )
 
-    for batch in loader:
-        logger.info(f"Batch: {batch}")
+    # for batch in loader:
+    #     logger.info(f"Batch: {batch}")
+
+    for batch in gigl_loader:
+        logger.info(f"Gigl Batch: {batch}")
 
     logger.info(f"Shutting down client")
     glt.distributed.shutdown_client()
