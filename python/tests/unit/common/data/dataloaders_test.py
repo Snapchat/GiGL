@@ -544,6 +544,13 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                 expected_features=None,
                 expected_labels=torch.tensor([[3.0], [6.0]]),
             ),
+            param(
+                "Test with features and no labels",
+                feature_and_label_tensor=torch.tensor([[3.0], [6.0]]),
+                label_dim=0,
+                expected_features=torch.tensor([[3.0], [6.0]]),
+                expected_labels=None,
+            ),
         ]
     )
     def test_get_labels_from_features(
@@ -551,11 +558,25 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         _,
         feature_and_label_tensor: torch.Tensor,
         label_dim: int,
-        expected_features: torch.Tensor,
-        expected_labels: torch.Tensor,
+        expected_features: Optional[torch.Tensor],
+        expected_labels: Optional[torch.Tensor],
     ):
         features, labels = _get_labels_from_features(
             feature_and_label_tensor, label_dim
         )
-        assert_tensor_equality(features, expected_features)
-        assert_tensor_equality(labels, expected_labels)
+        if features is None:
+            self.assertIsNone(features)
+        else:
+            assert (
+                features is not None
+            ), "Expected features was None, but expected a tensor"
+            assert_tensor_equality(features, expected_features)
+        if expected_labels is None:
+            self.assertIsNone(labels)
+        else:
+            assert labels is not None, "Expected labels was None, but expected a tensor"
+            assert_tensor_equality(labels, expected_labels)
+
+
+if __name__ == "__main__":
+    unittest.main()
