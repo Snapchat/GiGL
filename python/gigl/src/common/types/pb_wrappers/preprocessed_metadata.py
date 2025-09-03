@@ -68,6 +68,11 @@ class PreprocessedMetadataPbWrapper:
             condensed_node_type_to_feature_dim_map[
                 CondensedNodeType(condensed_node_type)
             ] = node_metadata.feature_dim
+
+            # Note that sorting the node feature/label keys breaks training with DDP. The root cause for why this is happening
+            # is still under investigation. TODO (mkolodner-sc): Once the reason for why sorting the feature/label keys
+            # breaks training is understood and fixed, this comment should be removed.
+
             node_feature_keys = list(node_metadata.feature_keys)
             label_keys = list(node_metadata.label_keys)
             node_feature_schema = self.__build_feature_schema(
