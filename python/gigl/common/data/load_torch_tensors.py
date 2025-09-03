@@ -119,6 +119,14 @@ def _data_loading_process(
             graph_type,
             serialized_entity_tf_record_info,
         ) in serialized_tf_record_info.items():
+            # We currently do not support training with labels for edge entities
+            if (
+                serialized_entity_tf_record_info.label_keys
+                and not serialized_entity_tf_record_info.is_node_entity
+            ):
+                raise NotImplementedError(
+                    "Label keys are not supported for edge entities"
+                )
             (
                 entity_ids,
                 entity_features,

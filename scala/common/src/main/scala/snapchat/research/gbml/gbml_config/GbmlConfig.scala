@@ -73,7 +73,7 @@ final case class GbmlConfig(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       taskMetadata.foreach { __v =>
@@ -359,7 +359,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         taskMetadata.nodeBasedTaskMetadata.foreach { __v =>
@@ -411,7 +411,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.type = snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.TaskMetadata])
   }
-  
+
   object TaskMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata = {
@@ -491,7 +491,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         override def number: _root_.scala.Int = 0
         override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
       }
-    
+
       @SerialVersionUID(0L)
       final case class NodeBasedTaskMetadata(value: snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata) extends snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.TaskMetadata {
         type ValueType = snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata
@@ -537,7 +537,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           supervisionNodeTypes.foreach { __v =>
@@ -567,7 +567,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata.type = snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata])
     }
-    
+
     object NodeBasedTaskMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata = {
@@ -619,7 +619,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata])
     }
-    
+
     @SerialVersionUID(0L)
     final case class NodeAnchorBasedLinkPredictionTaskMetadata(
         supervisionEdgeTypes: _root_.scala.Seq[snapchat.research.gbml.graph_schema.EdgeType] = _root_.scala.Seq.empty,
@@ -643,7 +643,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           supervisionEdgeTypes.foreach { __v =>
@@ -675,7 +675,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata.type = snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata])
     }
-    
+
     object NodeAnchorBasedLinkPredictionTaskMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata = {
@@ -733,7 +733,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata])
     }
-    
+
     @SerialVersionUID(0L)
     final case class LinkBasedTaskMetadata(
         supervisionEdgeTypes: _root_.scala.Seq[snapchat.research.gbml.graph_schema.EdgeType] = _root_.scala.Seq.empty,
@@ -757,7 +757,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           supervisionEdgeTypes.foreach { __v =>
@@ -789,7 +789,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.LinkBasedTaskMetadata.type = snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.LinkBasedTaskMetadata
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.TaskMetadata.LinkBasedTaskMetadata])
     }
-    
+
     object LinkBasedTaskMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.LinkBasedTaskMetadata] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.LinkBasedTaskMetadata] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.LinkBasedTaskMetadata = {
@@ -847,7 +847,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TaskMetadata.LinkBasedTaskMetadata])
     }
-    
+
     implicit class TaskMetadataLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata](_l) {
       def nodeBasedTaskMetadata: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata] = field(_.getNodeBasedTaskMetadata)((c_, f_) => c_.copy(taskMetadata = snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.TaskMetadata.NodeBasedTaskMetadata(f_)))
       def nodeAnchorBasedLinkPredictionTaskMetadata: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata] = field(_.getNodeAnchorBasedLinkPredictionTaskMetadata)((c_, f_) => c_.copy(taskMetadata = snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata(f_)))
@@ -864,7 +864,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TaskMetadata])
   }
-  
+
   /** @param preprocessedMetadataUri
     *   Uri where DataPreprocessor generates the PreprocessedMetadata proto.
     * @param flattenedGraphMetadata
@@ -917,7 +917,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = preprocessedMetadataUri
           if (!__value.isEmpty) {
@@ -948,42 +948,42 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           val __value = snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig._typemapper_sharedArgs.toBase(__item)
           __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
         }
-        
+
         {
           val __value = isGraphDirected
           if (__value != false) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(7, __value)
           }
         };
-        
+
         {
           val __value = shouldSkipTraining
           if (__value != false) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(8, __value)
           }
         };
-        
+
         {
           val __value = shouldSkipAutomaticTempAssetCleanup
           if (__value != false) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(9, __value)
           }
         };
-        
+
         {
           val __value = shouldSkipInference
           if (__value != false) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(10, __value)
           }
         };
-        
+
         {
           val __value = shouldSkipModelEvaluation
           if (__value != false) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(11, __value)
           }
         };
-        
+
         {
           val __value = shouldIncludeIsolatedNodesInTraining
           if (__value != false) {
@@ -1000,7 +1000,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -1171,7 +1171,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.SharedConfig])
   }
-  
+
   object SharedConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig = {
@@ -1308,14 +1308,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -1332,7 +1332,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -1376,7 +1376,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig.SharedArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig.SharedArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.SharedConfig.SharedArgsEntry])
     }
-    
+
     object SharedArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig.SharedArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig.SharedArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig.SharedArgsEntry = {
@@ -1441,7 +1441,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.SharedConfig.SharedArgsEntry])
     }
-    
+
     implicit class SharedConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.SharedConfig](_l) {
       def preprocessedMetadataUri: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.preprocessedMetadataUri)((c_, f_) => c_.copy(preprocessedMetadataUri = f_))
       def flattenedGraphMetadata: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.flattened_graph_metadata.FlattenedGraphMetadata] = field(_.getFlattenedGraphMetadata)((c_, f_) => c_.copy(flattenedGraphMetadata = Option(f_)))
@@ -1508,7 +1508,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.SharedConfig])
   }
-  
+
   /** Contains config related to generating training data for a GML task.
     */
   @SerialVersionUID(0L)
@@ -1544,7 +1544,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         dataPreprocessorConfig.foreach { __v =>
@@ -1597,7 +1597,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig])
   }
-  
+
   object DatasetConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig = {
@@ -1678,7 +1678,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = dataPreprocessorConfigClsPath
             if (!__value.isEmpty) {
@@ -1699,7 +1699,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -1743,7 +1743,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig.DataPreprocessorConfig])
     }
-    
+
     object DataPreprocessorConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig = {
@@ -1809,14 +1809,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
           private[this] def __computeSerializedSize(): _root_.scala.Int = {
             var __size = 0
-            
+
             {
               val __value = key
               if (!__value.isEmpty) {
                 __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
               }
             };
-            
+
             {
               val __value = value
               if (!__value.isEmpty) {
@@ -1833,7 +1833,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
               __serializedSizeMemoized = __size
             }
             __size - 1
-            
+
           }
           def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
             {
@@ -1877,7 +1877,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig.DataPreprocessorArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig.DataPreprocessorArgsEntry
           // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig.DataPreprocessorConfig.DataPreprocessorArgsEntry])
       }
-      
+
       object DataPreprocessorArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig.DataPreprocessorArgsEntry] {
         implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig.DataPreprocessorArgsEntry] = this
         def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig.DataPreprocessorArgsEntry = {
@@ -1942,7 +1942,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         )
         // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig.DataPreprocessorConfig.DataPreprocessorArgsEntry])
       }
-      
+
       implicit class DataPreprocessorConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig](_l) {
         def dataPreprocessorConfigClsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.dataPreprocessorConfigClsPath)((c_, f_) => c_.copy(dataPreprocessorConfigClsPath = f_))
         def dataPreprocessorArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.dataPreprocessorArgs)((c_, f_) => c_.copy(dataPreprocessorArgs = f_))
@@ -1960,7 +1960,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig.DataPreprocessorConfig])
     }
-    
+
     /** @param numHops
       *   number of hops for subgraph sampler to include
       * @param numNeighborsToSample
@@ -1990,7 +1990,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       *   Also used in loss computation. Random negatives will always be used even when there
       *   are no user defined hard negatives
       * @param graphDbConfig
-      *   If specified, intention is to run ingestion into graphDB for subgraph sampler 
+      *   If specified, intention is to run ingestion into graphDB for subgraph sampler
       */
     @SerialVersionUID(0L)
     final case class SubgraphSamplerConfig(
@@ -2009,14 +2009,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = numHops
             if (__value != 0) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(1, __value)
             }
           };
-          
+
           {
             val __value = numNeighborsToSample
             if (__value != 0) {
@@ -2027,7 +2027,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             val __value = subgraphSamplingStrategy.get
             __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
           };
-          
+
           {
             val __value = numPositiveSamples
             if (__value != 0) {
@@ -2038,21 +2038,21 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             val __value = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig._typemapper_experimentalFlags.toBase(__item)
             __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
           }
-          
+
           {
             val __value = numMaxTrainingSamplesToOutput
             if (__value != 0) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(6, __value)
             }
           };
-          
+
           {
             val __value = numUserDefinedPositiveSamples
             if (__value != 0) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(7, __value)
             }
           };
-          
+
           {
             val __value = numUserDefinedNegativeSamples
             if (__value != 0) {
@@ -2073,7 +2073,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -2199,7 +2199,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig.SubgraphSamplerConfig])
     }
-    
+
     object SubgraphSamplerConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig = {
@@ -2309,14 +2309,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
           private[this] def __computeSerializedSize(): _root_.scala.Int = {
             var __size = 0
-            
+
             {
               val __value = key
               if (!__value.isEmpty) {
                 __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
               }
             };
-            
+
             {
               val __value = value
               if (!__value.isEmpty) {
@@ -2333,7 +2333,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
               __serializedSizeMemoized = __size
             }
             __size - 1
-            
+
           }
           def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
             {
@@ -2377,7 +2377,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.ExperimentalFlagsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.ExperimentalFlagsEntry
           // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.ExperimentalFlagsEntry])
       }
-      
+
       object ExperimentalFlagsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.ExperimentalFlagsEntry] {
         implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.ExperimentalFlagsEntry] = this
         def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.ExperimentalFlagsEntry = {
@@ -2442,7 +2442,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         )
         // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig.SubgraphSamplerConfig.ExperimentalFlagsEntry])
       }
-      
+
       implicit class SubgraphSamplerConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SubgraphSamplerConfig](_l) {
         def numHops: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.numHops)((c_, f_) => c_.copy(numHops = f_))
         def numNeighborsToSample: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.numNeighborsToSample)((c_, f_) => c_.copy(numNeighborsToSample = f_))
@@ -2490,7 +2490,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig.SubgraphSamplerConfig])
     }
-    
+
     /** @param splitStrategyClsPath
       *   Module path to concrete SplitStrategy instance.
       * @param splitStrategyArgs
@@ -2512,7 +2512,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = splitStrategyClsPath
             if (!__value.isEmpty) {
@@ -2523,7 +2523,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             val __value = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig._typemapper_splitStrategyArgs.toBase(__item)
             __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
           }
-          
+
           {
             val __value = assignerClsPath
             if (!__value.isEmpty) {
@@ -2544,7 +2544,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -2612,7 +2612,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig.SplitGeneratorConfig])
     }
-    
+
     object SplitGeneratorConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig = {
@@ -2692,14 +2692,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
           private[this] def __computeSerializedSize(): _root_.scala.Int = {
             var __size = 0
-            
+
             {
               val __value = key
               if (!__value.isEmpty) {
                 __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
               }
             };
-            
+
             {
               val __value = value
               if (!__value.isEmpty) {
@@ -2716,7 +2716,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
               __serializedSizeMemoized = __size
             }
             __size - 1
-            
+
           }
           def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
             {
@@ -2760,7 +2760,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.SplitStrategyArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.SplitStrategyArgsEntry
           // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig.SplitGeneratorConfig.SplitStrategyArgsEntry])
       }
-      
+
       object SplitStrategyArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.SplitStrategyArgsEntry] {
         implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.SplitStrategyArgsEntry] = this
         def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.SplitStrategyArgsEntry = {
@@ -2825,7 +2825,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         )
         // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig.SplitGeneratorConfig.SplitStrategyArgsEntry])
       }
-      
+
       @SerialVersionUID(0L)
       final case class AssignerArgsEntry(
           key: _root_.scala.Predef.String = "",
@@ -2836,14 +2836,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
           private[this] def __computeSerializedSize(): _root_.scala.Int = {
             var __size = 0
-            
+
             {
               val __value = key
               if (!__value.isEmpty) {
                 __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
               }
             };
-            
+
             {
               val __value = value
               if (!__value.isEmpty) {
@@ -2860,7 +2860,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
               __serializedSizeMemoized = __size
             }
             __size - 1
-            
+
           }
           def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
             {
@@ -2904,7 +2904,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           def companion: snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.AssignerArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.AssignerArgsEntry
           // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.DatasetConfig.SplitGeneratorConfig.AssignerArgsEntry])
       }
-      
+
       object AssignerArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.AssignerArgsEntry] {
         implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.AssignerArgsEntry] = this
         def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig.AssignerArgsEntry = {
@@ -2969,7 +2969,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         )
         // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig.SplitGeneratorConfig.AssignerArgsEntry])
       }
-      
+
       implicit class SplitGeneratorConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.SplitGeneratorConfig](_l) {
         def splitStrategyClsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.splitStrategyClsPath)((c_, f_) => c_.copy(splitStrategyClsPath = f_))
         def splitStrategyArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.splitStrategyArgs)((c_, f_) => c_.copy(splitStrategyArgs = f_))
@@ -2997,7 +2997,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig.SplitGeneratorConfig])
     }
-    
+
     implicit class DatasetConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig](_l) {
       def dataPreprocessorConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig] = field(_.getDataPreprocessorConfig)((c_, f_) => c_.copy(dataPreprocessorConfig = Option(f_)))
       def optionalDataPreprocessorConfig: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.DatasetConfig.DataPreprocessorConfig]] = field(_.dataPreprocessorConfig)((c_, f_) => c_.copy(dataPreprocessorConfig = f_))
@@ -3020,11 +3020,11 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.DatasetConfig])
   }
-  
+
   /** Generic Configuration for a GraphDB connection.
     *
     * @param graphDbIngestionClsPath
-    *   Python class path pointing to user-written 
+    *   Python class path pointing to user-written
     *   `BaseIngestion`` class definition. e.g. `my.team.graph_db.BaseInjectionImpl`.
     *   This class is currently, as an implementation detail, used for injestion only.
     *   We document this *purely* for information purposes and may change the implementation at any time.
@@ -3052,7 +3052,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = graphDbIngestionClsPath
           if (!__value.isEmpty) {
@@ -3081,7 +3081,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -3148,7 +3148,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.GraphDBConfig])
   }
-  
+
   object GraphDBConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig = {
@@ -3230,14 +3230,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -3254,7 +3254,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -3298,7 +3298,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbIngestionArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbIngestionArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.GraphDBConfig.GraphDbIngestionArgsEntry])
     }
-    
+
     object GraphDbIngestionArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbIngestionArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbIngestionArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbIngestionArgsEntry = {
@@ -3363,7 +3363,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.GraphDBConfig.GraphDbIngestionArgsEntry])
     }
-    
+
     @SerialVersionUID(0L)
     final case class GraphDbArgsEntry(
         key: _root_.scala.Predef.String = "",
@@ -3374,14 +3374,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -3398,7 +3398,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -3442,7 +3442,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.GraphDBConfig.GraphDbArgsEntry])
     }
-    
+
     object GraphDbArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDbArgsEntry = {
@@ -3507,7 +3507,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.GraphDBConfig.GraphDbArgsEntry])
     }
-    
+
     /** Scala-specific configuration.
       *
       * @param graphDbClientClassPath
@@ -3523,7 +3523,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = graphDbClientClassPath
             if (!__value.isEmpty) {
@@ -3540,7 +3540,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -3572,7 +3572,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDBServiceConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDBServiceConfig
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.GraphDBConfig.GraphDBServiceConfig])
     }
-    
+
     object GraphDBServiceConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDBServiceConfig] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDBServiceConfig] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig.GraphDBServiceConfig = {
@@ -3624,7 +3624,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.GraphDBConfig.GraphDBServiceConfig])
     }
-    
+
     implicit class GraphDBConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphDBConfig](_l) {
       def graphDbIngestionClsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.graphDbIngestionClsPath)((c_, f_) => c_.copy(graphDbIngestionClsPath = f_))
       def graphDbIngestionArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.graphDbIngestionArgs)((c_, f_) => c_.copy(graphDbIngestionArgs = f_))
@@ -3653,10 +3653,10 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.GraphDBConfig])
   }
-  
+
   /** @param trainerClsPath
     *   (deprecated)
-    *   Uri pointing to user-written BaseTrainer class definition. Used for the subgraph-sampling-based training process. 
+    *   Uri pointing to user-written BaseTrainer class definition. Used for the subgraph-sampling-based training process.
     * @param trainerArgs
     *   Arguments to parameterize training process with.
     * @param shouldLogToTensorboard
@@ -3674,7 +3674,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = trainerClsPath
           if (!__value.isEmpty) {
@@ -3693,7 +3693,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           val __value = executable.command.get
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(101, __value)
         };
-        
+
         {
           val __value = shouldLogToTensorboard
           if (__value != false) {
@@ -3710,7 +3710,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -3784,7 +3784,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.TrainerConfig])
   }
-  
+
   object TrainerConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig = {
@@ -3873,7 +3873,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         override def number: _root_.scala.Int = 0
         override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
       }
-    
+
       @SerialVersionUID(0L)
       final case class ClsPath(value: _root_.scala.Predef.String) extends snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable {
         type ValueType = _root_.scala.Predef.String
@@ -3899,14 +3899,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -3923,7 +3923,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -3967,7 +3967,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.TrainerConfig.TrainerArgsEntry])
     }
-    
+
     object TrainerArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry = {
@@ -4032,7 +4032,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TrainerConfig.TrainerArgsEntry])
     }
-    
+
     implicit class TrainerConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig](_l) {
       def trainerClsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.trainerClsPath)((c_, f_) => c_.copy(trainerClsPath = f_))
       def trainerArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.trainerArgs)((c_, f_) => c_.copy(trainerArgs = f_))
@@ -4061,10 +4061,10 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TrainerConfig])
   }
-  
+
   /** @param inferencerClsPath
     *   (deprecated)
-    *   Path to modeling task spec class path to construct model for inference. Used for the subgraph-sampling-based inference process. 
+    *   Path to modeling task spec class path to construct model for inference. Used for the subgraph-sampling-based inference process.
     * @param inferenceBatchSize
     *   Optional. If set, will be used to batch inference samples to a specific size before call for inference is made
     *   Defaults to setting in python/gigl/src/inference/gnn_inferencer.py
@@ -4085,7 +4085,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           val __value = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig._typemapper_inferencerArgs.toBase(__item)
           __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
         }
-        
+
         {
           val __value = inferencerClsPath
           if (!__value.isEmpty) {
@@ -4100,7 +4100,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           val __value = executable.command.get
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(101, __value)
         };
-        
+
         {
           val __value = inferenceBatchSize
           if (__value != 0) {
@@ -4117,7 +4117,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         inferencerArgs.foreach { __v =>
@@ -4191,7 +4191,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.InferencerConfig])
   }
-  
+
   object InferencerConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig = {
@@ -4280,7 +4280,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         override def number: _root_.scala.Int = 0
         override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
       }
-    
+
       @SerialVersionUID(0L)
       final case class ClsPath(value: _root_.scala.Predef.String) extends snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable {
         type ValueType = _root_.scala.Predef.String
@@ -4306,14 +4306,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -4330,7 +4330,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -4374,7 +4374,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.InferencerArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.InferencerArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.InferencerConfig.InferencerArgsEntry])
     }
-    
+
     object InferencerArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.InferencerArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.InferencerArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.InferencerArgsEntry = {
@@ -4439,7 +4439,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.InferencerConfig.InferencerArgsEntry])
     }
-    
+
     implicit class InferencerConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig](_l) {
       def inferencerArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.inferencerArgs)((c_, f_) => c_.copy(inferencerArgs = f_))
       def inferencerClsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.inferencerClsPath)((c_, f_) => c_.copy(inferencerClsPath = f_))
@@ -4468,7 +4468,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.InferencerConfig])
   }
-  
+
   @SerialVersionUID(0L)
   final case class PostProcessorConfig(
       postProcessorArgs: _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String] = _root_.scala.collection.immutable.Map.empty,
@@ -4483,7 +4483,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           val __value = snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig._typemapper_postProcessorArgs.toBase(__item)
           __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
         }
-        
+
         {
           val __value = postProcessorClsPath
           if (!__value.isEmpty) {
@@ -4500,7 +4500,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         postProcessorArgs.foreach { __v =>
@@ -4544,7 +4544,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.PostProcessorConfig])
   }
-  
+
   object PostProcessorConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig = {
@@ -4610,14 +4610,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -4634,7 +4634,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -4678,7 +4678,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig.PostProcessorArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig.PostProcessorArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.PostProcessorConfig.PostProcessorArgsEntry])
     }
-    
+
     object PostProcessorArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig.PostProcessorArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig.PostProcessorArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig.PostProcessorArgsEntry = {
@@ -4743,7 +4743,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.PostProcessorConfig.PostProcessorArgsEntry])
     }
-    
+
     implicit class PostProcessorConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.PostProcessorConfig](_l) {
       def postProcessorArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.postProcessorArgs)((c_, f_) => c_.copy(postProcessorArgs = f_))
       def postProcessorClsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.postProcessorClsPath)((c_, f_) => c_.copy(postProcessorClsPath = f_))
@@ -4761,7 +4761,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.PostProcessorConfig])
   }
-  
+
   @SerialVersionUID(0L)
   final case class MetricsConfig(
       metricsClsPath: _root_.scala.Predef.String = "",
@@ -4772,7 +4772,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = metricsClsPath
           if (!__value.isEmpty) {
@@ -4793,7 +4793,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -4837,7 +4837,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.MetricsConfig])
   }
-  
+
   object MetricsConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig = {
@@ -4903,14 +4903,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -4927,7 +4927,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -4971,7 +4971,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig.MetricsArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig.MetricsArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.MetricsConfig.MetricsArgsEntry])
     }
-    
+
     object MetricsArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig.MetricsArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig.MetricsArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig.MetricsArgsEntry = {
@@ -5036,7 +5036,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.MetricsConfig.MetricsArgsEntry])
     }
-    
+
     implicit class MetricsConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.MetricsConfig](_l) {
       def metricsClsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.metricsClsPath)((c_, f_) => c_.copy(metricsClsPath = f_))
       def metricsArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.metricsArgs)((c_, f_) => c_.copy(metricsArgs = f_))
@@ -5054,7 +5054,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.MetricsConfig])
   }
-  
+
   @SerialVersionUID(0L)
   final case class ProfilerConfig(
       shouldEnableProfiler: _root_.scala.Boolean = false,
@@ -5066,14 +5066,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = shouldEnableProfiler
           if (__value != false) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(1, __value)
           }
         };
-        
+
         {
           val __value = profilerLogDir
           if (!__value.isEmpty) {
@@ -5094,7 +5094,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -5150,7 +5150,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig.type = snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.ProfilerConfig])
   }
-  
+
   object ProfilerConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig = {
@@ -5222,14 +5222,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
         private[this] def __computeSerializedSize(): _root_.scala.Int = {
           var __size = 0
-          
+
           {
             val __value = key
             if (!__value.isEmpty) {
               __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
             }
           };
-          
+
           {
             val __value = value
             if (!__value.isEmpty) {
@@ -5246,7 +5246,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __serializedSizeMemoized = __size
           }
           __size - 1
-          
+
         }
         def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
           {
@@ -5290,7 +5290,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         def companion: snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig.ProfilerArgsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig.ProfilerArgsEntry
         // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.ProfilerConfig.ProfilerArgsEntry])
     }
-    
+
     object ProfilerArgsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig.ProfilerArgsEntry] {
       implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig.ProfilerArgsEntry] = this
       def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig.ProfilerArgsEntry = {
@@ -5355,7 +5355,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
       // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.ProfilerConfig.ProfilerArgsEntry])
     }
-    
+
     implicit class ProfilerConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.ProfilerConfig](_l) {
       def shouldEnableProfiler: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Boolean] = field(_.shouldEnableProfiler)((c_, f_) => c_.copy(shouldEnableProfiler = f_))
       def profilerLogDir: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.profilerLogDir)((c_, f_) => c_.copy(profilerLogDir = f_))
@@ -5377,7 +5377,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.ProfilerConfig])
   }
-  
+
   @SerialVersionUID(0L)
   final case class FeatureFlagsEntry(
       key: _root_.scala.Predef.String = "",
@@ -5388,14 +5388,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -5412,7 +5412,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -5456,7 +5456,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def companion: snapchat.research.gbml.gbml_config.GbmlConfig.FeatureFlagsEntry.type = snapchat.research.gbml.gbml_config.GbmlConfig.FeatureFlagsEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GbmlConfig.FeatureFlagsEntry])
   }
-  
+
   object FeatureFlagsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.FeatureFlagsEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.FeatureFlagsEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.FeatureFlagsEntry = {
@@ -5521,7 +5521,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.FeatureFlagsEntry])
   }
-  
+
   implicit class GbmlConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig](_l) {
     def taskMetadata: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata] = field(_.getTaskMetadata)((c_, f_) => c_.copy(taskMetadata = Option(f_)))
     def optionalTaskMetadata: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.TaskMetadata]] = field(_.taskMetadata)((c_, f_) => c_.copy(taskMetadata = f_))

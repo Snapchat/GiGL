@@ -364,6 +364,8 @@ run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps,
 		--task_config_uri=$(task_config_uri) \
 		--resource_config_uri=$(resource_config_uri) \
 		--pipeline_tag=$(GIT_HASH) \
+		--run_labels="gigl_commit=$(GIT_HASH)" \
+		--run_labels="gigl_version=$(GIGL_VERSION)" \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
 
 

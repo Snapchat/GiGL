@@ -89,6 +89,8 @@ pip install -r $req_file $PIP_ARGS
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
 
+# TODO: (svij) Check if gperftools is still needed
+# https://github.com/Snapchat/GiGL/issues/296
 conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
 
 if [[ $DEV -eq 1 ]]

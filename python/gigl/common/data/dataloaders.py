@@ -317,7 +317,7 @@ class TFRecordDataLoader:
 
         feature_spec_dict = deepcopy(serialized_tf_record_info.feature_spec)
 
-        if isinstance(entity_key, str):
+        if serialized_tf_record_info.is_node_entity:
             assert isinstance(entity_key, str)
             id_concat_axis = 0
             proccess_id_tensor = lambda t: t[entity_key]
