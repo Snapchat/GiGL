@@ -10,7 +10,7 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch.testing import assert_close
 
-from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
@@ -86,7 +86,7 @@ class DistDatasetTestCase(unittest.TestCase):
     ) -> None:
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+        output_dict: MutableMapping[int, DistDataset] = manager.dict()
 
         mp.spawn(
             run_distributed_dataset,
@@ -202,7 +202,7 @@ class DistDatasetTestCase(unittest.TestCase):
     ) -> None:
         master_port = glt.utils.get_free_port(self._master_ip_address)
         manager = Manager()
-        output_dict: MutableMapping[int, DistLinkPredictionDataset] = manager.dict()
+        output_dict: MutableMapping[int, DistDataset] = manager.dict()
 
         mp.spawn(
             run_distributed_dataset,

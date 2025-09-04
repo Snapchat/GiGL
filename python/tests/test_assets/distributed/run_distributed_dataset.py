@@ -5,7 +5,7 @@ import torch.distributed as dist
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -49,21 +49,21 @@ def run_distributed_dataset(
     world_size: int,
     mocked_dataset_info: MockedDatasetInfo,
     should_load_tensors_in_parallel: bool,
-    output_dict: Optional[MutableMapping[int, DistLinkPredictionDataset]] = None,
+    output_dict: Optional[MutableMapping[int, DistDataset]] = None,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
-) -> DistLinkPredictionDataset:
+) -> DistDataset:
     """
-    Runs DistLinkPredictionDataset Load() __init__ and load() functions provided a mocked dataset info
+    Runs DistDataset Load() __init__ and load() functions provided a mocked dataset info
     Args:
         rank (int): Rank of the current process
         world_size (int): World size of the current process
         mocked_dataset_info (MockedDatasetInfo): Mocked Dataset Metadata for current run
 
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
-        output_dict (Optional[MutableMapping[int, DistLinkPredictionDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
+        output_dict (Optional[MutableMapping[int, DistDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
     """

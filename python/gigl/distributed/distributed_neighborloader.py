@@ -12,7 +12,7 @@ import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
-from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -37,7 +37,7 @@ DEFAULT_NUM_CPU_THREADS = 2
 class DistNeighborLoader(DistLoader):
     def __init__(
         self,
-        dataset: DistLinkPredictionDataset,
+        dataset: DistDataset,
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
@@ -62,7 +62,7 @@ class DistNeighborLoader(DistLoader):
         https://pytorch-geometric.readthedocs.io/en/2.5.2/_modules/torch_geometric/distributed/dist_neighbor_loader.html#DistNeighborLoader
 
         Args:
-            dataset (DistLinkPredictionDataset): The dataset to sample from.
+            dataset (DistDataset): The dataset to sample from.
             num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.

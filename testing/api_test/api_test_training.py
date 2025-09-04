@@ -41,7 +41,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed import (
     DistABLPLoader,
-    DistLinkPredictionDataset,
+    DistDataset,
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -73,7 +73,7 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
 
 
 def _setup_dataloaders(
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     split: Literal["train", "val", "test"],
     num_neighbors: list[int],
     sampling_workers_per_process: int,
@@ -86,7 +86,7 @@ def _setup_dataloaders(
     """
     Sets up main and random dataloaders for training and testing purposes
     Args:
-        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training and testing
+        dataset (DistDataset): Loaded Distributed Dataset for training and testing
         split (Literal["train", "val", "test"]): The current split which we are loading data for
         num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): sampling_workers_per_process (int): Number of sampling workers per training/testing process
@@ -247,7 +247,7 @@ def _training_process(
     local_world_size: int,
     machine_rank: int,
     machine_world_size: int,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     node_feature_dim: int,
     edge_feature_dim: int,
     master_ip_address: str,
@@ -276,7 +276,7 @@ def _training_process(
         local_world_size (int): Number of training processes spawned by each machine
         machine_rank (int): Rank of the current machine
         machine_world_size (int): Total number of machines
-        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training
+        dataset (DistDataset): Loaded Distributed Dataset for training
         node_feature_dim (int): Input node feature dimension for the model
         edge_feature_dim (int): Input edge feature dimension for the model
         master_ip_address (str): IP Address of the master worker for distributed communication
