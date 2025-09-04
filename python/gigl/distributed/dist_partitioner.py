@@ -1352,7 +1352,7 @@ class DistPartitioner:
 
         partitioned_node_features: dict[NodeType, FeaturePartitionData] = {}
         partitioned_node_labels: dict[NodeType, FeaturePartitionData] = {}
-        for node_type in sorted(list(node_feature_types)):
+        for node_type in sorted(node_feature_types):
             (
                 partitioned_node_features_for_node_type,
                 partitioned_node_labels_for_node_type,
