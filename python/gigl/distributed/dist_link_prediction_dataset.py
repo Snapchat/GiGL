@@ -463,16 +463,39 @@ class DistDataset(glt.distributed.DistDataset):
             split_start = time.time()
             logger.info("Starting splitting nodes...")
             # Every node is required to have a label, so we split among all ids on the current machine.
-            node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
-                {
-                    node_type: get_ids_on_rank(partition_book, rank=self._rank)
-                    for node_type, partition_book in self._node_partition_book.items()
-                }
-                if isinstance(self._node_partition_book, Mapping)
-                else get_ids_on_rank(self._node_partition_book, rank=self._rank)
-            )
-            splits = splitter(node_ids=node_ids)
-            del node_ids
+            node_ids_to_split: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            if isinstance(partition_output.partitioned_node_labels, Mapping):
+                assert isinstance(self._node_partition_book, Mapping)
+                node_ids_to_split = {}
+                for (
+                    node_type,
+                    node_labels,
+                ) in partition_output.partitioned_node_labels.items():
+                    labels_to_split_indices = node_labels.feats != -1
+                    node_ids_on_rank = get_ids_on_rank(
+                        self._node_partition_book[node_type], rank=self._rank
+                    )
+                    node_ids_to_split[node_type] = node_ids_on_rank[
+                        labels_to_split_indices
+                    ]
+            elif isinstance(
+                partition_output.partitioned_node_labels, FeaturePartitionData
+            ):
+                assert isinstance(self._node_partition_book, PartitionBook)
+                labels_to_split_indices = (
+                    partition_output.partitioned_node_labels.feats != -1
+                )
+                node_ids_on_rank = get_ids_on_rank(
+                    self._node_partition_book, rank=self._rank
+                )
+                node_ids_to_split = node_ids_on_rank[labels_to_split_indices]
+            else:
+                raise ValueError(
+                    f"Partitioned node labels must be a Mapping or FeaturePartitionData, got {type(partition_output.partitioned_node_labels)}"
+                )
+            splits = splitter(node_ids=node_ids_to_split)
+            del node_ids_to_split, labels_to_split_indices, node_ids_on_rank
+            gc.collect()
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )
