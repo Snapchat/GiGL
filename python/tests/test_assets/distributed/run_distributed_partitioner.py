@@ -53,6 +53,7 @@ def run_distributed_partitioner(
     edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     positive_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     negative_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    node_labels: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
 
     if not is_heterogeneous:
         node_ids = input_graph.node_ids[USER_NODE_TYPE]
@@ -61,6 +62,7 @@ def run_distributed_partitioner(
         edge_features = input_graph.edge_features[USER_TO_USER_EDGE_TYPE]
         positive_labels = input_graph.positive_labels[USER_TO_USER_EDGE_TYPE]
         negative_labels = input_graph.negative_labels[USER_TO_USER_EDGE_TYPE]
+        node_labels = input_graph.node_labels[USER_NODE_TYPE]
     else:
         node_ids = input_graph.node_ids
         edge_index = input_graph.edge_index
@@ -68,6 +70,8 @@ def run_distributed_partitioner(
         edge_features = input_graph.edge_features
         positive_labels = input_graph.positive_labels
         negative_labels = input_graph.negative_labels
+        node_labels = input_graph.node_labels
+
     partition_output: PartitionOutput
 
     init_worker_group(world_size=MOCKED_NUM_PARTITIONS, rank=rank)
@@ -96,8 +100,13 @@ def run_distributed_partitioner(
         )
 
         dist_partitioner.register_node_features(node_features=node_features)
+        dist_partitioner.register_node_labels(node_labels=node_labels)
+        del node_labels
         del node_features
-        output_node_features = dist_partitioner.partition_node_features(
+        (
+            output_node_features,
+            output_node_labels,
+        ) = dist_partitioner.partition_node_features_and_labels(
             node_partition_book=output_node_partition_book
         )
 
@@ -122,6 +131,7 @@ def run_distributed_partitioner(
             edge_partition_book=output_edge_partition_book,
             partitioned_edge_index=output_edge_index,
             partitioned_node_features=output_node_features,
+            partitioned_node_labels=output_node_labels,
             partitioned_edge_features=output_edge_features,
             partitioned_positive_labels=output_positive_labels,
             partitioned_negative_labels=output_negative_labels,
@@ -150,6 +160,7 @@ def run_distributed_partitioner(
             edge_partition_book=output_edge_partition_book,
             partitioned_edge_index=output_graph,
             partitioned_node_features=None,
+            partitioned_node_labels=None,
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
@@ -164,6 +175,7 @@ def run_distributed_partitioner(
             edge_features=edge_features,
             positive_labels=positive_labels,
             negative_labels=negative_labels,
+            node_labels=node_labels,
         )
         # We call del to mimic the real use case for handling these input tensors
         del (
@@ -173,6 +185,7 @@ def run_distributed_partitioner(
             edge_features,
             positive_labels,
             negative_labels,
+            node_labels,
         )
         partition_output = dist_partitioner.partition()
 
