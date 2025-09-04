@@ -635,13 +635,14 @@ class DistPartitioner:
             AttributeError: If the field_name does not exist in the class
         """
         field = getattr(self, field_name)
-        assert isinstance(
-            field, dict
-        ), f"Field {field_name} is not a dict, got {type(field)}"
-        if field is not None and entity_key in field:
-            del field[entity_key]
-            if len(field) == 0:
-                setattr(self, field_name, None)
+        if field is not None:
+            assert isinstance(
+                field, dict
+            ), f"Field {field_name} is not a dict, got {type(field)}"
+            if entity_key in field:
+                del field[entity_key]
+                if len(field) == 0:
+                    setattr(self, field_name, None)
 
     def _partition_single_chunk_data(
         self,
