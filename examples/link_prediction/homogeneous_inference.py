@@ -89,7 +89,7 @@ def _inference_process(
         inference_batch_size (int): Batch size to use for inference
         hid_dim (int): Hidden dimension of the model
         out_dim (int): Output dimension of the model
-        dataset (DistDataset): Link prediction dataset built on current machine
+        dataset (DistDataset): Loaded Distributed Dataset for inference
         inferencer_args (dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for. This is used to
             tag the embeddings written to GCS.
