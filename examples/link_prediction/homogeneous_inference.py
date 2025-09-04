@@ -34,10 +34,7 @@ from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed import (
-    DistLinkPredictionDataset,
-    build_dataset_from_task_config_uri,
-)
+from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
 from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
@@ -71,7 +68,7 @@ def _inference_process(
     inference_batch_size: int,
     hid_dim: int,
     out_dim: int,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     inferencer_args: dict[str, str],
     inference_node_type: NodeType,
     node_feature_dim: int,
@@ -92,7 +89,7 @@ def _inference_process(
         inference_batch_size (int): Batch size to use for inference
         hid_dim (int): Hidden dimension of the model
         out_dim (int): Output dimension of the model
-        dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
+        dataset (DistDataset): Link prediction dataset built on current machine
         inferencer_args (dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for. This is used to
             tag the embeddings written to GCS.
@@ -297,7 +294,7 @@ def _run_example_inference(
     )
 
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
-    # and registering that information to a DistLinkPredictionDataset class.
+    # and registering that information to a DistDataset class.
     dataset = build_dataset_from_task_config_uri(task_config_uri=task_config_uri)
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
