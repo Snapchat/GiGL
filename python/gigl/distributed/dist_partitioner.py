@@ -959,7 +959,7 @@ class DistPartitioner:
 
             else:
                 node_label_partition_data = None
-        else:
+        else:  # if len(partitioned_results) == 0
             if node_feat_dim is not None:
                 node_feature_partition_data = FeaturePartitionData(
                     feats=torch.empty((0, node_feat_dim)),
