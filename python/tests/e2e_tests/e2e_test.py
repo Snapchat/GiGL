@@ -29,33 +29,27 @@ Arguments:
                 - "gigl_version=$(GIGL_VERSION)" # Optional, default is empty.
         ```
     The following arguments are optional:
-        --test_names: [Optional] List of test names to run form the test spec file. The value is repeated for each test.
+        --test_names: [Optional] Test name to run from the test spec file. The value can be repeated for running multiple tests.
+            If not provided, all tests in the spec files will be run.
             Example: --test_names=cora_glt_udl_test_on --test_names=cora_nalp_test_on
 
 Examples:
     # Run all tests from combined config
     python -m python.tests.e2e_tests.e2e_test \
+        --compiled_pipeline_path=/tmp/gigl/my_pipeline.yaml \
         --test_spec_uri=python/tests/e2e_tests/configs/e2e_tests.yaml \
-        --compiled_pipeline_path=/tmp/gigl/my_pipeline.yaml
-        --test_names=cora_glt_udl_test --test_names=cora_nalp_test
 
     # Run specific tests by name
     python -m python.tests.e2e_tests.e2e_test \
+        --compiled_pipeline_path=/tmp/gigl/my_pipeline.yaml \
         --test_spec_uri=python/tests/e2e_tests/configs/e2e_tests.yaml \
         --test_names=cora_nalp --test_names=dblp_nalp
-
-    # Run with wait and custom tags
-    python -m python.tests.e2e_tests.e2e_test \
-        --test_spec_uri=python/tests/e2e_tests/configs/e2e_tests.yaml \
-        --test_names=cora_nalp --test_names=dblp_nalp \
-        --wait_for_all
 """
 
 import argparse
 import os
 import textwrap
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 from google.cloud.aiplatform import PipelineJob
 
@@ -70,7 +64,23 @@ logger = Logger()
 
 @dataclass
 class E2ETest:
-    """Configuration for a single E2E test specification."""
+    f"""
+    Configuration for a single E2E test specification.
+
+    Args:
+        task_config_uri: The URI of the task config to use.
+        resource_config_uri: The URI of the resource config to use.
+        name_suffix: The suffix to add to the job name; job name will be of form: <test_name><name_suffix>,
+            where <test_name> is the key in :attr:`E2ETestsSpec.tests`.
+        uses_in_memory_sampling: Whether to use in-memory sampling or not.
+        start_at: Specify the component where to start the pipeline. Choices are defined in:
+            :attr:`gigl.src.common.constants.components.GiGLComponents`.
+        stop_after: Specify the component where to stop the pipeline. Choices are defined in:
+            :attr:`gigl.src.common.constants.components.GiGLComponents`.
+        wait_for_completion: Whether to wait for the pipeline run to finish or not.
+        pipeline_tag: Optional tag, which is provided will be used to tag the pipeline description.
+        run_labels: Labels to associate with the pipeline run.
+    """
 
     task_config_uri: str
     resource_config_uri: str
@@ -82,7 +92,7 @@ class E2ETest:
     stop_after: str = "post_processor"
     wait_for_completion: bool = True
     pipeline_tag: str = ""
-    run_labels: List[str] = field(default_factory=list)
+    run_labels: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -114,7 +124,7 @@ def run_all_e2e_tests(
                 --pipeline_tag={job.pipeline_tag} \
                 --uses_in_memory_sampling={job.uses_in_memory_sampling} \
                 --run_labels={job.run_labels} \
-                --wait_for_completion={job.wait_for_completion} \
+                --wait={job.wait_for_completion} \
                 --action run
             """
             )
@@ -132,7 +142,7 @@ def run_all_e2e_tests(
             stop_after=job.stop_after,
             compiled_pipeline_path=compiled_pipeline_path,
         )
-        if job.wait_for_completion == True:
+        if job.wait_for_completion:
             runs_to_wait_on[full_job_name] = pipeline_job
 
     if runs_to_wait_on:
@@ -169,13 +179,13 @@ if __name__ == "__main__":
     logger.info(f"Will load test spec from: {test_spec_uri}")
     logger.info(f"Will load compiled pipeline from: {os.getcwd()}")
     test_spec: E2ETestsSpec = load_resolved_yaml(test_spec_uri, E2ETestsSpec)
-    filtered_tests: Dict[str, E2ETest]
+    available_tests = test_spec.tests.keys()
+    filtered_tests: dict[str, E2ETest]
     if args.test_names:
-        filtered_tests = {
-            test_name: test_spec.tests[test_name]
-            for test_name in args.test_names
-            if test_name in args.test_names
-        }
+        for test_name in args.test_names:
+            if test_name not in available_tests:
+                raise ValueError(f"Test {test_name} not found in test spec.")
+            filtered_tests[test_name] = test_spec.tests[test_name]
     else:
         filtered_tests = test_spec.tests
 

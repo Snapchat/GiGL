@@ -198,28 +198,28 @@ class KfpOrchestrator:
         Returns:
             None
         """
-        resource_names: list[str]
+        resource_names: list[str] = []
         if isinstance(run, str):
             resource_names = [run]
         elif isinstance(run, aiplatform.PipelineJob):
             resource_names = [run.resource_name]
         else:
             resource_names = [
-                run.resource_name if isinstance(run, aiplatform.PipelineJob) else run
-                for run in run
+                r.resource_name if isinstance(r, aiplatform.PipelineJob) else r
+                for r in run
             ]
 
         logger.info(
             f"Waiting for {len(resource_names)} pipeline runs to complete: {resource_names}"
         )
 
-        def wait_for_run_completion(resource_name: str) -> str:
+        def __wait(resource_name: str) -> str:
             VertexAIService.wait_for_run_completion(resource_name=resource_name)
             return resource_name  # Convenience to return the run name for logging
 
         with ThreadPoolExecutor(max_workers=len(resource_names)) as executor:
             futures = [
-                executor.submit(wait_for_run_completion, resource_name=resource_name)
+                executor.submit(__wait, resource_name=resource_name)
                 for resource_name in resource_names
             ]
             for future in as_completed(futures):

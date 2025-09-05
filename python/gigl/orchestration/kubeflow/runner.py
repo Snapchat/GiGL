@@ -167,7 +167,7 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
 logger = Logger()
 
 
-def parse_additional_job_args(
+def _parse_additional_job_args(
     additional_job_args: list[str],
 ) -> dict[GiGLComponents, dict[str, str]]:
     """
@@ -327,11 +327,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logger.info(f"Beginning runner.py with args: {args}")
 
-
     # Assert correctness of args
     _assert_required_flags(args)
 
-    parsed_additional_job_args = parse_additional_job_args(args.additional_job_args)
+    parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
     parsed_labels = _parse_labels(args.run_labels)
 
     # Set the default value for compiled_pipeline_path as we cannot set it in argparse as
