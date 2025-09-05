@@ -1801,7 +1801,9 @@ objsize==0.7.1 \
 omegaconf==2.3.0 \
     --hash=sha256:7b4df175cdb08ba400f45cae3bdcae7ba8365db4d165fc65fd04b050ab63b46b \
     --hash=sha256:d5d4b6d29955cc50ad50c46dc269bcd92c6e00f5f90d23ab5fee7bfca4ba4cc7
-    # via hydra-core
+    # via
+    #   gigl (python/pyproject.toml)
+    #   hydra-core
 opentelemetry-api==1.31.1 \
     --hash=sha256:137ad4b64215f02b3000a0292e077641c8611aab636414632a9b9068593b7e91 \
     --hash=sha256:1511a3f470c9c8a32eeea68d4ea37835880c0eed09dd1a0187acc8b1301da0a1

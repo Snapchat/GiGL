@@ -2,8 +2,11 @@ include dep_vars.env
 
 SHELL := /bin/bash
 CONDA_ENV_NAME=gnn
+# Ensure that python, pip, and pip-tools versions are consistent with the ones in:
+# .github/actions/setup-python-tools/action.yml
 PYTHON_VERSION=3.9
 PIP_VERSION=25.0.1
+PIP_TOOLS_VERSION=7.4.1
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
@@ -46,7 +49,7 @@ get_ver_hash:
 	$(eval GIT_COMMIT=$(shell git log -1 --pretty=format:"%H"))
 
 initialize_environment:
-	conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools
+	conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools=${PIP_TOOLS_VERSION}
 	@echo "If conda environment was successfully installed, ensure to activate it and run \`make install_dev_deps\` or \`make install_deps\` to complete setup"
 
 clean_environment:
