@@ -97,17 +97,16 @@ class TestNowResolver(unittest.TestCase):
     def test_git_hash_resolver_command_not_found(self, mock_subprocess_run):
         # Command not found throws a 127 exit code.
         mock_subprocess_run.side_effect = subprocess.CalledProcessError(
-            127, ["git", "rev-parse", "HEAD"], "command not found: hello"
+            127, ["git", "rev-parse", "HEAD"], "command not found: git"
         )
         yaml_config = """
         experiment:
             commit: "${git_hash:}"
         """
 
-        config = OmegaConf.create(yaml.safe_load(yaml_config))
-
         # Should return empty string when git is not available
-        self.assertEqual(config.experiment.commit, "")
+        with self.assertRaises(RuntimeError):
+            OmegaConf.create(yaml_config).experiment.commit
 
     @patch("gigl.common.omegaconf_resolvers.subprocess.run")
     def test_git_hash_resolver_not_git_repo(self, mock_subprocess_run):
@@ -124,10 +123,8 @@ class TestNowResolver(unittest.TestCase):
             commit: "${git_hash:}"
         """
 
-        config = OmegaConf.create(yaml.safe_load(yaml_config))
-
-        # Should return empty string when not in a git repository
-        self.assertEqual(config.experiment.commit, "")
+        with self.assertRaises(RuntimeError):
+            OmegaConf.create(yaml_config).experiment.commit
 
 
 if __name__ == "__main__":

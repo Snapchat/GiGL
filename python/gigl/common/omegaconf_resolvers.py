@@ -150,11 +150,10 @@ def git_hash_resolver() -> str:
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
         FileNotFoundError,
-    ):
-        logger.warning(
-            "Could not retrieve git hash - git command failed or not in a git repository"
+    ) as e:
+        raise RuntimeError(
+            f"Could not retrieve git hash - git command failed or not in a git repository: {e}"
         )
-        return ""
 
 
 def register_resolvers() -> None:

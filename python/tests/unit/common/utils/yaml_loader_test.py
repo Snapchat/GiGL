@@ -1,5 +1,6 @@
 import os
 import tempfile
+import textwrap
 import unittest
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,20 +38,23 @@ class YamlLoaderTest(unittest.TestCase):
     def tearDown(self):
         self.temp_file.close()
         os.remove(self.temp_file.name)
+        super().tearDown()
 
     def test_load_resolved_yaml_simple_config(self):
         """Test loading a simple YAML configuration."""
 
-        contents = """
-basic_config:
-    name: "experiment_${now:%Y%m%d}"
-    value: 42
-    enabled: true
-    tags:
-        - "tag_${git_hash:}"
-        - "${basic_config.value}" # resolves to 42
-description: "This is a test description"
-"""
+        contents = textwrap.dedent(
+            """
+        basic_config:
+            name: "experiment_${now:%Y%m%d}"
+            value: 42
+            enabled: true
+            tags:
+                - "tag_${git_hash:}"
+                - "${basic_config.value}" # resolves to 42
+        description: "This is a test description"
+        """
+        )
         with self.temp_file:
             self.temp_file.write(contents)
 
