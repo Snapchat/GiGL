@@ -140,7 +140,11 @@ class VertexAIService:
         """The GCP project that is being used for this service."""
         return self._project
 
-    def launch_job(self, job_config: VertexAiJobConfig) -> None:
+    def launch_job(
+        self,
+        job_config: VertexAiJobConfig,
+        worker_job_config: Optional[VertexAiJobConfig] = None,
+    ) -> None:
         """
         Launch a Vertex AI CustomJob.
         See the docs for more info.
@@ -210,6 +214,31 @@ class VertexAIService:
             worker_pool_specs.append(worker_spec)
             # worker_pool_specs.append({})
             # worker_pool_specs.append(worker_spec)
+
+        if worker_job_config:
+            worker_machine_spec = MachineSpec(
+                machine_type=worker_job_config.machine_type,
+                accelerator_type=worker_job_config.accelerator_type,
+                accelerator_count=worker_job_config.accelerator_count,
+            )
+            worker_container_spec = ContainerSpec(
+                image_uri=worker_job_config.container_uri,
+                command=worker_job_config.command,
+                args=worker_job_config.args,
+                env=env_vars,
+            )
+            worker_disk_spec = DiskSpec(
+                boot_disk_type=worker_job_config.boot_disk_type,
+                boot_disk_size_gb=worker_job_config.boot_disk_size_gb,
+            )
+            worker_spec = WorkerPoolSpec(
+                machine_spec=worker_machine_spec,
+                container_spec=worker_container_spec,
+                disk_spec=worker_disk_spec,
+                replica_count=worker_job_config.replica_count,
+            )
+            worker_pool_specs.append({})
+            worker_pool_specs.append(worker_spec)
 
         logger.info(
             f"Running Custom job {job_config.job_name} with worker_pool_specs {worker_pool_specs}, in project: {self._project}/{self._location} using staging bucket: {self._staging_bucket}, and attached labels: {job_config.labels}"

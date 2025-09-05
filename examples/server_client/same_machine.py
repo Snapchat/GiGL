@@ -7,9 +7,8 @@ import argparse
 import uuid
 from pathlib import Path
 
-import torch
-from examples.server_client.client import run_client
-from examples.server_client.server import run_server
+from examples.server_client.client import run_clients
+from examples.server_client.server import run_servers
 
 from gigl.common.logger import Logger
 from gigl.distributed.utils import get_free_port
@@ -37,52 +36,12 @@ def main():
     output_dir = args.output_dir
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    server_processes = []
-    mp_context = torch.multiprocessing.get_context("spawn")
-
-    for server_rank in range(num_servers):
-        server_process = mp_context.Process(
-            target=run_server,
-            args=(
-                server_rank,
-                num_servers,
-                num_clients,
-                args.host,
-                args.port,
-                output_dir,
-            ),
-        )
-        server_processes.append(server_process)
-
-    for server_process in server_processes:
-        server_process.start()
-
-    output_file = Path(f"{output_dir}/node_ids.pt")
-
-    # while not output_file.exists():
-    #     time.sleep(5)
-    #     logger.info(
-    #         f"Waiting for server rank {server_rank} to dump node_ids to {output_dir}/node_ids.pt"
-    #     )
-
-    client_processes = []
-
-    for client_rank in range(num_clients):
-        client_process = mp_context.Process(
-            target=run_client,
-            args=(
-                client_rank,
-                num_clients,
-                num_servers,
-                args.host,
-                args.port,
-                output_dir,
-            ),
-        )
-        client_processes.append(client_process)
-
-    for client_process in client_processes:
-        client_process.start()
+    server_processes = run_servers(
+        num_servers, num_clients, args.host, args.port, output_dir
+    )
+    client_processes = run_clients(
+        num_clients, num_servers, args.host, args.port, output_dir
+    )
 
     logger.info(f"Waiting for client processes to exit")
     for client_process in client_processes:

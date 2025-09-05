@@ -14,7 +14,11 @@ import gigl.distributed as gd
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.sampler import RemoteNodeInfo
-from gigl.distributed.utils import get_free_port
+from gigl.distributed.utils import (
+    get_free_port,
+    get_free_ports_from_master_node,
+    get_internal_ip_from_master_node,
+)
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.types.graph import to_homogeneous
 
@@ -84,8 +88,7 @@ def run_server(
             master_port=get_free_port(),
             num_servers=num_servers,
         )
-        with open(f"{output_dir}/remote_node_info.pyast", "w") as f:
-            f.write(remote_node_info.dump())
+        FileLoader().load_from_filelike(UriFactory.create_uri(f"{output_dir}/remote_node_info.pyast"), io.BytesIO(remote_node_info.dump().encode()))
         print(f"Wrote remote node info to {output_dir}/remote_node_info.pyast")
     logger.info(f"Initializing serve {server_rank} / {num_servers}")
     glt.distributed.init_server(
@@ -102,10 +105,28 @@ def run_server(
     logger.info(f"Server rank {server_rank} exited")
 
 
+def run_servers(
+    num_servers: int, num_clients: int, host: str, port: int, output_dir: str
+) -> list:
+    server_processes = []
+    mp_context = torch.multiprocessing.get_context("spawn")
+    for server_rank in range(num_servers):
+        server_process = mp_context.Process(
+            target=run_server,
+            args=(server_rank, num_servers, num_clients, host, port, output_dir),
+        )
+        server_processes.append(server_process)
+    for server_process in server_processes:
+        server_process.start()
+    return server_processes
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=get_free_port())
+    parser.add_argument("--num_servers", type=int, default=1)
+    parser.add_argument("--num_clients", type=int, default=1)
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -113,4 +134,16 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     logger.info(f"Arguments: {args}")
-    run_server(0, 1, 1, args.host, args.port, args.output_dir)
+    if args.host == "FROM ENV" and args.port == -1:
+        logger.info(f"Using host and port from process group")
+        torch.distributed.init_process_group(backend="gloo")
+        args.host = get_internal_ip_from_master_node()
+        args.port = get_free_ports_from_master_node(num_ports=1)[0]
+        torch.distributed.destroy_process_group()
+    elif args.host == "FROM ENV" or args.port == -1:
+        raise ValueError("Either host or port must be provided")
+    logger.info(f"Using host: {args.host}")
+    logger.info(f"Using port: {args.port}")
+    run_servers(
+        args.num_servers, args.num_clients, args.host, args.port, args.output_dir
+    )

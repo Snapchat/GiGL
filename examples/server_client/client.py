@@ -12,7 +12,11 @@ import torch
 import gigl.distributed as gd
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
-from gigl.distributed.utils import get_free_port
+from gigl.distributed.utils import (
+    get_free_port,
+    get_free_ports_from_master_node,
+    get_internal_ip_from_master_node,
+)
 
 logger = Logger()
 
@@ -34,7 +38,10 @@ def run_client(
     )
     current_ctx = glt.distributed.get_context()
     print("Current context: ", current_ctx)
-    current_device = torch.device(current_ctx.rank % torch.cuda.device_count())
+    if torch.cuda.is_available():
+        current_device = torch.device(current_ctx.rank % torch.cuda.device_count())
+    else:
+        current_device = torch.device("cpu")
     logger.info(f"Client rank {client_rank} initialized on device {current_device}")
 
     # logger.info(f"Loading node_ids from {output_dir}/node_ids.pt")
@@ -58,6 +65,9 @@ def run_client(
 
     # for batch in loader:
     #     logger.info(f"Batch: {batch}")
+    if client_rank == 0:
+        for k, v in os.environ.items():
+            logger.info(f"Environment variable: {k} = {v}")
     torch.distributed.init_process_group(
         backend="gloo",
         world_size=num_clients,
@@ -83,6 +93,22 @@ def run_client(
     logger.info(f"Client rank {client_rank} exited")
 
 
+def run_clients(
+    num_clients: int, num_servers: int, host: str, port: int, output_dir: str
+) -> list:
+    client_processes = []
+    mp_context = torch.multiprocessing.get_context("spawn")
+    for client_rank in range(num_clients):
+        client_process = mp_context.Process(
+            target=run_client,
+            args=(client_rank, num_clients, num_servers, host, port, output_dir),
+        )
+        client_processes.append(client_process)
+    for client_process in client_processes:
+        client_process.start()
+    return client_processes
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="localhost")
@@ -92,6 +118,20 @@ if __name__ == "__main__":
         type=str,
         default=f"/tmp/gigl/server_client/output/{uuid.uuid4()}",
     )
+    parser.add_argument("--num_clients", type=int, default=1)
+    parser.add_argument("--num_servers", type=int, default=1)
     args = parser.parse_args()
     logger.info(f"Arguments: {args}")
-    run_client(0, 1, 1, args.host, args.port, args.output_dir)
+    if args.host == "FROM ENV" and args.port == -1:
+        logger.info(f"Using host and port from process group")
+        torch.distributed.init_process_group(backend="gloo")
+        args.host = get_internal_ip_from_master_node()
+        args.port = get_free_ports_from_master_node(num_ports=1)[0]
+        torch.distributed.destroy_process_group()
+    elif args.host == "FROM ENV" or args.port == -1:
+        raise ValueError("Either host or port must be provided")
+    logger.info(f"Using host: {args.host}")
+    logger.info(f"Using port: {args.port}")
+    run_clients(
+        args.num_clients, args.num_servers, args.host, args.port, args.output_dir
+    )
