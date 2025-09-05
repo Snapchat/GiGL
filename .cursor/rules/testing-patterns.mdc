@@ -1,6 +1,8 @@
-______________________________________________________________________
-
-## description: Testing patterns and conventions for GiGL components globs: \["**/test\*.py", "**/tests/**/\*", "**/testing/**", "**/tests/\*\*"\] alwaysApply: false
+---
+description: Testing patterns and conventions for GiGL components
+globs: \["**/test\*.py", "**/tests/**/\*", "**/testing/**", "**/tests/\*\*"\]
+alwaysApply: false
+---
 
 # Testing Patterns & Conventions
 
