@@ -13,13 +13,13 @@ from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
     strip_label_edges,
 )
-from gigl.types.graph import FeatureInfo, message_passing_to_positive_label
+from gigl.types.graph import FeatureInfo, message_passing_to_positive_supervision_edges
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 _U2U_EDGE_TYPE = ("user", "to", "user")
 _U2I_EDGE_TYPE = ("user", "to", "item")
 _I2U_EDGE_TYPE = ("item", "to", "user")
-_LABELED_EDGE_TYPE = message_passing_to_positive_label(_U2I_EDGE_TYPE)
+_LABELED_EDGE_TYPE = message_passing_to_positive_supervision_edges(_U2I_EDGE_TYPE)
 
 
 class LoaderUtilsTest(unittest.TestCase):

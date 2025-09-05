@@ -10,8 +10,8 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     LoadedGraphTensors,
     is_label_edge_type,
-    message_passing_to_negative_label,
-    message_passing_to_positive_label,
+    message_passing_to_negative_supervision_edges,
+    message_passing_to_positive_supervision_edges,
     select_label_edge_types,
     to_heterogeneous_edge,
     to_heterogeneous_node,
@@ -90,14 +90,14 @@ class GraphTypesTyest(unittest.TestCase):
                 node_features=torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
                 edge_index=torch.tensor([[0, 1], [1, 2]]),
                 edge_features=torch.tensor([[0.1, 0.2], [0.3, 0.4]]),
-                positive_label=torch.tensor([[0], [2]]),
-                negative_label=torch.tensor([[1], [0]]),
+                positive_supervision_edges=torch.tensor([[0], [2]]),
+                negative_supervision_edges=torch.tensor([[1], [0]]),
                 expected_edge_index={
                     DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor([[0, 1], [1, 2]]),
-                    message_passing_to_positive_label(
+                    message_passing_to_positive_supervision_edges(
                         DEFAULT_HOMOGENEOUS_EDGE_TYPE
                     ): torch.tensor([[2], [0]]),
-                    message_passing_to_negative_label(
+                    message_passing_to_negative_supervision_edges(
                         DEFAULT_HOMOGENEOUS_EDGE_TYPE
                     ): torch.tensor([[0], [1]]),
                 },
@@ -109,14 +109,14 @@ class GraphTypesTyest(unittest.TestCase):
                 node_features=torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
                 edge_index=torch.tensor([[0, 1], [1, 2]]),
                 edge_features=torch.tensor([[0.1, 0.2], [0.3, 0.4]]),
-                positive_label=torch.tensor([[0], [2]]),
-                negative_label=torch.tensor([[1], [0]]),
+                positive_supervision_edges=torch.tensor([[0], [2]]),
+                negative_supervision_edges=torch.tensor([[1], [0]]),
                 expected_edge_index={
                     DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor([[0, 1], [1, 2]]),
-                    message_passing_to_positive_label(
+                    message_passing_to_positive_supervision_edges(
                         DEFAULT_HOMOGENEOUS_EDGE_TYPE
                     ): torch.tensor([[0], [2]]),
-                    message_passing_to_negative_label(
+                    message_passing_to_negative_supervision_edges(
                         DEFAULT_HOMOGENEOUS_EDGE_TYPE
                     ): torch.tensor([[1], [0]]),
                 },
@@ -148,12 +148,12 @@ class GraphTypesTyest(unittest.TestCase):
                         NodeType("bar"), Relation("to"), NodeType("foo")
                     ): torch.tensor([[0.5, 0.6], [0.7, 0.8]]),
                 },
-                positive_label={
+                positive_supervision_edges={
                     EdgeType(
                         NodeType("foo"), Relation("labels"), NodeType("bar")
                     ): torch.tensor([[0], [2]])
                 },
-                negative_label={
+                negative_supervision_edges={
                     EdgeType(
                         NodeType("bar"), Relation("labels"), NodeType("foo")
                     ): torch.tensor([[1], [0]])
@@ -165,10 +165,10 @@ class GraphTypesTyest(unittest.TestCase):
                     EdgeType(
                         NodeType("bar"), Relation("to"), NodeType("foo")
                     ): torch.tensor([[2, 3], [0, 1]]),
-                    message_passing_to_positive_label(
+                    message_passing_to_positive_supervision_edges(
                         EdgeType(NodeType("foo"), Relation("labels"), NodeType("bar"))
                     ): torch.tensor([[0], [2]]),
-                    message_passing_to_negative_label(
+                    message_passing_to_negative_supervision_edges(
                         EdgeType(NodeType("bar"), Relation("labels"), NodeType("foo"))
                     ): torch.tensor([[1], [0]]),
                 },
@@ -200,12 +200,12 @@ class GraphTypesTyest(unittest.TestCase):
                         NodeType("bar"), Relation("to"), NodeType("foo")
                     ): torch.tensor([[0.5, 0.6], [0.7, 0.8]]),
                 },
-                positive_label={
+                positive_supervision_edges={
                     EdgeType(
                         NodeType("foo"), Relation("labels"), NodeType("bar")
                     ): torch.tensor([[0], [2]])
                 },
-                negative_label={
+                negative_supervision_edges={
                     EdgeType(
                         NodeType("bar"), Relation("labels"), NodeType("foo")
                     ): torch.tensor([[1], [0]])
@@ -217,10 +217,10 @@ class GraphTypesTyest(unittest.TestCase):
                     EdgeType(
                         NodeType("bar"), Relation("to"), NodeType("foo")
                     ): torch.tensor([[2, 3], [0, 1]]),
-                    message_passing_to_positive_label(
+                    message_passing_to_positive_supervision_edges(
                         EdgeType(NodeType("bar"), Relation("labels"), NodeType("foo"))
                     ): torch.tensor([[2], [0]]),
-                    message_passing_to_negative_label(
+                    message_passing_to_negative_supervision_edges(
                         EdgeType(NodeType("foo"), Relation("labels"), NodeType("bar"))
                     ): torch.tensor([[0], [1]]),
                 },
@@ -252,12 +252,12 @@ class GraphTypesTyest(unittest.TestCase):
                         NodeType("bar"), Relation("to"), NodeType("foo")
                     ): torch.tensor([[0.5, 0.6], [0.7, 0.8]]),
                 },
-                positive_label={
+                positive_supervision_edges={
                     EdgeType(
                         NodeType("foo"), Relation("labels"), NodeType("bar")
                     ): torch.tensor([[0], [2]])
                 },
-                negative_label=None,
+                negative_supervision_edges=None,
                 expected_edge_index={
                     EdgeType(
                         NodeType("foo"), Relation("to"), NodeType("bar")
@@ -265,7 +265,7 @@ class GraphTypesTyest(unittest.TestCase):
                     EdgeType(
                         NodeType("bar"), Relation("to"), NodeType("foo")
                     ): torch.tensor([[2, 3], [0, 1]]),
-                    message_passing_to_positive_label(
+                    message_passing_to_positive_supervision_edges(
                         EdgeType(NodeType("foo"), Relation("labels"), NodeType("bar"))
                     ): torch.tensor([[0], [2]]),
                 },
@@ -280,8 +280,8 @@ class GraphTypesTyest(unittest.TestCase):
         node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        positive_label: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        negative_label: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        positive_supervision_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        negative_supervision_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         expected_edge_index: dict[EdgeType, torch.Tensor],
         edge_dir: Literal["in", "out"],
     ):
@@ -290,12 +290,12 @@ class GraphTypesTyest(unittest.TestCase):
             node_features=node_features,
             edge_index=edge_index,
             edge_features=edge_features,
-            positive_label=positive_label,
-            negative_label=negative_label,
+            positive_supervision_edges=positive_supervision_edges,
+            negative_supervision_edges=negative_supervision_edges,
         )
         graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
-        self.assertIsNone(graph_tensors.positive_label)
-        self.assertIsNone(graph_tensors.negative_label)
+        self.assertIsNone(graph_tensors.positive_supervision_edges)
+        self.assertIsNone(graph_tensors.negative_supervision_edges)
         assert isinstance(graph_tensors.edge_index, dict)
         self.assertEqual(graph_tensors.edge_index.keys(), expected_edge_index.keys())
         for edge_type, expected_tensor in expected_edge_index.items():
@@ -307,8 +307,8 @@ class GraphTypesTyest(unittest.TestCase):
         message_passing_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
         edge_types = [
             message_passing_edge_type,
-            message_passing_to_positive_label(message_passing_edge_type),
-            message_passing_to_negative_label(message_passing_edge_type),
+            message_passing_to_positive_supervision_edges(message_passing_edge_type),
+            message_passing_to_negative_supervision_edges(message_passing_edge_type),
             EdgeType(NodeType("foo"), Relation("bar"), NodeType("baz")),
             EdgeType(
                 DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -319,8 +319,12 @@ class GraphTypesTyest(unittest.TestCase):
 
         self.assertEqual(
             (
-                message_passing_to_positive_label(message_passing_edge_type),
-                message_passing_to_negative_label(message_passing_edge_type),
+                message_passing_to_positive_supervision_edges(
+                    message_passing_edge_type
+                ),
+                message_passing_to_negative_supervision_edges(
+                    message_passing_edge_type
+                ),
             ),
             select_label_edge_types(message_passing_edge_type, edge_types),
         )
@@ -329,16 +333,20 @@ class GraphTypesTyest(unittest.TestCase):
         message_passing_edge_type = ("node", "to", "node")
         edge_types = [
             message_passing_edge_type,
-            message_passing_to_positive_label(message_passing_edge_type),
-            message_passing_to_negative_label(message_passing_edge_type),
+            message_passing_to_positive_supervision_edges(message_passing_edge_type),
+            message_passing_to_negative_supervision_edges(message_passing_edge_type),
             ("other", "to", "node"),
             ("other", "to", "other"),
         ]
 
         self.assertEqual(
             (
-                message_passing_to_positive_label(message_passing_edge_type),
-                message_passing_to_negative_label(message_passing_edge_type),
+                message_passing_to_positive_supervision_edges(
+                    message_passing_edge_type
+                ),
+                message_passing_to_negative_supervision_edges(
+                    message_passing_edge_type
+                ),
             ),
             select_label_edge_types(message_passing_edge_type, edge_types),
         )

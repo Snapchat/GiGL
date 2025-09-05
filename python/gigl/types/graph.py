@@ -81,12 +81,12 @@ class PartitionOutput:
     ]
 
     # Positive edge indices on current rank, May be None if positive edge labels are not partitioned
-    partitioned_positive_labels: Optional[
+    partitioned_positive_supervision_edges: Optional[
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ]
 
     # Negative edge indices on current rank, May be None if negative edge labels are not partitioned
-    partitioned_negative_labels: Optional[
+    partitioned_negative_supervision_edges: Optional[
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ]
 
@@ -145,10 +145,14 @@ class LoadedGraphTensors:
     edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     # Unpartitioned Edge Features
     edge_features: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
-    # Unpartitioned Positive Edge Label
-    positive_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
-    # Unpartitioned Negative Edge Label
-    negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    # Unpartitioned Positive Supervision Edges
+    positive_supervision_edges: Optional[
+        Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    ]
+    # Unpartitioned Negative Supervision Edges
+    negative_supervision_edges: Optional[
+        Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    ]
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
@@ -157,13 +161,13 @@ class LoadedGraphTensors:
         outwards in form (`anchor_node_type`, `relation`, `supervision_node_type`), and all edges in the edge index must be in the same direction.
 
         This function requires the following conditions and will throw if they are not met:
-            1. The positive_label is not None
+            1. The positive_supervision_edges is not None
 
         Args:
             edge_dir: The edge direction of the graph.
 
         """
-        if self.positive_label is None:
+        if self.positive_supervision_edges is None:
             raise ValueError(
                 "Cannot treat labels as edges when positive label is None."
             )
@@ -178,83 +182,91 @@ class LoadedGraphTensors:
         else:
             main_edge_type = None
 
-        if isinstance(self.positive_label, torch.Tensor):
+        if isinstance(self.positive_supervision_edges, torch.Tensor):
             if main_edge_type is None:
                 raise ValueError(
                     "Detected multiple edge types in provided edge_index, but no edge types specified for provided positive label."
                 )
-            positive_label_edge_type = message_passing_to_positive_label(main_edge_type)
+            positive_supervision_edge_edge_type = (
+                message_passing_to_positive_supervision_edges(main_edge_type)
+            )
             labeled_edge_type, edge_index = _get_label_edges(
-                labeled_edge_index=self.positive_label,
+                labeled_edge_index=self.positive_supervision_edges,
                 edge_dir=edge_dir,
-                labeled_edge_type=positive_label_edge_type,
+                labeled_edge_type=positive_supervision_edge_edge_type,
             )
             edge_index_with_labels[labeled_edge_type] = edge_index
             logger.info(
-                f"Treating homogeneous positive labels as edge type {positive_label_edge_type}."
+                f"Treating homogeneous positive labels as edge type {positive_supervision_edge_edge_type}."
             )
 
-        elif isinstance(self.positive_label, dict):
+        elif isinstance(self.positive_supervision_edges, dict):
             for (
-                positive_label_type,
-                positive_label_tensor,
-            ) in self.positive_label.items():
-                positive_label_edge_type = message_passing_to_positive_label(
-                    positive_label_type
+                positive_supervision_edge_type,
+                positive_supervision_edge_tensor,
+            ) in self.positive_supervision_edges.items():
+                positive_supervision_edge_edge_type = (
+                    message_passing_to_positive_supervision_edges(
+                        positive_supervision_edge_type
+                    )
                 )
                 labeled_edge_type, edge_index = _get_label_edges(
-                    labeled_edge_index=positive_label_tensor,
+                    labeled_edge_index=positive_supervision_edge_tensor,
                     edge_dir=edge_dir,
-                    labeled_edge_type=positive_label_edge_type,
+                    labeled_edge_type=positive_supervision_edge_edge_type,
                 )
                 edge_index_with_labels[labeled_edge_type] = edge_index
                 logger.info(
-                    f"Treating heterogeneous positive labels {positive_label_type} as edge type {positive_label_edge_type}."
+                    f"Treating heterogeneous positive labels {positive_supervision_edge_type} as edge type {positive_supervision_edge_edge_type}."
                 )
 
-        if isinstance(self.negative_label, torch.Tensor):
+        if isinstance(self.negative_supervision_edges, torch.Tensor):
             if main_edge_type is None:
                 raise ValueError(
                     "Detected multiple edge types in provided edge_index, but no edge types specified for provided negative label."
                 )
-            negative_label_edge_type = message_passing_to_negative_label(main_edge_type)
+            negative_supervision_edge_edge_type = (
+                message_passing_to_negative_supervision_edges(main_edge_type)
+            )
             labeled_edge_type, edge_index = _get_label_edges(
-                labeled_edge_index=self.negative_label,
+                labeled_edge_index=self.negative_supervision_edges,
                 edge_dir=edge_dir,
-                labeled_edge_type=negative_label_edge_type,
+                labeled_edge_type=negative_supervision_edge_edge_type,
             )
             edge_index_with_labels[labeled_edge_type] = edge_index
             logger.info(
-                f"Treating homogeneous negative labels as edge type {negative_label_edge_type}."
+                f"Treating homogeneous negative labels as edge type {negative_supervision_edge_edge_type}."
             )
-        elif isinstance(self.negative_label, dict):
+        elif isinstance(self.negative_supervision_edges, dict):
             for (
-                negative_label_type,
-                negative_label_tensor,
-            ) in self.negative_label.items():
-                negative_label_edge_type = message_passing_to_negative_label(
-                    negative_label_type
+                negative_supervision_edge_type,
+                negative_supervision_edge_tensor,
+            ) in self.negative_supervision_edges.items():
+                negative_supervision_edge_edge_type = (
+                    message_passing_to_negative_supervision_edges(
+                        negative_supervision_edge_type
+                    )
                 )
                 labeled_edge_type, edge_index = _get_label_edges(
-                    labeled_edge_index=negative_label_tensor,
+                    labeled_edge_index=negative_supervision_edge_tensor,
                     edge_dir=edge_dir,
-                    labeled_edge_type=negative_label_edge_type,
+                    labeled_edge_type=negative_supervision_edge_edge_type,
                 )
                 edge_index_with_labels[labeled_edge_type] = edge_index
                 logger.info(
-                    f"Treating heterogeneous negative labels {negative_label_type} as edge type {negative_label_edge_type}."
+                    f"Treating heterogeneous negative labels {negative_supervision_edge_type} as edge type {negative_supervision_edge_edge_type}."
                 )
 
         self.node_ids = to_heterogeneous_node(self.node_ids)
         self.node_features = to_heterogeneous_node(self.node_features)
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
-        self.positive_label = None
-        self.negative_label = None
+        self.positive_supervision_edges = None
+        self.negative_supervision_edges = None
         gc.collect()
 
 
-def message_passing_to_positive_label(
+def message_passing_to_positive_supervision_edges(
     message_passing_edge_type: _EdgeType,
 ) -> _EdgeType:
     """Convert a message passing edge type to a positive label edge type.
@@ -278,7 +290,7 @@ def message_passing_to_positive_label(
         return edge_type
 
 
-def message_passing_to_negative_label(
+def message_passing_to_negative_supervision_edges(
     message_passing_edge_type: _EdgeType,
 ) -> _EdgeType:
     """Convert a message passing edge type to a negative label edge type.
@@ -330,18 +342,24 @@ def select_label_edge_types(
     Returns:
         tuple[EdgeType, Optional[EdgeType]]: A tuple containing the positive label edge type and optionally the negative label edge type.
     """
-    positive_label_type = None
-    negative_label_type = None
+    positive_supervision_edge_type = None
+    negative_supervision_edge_type = None
     for edge_type in edge_entities:
-        if message_passing_to_positive_label(message_passing_edge_type) == edge_type:
-            positive_label_type = edge_type
-        if message_passing_to_negative_label(message_passing_edge_type) == edge_type:
-            negative_label_type = edge_type
-    if positive_label_type is None:
+        if (
+            message_passing_to_positive_supervision_edges(message_passing_edge_type)
+            == edge_type
+        ):
+            positive_supervision_edge_type = edge_type
+        if (
+            message_passing_to_negative_supervision_edges(message_passing_edge_type)
+            == edge_type
+        ):
+            negative_supervision_edge_type = edge_type
+    if positive_supervision_edge_type is None:
         raise ValueError(
-            f"Could not find positive label edge type for message passing edge type {message_passing_to_positive_label(message_passing_edge_type)} from edge entities {edge_entities}."
+            f"Could not find positive label edge type for message passing edge type {message_passing_to_positive_supervision_edges(message_passing_edge_type)} from edge entities {edge_entities}."
         )
-    return positive_label_type, negative_label_type
+    return positive_supervision_edge_type, negative_supervision_edge_type
 
 
 # Entities that represent a graph, somehow.

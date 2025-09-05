@@ -62,7 +62,8 @@ def run_distributed_dataset(
         world_size (int): World size of the current process
         mocked_dataset_info (MockedDatasetInfo): Mocked Dataset Metadata for current run
 
-        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
+        should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or
+            in sequence across the [node, edge, positive_supervision_edges, negative_supervision_edges] entity types.
         output_dict (Optional[MutableMapping[int, DistLinkPredictionDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
