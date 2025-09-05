@@ -107,7 +107,7 @@ def run_all_e2e_tests(
     compiled_pipeline_path: Uri,
 ) -> None:
     orchestrator = KfpOrchestrator()
-    runs_to_wait_on: dict[str, PipelineJob] = {}
+    runs_to_wait_on: list[PipelineJob] = []
     for job_name, job in tests.items():
         full_job_name = f"{job_name}{job.name_suffix}"
         logger.info(f"Compiling and running job: {full_job_name}")
@@ -143,10 +143,10 @@ def run_all_e2e_tests(
             compiled_pipeline_path=compiled_pipeline_path,
         )
         if job.wait_for_completion:
-            runs_to_wait_on[full_job_name] = pipeline_job
+            runs_to_wait_on.append(pipeline_job)
 
     if runs_to_wait_on:
-        orchestrator.wait_for_completion(runs_to_wait_on.values())
+        orchestrator.wait_for_completion(runs_to_wait_on)
 
 
 if __name__ == "__main__":

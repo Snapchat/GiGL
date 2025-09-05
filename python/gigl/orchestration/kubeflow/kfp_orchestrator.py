@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, Union, overload
+from typing import Optional, Union
 
 from google.cloud import aiplatform
 from kfp.compiler import Compiler
@@ -167,26 +167,13 @@ class KfpOrchestrator:
         )
         return run
 
-    @overload
-    def wait_for_completion(self, runs: list[aiplatform.PipelineJob]):
-        ...
-
-    @overload
-    def wait_for_completion(self, run: list[str]):
-        ...
-
-    @overload
-    def wait_for_completion(self, run: aiplatform.PipelineJob):
-        ...
-
-    @overload
-    def wait_for_completion(self, run: str):
-        ...
-
     def wait_for_completion(
         self,
         run: Union[
-            aiplatform.PipelineJob, str, list[aiplatform.PipelineJob], list[str]
+            str,
+            aiplatform.PipelineJob,
+            list[str],
+            list[aiplatform.PipelineJob],
         ],
     ):
         """

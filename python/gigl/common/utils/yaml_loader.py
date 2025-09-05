@@ -1,4 +1,4 @@
-from typing import Type, TypeVar
+from typing import Type, TypeVar, cast
 
 from omegaconf import OmegaConf
 
@@ -24,4 +24,4 @@ def load_resolved_yaml(uri: Uri, type_of_object: Type[T]) -> T:
     )
 
     # Convert to strongly typed E2ETestsSpec object
-    return OmegaConf.to_object(merged_config)
+    return cast(T, OmegaConf.to_object(merged_config))

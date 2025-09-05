@@ -26,7 +26,7 @@ def adder(a: int, b: int) -> int:
 
 
 @kfp.dsl.component
-def division_by_zero(a: int) -> int:  # This is meant to fail
+def division_by_zero(a: int) -> float:  # This is meant to fail
     return a / 0
 
 

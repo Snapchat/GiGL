@@ -66,7 +66,6 @@ description: "This is a test description"
             ),
             description="This is a test description",
         )
-        result: _Complex_TestConfig
         with patch(
             "gigl.common.omegaconf_resolvers.subprocess.run"
         ) as mock_subprocess_run, patch(
