@@ -105,8 +105,7 @@ class TestNowResolver(unittest.TestCase):
         """
 
         # Should return empty string when git is not available
-        with self.assertRaises(RuntimeError):
-            OmegaConf.create(yaml_config).experiment.commit
+        self.assertEqual(OmegaConf.create(yaml_config).experiment.commit, "")
 
     @patch("gigl.common.omegaconf_resolvers.subprocess.run")
     def test_git_hash_resolver_not_git_repo(self, mock_subprocess_run):
@@ -123,8 +122,7 @@ class TestNowResolver(unittest.TestCase):
             commit: "${git_hash:}"
         """
 
-        with self.assertRaises(RuntimeError):
-            OmegaConf.create(yaml_config).experiment.commit
+        self.assertEqual(OmegaConf.create(yaml_config).experiment.commit, "")
 
 
 if __name__ == "__main__":
