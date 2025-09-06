@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+- Added suport to load arbritary yamls given a dataclass definition
+- Added custom Omegaconf resolver for `${git_hash:}`
 - Added Omegaconf resolvers when parsing yamls; added custom resolver for `${now:}`
 - Support `URI / URI_LIKE`, similar to `pathlib.Path`.
 

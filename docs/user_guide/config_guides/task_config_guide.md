@@ -167,3 +167,31 @@ tomorrow_plus_5_hours_30_min_15_sec: "2023-12-16 20:00:37"
 next_week: "2023-12-22"
 multiple_args: "20231130:20231214"
 ```
+
+### Git Hash Resolver
+
+This resolver returns the current git hash if one is available. Takes no arguments and returns the git hash as a string.
+Specifically this returns the SHA that is returned when the following is run in the active working directory:
+
+```bash
+git rev-parse HEAD
+```
+
+If no git repository is found, or there is an error, will return empty string.
+
+Examples:
+
+```yaml
+experiment:
+    commit: "${git_hash:}"
+    model_version: "model_${git_hash:}"
+```
+
+Assuming you are scheduling workflows from an active git repo with the current commit hash:
+`9d42b423b65961692ffc650a0714a63a1b695b12`, this would resolve:
+
+```yaml
+experiment:
+    commit: "9d42b423b65961692ffc650a0714a63a1b695b12"
+    model_version: "model_9d42b423b65961692ffc650a0714a63a1b695b12"
+```
