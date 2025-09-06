@@ -23,5 +23,5 @@ def load_resolved_yaml(uri: Uri, type_of_object: Type[T]) -> T:
         OmegaConf.structured(type_of_object), test_spec_data
     )
 
-    # Convert to strongly typed E2ETestsSpec object
+    # Convert to strongly typed T object
     return cast(T, OmegaConf.to_object(merged_config))

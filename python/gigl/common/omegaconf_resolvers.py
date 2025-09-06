@@ -150,11 +150,10 @@ def git_hash_resolver() -> str:
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
         FileNotFoundError,
-    ):
-        logger.warning(
-            "Could not retrieve git hash - git command failed or not in a git repository"
+    ) as e:
+        raise RuntimeError(
+            f"Could not retrieve git hash - git command failed or not in a git repository: {e}"
         )
-        return ""
 
 
 def register_resolvers() -> None:
@@ -167,7 +166,7 @@ def register_resolvers() -> None:
         logger.info("Registering OmegaConf resolver 'now'")
         OmegaConf.register_new_resolver("now", now_resolver)
     else:
-        logger.info(
+        logger.debug(
             "OmegaConf resolver 'now' already registered, skipping registration"
         )
 
@@ -175,6 +174,6 @@ def register_resolvers() -> None:
         logger.info("Registering OmegaConf resolver 'git_hash'")
         OmegaConf.register_new_resolver("git_hash", git_hash_resolver)
     else:
-        logger.info(
+        logger.debug(
             "OmegaConf resolver 'git_hash' already registered, skipping registration"
         )

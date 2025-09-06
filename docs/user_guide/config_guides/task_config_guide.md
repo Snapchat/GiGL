@@ -126,7 +126,6 @@ GiGL makes use of custom [Omegaconf resolvers](https://omegaconf.readthedocs.io/
 allow us to expose macros that are resolved at runtime instead of being hardcoded. Our resolvers are defined in
 [omegaconf_resolvers.py](python/gigl/common/omegaconf_resolvers.py)
 
-
 ```{note}
 In tabularized GiGL: Subgraph Sampler, and Split Generator do not have support for custom resolvers. In most cases this should not be a problem as the Config Populator should populate any needed custom resolution to your frozen configs.
 ```
@@ -171,18 +170,26 @@ multiple_args: "20231130:20231214"
 
 ### Git Hash Resolver
 
+This resolver returns the current git hash if one is available. Takes no arguments and returns the git hash as a string.
+Specifically this returns the SHA that is returned when the following is run in the active working directory:
+
+```bash
+git rev-parse HEAD
+```
 
 Examples:
+
 ```yaml
 experiment:
     commit: "${git_hash:}"
     model_version: "model_${git_hash:}"
 ```
 
-Assuming you are scheduling workflows from an active git repo with the current commit hash: `ABC1235`, this would resolve:
+Assuming you are scheduling workflows from an active git repo with the current commit hash:
+`9d42b423b65961692ffc650a0714a63a1b695b12`, this would resolve:
 
 ```yaml
 experiment:
-    commit: "ABC1235"
-    model_version: "model_ABC1235"
+    commit: "9d42b423b65961692ffc650a0714a63a1b695b12"
+    model_version: "9d42b423b65961692ffc650a0714a63a1b695b12"
 ```
