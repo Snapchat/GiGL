@@ -85,8 +85,8 @@ class SupportedParams:
                 description="Path to the output resource config file. If not provided, one will be generated in the `perm_assets_bucket`.",
             ),
             "force_shell_config_update": Param(
-                default="False",
-                description="If set to True, will not ask to update the shell configuration file. If False, will prompt the user to update the shell configuration file.",
+                default="True",
+                description="Force Shell Config Update. If set to True, will update the shell configuration file (i.e. ~/.bashrc or ~/.zshrc) to export the appropriate environment variables.",
             ),
         }
 

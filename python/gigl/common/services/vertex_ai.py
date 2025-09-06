@@ -321,6 +321,7 @@ class VertexAIService:
             None
         """
         start_time = time.time()
+        logger.info(f"Waiting for run to complete: {resource_name}")
         run = aiplatform.PipelineJob.get(resource_name=resource_name)
         while start_time + timeout > time.time():
             # Note that accesses to `run.state` cause a network call under the hood.
