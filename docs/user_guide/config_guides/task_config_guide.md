@@ -177,6 +177,8 @@ Specifically this returns the SHA that is returned when the following is run in 
 git rev-parse HEAD
 ```
 
+If no git repository is found, or there is an error, will return empty string.
+
 Examples:
 
 ```yaml
@@ -191,5 +193,5 @@ Assuming you are scheduling workflows from an active git repo with the current c
 ```yaml
 experiment:
     commit: "9d42b423b65961692ffc650a0714a63a1b695b12"
-    model_version: "9d42b423b65961692ffc650a0714a63a1b695b12"
+    model_version: "model_9d42b423b65961692ffc650a0714a63a1b695b12"
 ```
