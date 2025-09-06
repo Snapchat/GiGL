@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 This script is used to run end-to-end (e2e) tests for the GiGL project.
 
@@ -12,26 +10,26 @@ Arguments:
     The following arguments are required:
         --compiled_pipeline_path: The KFP pipeline definition to use.
         --test_spec_uri: URI to a YAML file containing test specifications.
-        Supports yaml format:
-        ```yaml
-        tests:
-        - "name_of_the_test":
-            name_suffix: "_on_$(now:)"
-            task_config_uri: "path/to/task_config.yaml"
-            resource_config_uri: "path/to/resource_config.yaml"
-            uses_in_memory_sampling: "True"
-            start_at: "config_populator" # Optional, default is config_populator.
-            stop_after: "post_processor" # Optional, default is post_processor.
-            wait_for_completion: "True" # Optional, default is True.
-            pipeline_tag: "my_pipeline_tag" # Optional, default is empty.
-            run_labels:
-                - "gigl_commit=$(GIT_HASH)" # Optional, default is empty.
-                - "gigl_version=$(GIGL_VERSION)" # Optional, default is empty.
-        ```
     The following arguments are optional:
         --test_names: [Optional] Test name to run from the test spec file. The value can be repeated for running multiple tests.
             If not provided, all tests in the spec files will be run.
             Example: --test_names=cora_glt_udl_test_on --test_names=cora_nalp_test_on
+
+The test_spec_uri is a yaml file of the following format:
+    ```yaml
+    tests:
+    - "name_of_the_test":
+        name_suffix: "_on_$(now:)"
+        task_config_uri: "path/to/task_config.yaml"
+        resource_config_uri: "path/to/resource_config.yaml"
+        uses_in_memory_sampling: "True"
+        start_at: "config_populator" # Optional, default is config_populator.
+        stop_after: "post_processor" # Optional, defaults to None
+        wait_for_completion: "True" # Optional, default is True.
+        run_labels: # Labels to associate with the pipeline run. Default is:
+            gigl_commit: "${git_hash:}" # Resolves to current git hash for the active working directory
+            gigl_version: "${__version__}" # Resolves to current GiGL version
+    ```
 
 Examples:
     # Run all tests from combined config
@@ -50,9 +48,11 @@ import argparse
 import os
 import textwrap
 from dataclasses import dataclass, field
+from typing import Optional
 
 from google.cloud.aiplatform import PipelineJob
 
+from gigl import __version__
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.yaml_loader import load_resolved_yaml
@@ -72,13 +72,11 @@ class E2ETest:
         resource_config_uri: The URI of the resource config to use.
         name_suffix: The suffix to add to the job name; job name will be of form: <test_name><name_suffix>,
             where <test_name> is the key in :attr:`E2ETestsSpec.tests`.
-        uses_in_memory_sampling: Whether to use in-memory sampling or not.
         start_at: Specify the component where to start the pipeline. Choices are defined in:
             :attr:`gigl.src.common.constants.components.GiGLComponents`.
         stop_after: Specify the component where to stop the pipeline. Choices are defined in:
             :attr:`gigl.src.common.constants.components.GiGLComponents`.
         wait_for_completion: Whether to wait for the pipeline run to finish or not.
-        pipeline_tag: Optional tag, which is provided will be used to tag the pipeline description.
         run_labels: Labels to associate with the pipeline run.
     """
 
@@ -87,12 +85,13 @@ class E2ETest:
     name_suffix: str = (
         "_on_${now:}"  # Makes use of gigl.common.omegaconf_resolvers#now_resolver()
     )
-    uses_in_memory_sampling: bool = True
     start_at: str = "config_populator"
-    stop_after: str = "post_processor"
+    stop_after: Optional[str] = None
     wait_for_completion: bool = True
-    pipeline_tag: str = ""
-    run_labels: list[str] = field(default_factory=list)
+    run_labels: dict[str, str] = {
+        "gigl_commit": "${git_hash:}",
+        "gigl_version": f"{__version__}",
+    }
 
 
 @dataclass
@@ -114,17 +113,15 @@ def run_all_e2e_tests(
         logger.info(
             textwrap.dedent(
                 f"""To reproduce, run:
-                python -m gigl.orchestration.kubeflow.runner \
-                --compiled_pipeline_path={compiled_pipeline_path} \
-                --job_name={full_job_name} \
+            python -m gigl.orchestration.kubeflow.runner \
                 --task_config_uri={job.task_config_uri} \
                 --resource_config_uri={job.resource_config_uri} \
+                --compiled_pipeline_path={compiled_pipeline_path} \
+                --job_name={full_job_name} \
                 --start_at={job.start_at} \
                 --stop_after={job.stop_after} \
-                --pipeline_tag={job.pipeline_tag} \
-                --uses_in_memory_sampling={job.uses_in_memory_sampling} \
                 --run_labels={job.run_labels} \
-                --wait={job.wait_for_completion} \
+                {"--wait" if job.wait_for_completion else ""} \
                 --action run
             """
             )
@@ -141,6 +138,7 @@ def run_all_e2e_tests(
             start_at=job.start_at,
             stop_after=job.stop_after,
             compiled_pipeline_path=compiled_pipeline_path,
+            labels=job.run_labels,
         )
         if job.wait_for_completion:
             runs_to_wait_on.append(pipeline_job)
