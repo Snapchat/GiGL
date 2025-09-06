@@ -18,8 +18,8 @@ Arguments:
 The test_spec_uri is a yaml file of the following format:
     ```yaml
     tests:
-    - "name_of_the_test":
-        name_suffix: "_on_$(now:)"
+      "name_of_the_test":
+        name_suffix: "_on_${now:}"
         task_config_uri: "path/to/task_config.yaml"
         resource_config_uri: "path/to/resource_config.yaml"
         uses_in_memory_sampling: "True"
@@ -27,8 +27,8 @@ The test_spec_uri is a yaml file of the following format:
         stop_after: "post_processor" # Optional, defaults to None
         wait_for_completion: "True" # Optional, default is True.
         run_labels: # Labels to associate with the pipeline run. Default is:
-            gigl_commit: "${git_hash:}" # Resolves to current git hash for the active working directory
-            gigl_version: "${__version__}" # Resolves to current GiGL version
+          gigl_commit: "${git_hash:}" # Resolves to current git hash for the active working directory
+          gigl_version: "${__version__}" # Resolves to current GiGL version
     ```
 
 Examples:
@@ -45,7 +45,6 @@ Examples:
 """
 
 import argparse
-import os
 import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
@@ -88,10 +87,12 @@ class E2ETest:
     start_at: str = "config_populator"
     stop_after: Optional[str] = None
     wait_for_completion: bool = True
-    run_labels: dict[str, str] = {
-        "gigl_commit": "${git_hash:}",
-        "gigl_version": f"{__version__}",
-    }
+    run_labels: dict[str, str] = field(
+        default_factory=lambda: {
+            "gigl_commit": "${git_hash:}",
+            "gigl_version": f"{__version__.replace('.', '_')}",
+        }
+    )
 
 
 @dataclass
@@ -175,10 +176,10 @@ if __name__ == "__main__":
 
     test_spec_uri = UriFactory.create_uri(args.test_spec_uri)
     logger.info(f"Will load test spec from: {test_spec_uri}")
-    logger.info(f"Will load compiled pipeline from: {os.getcwd()}")
+    logger.info(f"Will load compiled pipeline from: {test_spec_uri}")
     test_spec: E2ETestsSpec = load_resolved_yaml(test_spec_uri, E2ETestsSpec)
     available_tests = test_spec.tests.keys()
-    filtered_tests: dict[str, E2ETest]
+    filtered_tests: dict[str, E2ETest] = {}
     if args.test_names:
         for test_name in args.test_names:
             if test_name not in available_tests:
