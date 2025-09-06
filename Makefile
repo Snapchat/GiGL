@@ -265,7 +265,7 @@ push_dev_workbench_docker_image: compile_jars
 
 # Set compiled_pipeline path so compile_gigl_kubeflow_pipeline knows where to save the pipeline to so
 # that the e2e test can use it.
-run_cora_nalp_e2e_test: compiled_pipeline_path:=GIGL_E2E_TEST_COMPILED_PIPELINE_PATH
+run_cora_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_nalp_e2e_test:
 	python testing/e2e_tests/e2e_test.py \
@@ -273,7 +273,7 @@ run_cora_nalp_e2e_test:
 		--test_spec_uri="python/tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_nalp_test"
 
-run_cora_snc_e2e_test: compiled_pipeline_path:=GIGL_E2E_TEST_COMPILED_PIPELINE_PATH
+run_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_snc_e2e_test:
 	python testing/e2e_tests/e2e_test.py \
@@ -281,7 +281,7 @@ run_cora_snc_e2e_test:
 		--test_spec_uri="python/tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_snc_test"
 
-run_cora_udl_e2e_test: compiled_pipeline_path:=GIGL_E2E_TEST_COMPILED_PIPELINE_PATH
+run_cora_udl_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_udl_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_udl_e2e_test:
 	python testing/e2e_tests/e2e_test.py \
@@ -289,7 +289,7 @@ run_cora_udl_e2e_test:
 		--test_spec_uri="python/tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_udl_test"
 
-run_dblp_nalp_e2e_test: compiled_pipeline_path:=GIGL_E2E_TEST_COMPILED_PIPELINE_PATH
+run_dblp_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_dblp_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_dblp_nalp_e2e_test:
 	python testing/e2e_tests/e2e_test.py \
@@ -297,7 +297,7 @@ run_dblp_nalp_e2e_test:
 		--test_spec_uri="python/tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="dblp_nalp_test"
 
-run_hom_cora_sup_e2e_test: compiled_pipeline_path:=GIGL_E2E_TEST_COMPILED_PIPELINE_PATH
+run_hom_cora_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_e2e_test:
 	python testing/e2e_tests/e2e_test.py \
@@ -305,7 +305,7 @@ run_hom_cora_sup_e2e_test:
 		--test_spec_uri="python/tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_test"
 
-run_het_dblp_sup_e2e_test: compiled_pipeline_path:=GIGL_E2E_TEST_COMPILED_PIPELINE_PATH
+run_het_dblp_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_e2e_test:
 	python testing/e2e_tests/e2e_test.py \
@@ -313,7 +313,7 @@ run_het_dblp_sup_e2e_test:
 		--test_spec_uri="python/tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_test"
 
-run_all_e2e_tests: compiled_pipeline_path:=GIGL_E2E_TEST_COMPILED_PIPELINE_PATH
+run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
 	python testing/e2e_tests/e2e_test.py \
