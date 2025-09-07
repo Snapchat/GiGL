@@ -163,7 +163,7 @@ The entry point for running all tests is from the `Makefile`. We provide some do
 these tests both locally and on an open PR (leveraring our build/testing system).
 
 ````{note}
-  GiGL's unit, integration, and e2e tests require the use of a resource config. By default we use the `deployment/configs/unittest_resource_config.yaml` config for our CI/CD systems; but since most users wont have much access needed to compute/storage assets on the resources listed in our config, you won't be able to run the tests without doing some configuration.
+  GiGL's unit, integration, and e2e tests require the use of a resource config. By default we use the `deployment/configs/e2e_cicd_resource_config.yaml` and `deployment/configs/e2e_glt_resource_config.yaml`, for our CI/CD systems; but since most users wont have much access needed to compute/storage assets on the resources listed in our config, you won't be able to run the tests without doing some configuration.
 
   This is already taken care for you assuming you have already followed [quick start instructions to setup resource config](./docs/user_guide/getting_started/quick_start.md#3-config-setup). You will have a few environment variables exposed in your main shell file (i.e. `~/.zshrc`) that are needed for these tests to function.
 
@@ -174,7 +174,7 @@ these tests both locally and on an open PR (leveraring our build/testing system)
   echo $GIGL_DOCKER_ARTIFACT_REGISTRY
   ```
 
-  These environment variables override what is defined in the `Makefile` , allowing you to run tests as discussed below.
+  These environment variables override what is defined in the `Makefile`, and when running e2e tests (see: `testing/e2e_tests/e2e_tests.yaml`), allowing you to run tests as discussed below.
 ````
 
 ##### Lint/Formatting & Unit Tests
@@ -258,16 +258,12 @@ All integration tests are organized in `python/tests/integration` folder with th
 
 ##### Cloud Integration Test (end-to-end)
 
-We have a few e2e test entrypoints defined in the Makefile i.e. `run_cora_nalp_e2e_kfp_test`,
-`run_cora_snc_e2e_kfp_test`, etc. Search for `e2e` keyword.
+We have a few e2e test entrypoints defined in the Makefile i.e. `run_cora_nalp_e2e_test`,
+`run_cora_snc_e2e_test`, etc. You will note that all these tests are defined in `testing/e2e_tests/e2e_tests.yaml`.
 
 ```{caution}
 As these are very long running tests, we advise you run them on the PR; leveraging commands [pointed out above](#running-tests-against-an-open-pr).
 i.e. leaving `/e2e_test` comment in your open PR.
-
-If you must run them locally, you will have to manually modify the resource configs for the relevant e2e test you want to run so that it is using resources that you have access to.
-
-We plan on providing better support here in the future.
 ```
 
 <br>
