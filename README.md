@@ -258,8 +258,8 @@ All integration tests are organized in `python/tests/integration` folder with th
 
 ##### Cloud Integration Test (end-to-end)
 
-We have a few e2e test entrypoints defined in the Makefile i.e. `run_cora_nalp_e2e_test`,
-`run_cora_snc_e2e_test`, etc. You will note that all these tests are defined in `testing/e2e_tests/e2e_tests.yaml`.
+We have a few e2e test entrypoints defined in the Makefile i.e. `run_cora_nalp_e2e_test`, `run_cora_snc_e2e_test`, etc.
+You will note that all these tests are defined in `testing/e2e_tests/e2e_tests.yaml`.
 
 ```{caution}
 As these are very long running tests, we advise you run them on the PR; leveraging commands [pointed out above](#running-tests-against-an-open-pr).
