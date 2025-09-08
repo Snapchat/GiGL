@@ -299,12 +299,16 @@ if __name__ == "__main__":
         print(f"  {key}: {value}")
 
     file_loader = FileLoader(project=values["project"])
-    for name, config in TEMPLATE_CONFIGS.items():
+    shell_env_vars = {
+        "GIGL_PROJECT": values["project"],
+        "GIGL_DOCKER_ARTIFACT_REGISTRY": values["docker_artifact_registry_path"],
+    }
+    for name, template_config in TEMPLATE_CONFIGS.items():
         resource_config_destination_path = compute_resource_config_destination_path(
-            perm_assets_bucket=values["perm_assets_bucket"], name=name
+            name=name, perm_assets_bucket=values["perm_assets_bucket"]
         )
 
-        with open(config.template_path, "r") as file:
+        with open(template_config.template_path, "r") as file:
             config = yaml.safe_load(file)
 
         # Update the YAML content
@@ -322,13 +326,10 @@ if __name__ == "__main__":
         file_loader.load_file(
             file_uri_src=file_uri_src, file_uri_dst=resource_config_destination_path
         )
+        shell_env_vars[
+            template_config.env_var_to_update
+        ] = resource_config_destination_path.uri
 
-    shell_env_vars = {
-        "GIGL_PROJECT": values["project"],
-        "GIGL_DOCKER_ARTIFACT_REGISTRY": values["docker_artifact_registry_path"],
-    }
-    for name, config in TEMPLATE_CONFIGS.items():
-        shell_env_vars[config.env_var_to_update] = resource_config_destination_path.uri
     # Update the user's shell configuration (always)
     print("Updating shell configuration...")
     shell_config_path: str = infer_shell_file()
