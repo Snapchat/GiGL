@@ -406,6 +406,9 @@ class DistDataset(glt.distributed.DistDataset):
             splitter(Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): The splitter to use for data splitting
             partitioned_edge_index(Optional[Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]]): The partitioned edge index. Only required if we are splitting on edges.
         """
+
+        # We compute the node ids on the current machine, which will be used as input to the DistNeighborLoader.
+
         assert (
             self._node_partition_book is not None
         ), "Node partition book must be set prior to calling this method."
@@ -446,10 +449,9 @@ class DistDataset(glt.distributed.DistDataset):
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )
 
-        # We compute the node ids on the current machine, which will be used as input to the DistNeighborLoader.
-        # If the nodes were split, then we set the total number of nodes in each split here.
+        # If the nodes are split, then we set the total number of nodes in each split here.
         # Additionally, we append any node ids, for a given node type, that were *not* split to the end of "node ids"
-        # so that all node ids on a given machine are included in the dataset.
+        # so that all node ids on a given machine are included in the dataset in self._node_ids.
         # This is done with `_append_non_split_node_ids`.
         # An example here is if we have:
         #   train_nodes: [1, 2, 3]
@@ -543,6 +545,9 @@ class DistDataset(glt.distributed.DistDataset):
                 self._num_train = num_train_by_node_type
                 self._num_val = num_val_by_node_type
                 self._num_test = num_test_by_node_type
+
+        del splits
+        gc.collect()
 
     def _initialize_graph(
         self,
@@ -800,7 +805,7 @@ class DistDataset(glt.distributed.DistDataset):
         Provided some partition graph information, this method stores these tensors inside of the class for
         subsequent live subgraph sampling using a GraphLearn-for-PyTorch NeighborLoader.
 
-        Note that this method will all the fields from the provided partition_output:
+        Note that this method will remove all the fields from the provided partition_output:
         We do this to decrease the peak memory usage during the build process by removing these intermediate assets.
 
         Args:
@@ -821,7 +826,6 @@ class DistDataset(glt.distributed.DistDataset):
 
         partition_output.node_partition_book = None
         partition_output.edge_partition_book = None
-        gc.collect()
 
         # Handle data splitting and compute node IDs
         self._split_and_initialize_node_ids(
@@ -859,7 +863,6 @@ class DistDataset(glt.distributed.DistDataset):
 
         partition_output.partitioned_positive_labels = None
         partition_output.partitioned_negative_labels = None
-        gc.collect()
 
         logger.info(
             f"Rank {self._rank} finished building dataset class from partitioned graph in {time.time() - start_time:.2f} seconds. Waiting for other ranks to finish ..."
