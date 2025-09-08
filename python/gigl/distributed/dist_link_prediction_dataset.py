@@ -388,11 +388,14 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _split_and_initialize_node_ids(
         self,
-        partition_output: PartitionOutput,
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]],
+        partitioned_edge_index: Optional[
+            Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]
+        ],
     ) -> None:
         """
-        Handles data splitting and computes node IDs and optional split node ids for the current machine.
+        Handles data splitting and computes node IDs and optional split node ids for the current machine. Note that this method assumes
+        that the node partition book is set in the dataset class prior to calling this method.
 
         This method:
         - Performs data splitting for training, validation, and testing
@@ -400,22 +403,33 @@ class DistDataset(glt.distributed.DistDataset):
         - If splits are provided, organizes them into train/val/test and appends non-split nodes
 
         Args:
-            partition_output(PartitionOutput): The partitioned graph data
             splitter(Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): The splitter to use for data splitting
+            partitioned_edge_index(Optional[Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]]): The partitioned edge index. Only required if we are splitting on edges.
         """
+        assert (
+            self._node_partition_book is not None
+        ), "Node partition book must be set prior to calling this method."
+
+        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
+            {
+                node_type: get_ids_on_rank(partition_book, rank=self._rank)
+                for node_type, partition_book in self._node_partition_book.items()
+            }
+            if isinstance(self._node_partition_book, Mapping)
+            else get_ids_on_rank(self._node_partition_book, rank=self._rank)
+        )
+
         # Handle data splitting
         splits = None
         if isinstance(splitter, NodeAnchorLinkSplitter):
             split_start = time.time()
-            assert partition_output.partitioned_edge_index is not None
+            assert partitioned_edge_index is not None
             edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
-                partition_output.partitioned_edge_index.edge_index
-                if isinstance(
-                    partition_output.partitioned_edge_index, GraphPartitionData
-                )
+                partitioned_edge_index.edge_index
+                if isinstance(partitioned_edge_index, GraphPartitionData)
                 else {
                     edge_type: graph_partition_data.edge_index
-                    for edge_type, graph_partition_data in partition_output.partitioned_edge_index.items()
+                    for edge_type, graph_partition_data in partitioned_edge_index.items()
                 }
             )
             logger.info("Starting splitting edges...")
@@ -427,18 +441,7 @@ class DistDataset(glt.distributed.DistDataset):
             split_start = time.time()
             logger.info("Starting splitting nodes...")
             # Every node is required to have a label, so we split among all ids on the current machine.
-            node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
-                {
-                    node_type: get_ids_on_rank(partition_book, rank=self._rank)
-                    for node_type, partition_book in partition_output.node_partition_book.items()
-                }
-                if isinstance(partition_output.node_partition_book, Mapping)
-                else get_ids_on_rank(
-                    partition_output.node_partition_book, rank=self._rank
-                )
-            )
-            splits = splitter(node_ids=node_ids)
-            del node_ids
+            splits = splitter(node_ids=node_ids_on_machine)
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )
@@ -461,12 +464,7 @@ class DistDataset(glt.distributed.DistDataset):
 
         # For tensor based partitioning, the partition_book will be a torch.Tensor under-the-hood. We need to check if this is a torch.Tensor
         # here, as it will not be recognized by `isinstance` as a `PartitionBook` since torch.Tensor doesn't directly inherit from `PartitionBook`.
-        if isinstance(
-            partition_output.node_partition_book, (torch.Tensor, PartitionBook)
-        ):
-            node_ids_on_machine = get_ids_on_rank(
-                partition_book=partition_output.node_partition_book, rank=self._rank
-            )
+        if isinstance(node_ids_on_machine, torch.Tensor):
             if splits is not None:
                 logger.info("Using node ids that we got from the splitter.")
                 if not isinstance(splits, tuple):
@@ -502,37 +500,44 @@ class DistDataset(glt.distributed.DistDataset):
             num_test_by_node_type: dict[NodeType, int] = {}
             if splits is not None and isinstance(splits, tuple):
                 node_types = (
-                    self._node_partition_book.keys()
-                    if self._node_partition_book is not None
+                    node_ids_on_machine.keys()
+                    if isinstance(node_ids_on_machine, Mapping)
                     else []
                 )
                 raise ValueError(
                     f"Got splits as a tuple, which is intended for homogeneous graphs. We recieved the node types: {node_types}. Please use a splitter that returns a mapping of tensors."
                 )
-            if partition_output.node_partition_book is not None:
-                for node_type, node_pb in partition_output.node_partition_book.items():
-                    node_ids_on_machine = get_ids_on_rank(
-                        partition_book=node_pb, rank=self._rank
+            for (
+                node_type,
+                node_ids_on_machine_per_node_type,
+            ) in node_ids_on_machine.items():
+                if splits is None or node_type not in splits:
+                    logger.info(f"Did not split for node type {node_type}.")
+                    node_ids_by_node_type[node_type] = node_ids_on_machine_per_node_type
+                elif splits is not None:
+                    logger.info(
+                        f"Using node ids that we got from the splitter for node type {node_type}."
                     )
-                    if splits is None or node_type not in splits:
-                        logger.info(f"Did not split for node type {node_type}.")
-                        node_ids_by_node_type[node_type] = node_ids_on_machine
-                    elif splits is not None:
-                        logger.info(
-                            f"Using node ids that we got from the splitter for node type {node_type}."
-                        )
-                        train_nodes, val_nodes, test_nodes = splits[node_type]
-                        num_train_by_node_type[node_type] = train_nodes.numel()
-                        num_val_by_node_type[node_type] = val_nodes.numel()
-                        num_test_by_node_type[node_type] = test_nodes.numel()
-                        node_ids_by_node_type[node_type] = _append_non_split_node_ids(
-                            train_nodes, val_nodes, test_nodes, node_ids_on_machine
-                        )
-                        # do gc to save memory.
-                        del train_nodes, val_nodes, test_nodes, node_ids_on_machine
-                        gc.collect()
-                    else:
-                        raise ValueError(f"We should not get here, whoops!")
+                    train_nodes, val_nodes, test_nodes = splits[node_type]
+                    num_train_by_node_type[node_type] = train_nodes.numel()
+                    num_val_by_node_type[node_type] = val_nodes.numel()
+                    num_test_by_node_type[node_type] = test_nodes.numel()
+                    node_ids_by_node_type[node_type] = _append_non_split_node_ids(
+                        train_nodes,
+                        val_nodes,
+                        test_nodes,
+                        node_ids_on_machine_per_node_type,
+                    )
+                    # do gc to save memory.
+                    del (
+                        train_nodes,
+                        val_nodes,
+                        test_nodes,
+                        node_ids_on_machine_per_node_type,
+                    )
+                    gc.collect()
+                else:
+                    raise ValueError(f"We should not get here, whoops!")
             self._node_ids = node_ids_by_node_type
             if splits is not None:
                 self._num_train = num_train_by_node_type
@@ -587,7 +592,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes node features in the dataset class
+        Initializes node features in the dataset class. Requires that node partition book is set prior to calling this function.
 
         Args:
             partitioned_node_features(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]): The partitioned graph data containing node features
@@ -663,7 +668,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes node labels in the dataset class
+        Initializes node labels in the dataset class. Requires that node partition book is set prior to calling this function.
 
         Args:
             partitioned_node_labels(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]): The partitioned graph data containing node labels
@@ -721,7 +726,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes edge features in the dataset class
+        Initializes edge features in the dataset class. Requires that edge partition book is set prior to calling this function.
 
         Args:
             partitioned_edge_features(Optional[Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]]): The partitioned graph data containing edge features
@@ -795,10 +800,7 @@ class DistDataset(glt.distributed.DistDataset):
         Provided some partition graph information, this method stores these tensors inside of the class for
         subsequent live subgraph sampling using a GraphLearn-for-PyTorch NeighborLoader.
 
-        Note that this method will clear the following fields from the provided partition_output:
-            * `partitioned_edge_index`
-            * `partitioned_node_features`
-            * `partitioned_edge_features`
+        Note that this method will all the fields from the provided partition_output:
         We do this to decrease the peak memory usage during the build process by removing these intermediate assets.
 
         Args:
@@ -822,22 +824,33 @@ class DistDataset(glt.distributed.DistDataset):
         gc.collect()
 
         # Handle data splitting and compute node IDs
-        self._split_and_initialize_node_ids(partition_output, splitter)
+        self._split_and_initialize_node_ids(
+            splitter=splitter,
+            partitioned_edge_index=partition_output.partitioned_edge_index,
+        )
 
         # Initialize Graph and get edge data for splitting
-        self._initialize_graph(partition_output.partitioned_edge_index)
+        self._initialize_graph(
+            partitioned_edge_index=partition_output.partitioned_edge_index
+        )
         partition_output.partitioned_edge_index = None
         gc.collect()
 
-        self._initialize_node_features(partition_output.partitioned_node_features)
+        self._initialize_node_features(
+            partitioned_node_features=partition_output.partitioned_node_features
+        )
         partition_output.partitioned_node_features = None
         gc.collect()
 
-        self._initialize_node_labels(partition_output.partitioned_node_labels)
+        self._initialize_node_labels(
+            partitioned_node_labels=partition_output.partitioned_node_labels
+        )
         partition_output.partitioned_node_labels = None
         gc.collect()
 
-        self._initialize_edge_features(partition_output.partitioned_edge_features)
+        self._initialize_edge_features(
+            partitioned_edge_features=partition_output.partitioned_edge_features
+        )
         partition_output.partitioned_edge_features = None
         gc.collect()
 
