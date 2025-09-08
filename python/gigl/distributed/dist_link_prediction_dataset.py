@@ -388,14 +388,14 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _split_and_initialize_node_ids(
         self,
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]],
         partitioned_edge_index: Optional[
             Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]
         ],
     ) -> None:
         """
-        Handles data splitting and computes node IDs and optional split node ids for the current machine. Note that this method assumes
-        that the node partition book is set in the dataset class prior to calling this method.
+        Handles data splitting and computes node IDs and optional split node ids for the current machine.
 
         This method:
         - Performs data splitting for training, validation, and testing
@@ -403,23 +403,20 @@ class DistDataset(glt.distributed.DistDataset):
         - If splits are provided, organizes them into train/val/test and appends non-split nodes
 
         Args:
+            node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
             splitter(Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): The splitter to use for data splitting
             partitioned_edge_index(Optional[Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]]): The partitioned edge index. Only required if we are splitting on edges.
         """
 
         # We compute the node ids on the current machine, which will be used as input to the DistNeighborLoader.
 
-        assert (
-            self._node_partition_book is not None
-        ), "Node partition book must be set prior to calling this method."
-
         node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
             {
                 node_type: get_ids_on_rank(partition_book, rank=self._rank)
-                for node_type, partition_book in self._node_partition_book.items()
+                for node_type, partition_book in node_partition_book.items()
             }
-            if isinstance(self._node_partition_book, Mapping)
-            else get_ids_on_rank(self._node_partition_book, rank=self._rank)
+            if isinstance(node_partition_book, Mapping)
+            else get_ids_on_rank(node_partition_book, rank=self._rank)
         )
 
         # Handle data splitting
@@ -592,22 +589,24 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_node_features(
         self,
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         partitioned_node_features: Optional[
             Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
         ],
     ) -> None:
         """
-        Initializes node features in the dataset class. Requires that node partition book is set prior to calling this function.
+        Initializes node features in the dataset class.
 
         Args:
+            node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
             partitioned_node_features(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]): The partitioned graph data containing node features
         """
         if isinstance(partitioned_node_features, FeaturePartitionData):
-            assert isinstance(self._node_partition_book, (torch.Tensor, PartitionBook))
+            assert isinstance(node_partition_book, (torch.Tensor, PartitionBook))
             node_features = partitioned_node_features.feats
             node_feature_ids = partitioned_node_features.ids
-            if isinstance(self._node_partition_book, RangePartitionBook):
-                node_id2idx = self._node_partition_book.id2index
+            if isinstance(node_partition_book, RangePartitionBook):
+                node_id2idx = node_partition_book.id2index
             else:
                 node_id2idx = id2idx(node_feature_ids)
 
@@ -625,11 +624,11 @@ class DistDataset(glt.distributed.DistDataset):
             and len(partitioned_node_features) > 0
         ):
             assert isinstance(
-                self._node_partition_book, Mapping
-            ), f"Found heterogeneous partitioned node features, but no corresponding heterogeneous node partition book. Got node partition book of type {type(self._node_partition_book)}"
+                node_partition_book, Mapping
+            ), f"Found heterogeneous partitioned node features, but no corresponding heterogeneous node partition book. Got node partition book of type {type(node_partition_book)}"
             assert (
-                len(self._node_partition_book) > 0
-            ), f"Expected at least one node type in node partition book, got {self._node_partition_book.keys()}."
+                len(node_partition_book) > 0
+            ), f"Expected at least one node type in node partition book, got {node_partition_book.keys()}."
 
             # Partitioned node features can be empty when there are no features but are
             # labels, so we only populate the dictionary with non-empty features.
@@ -645,7 +644,7 @@ class DistDataset(glt.distributed.DistDataset):
             for (
                 node_type,
                 node_partition_book,
-            ) in self._node_partition_book.items():
+            ) in node_partition_book.items():
                 if node_type in node_type_to_node_features:
                     if isinstance(node_partition_book, RangePartitionBook):
                         node_type_to_id2idx[node_type] = node_partition_book.id2index
@@ -668,22 +667,24 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_node_labels(
         self,
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         partitioned_node_labels: Optional[
             Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
         ],
     ) -> None:
         """
-        Initializes node labels in the dataset class. Requires that node partition book is set prior to calling this function.
+        Initializes node labels in the dataset class.
 
         Args:
+            node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
             partitioned_node_labels(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]): The partitioned graph data containing node labels
         """
         if isinstance(partitioned_node_labels, FeaturePartitionData):
-            assert isinstance(self._node_partition_book, (torch.Tensor, PartitionBook))
+            assert isinstance(node_partition_book, (torch.Tensor, PartitionBook))
             node_labels = partitioned_node_labels.feats
             node_label_ids = partitioned_node_labels.ids
-            if isinstance(self._node_partition_book, RangePartitionBook):
-                node_id2idx = self._node_partition_book.id2index
+            if isinstance(node_partition_book, RangePartitionBook):
+                node_id2idx = node_partition_book.id2index
             else:
                 node_id2idx = id2idx(node_label_ids)
 
@@ -694,11 +695,11 @@ class DistDataset(glt.distributed.DistDataset):
 
         elif isinstance(partitioned_node_labels, Mapping):
             assert isinstance(
-                self._node_partition_book, Mapping
-            ), f"Found heterogeneous partitioned node labels, but no corresponding heterogeneous node partition book. Got node partition book of type {type(self._node_partition_book)}"
+                node_partition_book, Mapping
+            ), f"Found heterogeneous partitioned node labels, but no corresponding heterogeneous node partition book. Got node partition book of type {type(node_partition_book)}"
             assert (
-                len(self._node_partition_book) > 0
-            ), f"Expected at least one node type in node partition book, got {self._node_partition_book.keys()}."
+                len(node_partition_book) > 0
+            ), f"Expected at least one node type in node partition book, got {node_partition_book.keys()}."
             node_type_to_node_labels = {
                 node_type: node_labels.feats
                 for node_type, node_labels in partitioned_node_labels.items()
@@ -711,7 +712,7 @@ class DistDataset(glt.distributed.DistDataset):
             for (
                 node_type,
                 node_partition_book,
-            ) in self._node_partition_book.items():
+            ) in node_partition_book.items():
                 if node_type in node_type_to_node_labels:
                     if isinstance(node_partition_book, RangePartitionBook):
                         node_type_to_id2idx[node_type] = node_partition_book.id2index
@@ -726,22 +727,24 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_edge_features(
         self,
+        edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]],
         partitioned_edge_features: Optional[
             Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
         ],
     ) -> None:
         """
-        Initializes edge features in the dataset class. Requires that edge partition book is set prior to calling this function.
+        Initializes edge features in the dataset class.
 
         Args:
+            edge_partition_book(Union[PartitionBook, dict[EdgeType, PartitionBook]]): The partition book for edges
             partitioned_edge_features(Optional[Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]]): The partitioned graph data containing edge features
         """
         if isinstance(partitioned_edge_features, FeaturePartitionData):
-            assert isinstance(self._edge_partition_book, (torch.Tensor, PartitionBook))
+            assert isinstance(edge_partition_book, (torch.Tensor, PartitionBook))
             edge_features = partitioned_edge_features.feats
             edge_feature_ids = partitioned_edge_features.ids
-            if isinstance(self._edge_partition_book, RangePartitionBook):
-                edge_id2idx = self._edge_partition_book.id2index
+            if isinstance(edge_partition_book, RangePartitionBook):
+                edge_id2idx = edge_partition_book.id2index
             else:
                 edge_id2idx = id2idx(edge_feature_ids)
             self.init_edge_features(
@@ -758,11 +761,11 @@ class DistDataset(glt.distributed.DistDataset):
             and len(partitioned_edge_features) > 0
         ):
             assert isinstance(
-                self._edge_partition_book, Mapping
-            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book. Got edge partition book of type {type(self._edge_partition_book)}"
+                edge_partition_book, Mapping
+            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book. Got edge partition book of type {type(edge_partition_book)}"
             assert (
-                len(self._edge_partition_book) > 0
-            ), f"Expected at least one edge type in edge partition book, got {self._edge_partition_book.keys()}."
+                len(edge_partition_book) > 0
+            ), f"Expected at least one edge type in edge partition book, got {edge_partition_book.keys()}."
             edge_type_to_edge_features = {
                 edge_type: feature_partition_data.feats
                 for edge_type, feature_partition_data in partitioned_edge_features.items()
@@ -775,7 +778,7 @@ class DistDataset(glt.distributed.DistDataset):
             for (
                 edge_type,
                 edge_partition_book,
-            ) in self._edge_partition_book.items():
+            ) in edge_partition_book.items():
                 if isinstance(edge_partition_book, RangePartitionBook):
                     edge_type_to_id2idx[edge_type] = edge_partition_book.id2index
                 # Not all edge types may have partitioned features.
@@ -821,14 +824,9 @@ class DistDataset(glt.distributed.DistDataset):
 
         start_time = time.time()
 
-        self._node_partition_book = partition_output.node_partition_book
-        self._edge_partition_book = partition_output.edge_partition_book
-
-        partition_output.node_partition_book = None
-        partition_output.edge_partition_book = None
-
         # Handle data splitting and compute node IDs
         self._split_and_initialize_node_ids(
+            node_partition_book=partition_output.node_partition_book,
             splitter=splitter,
             partitioned_edge_index=partition_output.partitioned_edge_index,
         )
@@ -841,25 +839,34 @@ class DistDataset(glt.distributed.DistDataset):
         gc.collect()
 
         self._initialize_node_features(
-            partitioned_node_features=partition_output.partitioned_node_features
+            node_partition_book=partition_output.node_partition_book,
+            partitioned_node_features=partition_output.partitioned_node_features,
         )
         partition_output.partitioned_node_features = None
         gc.collect()
 
         self._initialize_node_labels(
-            partitioned_node_labels=partition_output.partitioned_node_labels
+            node_partition_book=partition_output.node_partition_book,
+            partitioned_node_labels=partition_output.partitioned_node_labels,
         )
         partition_output.partitioned_node_labels = None
         gc.collect()
 
         self._initialize_edge_features(
-            partitioned_edge_features=partition_output.partitioned_edge_features
+            edge_partition_book=partition_output.edge_partition_book,
+            partitioned_edge_features=partition_output.partitioned_edge_features,
         )
         partition_output.partitioned_edge_features = None
         gc.collect()
 
+        self._node_partition_book = partition_output.node_partition_book
+        self._edge_partition_book = partition_output.edge_partition_book
+
         self._positive_edge_label = partition_output.partitioned_positive_labels
         self._negative_edge_label = partition_output.partitioned_negative_labels
+
+        partition_output.node_partition_book = None
+        partition_output.edge_partition_book = None
 
         partition_output.partitioned_positive_labels = None
         partition_output.partitioned_negative_labels = None
