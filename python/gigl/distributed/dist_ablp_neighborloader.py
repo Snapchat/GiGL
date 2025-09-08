@@ -33,7 +33,6 @@ from gigl.src.common.types.graph_data import (
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    reverse_edge_type,
     select_label_edge_types,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -243,15 +242,18 @@ class DistABLPLoader(DistLoader):
                 )
             self._is_input_heterogeneous = True
             anchor_node_type, anchor_node_ids = input_nodes
-            # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
-            # this assumption is no longer valid and/or is too opinionated
-            assert (
-                supervision_edge_type[0] == anchor_node_type
-            ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
-                got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
-            supervision_node_type = supervision_edge_type[2]
             if dataset.edge_dir == "in":
-                supervision_edge_type = reverse_edge_type(supervision_edge_type)
+                supervision_node_type = supervision_edge_type[0]
+                if supervision_edge_type[2] != anchor_node_type:
+                    raise ValueError(
+                        f"Found anchor node type {anchor_node_type} but expected {supervision_edge_type[2]}"
+                    )
+            else:
+                supervision_node_type = supervision_edge_type[2]
+                if supervision_edge_type[0] != anchor_node_type:
+                    raise ValueError(
+                        f"Found anchor node type {anchor_node_type} but expected {supervision_edge_type[0]}"
+                    )
 
         elif isinstance(input_nodes, torch.Tensor):
             if supervision_edge_type is not None:
