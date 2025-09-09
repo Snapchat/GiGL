@@ -8,7 +8,6 @@ from typing import List
 from unittest.mock import MagicMock, patch
 
 from gigl.common import LocalUri
-from gigl.common.omegaconf_resolvers import register_resolvers
 from gigl.common.utils.yaml_loader import load_resolved_yaml
 
 
@@ -30,7 +29,6 @@ class YamlLoaderTest(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         super().setUp()
-        register_resolvers()
         self.temp_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".yaml", delete=False
         )
@@ -82,6 +80,7 @@ class YamlLoaderTest(unittest.TestCase):
 
             uri = LocalUri(self.temp_file.name)
             result: _Complex_TestConfig = load_resolved_yaml(uri, _Complex_TestConfig)
+            self.assertTrue(isinstance(result, _Complex_TestConfig))
 
         self.assertEqual(result, expected_result)
 

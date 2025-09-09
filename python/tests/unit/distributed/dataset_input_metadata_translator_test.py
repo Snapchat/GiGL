@@ -157,7 +157,7 @@ class TranslatorTestCase(unittest.TestCase):
                 ].tfrecord_uri_prefix,
             )
             self.assertEqual(
-                sorted(seralized_node_info.feature_keys),
+                seralized_node_info.feature_keys,
                 (
                     preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_keys_map[
                         condensed_node_type
