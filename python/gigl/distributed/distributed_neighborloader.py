@@ -238,14 +238,17 @@ class DistNeighborLoader(DistLoader):
             self._edge_feature_info = remote_node_info.edge_feature_info
             num_partitions = remote_node_info.num_partitions
             edge_dir = remote_node_info.edge_dir
+            logger.info(
+                f"Using master ip address: {remote_node_info.master_addr}, master port: {remote_node_info.master_port}"
+            )
             worker_options = RemoteDistSamplingWorkerOptions(
                 server_rank=[
                     server_rank for server_rank in range(remote_node_info.num_servers)
                 ],
                 num_workers=num_workers,
                 worker_devices=[torch.device("cpu") for i in range(num_workers)],
-                master_addr=master_ip_address,
-                master_port=42192,
+                master_addr=remote_node_info.master_addr,
+                master_port=remote_node_info.master_port,
             )
             num_neighbors = patch_fanout_for_sampling(
                 remote_node_info.edge_types, num_neighbors

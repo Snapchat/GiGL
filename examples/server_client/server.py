@@ -17,8 +17,10 @@ from gigl.distributed.sampler import RemoteNodeInfo
 from gigl.distributed.utils import (
     get_free_port,
     get_free_ports_from_master_node,
+    get_internal_ip_from_all_ranks,
     get_internal_ip_from_master_node,
 )
+from gigl.distributed.utils.networking import get_ports_for_server_client_clusters
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.types.graph import to_homogeneous
 
@@ -85,10 +87,14 @@ def run_server(
             edge_feature_info=dataset.edge_feature_info,
             num_partitions=dataset.num_partitions,
             edge_dir=dataset.edge_dir,
+            master_addr=host,
             master_port=get_free_port(),
             num_servers=num_servers,
         )
-        FileLoader().load_from_filelike(UriFactory.create_uri(f"{output_dir}/remote_node_info.pyast"), io.BytesIO(remote_node_info.dump().encode()))
+        FileLoader().load_from_filelike(
+            UriFactory.create_uri(f"{output_dir}/remote_node_info.pyast"),
+            io.BytesIO(remote_node_info.dump().encode()),
+        )
         print(f"Wrote remote node info to {output_dir}/remote_node_info.pyast")
     logger.info(f"Initializing serve {server_rank} / {num_servers}")
     glt.distributed.init_server(
@@ -106,11 +112,16 @@ def run_server(
 
 
 def run_servers(
-    num_servers: int, num_clients: int, host: str, port: int, output_dir: str
+    server_rank: int,
+    num_servers: int,
+    num_clients: int,
+    host: str,
+    port: int,
+    output_dir: str,
 ) -> list:
     server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
-    for server_rank in range(num_servers):
+    for i in range(num_servers):
         server_process = mp_context.Process(
             target=run_server,
             args=(server_rank, num_servers, num_clients, host, port, output_dir),
@@ -139,11 +150,22 @@ if __name__ == "__main__":
         torch.distributed.init_process_group(backend="gloo")
         args.host = get_internal_ip_from_master_node()
         args.port = get_free_ports_from_master_node(num_ports=1)[0]
+        server_port, client_port = get_ports_for_server_client_clusters(
+            args.num_servers, args.num_clients
+        )
+        logger.info(f"Server port: {server_port}, client port: {client_port}")
+        ips = get_internal_ip_from_all_ranks()
+        logger.info(f"IPs: {ips}")
         torch.distributed.destroy_process_group()
     elif args.host == "FROM ENV" or args.port == -1:
         raise ValueError("Either host or port must be provided")
     logger.info(f"Using host: {args.host}")
     logger.info(f"Using port: {args.port}")
     run_servers(
-        args.num_servers, args.num_clients, args.host, args.port, args.output_dir
+        int(os.environ.get("RANK")),
+        args.num_servers,
+        args.num_clients,
+        args.host,
+        args.port,
+        args.output_dir,
     )

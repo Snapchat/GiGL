@@ -37,10 +37,16 @@ def main():
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     server_processes = run_servers(
-        num_servers, num_clients, args.host, args.port, output_dir
+        server_rank=0, num_servers=num_servers, num_clients=num_clients, host=args.host, port=args.port, output_dir=output_dir
     )
     client_processes = run_clients(
-        num_clients, num_servers, args.host, args.port, output_dir
+        num_clients,
+        num_servers,
+        args.host,
+        args.port,
+        "localhost",
+        get_free_port(),
+        output_dir,
     )
 
     logger.info(f"Waiting for client processes to exit")

@@ -24,6 +24,7 @@ class RemoteNodeInfo:
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
     num_partitions: int
     edge_dir: str
+    master_addr: str
     master_port: int
     num_servers: int
 
@@ -44,6 +45,7 @@ class RemoteNodeInfo:
         out_dict["node_tensor_uris"] = self.node_tensor_uris
         out_dict["num_partitions"] = self.num_partitions
         out_dict["edge_dir"] = self.edge_dir
+        out_dict["master_addr"] = self.master_addr
         out_dict["master_port"] = self.master_port
         out_dict["num_servers"] = self.num_servers
 
@@ -103,6 +105,7 @@ class RemoteNodeInfo:
             "node_tensor_uris",
             "num_partitions",
             "edge_dir",
+            "master_addr",
             "master_port",
             "num_servers",
         ]
@@ -190,6 +193,7 @@ class RemoteNodeInfo:
             edge_feature_info=edge_feature_info,
             num_partitions=data["num_partitions"],
             edge_dir=data["edge_dir"],
+            master_addr=data["master_addr"],
             master_port=data["master_port"],
             num_servers=data["num_servers"],
         )

@@ -237,7 +237,8 @@ class VertexAIService:
                 disk_spec=worker_disk_spec,
                 replica_count=worker_job_config.replica_count,
             )
-            worker_pool_specs.append({})
+            if job_config.replica_count == 1:
+                worker_pool_specs.append({})
             worker_pool_specs.append(worker_spec)
 
         logger.info(

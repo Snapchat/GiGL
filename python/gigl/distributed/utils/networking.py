@@ -44,7 +44,7 @@ def get_free_ports(num_ports: int) -> list[int]:
 
 
 def get_free_ports_from_master_node(
-    num_ports=1, _global_rank_override: Optional[int] = None
+    num_ports=1, master_node_id: int = 0, _global_rank_override: Optional[int] = None
 ) -> list[int]:
     """
     Get free ports from master node, that can be used for communication between workers.
@@ -67,17 +67,17 @@ def get_free_ports_from_master_node(
         else _global_rank_override
     )
     logger.info(
-        f"Rank {rank} is requesting {num_ports} free ports from rank 0 (master)"
+        f"Rank {rank} is requesting {num_ports} free ports from rank {master_node_id} (master)"
     )
     ports: list[int]
-    if rank == 0:
+    if rank == master_node_id:
         ports = get_free_ports(num_ports)
         logger.info(f"Rank {rank} found free ports: {ports}")
     else:
         ports = [0] * num_ports
 
     # Broadcast from master from rank 0 to all other ranks
-    torch.distributed.broadcast_object_list(ports, src=0)
+    torch.distributed.broadcast_object_list(ports, src=master_node_id)
     logger.info(f"Rank {rank} received ports: {ports}")
     return ports
 
@@ -150,3 +150,11 @@ def get_internal_ip_from_all_ranks() -> list[str]:
     assert all(ip for ip in ip_list), "Could not retrieve all ranks' internal IPs"
 
     return ip_list
+
+
+def get_ports_for_server_client_clusters(
+    num_servers: int, num_clients: int
+) -> tuple[int, int]:
+    server_port = get_free_ports_from_master_node(1)[0]
+    client_port = get_free_ports_from_master_node(1, master_node_id=num_servers)[0]
+    return server_port, client_port
