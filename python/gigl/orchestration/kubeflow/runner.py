@@ -33,7 +33,7 @@ RUNNING A PIPELINE:
             Example: --run_labels=gigl-integration-test=true --run_labels=user=me
         --notification_emails: Emails to send notification to.
             See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
-            Example: --notification_emails=user@example.com --notification_emails=user2@example.com
+            Example: --notification_email=user@example.com
 
     You can alternatively run_no_compile if you have a precompiled pipeline somewhere.
     python gigl.orchestration.kubeflow.runner --action=run_no_compile ...args
@@ -46,7 +46,7 @@ RUNNING A PIPELINE:
         --start_at
         --stop_after
         --pipeline_tag
-        --notification_emails
+        --notification_email
         --wait
 
 COMPILING A PIPELINE:
@@ -323,10 +323,9 @@ def _get_parser() -> argparse.ArgumentParser:
         """,
     )
     parser.add_argument(
-        "--notification_emails",
-        action="append",
-        help="Emails to send notification to.",
-        default=[],
+        "--notification_email",
+        help="Email to send notification to.",
+        default=None,
     )
     return parser
 
@@ -398,7 +397,7 @@ if __name__ == "__main__":
             stop_after=args.stop_after,
             compiled_pipeline_path=compiled_pipeline_path,
             labels=parsed_labels if parsed_labels else None,
-            notification_emails=["kmonte@snap.com"],
+            notification_email=["kmonte@snap.com"],
         )
 
         if args.wait:
