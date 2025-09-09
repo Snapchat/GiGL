@@ -109,17 +109,21 @@ def check_if_task_metadata_valid(
         assert (
             len(task_metadata_pb.supervision_edge_types) > 0
         ), "Must provide at least one supervision edge type."
-        graph_metadata_pb_edge_types = [
-            GbmlProtosTranslator.edge_type_from_EdgeTypePb(edge_type_pb=edge_type_pb)
-            for edge_type_pb in graph_metadata_pb.edge_types
+        graph_metadata_node_types = [
+            GbmlProtosTranslator.node_type_from_NodeTypePb(
+                node_type_pb=graph_metadata_pb.node_types
+            )
         ]
         for edge_type_pb in task_metadata_pb.supervision_edge_types:
             edge_type = GbmlProtosTranslator.edge_type_from_EdgeTypePb(
                 edge_type_pb=edge_type_pb
             )
             assert (
-                edge_type in graph_metadata_pb_edge_types
-            ), f"Invalid supervision edge type: {edge_type}; not found in graphMetadata edge types {graph_metadata_pb_edge_types}."
+                edge_type.src_node_type in graph_metadata_node_types
+            ), f"Invalid supervision edge type: {edge_type}; which contains a source node type not found in graphMetadata node types: {graph_metadata_node_types}."
+            assert (
+                edge_type.dst_node_type in graph_metadata_node_types
+            ), f"Invalid supervision edge type: {edge_type}; which contains a destination node type not found in graphMetadata node types: {graph_metadata_node_types}."
     else:
         raise ValueError(
             f"Invalid 'taskMetadata'; must be one of {[TaskMetadataType.NODE_BASED_TASK, TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK]}.",
