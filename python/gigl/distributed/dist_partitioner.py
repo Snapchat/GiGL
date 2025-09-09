@@ -489,8 +489,10 @@ class DistPartitioner:
         """
         Registers the node features to the partitioner.
 
-        This function assumes that node feature at index N on the current machine corresponds to the node id at index N
-        on the current machine, which should be registered through `register_node_ids`.
+        Given a
+            - node feature tensor on current machine of shape [num_nodes_on_current_rank, node_feat_dim]
+            - node id tensor on current machine of shape [num_nodes_on_current_rank] which has been registered through `register_node_ids`
+        We assume that the node feature at node_feature[n] corresponds to the node id at node_id[n].
 
         For optimal memory management, it is recommended that the reference to node_features tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
@@ -523,8 +525,10 @@ class DistPartitioner:
         """
         Registers the node labels to the partitioner.
 
-        This function assumes that node label at index N on the current machine corresponds to the node id at index N
-        on the current machine, which should be registered through `register_node_ids`.
+        Given a
+            - node label tensor on current machine of shape [num_nodes_on_current_rank, label_dim]
+            - node id tensor on current machine of shape [num_nodes_on_current_rank] which has been registered through `register_node_ids`
+        We assume that the node label at node_labels[n] corresponds to the node id at node_id[n].
 
         For optimal memory management, it is recommended that the reference to node_labels tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
@@ -626,7 +630,8 @@ class DistPartitioner:
         self, field_name: str, entity_key: Union[NodeType, EdgeType]
     ) -> None:
         """
-        Removes a key from a member dictionary of the partitioner class given a field name. If the dictionary becomes empty after removal, sets the field to None.
+        This method safely removes a key (node type or edge type) from a dictionary attribute of the partitioner.
+        If the dictionary becomes empty after removing the key, the entire attribute is set to None to maintain consistency.
 
         Args:
             field_name (str): The name of the instance attribute (e.g., '_node_feat')
@@ -646,7 +651,7 @@ class DistPartitioner:
 
     def _partition_single_chunk_data(
         self,
-        input_data: Optional[Tuple[Optional[torch.Tensor], ...]],
+        input_data: Optional[Tuple[torch.Tensor, ...]],
         rank_indices: torch.Tensor,
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         chunk_start_pos: int,
@@ -692,7 +697,7 @@ class DistPartitioner:
 
     def _partition_by_chunk(
         self,
-        input_data: Optional[Tuple[Optional[torch.Tensor], ...]],
+        input_data: Optional[Tuple[torch.Tensor, ...]],
         rank_indices: torch.Tensor,
         partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
         total_val_size: int = 0,
@@ -892,12 +897,20 @@ class DistPartitioner:
             else None
         )
 
+        input_data: Tuple[torch.Tensor, ...]
+        if node_features is not None and node_labels is not None:
+            input_data = (node_features, node_labels, node_ids)
+        elif node_features is not None:
+            input_data = (node_features, node_ids)
+        elif node_labels is not None:
+            input_data = (node_labels, node_ids)
+        else:
+            raise ValueError(
+                f"Found no node features or node labels to partition for node type {node_type}"
+            )
+
         has_node_features = node_features is not None
         has_node_labels = node_labels is not None
-
-        assert (
-            has_node_features or has_node_labels
-        ), "Cannot partition node features and labels if both are None"
 
         self._remove_key_from_member_dict("_node_ids", node_type)
         self._remove_key_from_member_dict("_num_nodes", node_type)
@@ -913,7 +926,7 @@ class DistPartitioner:
         # partitioned_results is a list of tuples. Each tuple correpsonds
         # to a chunk of data. A tuple contains node features, node labels, and node ids.
         partitioned_results, _ = self._partition_by_chunk(
-            input_data=(node_features, node_labels, node_ids),
+            input_data=input_data,
             rank_indices=node_ids,
             partition_function=_node_feature_partition_fn,
             total_val_size=num_nodes,
@@ -928,7 +941,7 @@ class DistPartitioner:
 
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the 2nd index in each tuple of the partitioned results.
-            partitioned_ids = torch.cat([r[2] for r in partitioned_results])
+            partitioned_ids = torch.cat([r[-1] for r in partitioned_results])
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
                     f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
@@ -950,8 +963,9 @@ class DistPartitioner:
 
             # Partitioned node labels are stored at the 1st index in each tuple of the partitioned results.
             if has_node_labels:
+                node_label_ind = 1 if has_node_features else 0
                 node_label_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[1] for r in partitioned_results]),
+                    feats=torch.cat([r[node_label_ind] for r in partitioned_results]),
                     ids=partitioned_ids,
                 )
 
