@@ -109,11 +109,7 @@ def check_if_task_metadata_valid(
         assert (
             len(task_metadata_pb.supervision_edge_types) > 0
         ), "Must provide at least one supervision edge type."
-        graph_metadata_node_types = [
-            GbmlProtosTranslator.node_type_from_NodeTypePb(
-                node_type_pb=graph_metadata_pb.node_types
-            )
-        ]
+        graph_metadata_node_types = graph_metadata_pb.node_types
         for edge_type_pb in task_metadata_pb.supervision_edge_types:
             edge_type = GbmlProtosTranslator.edge_type_from_EdgeTypePb(
                 edge_type_pb=edge_type_pb
