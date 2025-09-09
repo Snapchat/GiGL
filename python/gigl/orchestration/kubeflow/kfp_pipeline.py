@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 import os
 from typing import Final, Optional
 
@@ -129,6 +130,7 @@ def _generate_component_task(
 def generate_pipeline(
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     tag: Optional[str] = None,
+    notification_emails: Sequence[str] = (),
 ):
     """
     Generates a KFP pipeline definition for GiGL.
@@ -150,11 +152,10 @@ def generate_pipeline(
         resource_config_uri: str,
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
-        notification_email: Optional[str] = None,
     ):
         with kfp.dsl.ExitHandler(
             VertexNotificationEmailOp(
-                recipients=[notification_email] if notification_email else []
+                recipients=list(notification_emails)
             )
         ):
             validation_check_task = _generate_component_task(

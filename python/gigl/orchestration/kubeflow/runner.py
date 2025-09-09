@@ -33,7 +33,7 @@ RUNNING A PIPELINE:
             Example: --run_labels=gigl-integration-test=true --run_labels=user=me
         --notification_emails: Emails to send notification to.
             See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
-            Example: --notification_email=user@example.com
+            Example: --notification_emails=user@example.com --notification_emails=user2@example.com
 
     You can alternatively run_no_compile if you have a precompiled pipeline somewhere.
     python gigl.orchestration.kubeflow.runner --action=run_no_compile ...args
@@ -46,7 +46,7 @@ RUNNING A PIPELINE:
         --start_at
         --stop_after
         --pipeline_tag
-        --notification_email
+        --notification_emails
         --wait
 
 COMPILING A PIPELINE:
@@ -323,9 +323,10 @@ def _get_parser() -> argparse.ArgumentParser:
         """,
     )
     parser.add_argument(
-        "--notification_email",
+        "--notification_emails",
+        action="append",
+        default=[],
         help="Email to send notification to.",
-        default=None,
     )
     return parser
 
@@ -384,6 +385,7 @@ if __name__ == "__main__":
                 dst_compiled_pipeline_path=compiled_pipeline_path,
                 additional_job_args=parsed_additional_job_args,
                 tag=args.pipeline_tag,
+                notification_emails=["kmonte@snap.com"],
             )
             assert (
                 path == compiled_pipeline_path
@@ -397,7 +399,6 @@ if __name__ == "__main__":
             stop_after=args.stop_after,
             compiled_pipeline_path=compiled_pipeline_path,
             labels=parsed_labels if parsed_labels else None,
-            notification_email=["kmonte@snap.com"],
         )
 
         if args.wait:
@@ -411,6 +412,7 @@ if __name__ == "__main__":
             dst_compiled_pipeline_path=compiled_pipeline_path,
             additional_job_args=parsed_additional_job_args,
             tag=args.pipeline_tag,
+            notification_emails=["kmonte@snap.com"],
         )
         logger.info(
             f"Pipeline finished compiling, exported to: {pipeline_bundle_path.uri}"
