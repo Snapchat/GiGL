@@ -1,6 +1,6 @@
 ---
 description: Python coding patterns and conventions for GiGL
-globs: ["\*\*/\*.py"]
+globs: **.py
 alwaysApply: false
 ---
 
