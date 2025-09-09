@@ -553,7 +553,7 @@ def _run_cora_supervised_node_classification(
 def _run_subgraph_looks_as_expected_given_edge_direction(
     _,
     dataset: DistLinkPredictionDataset,
-    possible_edge_indices_in_subgraph: dict[EdgeType, torch.Tensor],
+    possible_edge_indices: dict[EdgeType, torch.Tensor],
 ):
     torch.distributed.init_process_group(
         rank=0, world_size=1, init_method=get_process_group_init_method()
@@ -592,21 +592,21 @@ def _run_subgraph_looks_as_expected_given_edge_direction(
                 [global_src_edge_index, global_dst_edge_index], dim=0
             )
 
-            # Then, we can compare the global edge index with the expected reversed edge index from the input graph
+            # Then, we can compare the global edge index with the possible edge indices that can exist for this edge type
             assert (
-                edge_type in possible_edge_indices_in_subgraph
-            ), f"User HeteroData contains edge type {edge_type} that is not in the expected graph edge types: {list(possible_edge_indices_in_subgraph.keys())}"
-            matches = global_edge_index == possible_edge_indices_in_subgraph[edge_type]
+                edge_type in possible_edge_indices
+            ), f"User HeteroData contains edge type {edge_type} that is not in the expected graph edge types: {list(possible_edge_indices.keys())}"
+            matches = global_edge_index == possible_edge_indices[edge_type]
             column_matches = matches.all(dim=0)
             contains_column = column_matches.any()
             assert (
                 contains_column
-            ), f"User HeteroData contains an edge for edge type {edge_type} in {user_datum[edge_type].edge_index} that is not in the expected graph: {possible_edge_indices_in_subgraph[edge_type]}"
+            ), f"User HeteroData contains an edge for edge type {edge_type} in {user_datum[edge_type].edge_index} that is not in the expected graph: {possible_edge_indices[edge_type]}"
 
         for edge_type in story_datum.edge_types:
             assert (
-                edge_type in possible_edge_indices_in_subgraph
-            ), f"Story HeteroData contains edge type {edge_type} that is not inthe expected graph edge types: {list(possible_edge_indices_in_subgraph.keys())}"
+                edge_type in possible_edge_indices
+            ), f"Story HeteroData contains edge type {edge_type} that is not inthe expected graph edge types: {list(possible_edge_indices.keys())}"
             # First, we need to remap the edge index with local node ids in the HeteroData object to an edge index with the global node ids
             global_src_nodes = story_datum[edge_type[0]].node
             global_dst_nodes = story_datum[edge_type[2]].node
@@ -621,12 +621,12 @@ def _run_subgraph_looks_as_expected_given_edge_direction(
             )
 
             # Then, we can compare the global edge index with the expected reversed edge index from the input graph
-            matches = global_edge_index == possible_edge_indices_in_subgraph[edge_type]
+            matches = global_edge_index == possible_edge_indices[edge_type]
             column_matches = matches.all(dim=0)
             contains_column = column_matches.any()
             assert (
                 contains_column
-            ), f"User HeteroData contains an edge for edge type {edge_type} in {user_datum[edge_type].edge_index} that is not in the expected graph: {possible_edge_indices_in_subgraph[edge_type]}"
+            ), f"User HeteroData contains an edge for edge type {edge_type} in {user_datum[edge_type].edge_index} that is not in the expected graph: {possible_edge_indices[edge_type]}"
 
     shutdown_rpc()
 
@@ -1202,7 +1202,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             # If the edge direction is out, we expect the produced HeteroData object to have the edge type reversed and the
             # edge index tensor also swapped. This is because GLT swaps the outward direction under-the-hood as a convenience for message passing:
             # https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/loader/transform.py#L116-L124
-            possible_edge_indices_in_subgraph = {
+            possible_edge_indices = {
                 reverse_edge_type(_USER_TO_STORY): user_to_story_edge_index[[1, 0], :],
                 reverse_edge_type(_STORY_TO_USER): story_to_user_edge_index[[1, 0], :],
             }
@@ -1210,7 +1210,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             # If the edge direction is in, we expect the produced HeteroData object to have the edge type and edge tensor be the same as the input
             # graph. This is because GLT swaps the inward direction under-the-hood as a convenience for message passing:
             # https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/loader/transform.py#L116-L124
-            possible_edge_indices_in_subgraph = {
+            possible_edge_indices = {
                 _USER_TO_STORY: user_to_story_edge_index,
                 _STORY_TO_USER: story_to_user_edge_index,
             }
@@ -1219,7 +1219,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             fn=_run_subgraph_looks_as_expected_given_edge_direction,
             args=(
                 dataset,
-                possible_edge_indices_in_subgraph,
+                possible_edge_indices,
             ),
         )
 
