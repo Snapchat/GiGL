@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional, Union
 
@@ -117,6 +118,7 @@ class KfpOrchestrator:
         stop_after: Optional[str] = None,
         compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         labels: Optional[dict[str, str]] = None,
+        notification_emails: Sequence[str] = (),
     ) -> aiplatform.PipelineJob:
         """
         Runs the GiGL Kubeflow pipeline.
@@ -129,6 +131,8 @@ class KfpOrchestrator:
             stop_after (Optional[str]): Component to stop the pipeline after. Defaults to None i.e. run entire pipeline.
             compiled_pipeline_path (Uri): Path to the compiled pipeline YAML file.
             labels (Optional[dict[str, str]]): Labels to associate with the run.
+            notification_emails (Sequence[str]): Emails to send notification to.
+              See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
         Returns:
             aiplatform.PipelineJob: The created pipeline job.
         """
@@ -145,6 +149,7 @@ class KfpOrchestrator:
             "start_at": start_at,
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
+            "notification_emails": notification_emails,
         }
         if stop_after is not None:
             run_keyword_args["stop_after"] = stop_after
