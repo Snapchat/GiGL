@@ -39,7 +39,7 @@ def get_pipeline() -> int:
 
 
 @kfp.dsl.pipeline(name="kfp-integration-test-that-fails")
-def get_pipeline_that_fails() -> int:
+def get_pipeline_that_fails() -> float:
     source_task = source()
     fails_task = division_by_zero(a=source_task.output)  # This is meant to fail
     return fails_task.output
