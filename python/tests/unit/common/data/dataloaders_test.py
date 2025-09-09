@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
+import numpy as np
 import tensorflow as tf
 import torch
 from parameterized import param, parameterized
@@ -505,7 +506,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         [
             param(
                 "Basic test with label_dim=1",
-                feature_and_label_tensor=torch.tensor(
+                feature_and_label_tensor=tf.constant(
                     [
                         [1.0, 2.0, 3.0, 4.0],
                         [5.0, 6.0, 7.0, 8.0],
@@ -513,41 +514,41 @@ class TFRecordDataLoaderTest(unittest.TestCase):
                     ]
                 ),
                 label_dim=1,
-                expected_features=torch.tensor(
+                expected_features=tf.constant(
                     [[1.0, 2.0, 3.0], [5.0, 6.0, 7.0], [9.0, 10.0, 11.0]]
                 ),
-                expected_labels=torch.tensor([[4.0], [8.0], [12.0]]),
+                expected_labels=tf.constant([[4.0], [8.0], [12.0]]),
             ),
             param(
                 "Test with label_dim=2",
-                feature_and_label_tensor=torch.tensor(
+                feature_and_label_tensor=tf.constant(
                     [[1.0, 2.0, 3.0, 4.0, 5.0], [6.0, 7.0, 8.0, 9.0, 10.0]]
                 ),
                 label_dim=2,
-                expected_features=torch.tensor([[1.0, 2.0, 3.0], [6.0, 7.0, 8.0]]),
-                expected_labels=torch.tensor([[4.0, 5.0], [9.0, 10.0]]),
+                expected_features=tf.constant([[1.0, 2.0, 3.0], [6.0, 7.0, 8.0]]),
+                expected_labels=tf.constant([[4.0, 5.0], [9.0, 10.0]]),
             ),
             param(
                 "Test with single feature column",
-                feature_and_label_tensor=torch.tensor(
+                feature_and_label_tensor=tf.constant(
                     [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
                 ),
                 label_dim=1,
-                expected_features=torch.tensor([[1.0], [3.0], [5.0]]),
-                expected_labels=torch.tensor([[2.0], [4.0], [6.0]]),
+                expected_features=tf.constant([[1.0], [3.0], [5.0]]),
+                expected_labels=tf.constant([[2.0], [4.0], [6.0]]),
             ),
             param(
                 "Test with no features and labels",
-                feature_and_label_tensor=torch.tensor([[3.0], [6.0]]),
+                feature_and_label_tensor=tf.constant([[3.0], [6.0]]),
                 label_dim=1,
                 expected_features=None,
-                expected_labels=torch.tensor([[3.0], [6.0]]),
+                expected_labels=tf.constant([[3.0], [6.0]]),
             ),
             param(
                 "Test with features and no labels",
-                feature_and_label_tensor=torch.tensor([[3.0], [6.0]]),
+                feature_and_label_tensor=tf.constant([[3.0], [6.0]]),
                 label_dim=0,
-                expected_features=torch.tensor([[3.0], [6.0]]),
+                expected_features=tf.constant([[3.0], [6.0]]),
                 expected_labels=None,
             ),
         ]
@@ -555,16 +556,28 @@ class TFRecordDataLoaderTest(unittest.TestCase):
     def test_get_labels_from_features(
         self,
         _,
-        feature_and_label_tensor: torch.Tensor,
+        feature_and_label_tensor: tf.Tensor,
         label_dim: int,
-        expected_features: Optional[torch.Tensor],
-        expected_labels: Optional[torch.Tensor],
+        expected_features: Optional[tf.Tensor],
+        expected_labels: Optional[tf.Tensor],
     ):
         features, labels = _get_labels_from_features(
             feature_and_label_tensor, label_dim
         )
-        assert_close(features, expected_features)
-        assert_close(labels, expected_labels)
+
+        # Compare features
+        if expected_features is None:
+            self.assertIsNone(features)
+        else:
+            assert features is not None
+            np.testing.assert_allclose(features.numpy(), expected_features.numpy())
+
+        # Compare labels
+        if expected_labels is None:
+            self.assertIsNone(labels)
+        else:
+            assert labels is not None
+            np.testing.assert_allclose(labels.numpy(), expected_labels.numpy())
 
 
 if __name__ == "__main__":
