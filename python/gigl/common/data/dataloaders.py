@@ -2,7 +2,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Callable, Optional, Sequence, Tuple, Union
+from typing import Callable, NamedTuple, Optional, Sequence, Tuple, Union
 
 import psutil
 import tensorflow as tf
@@ -16,6 +16,12 @@ from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 
 logger = Logger()
+
+
+class SerializedGraphTensors(NamedTuple):
+    ids: torch.Tensor
+    features: Optional[torch.Tensor]
+    labels: Optional[torch.Tensor]
 
 
 @dataclass(frozen=True)
@@ -81,92 +87,17 @@ class TFDatasetOptions:
     log_every_n_batch: int = 1000
 
 
-def _concatenate_features_by_names(
-    feature_key_to_tf_tensor: dict[str, tf.Tensor],
-    feature_keys: Sequence[str],
-    label_keys: Sequence[str],
-) -> tf.Tensor:
-    """
-    Concatenates feature tensors in the order specified by feature names.
-    Also concatenates labels to the end of the feature list if they are present using the corresponding label key
-
-    It is assumed that feature_names is a subset of the keys in feature_name_to_tf_tensor.
-
-    Args:
-        feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
-        feature_keys (Sequence[str]): A list of feature names specifying the order in which tensors should be concatenated.
-        label_keys (Sequence[str]): Name of the label columns for the current entity.
-
-    Returns:
-        tf.Tensor: A concatenated tensor of the features in the specified order, with the labels being concatenated at the end if it exists
-    """
-
-    features: list[tf.Tensor] = []
-
-    feature_iterable = list(feature_keys)
-
-    for label_key in label_keys:
-        feature_iterable.append(label_key)
-
-    for feature_key in feature_iterable:
-        tensor = feature_key_to_tf_tensor[feature_key]
-
-        # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
-        # Features may be stored as int type. We cast it to float here and will need to subsequently convert
-        # it back to int. Note that this is ok for small int values (less than 2^24, or ~16 million).
-        # For large int values, we will need to round it when converting back
-        # from float, as otherwise there will be precision loss.
-        if tensor.dtype != tf.float32:
-            tensor = tf.cast(tensor, tf.float32)
-
-        # Reshape 1D tensor to column vector
-        if len(tensor.shape) == 1:
-            tensor = tf.expand_dims(tensor, axis=-1)
-
-        features.append(tensor)
-
-    return tf.concat(features, axis=1)
-
-
-def _tf_tensor_to_torch_tensor(tf_tensor: tf.Tensor) -> torch.Tensor:
-    """
-    Converts a TensorFlow tensor to a PyTorch tensor using DLPack to ensure zero-copy conversion.
-
-    Args:
-        tf_tensor (tf.Tensor): The TensorFlow tensor to convert.
-
-    Returns:
-        torch.Tensor: The converted PyTorch tensor.
-    """
-    return torch.utils.dlpack.from_dlpack(tf.experimental.dlpack.to_dlpack(tf_tensor))
-
-
-def _build_example_parser(
-    *,
-    feature_spec: FeatureSpecDict,
-) -> Callable[[bytes], dict[str, tf.Tensor]]:
-    # Wrapping this partial with tf.function gives us a speedup.
-    # https://www.tensorflow.org/guide/function
-    @tf.function
-    def _parse_example(
-        example_proto: bytes, spec: FeatureSpecDict
-    ) -> dict[str, tf.Tensor]:
-        return tf.io.parse_example(example_proto, spec)
-
-    return partial(_parse_example, spec=feature_spec)
-
-
 def _get_labels_from_features(
-    feature_and_label_tensor: torch.Tensor, label_dim: int
-) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    feature_and_label_tensor: tf.Tensor, label_dim: int
+) -> tuple[Optional[tf.Tensor], Optional[tf.Tensor]]:
     """
     Given a combined tensor of features and labels, returns the features and labels separately.
     Args:
-        feature_and_label_tensor (torch.Tensor): Tensor of features and labels
+        feature_and_label_tensor (tf.Tensor): Tensor of features and labels
         label_dim (int): Dimension of the labels
     Returns:
-        feature_tensor (Optional[torch.Tensor]): Tensor of features
-        label_tensor (Optional[torch.Tensor]): Tensor of labels
+        feature_tensor (Optional[tf.Tensor]): Tensor of features
+        label_tensor (Optional[tf.Tensor]): Tensor of labels
     """
 
     if len(feature_and_label_tensor.shape) != 2:
@@ -197,6 +128,91 @@ def _get_labels_from_features(
         feature_tensor,
         label_tensor,
     )
+
+
+def _concatenate_features_by_names(
+    feature_key_to_tf_tensor: dict[str, tf.Tensor],
+    feature_keys: Sequence[str],
+    label_keys: Sequence[str],
+) -> tuple[Optional[tf.Tensor], Optional[tf.Tensor]]:
+    """
+    Concatenates feature tensors in the order specified by feature names.
+    Also concatenates labels to the end of the feature list if they are present using the corresponding label key
+
+    It is assumed that feature_names is a subset of the keys in feature_name_to_tf_tensor.
+
+    Args:
+        feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
+        feature_keys (Sequence[str]): A list of feature names specifying the order in which tensors should be concatenated.
+        label_keys (Sequence[str]): Name of the label columns for the current entity.
+
+    Returns:
+        Tuple[
+            Optional[tf.Tensor]: A concatenated tensor of the features in the specified order of feature_keys.
+            Optional[tf.Tensor]: A concatenated tensor of the labels in the specified order of label_keys.
+        ]
+    """
+
+    features: list[tf.Tensor] = []
+    label_dim = 0
+
+    feature_iterable = list(feature_keys)
+
+    for label_key in label_keys:
+        feature_iterable.append(label_key)
+
+    for feature_key in feature_iterable:
+        tensor = feature_key_to_tf_tensor[feature_key]
+
+        # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
+        # Features may be stored as int type. We cast it to float here and will need to subsequently convert
+        # it back to int. Note that this is ok for small int values (less than 2^24, or ~16 million).
+        # For large int values, we will need to round it when converting back
+        # from float, as otherwise there will be precision loss.
+        if tensor.dtype != tf.float32:
+            tensor = tf.cast(tensor, tf.float32)
+
+        # Reshape 1D tensor to column vector
+        if len(tensor.shape) == 1:
+            tensor = tf.expand_dims(tensor, axis=-1)
+
+        # Calculate label dimension by summing dimensions of label tensors
+        if feature_key in label_keys:
+            label_dim += tensor.shape[-1]
+
+        features.append(tensor)
+
+    combined_feature_tensor = tf.concat(features, axis=1)
+
+    return _get_labels_from_features(combined_feature_tensor, label_dim)
+
+
+def _tf_tensor_to_torch_tensor(tf_tensor: tf.Tensor) -> torch.Tensor:
+    """
+    Converts a TensorFlow tensor to a PyTorch tensor using DLPack to ensure zero-copy conversion.
+
+    Args:
+        tf_tensor (tf.Tensor): The TensorFlow tensor to convert.
+
+    Returns:
+        torch.Tensor: The converted PyTorch tensor.
+    """
+    return torch.utils.dlpack.from_dlpack(tf.experimental.dlpack.to_dlpack(tf_tensor))
+
+
+def _build_example_parser(
+    *,
+    feature_spec: FeatureSpecDict,
+) -> Callable[[bytes], dict[str, tf.Tensor]]:
+    # Wrapping this partial with tf.function gives us a speedup.
+    # https://www.tensorflow.org/guide/function
+    @tf.function
+    def _parse_example(
+        example_proto: bytes, spec: FeatureSpecDict
+    ) -> dict[str, tf.Tensor]:
+        return tf.io.parse_example(example_proto, spec)
+
+    return partial(_parse_example, spec=feature_spec)
 
 
 class TFRecordDataLoader:
@@ -341,7 +357,7 @@ class TFRecordDataLoader:
         self,
         serialized_tf_record_info: SerializedTFRecordInfo,
         tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> SerializedGraphTensors:
         """
         Loads torch tensors from a set of TFRecord files.
 
@@ -349,7 +365,7 @@ class TFRecordDataLoader:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
         Returns:
-            Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]: The (id_tensor, feature_tensor, label_tensor) for the loaded entities.
+            SerializedGraphTensors: The (id_tensor, feature_tensor, label_tensor) for the loaded entities.
         """
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
@@ -422,7 +438,9 @@ class TFRecordDataLoader:
             else:
                 empty_label = None
 
-            return empty_entity, empty_feature, empty_label
+            return SerializedGraphTensors(
+                ids=empty_entity, features=empty_feature, labels=empty_label
+            )
 
         dataset = TFRecordDataLoader._build_dataset_for_uris(
             uris=uris,
@@ -432,14 +450,19 @@ class TFRecordDataLoader:
 
         start_time = time.perf_counter()
         num_entities_processed = 0
-        id_tensors = []
-        feature_tensors = []
+        id_tensors: list[torch.Tensor] = []
+        feature_tensors: list[torch.Tensor] = []
+        label_tensors: list[torch.Tensor] = []
         for idx, batch in enumerate(dataset):
             id_tensors.append(proccess_id_tensor(batch))
             if feature_keys or label_keys:
-                feature_tensors.append(
-                    _concatenate_features_by_names(batch, feature_keys, label_keys)
+                feature_tensor, label_tensor = _concatenate_features_by_names(
+                    batch, feature_keys, label_keys
                 )
+                if feature_tensor is not None:
+                    feature_tensors.append(feature_tensor)
+                if label_tensor is not None:
+                    label_tensors.append(label_tensor)
             num_entities_processed += (
                 id_tensors[-1].shape[0]
                 if entity_type == FeatureTypes.NODE
@@ -457,19 +480,26 @@ class TFRecordDataLoader:
         id_tensor = _tf_tensor_to_torch_tensor(
             tf.concat(id_tensors, axis=id_concat_axis)
         )
-        feature_tensor: Optional[torch.Tensor] = None
-        label_tensor: Optional[torch.Tensor] = None
+        output_feature_tensor: Optional[torch.Tensor] = None
+        output_label_tensor: Optional[torch.Tensor] = None
         if feature_tensors:
-            feature_tensor = _tf_tensor_to_torch_tensor(
+            output_feature_tensor = _tf_tensor_to_torch_tensor(
                 tf.concat(feature_tensors, axis=0)
             )
-            label_dim = feature_tensor.size(1) - serialized_tf_record_info.feature_dim
-            feature_tensor, label_tensor = _get_labels_from_features(
-                feature_tensor, label_dim
+        if label_tensors:
+            output_label_tensor = _tf_tensor_to_torch_tensor(
+                tf.concat(label_tensors, axis=0)
             )
+
+        if output_feature_tensor is not None and output_label_tensor is not None:
+            assert output_feature_tensor.size(0) == output_label_tensor.size(
+                0
+            ), f"Loaded {output_feature_tensor.size(0)} features and {output_label_tensor.size(0)} labels, but they must be the same."
 
         end = time.perf_counter()
         logger.info(
             f"Converted {num_entities_processed:,} {entity_type.name} to torch tensors in {end - start:.2f} seconds"
         )
-        return id_tensor, feature_tensor, label_tensor
+        return SerializedGraphTensors(
+            ids=id_tensor, features=output_feature_tensor, labels=output_label_tensor
+        )
