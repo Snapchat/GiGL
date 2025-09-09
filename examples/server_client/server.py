@@ -1,7 +1,7 @@
 import os
 
 # Suppress TensorFlow logs
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
+#os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
 
 import argparse
 import io
@@ -35,6 +35,7 @@ def run_server(
     port: int,
     output_dir: str,
 ) -> None:
+    logger.info(f"Initializing server {server_rank} / {num_servers}. Cluster rank: {os.environ.get('RANK')}")
     torch.distributed.init_process_group(
         backend="gloo",
         world_size=num_servers,
@@ -121,7 +122,7 @@ def run_servers(
 ) -> list:
     server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
-    for i in range(num_servers):
+    for i in range(1):
         server_process = mp_context.Process(
             target=run_server,
             args=(server_rank, num_servers, num_clients, host, port, output_dir),

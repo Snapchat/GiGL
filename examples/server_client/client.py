@@ -1,7 +1,7 @@
 import os
 
 # Suppress TensorFlow logs
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
+#os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
 
 import argparse
 import json

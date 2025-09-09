@@ -41,13 +41,18 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         service_account = resource_config.service_account_email
         staging_bucket = resource_config.temp_assets_regional_bucket_path.uri
         job_name = f"GiGL-Integration-Test-{uuid.uuid4()}"
-        container_uri = "condaforge/miniforge3:25.3.0-1"
+        # container_uri = "condaforge/miniforge3:25.3.0-1"
+        # container_uri = "us-docker.pkg.dev/vertex-ai/training/tf-gpu.2-17.py310:latest"
+        container_uri = "gcr.io/snap-umap-dev/gbml_cuda:20250909-152833"
         command = ["printenv"]
 
         job_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri=container_uri,
             command=command,
+            machine_type="n1-standard-32",
+            accelerator_type="NVIDIA_TESLA_T4",
+            accelerator_count=2,
             replica_count=2,
         )
 

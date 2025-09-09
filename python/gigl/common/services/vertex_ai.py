@@ -239,8 +239,9 @@ class VertexAIService:
             )
             if job_config.replica_count == 1:
                 worker_pool_specs.append({})
+            # worker_pool_specs.append({})
             worker_pool_specs.append(worker_spec)
-
+        print(f"worker_pool_specs: {worker_pool_specs}")
         logger.info(
             f"Running Custom job {job_config.job_name} with worker_pool_specs {worker_pool_specs}, in project: {self._project}/{self._location} using staging bucket: {self._staging_bucket}, and attached labels: {job_config.labels}"
         )

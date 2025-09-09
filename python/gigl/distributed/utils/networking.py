@@ -1,11 +1,14 @@
 import socket
 from typing import Optional
+import logging
+import os
 
 import torch
 
 from gigl.common.logger import Logger
 
 logger = Logger()
+logging.info(f"Vanilla logger on {os.environ.get('HOSTNAME')}:{os.environ.get('RANK')}")
 
 
 def get_free_port() -> int:
@@ -97,7 +100,7 @@ def get_internal_ip_from_master_node(
     assert (
         torch.distributed.is_initialized()
     ), "Distributed environment must be initialized"
-
+    print(f"torch.distributed.is_initialized(): {torch.distributed.is_initialized()}")
     rank = (
         torch.distributed.get_rank()
         if _global_rank_override is None
