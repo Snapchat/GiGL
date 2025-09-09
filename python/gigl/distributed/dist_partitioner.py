@@ -897,9 +897,12 @@ class DistPartitioner:
             else None
         )
 
-        input_data: Tuple[torch.Tensor, ...]
         if node_features is not None and node_labels is not None:
-            input_data = (node_features, node_labels, node_ids)
+            input_data: Tuple[torch.Tensor, ...] = (
+                node_features,
+                node_labels,
+                node_ids,
+            )
         elif node_features is not None:
             input_data = (node_features, node_ids)
         elif node_labels is not None:
@@ -940,7 +943,7 @@ class DistPartitioner:
         gc.collect()
 
         if len(partitioned_results) > 0:
-            # Partitioned node ids are stored at the 2nd index in each tuple of the partitioned results.
+            # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
             partitioned_ids = torch.cat([r[-1] for r in partitioned_results])
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
@@ -961,7 +964,8 @@ class DistPartitioner:
             else:
                 node_feature_partition_data = None
 
-            # Partitioned node labels are stored at the 1st index in each tuple of the partitioned results.
+            # Partitioned node labels are stored at the 1st index in each tuple of the partitioned results if we have
+            # both node features and node labels. Otherwise, it is stored at the 0th index
             if has_node_labels:
                 node_label_ind = 1 if has_node_features else 0
                 node_label_partition_data = FeaturePartitionData(
