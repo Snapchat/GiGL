@@ -478,7 +478,7 @@ fastjsonschema==2.21.1 \
     --hash=sha256:794d4f0a58f848961ba16af7b9c85a3e88cd360df008c59aac6fc5ae9323b5d4 \
     --hash=sha256:c9e5b7e908310918cf494a434eeb31384dd84a98b57a30bcb1f535015b554667
     # via nbformat
-fbgemm-gpu @ https://download.pytorch.org/whl/cpu/fbgemm_gpu-1.0.0%2Bcpu-cp39-cp39-manylinux2014_x86_64.whl \
+fbgemm-gpu @ https://download.pytorch.org/whl/cpu/fbgemm_gpu-1.0.0%2Bcpu-cp39-cp39-manylinux2014_x86_64.whl ; platform_system == "Linux" and python_version == "3.9" \
     --hash=sha256:bb4f3110aff339b6ff9ea55ec4ee67e4887c12bd342920e4fb020d7cfbb50d8c
     # via
     #   gigl (python/pyproject.toml)
@@ -2342,7 +2342,7 @@ pyfarmhash==0.3.2 \
     --hash=sha256:dc3ef74dc64a19bb325d85749e0a7955ebaa6777d7cc357bfa4ba6e5864a4362 \
     --hash=sha256:ea0394094509eff756e093cd7a32d6c91d7e40afce941a00c3cf5980f2d9d0dd
     # via tensorflow-data-validation
-pyg-lib @ https://data.pyg.org/whl/torch-2.5.0+cpu/pyg_lib-0.4.0+pt25cpu-cp39-cp39-linux_x86_64.whl \
+pyg-lib @ https://data.pyg.org/whl/torch-2.5.0+cpu/pyg_lib-0.4.0+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system == "Linux" and python_version == "3.9" \
     --hash=sha256:fc4a57cd2554f1454a361e28830771b7f676581c47cebc0968d1362dee162343
     # via gigl (python/pyproject.toml)
 pygments==2.19.2 \
@@ -3020,7 +3020,7 @@ tensorflow==2.15.1 \
     #   tensorflow-serving-api
     #   tensorflow-transform
     #   tfx-bsl
-tensorflow-data-validation==1.14.0 \
+tensorflow-data-validation==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:00b29e486c04e18ca255c764f8d788b398daf43c18a9372220c0e6d70f6d1131 \
     --hash=sha256:0aa894ee574855beb0bbe4a06032515d6a261d6326958edd67b562c210601acf \
     --hash=sha256:148604e3d7263343a4fc9cf591743b8f022b9474f38b0cb46df943072977f2fb \
@@ -3052,26 +3052,26 @@ tensorflow-io-gcs-filesystem==0.37.1 \
     --hash=sha256:fe8dcc6d222258a080ac3dfcaaaa347325ce36a7a046277f6b3e19abc1efb3c5 \
     --hash=sha256:ffebb6666a7bfc28005f4fbbb111a455b5e7d6cd3b12752b7050863ecb27d5cc
     # via tensorflow
-tensorflow-metadata==1.14.0 \
+tensorflow-metadata==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:5ff79bf96f98c800fc08270b852663afe7e74d7e1f92b50ba1487bfc63894cdb
     # via
     #   gigl (python/pyproject.toml)
     #   tensorflow-data-validation
     #   tensorflow-transform
     #   tfx-bsl
-tensorflow-serving-api==2.15.1 \
+tensorflow-serving-api==2.15.1 ; platform_system != "Darwin" \
     --hash=sha256:7db02614e57f948f94da3b4cba3e90d19b6acde0d7fb3c0972312da1f0580b65
     # via
     #   gigl (python/pyproject.toml)
     #   tfx-bsl
-tensorflow-transform==1.14.0 \
+tensorflow-transform==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:f21bb7dfbced576a5eec77c4ddaa59e74855144b57045e43ac46d78f51524ad1
     # via gigl (python/pyproject.toml)
 termcolor==3.0.1 \
     --hash=sha256:a6abd5c6e1284cea2934443ba806e70e5ec8fd2449021be55c280f8a3731b611 \
     --hash=sha256:da1ed4ec8a5dc5b2e17476d859febdb3cccb612be1c36e64511a6f2485c10c69
     # via tensorflow
-tfx-bsl==1.14.0 \
+tfx-bsl==1.14.0 ; platform_system != "Darwin" \
     --hash=sha256:2cf105a8d2190f7a74b61cc52d59a80b8e2d238f07623cb41b55558ba8258b24 \
     --hash=sha256:4c016162eeb9247ffb45b88a98b7f15c1d88d0719a200cea89a91fe5315e2afa \
     --hash=sha256:585b194482b6e0a4e2643dafc8ff9621c7a85537d5ca2930485ef3806af4fbe5 \
@@ -3114,20 +3114,20 @@ torch==2.5.1 \
     # via
     #   gigl (python/pyproject.toml)
     #   torchmetrics
-torch-cluster @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_cluster-1.6.3+pt25cpu-cp39-cp39-linux_x86_64.whl \
+torch-cluster @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_cluster-1.6.3+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system == "Linux" and python_version == "3.9" \
     --hash=sha256:bfd9bc031fc0416edc0e9afa8d42bfc337fb7736fee83476105e9c1a9a16ae6c
     # via gigl (python/pyproject.toml)
 torch-geometric==2.5.3 \
     --hash=sha256:8277abfc12600b0e8047e0c3ea2d55cc43f08c1448e73e924de827c15d0b5f85 \
     --hash=sha256:ad0761650c8fa56cdc46ee61c564fd4995f07f079965fe732b3a76d109fd3edc
     # via gigl (python/pyproject.toml)
-torch-scatter @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_scatter-2.1.2+pt25cpu-cp39-cp39-linux_x86_64.whl \
+torch-scatter @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_scatter-2.1.2+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system == "Linux" and python_version == "3.9" \
     --hash=sha256:168a4db40ee33c0ddad1212e5784b04e17474517d48ce544d81adfbf3eb37ad4
     # via gigl (python/pyproject.toml)
-torch-sparse @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_sparse-0.6.18+pt25cpu-cp39-cp39-linux_x86_64.whl \
+torch-sparse @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_sparse-0.6.18+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system == "Linux" and python_version == "3.9" \
     --hash=sha256:b138bb20e61368d51bf47d253dbcce2b14360d9aec2750098d8b33437459e475
     # via gigl (python/pyproject.toml)
-torch-spline-conv @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_spline_conv-1.2.2+pt25cpu-cp39-cp39-linux_x86_64.whl \
+torch-spline-conv @ https://data.pyg.org/whl/torch-2.5.0+cpu/torch_spline_conv-1.2.2+pt25cpu-cp39-cp39-linux_x86_64.whl ; platform_system == "Linux" and python_version == "3.9" \
     --hash=sha256:0e026f9c9b9edafb3a958160357b851affb41bbf39ce87021742dba72d4c24e2
     # via gigl (python/pyproject.toml)
 torchmetrics==1.0.3 \
@@ -3136,7 +3136,7 @@ torchmetrics==1.0.3 \
     # via
     #   gigl (python/pyproject.toml)
     #   torchrec
-torchrec @ https://download.pytorch.org/whl/cpu/torchrec-1.0.0%2Bcpu-py3-none-any.whl \
+torchrec @ https://download.pytorch.org/whl/cpu/torchrec-1.0.0%2Bcpu-py3-none-any.whl ; platform_system == "Linux" and python_version == "3.9" \
     --hash=sha256:fc3ba8604e23c2974b6ea6a27bc3806b87b8d42344296ce4b3c116d7d53fdd4e
     # via gigl (python/pyproject.toml)
 tornado==6.5.1 \
