@@ -27,6 +27,7 @@ from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
 logger = Logger()
 
 
+# TODO(nshah): This could be refactored to be more modular and have individualized APIs for individual KGE model variants.
 class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
     """
     A backbone model to support sparse embedding of (possibly multi-relational) graphs.
