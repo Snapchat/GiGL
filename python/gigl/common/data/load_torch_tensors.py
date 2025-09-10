@@ -28,10 +28,11 @@ _ID_FMT = "{entity}_ids"
 _FEATURE_FMT = "{entity}_features"
 _NODE_KEY = "node"
 _EDGE_KEY = "edge"
-_POSITIVE_LABEL_KEY = "positive_label"
-_NEGATIVE_LABEL_KEY = "negative_label"
+_POSITIVE_SUPERVISION_EDGES_KEY = "positive_supervision_edges"
+_NEGATIVE_SUPERVISION_EDGES_KEY = "negative_supervision_edges"
 
 
+# TODO (mkolodner-sc): Change positive/negative label name to positive/negative supervision edges
 @dataclass(frozen=True)
 class SerializedGraphMetadata:
     """
@@ -256,7 +257,7 @@ def load_torch_tensors_from_tf_record(
                 "tf_record_dataloader": tf_record_dataloader,
                 "output_dict": edge_output_dict,
                 "error_dict": error_dict,
-                "entity_type": _POSITIVE_LABEL_KEY,
+                "entity_type": _POSITIVE_SUPERVISION_EDGES_KEY,
                 "serialized_tf_record_info": serialized_graph_metadata.positive_label_entity_info,
                 "rank": rank,
             },
@@ -271,7 +272,7 @@ def load_torch_tensors_from_tf_record(
                 "tf_record_dataloader": tf_record_dataloader,
                 "output_dict": edge_output_dict,
                 "error_dict": error_dict,
-                "entity_type": _NEGATIVE_LABEL_KEY,
+                "entity_type": _NEGATIVE_SUPERVISION_EDGES_KEY,
                 "serialized_tf_record_info": serialized_graph_metadata.negative_label_entity_info,
                 "rank": rank,
             },
@@ -328,12 +329,12 @@ def load_torch_tensors_from_tf_record(
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
     edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
 
-    positive_labels = edge_output_dict.get(
-        _ID_FMT.format(entity=_POSITIVE_LABEL_KEY), None
+    positive_supervision_edges = edge_output_dict.get(
+        _ID_FMT.format(entity=_POSITIVE_SUPERVISION_EDGES_KEY), None
     )
 
-    negative_labels = edge_output_dict.get(
-        _ID_FMT.format(entity=_NEGATIVE_LABEL_KEY), None
+    negative_supervision_edges = edge_output_dict.get(
+        _ID_FMT.format(entity=_NEGATIVE_SUPERVISION_EDGES_KEY), None
     )
 
     if rpc_is_initialized():
@@ -351,6 +352,6 @@ def load_torch_tensors_from_tf_record(
         node_features=node_features,
         edge_index=edge_index,
         edge_features=edge_features,
-        positive_label=positive_labels,
-        negative_label=negative_labels,
+        positive_supervision_edges=positive_supervision_edges,
+        negative_supervision_edges=negative_supervision_edges,
     )
