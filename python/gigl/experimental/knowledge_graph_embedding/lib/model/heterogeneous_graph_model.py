@@ -4,23 +4,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchrec
-from applied_tasks.knowledge_graph_embedding.common.torchrec.large_embedding_lookup import (
+
+from gigl.common.logger import Logger
+from gigl.experimental.knowledge_graph_embedding.common.torchrec.large_embedding_lookup import (
     LargeEmbeddingLookup,
 )
-from applied_tasks.knowledge_graph_embedding.lib.config import ModelConfig
-from applied_tasks.knowledge_graph_embedding.lib.config.sampling import SamplingConfig
-from applied_tasks.knowledge_graph_embedding.lib.data.edge_batch import EdgeBatch
-from applied_tasks.knowledge_graph_embedding.lib.data.node_batch import NodeBatch
-from applied_tasks.knowledge_graph_embedding.lib.model.negative_sampling import (
+from gigl.experimental.knowledge_graph_embedding.lib.config import ModelConfig
+from gigl.experimental.knowledge_graph_embedding.lib.config.sampling import (
+    SamplingConfig,
+)
+from gigl.experimental.knowledge_graph_embedding.lib.data.edge_batch import EdgeBatch
+from gigl.experimental.knowledge_graph_embedding.lib.data.node_batch import NodeBatch
+from gigl.experimental.knowledge_graph_embedding.lib.model.negative_sampling import (
     against_batch_relationwise_contrastive_similarity,
     in_batch_relationwise_contrastive_similarity,
 )
-from applied_tasks.knowledge_graph_embedding.lib.model.types import (
+from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
     ModelPhase,
     SimilarityType,
 )
-
-from gigl.common.logger import Logger
 
 logger = Logger()
 
@@ -29,6 +31,10 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
     """
     A backbone model to support sparse embedding of (possibly multi-relational) graphs.
     Can also be used to implement matrix factorization and variants.
+
+    Useful overviews on Knowledge Graph Embedding:
+        - Knowledge Graph Embedding: An Overview (Ge et al, 2023): https://arxiv.org/pdf/2309.12501
+        - Stanford CS224W: ML with Graphs: Knowledge Graph Embeddings (2023): https://www.youtube.com/watch?v=isI_TUMoP60
 
     Args:
         model_config (ModelConfig): Configuration object containing model parameters.
@@ -46,21 +52,7 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
         self.similarity_type = model_config.embedding_similarity_type
         self._phase: ModelPhase = ModelPhase.TRAIN
 
-        # Validate the sampling configurations.
-        for sampling_config in (
-            self.training_sampling_config,
-            self.validation_sampling_config,
-            self.testing_sampling_config,
-        ):
-            assert sampling_config is not None, "Sampling config must be provided."
-            assert (
-                sampling_config.positive_edge_batch_size > 0
-            ), "Positive edge batch size must be greater than 0."
-            assert (
-                sampling_config.num_inbatch_negatives_per_edge
-                + sampling_config.num_random_negatives_per_edge
-                > 0
-            ), "At least one type of negative sampling must be specified."
+        self._assert_sampling_config_is_valid()
 
         # Define the embedding layers.
         self.large_embeddings = LargeEmbeddingLookup(
@@ -78,6 +70,22 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
         )
 
         logger.info(f"Initialized model with: {self.__dict__}")
+
+    def _assert_sampling_config_is_valid(self):
+        for sampling_config in (
+            self.training_sampling_config,
+            self.validation_sampling_config,
+            self.testing_sampling_config,
+        ):
+            assert sampling_config is not None, "Sampling config must be provided."
+            assert (
+                sampling_config.positive_edge_batch_size > 0
+            ), "Positive edge batch size must be greater than 0."
+            assert (
+                sampling_config.num_inbatch_negatives_per_edge
+                + sampling_config.num_random_negatives_per_edge
+                > 0
+            ), "At least one type of negative sampling must be specified."
 
     @property
     def active_sampling_config(self) -> SamplingConfig:
@@ -310,16 +318,19 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
                 against_batch_logits,
                 against_batch_labels,
             ) = against_batch_relationwise_contrastive_similarity(
-                src_embeddings=pos_src_embeddings,
-                dst_embeddings=pos_dst_embeddings,
-                condensed_edge_types=pos_condensed_edge_types,
-                batch_src_embeddings=batch_neg_src_embeddings,
-                batch_dst_embeddings=batch_neg_dst_embeddings,
+                positive_src_embeddings=pos_src_embeddings,
+                positive_dst_embeddings=pos_dst_embeddings,
+                positive_condensed_edge_types=pos_condensed_edge_types,
+                negative_batch_src_embeddings=batch_neg_src_embeddings,
+                negative_batch_dst_embeddings=batch_neg_dst_embeddings,
                 batch_condensed_edge_types=batch_neg_condensed_edge_types,
                 scoring_function=self.similarity_type,
                 corrupt_side=self.active_sampling_config.negative_corruption_side,
                 num_negatives=self.active_sampling_config.num_random_negatives_per_edge,
             )
+
+            # These pos_logits and pos_labels are the same as those from in-batch similarity calculations.
+            # We keep them here for consistency.
             pos_logits = against_batch_logits[:, 0].unsqueeze(1)
             pos_labels = against_batch_labels[:, 0].unsqueeze(1)
             neg_logits.append(against_batch_logits[:, 1:])

@@ -108,11 +108,13 @@ def hit_rate_at_k(
             1st column contains positive scores, and the rest are negative scores.
         labels: Label tensor of shape [B, 1 + K], where 1 indicates positive and 0 indicates negative.
             1st column contains positive labels, and the rest are negative labels.
-        ks: An integer or list of integers indicating K values.
+        ks: An integer or list of integers indicating K values.  Maximum K should be less than or equal
+            to the number of negatives + 1.
 
     Returns:
         A tensor (if one K) or dict of tensors (if multiple Ks), each giving HitRate@K.
     """
+
     if isinstance(ks, int):
         ks = [ks]
     ks = torch.tensor(sorted(set(ks)), device=scores.device)

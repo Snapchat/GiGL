@@ -1,10 +1,11 @@
 import unittest
 
 import torch
-from applied_tasks.knowledge_graph_embedding.lib.model.negative_sampling import (
+
+from gigl.experimental.knowledge_graph_embedding.lib.model.negative_sampling import (
     against_batch_relationwise_contrastive_similarity,
 )
-from applied_tasks.knowledge_graph_embedding.lib.model.types import (
+from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
     NegativeSamplingCorruptionType,
     SimilarityType,
 )
@@ -25,11 +26,11 @@ class TestAgainstBatchRelationwiseContrastiveSimilarity(unittest.TestCase):
         scoring_function = SimilarityType.DOT
 
         logits, labels = against_batch_relationwise_contrastive_similarity(
-            src_embeddings=src_embeddings,
-            dst_embeddings=dst_embeddings,
-            condensed_edge_types=condensed_edge_types,
-            batch_src_embeddings=batch_src_embeddings,
-            batch_dst_embeddings=batch_dst_embeddings,
+            positive_src_embeddings=src_embeddings,
+            positive_dst_embeddings=dst_embeddings,
+            positive_condensed_edge_types=condensed_edge_types,
+            negative_batch_src_embeddings=batch_src_embeddings,
+            negative_batch_dst_embeddings=batch_dst_embeddings,
             batch_condensed_edge_types=batch_condensed_edge_types,
             temperature=temperature,
             scoring_function=scoring_function,
@@ -61,11 +62,11 @@ class TestAgainstBatchRelationwiseContrastiveSimilarity(unittest.TestCase):
         torch.manual_seed(42)  # For deterministic negative sampling
 
         logits, labels = against_batch_relationwise_contrastive_similarity(
-            src_embeddings=src_embeddings,
-            dst_embeddings=dst_embeddings,
-            condensed_edge_types=condensed_edge_types,
-            batch_src_embeddings=batch_src_embeddings,
-            batch_dst_embeddings=batch_dst_embeddings,
+            positive_src_embeddings=src_embeddings,
+            positive_dst_embeddings=dst_embeddings,
+            positive_condensed_edge_types=condensed_edge_types,
+            negative_batch_src_embeddings=batch_src_embeddings,
+            negative_batch_dst_embeddings=batch_dst_embeddings,
             batch_condensed_edge_types=batch_condensed_edge_types,
             temperature=temperature,
             scoring_function=scoring_function,
@@ -119,11 +120,11 @@ class TestAgainstBatchRelationwiseContrastiveSimilarity(unittest.TestCase):
         torch.manual_seed(10)  # For deterministic 'both' corruption
 
         logits, labels = against_batch_relationwise_contrastive_similarity(
-            src_embeddings=src_embeddings,
-            dst_embeddings=dst_embeddings,
-            condensed_edge_types=condensed_edge_types,
-            batch_src_embeddings=batch_src_embeddings,
-            batch_dst_embeddings=batch_dst_embeddings,
+            positive_src_embeddings=src_embeddings,
+            positive_dst_embeddings=dst_embeddings,
+            positive_condensed_edge_types=condensed_edge_types,
+            negative_batch_src_embeddings=batch_src_embeddings,
+            negative_batch_dst_embeddings=batch_dst_embeddings,
             batch_condensed_edge_types=batch_condensed_edge_types,
             temperature=temperature,
             scoring_function=scoring_function,
@@ -156,11 +157,11 @@ class TestAgainstBatchRelationwiseContrastiveSimilarity(unittest.TestCase):
         scoring_function = SimilarityType.DOT
 
         logits, labels = against_batch_relationwise_contrastive_similarity(
-            src_embeddings=src_embeddings,
-            dst_embeddings=dst_embeddings,
-            condensed_edge_types=condensed_edge_types,
-            batch_src_embeddings=batch_src_embeddings,
-            batch_dst_embeddings=batch_dst_embeddings,
+            positive_src_embeddings=src_embeddings,
+            positive_dst_embeddings=dst_embeddings,
+            positive_condensed_edge_types=condensed_edge_types,
+            negative_batch_src_embeddings=batch_src_embeddings,
+            negative_batch_dst_embeddings=batch_dst_embeddings,
             batch_condensed_edge_types=batch_condensed_edge_types,
             temperature=temperature,
             scoring_function=scoring_function,
@@ -190,11 +191,11 @@ class TestAgainstBatchRelationwiseContrastiveSimilarity(unittest.TestCase):
         scoring_function = SimilarityType.DOT
 
         logits, labels = against_batch_relationwise_contrastive_similarity(
-            src_embeddings=src_embeddings,
-            dst_embeddings=dst_embeddings,
-            condensed_edge_types=condensed_edge_types,
-            batch_src_embeddings=batch_src_embeddings,
-            batch_dst_embeddings=batch_dst_embeddings,
+            positive_src_embeddings=src_embeddings,
+            positive_dst_embeddings=dst_embeddings,
+            positive_condensed_edge_types=condensed_edge_types,
+            negative_batch_src_embeddings=batch_src_embeddings,
+            negative_batch_dst_embeddings=batch_dst_embeddings,
             batch_condensed_edge_types=batch_condensed_edge_types,
             temperature=temperature,
             scoring_function=scoring_function,

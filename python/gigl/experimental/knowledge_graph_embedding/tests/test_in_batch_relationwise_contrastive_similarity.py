@@ -1,10 +1,11 @@
 import unittest
 
 import torch
-from applied_tasks.knowledge_graph_embedding.lib.model.negative_sampling import (
+
+from gigl.experimental.knowledge_graph_embedding.lib.model.negative_sampling import (
     in_batch_relationwise_contrastive_similarity,
 )
-from applied_tasks.knowledge_graph_embedding.lib.model.types import (
+from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
     NegativeSamplingCorruptionType,
     SimilarityType,
 )
