@@ -88,9 +88,19 @@ Defines the neural network architecture for knowledge graph embeddings, implemen
   - `COSINE`: Cosine similarity (normalized dot product)
   - `DOT`: Dot product similarity
 
-- **`src_operator`**: (`OperatorType`, default: `IDENTITY`) Transformation operator applied to source node embeddings before computing edge scores. Can be identity (no transformation) or learned operators.
+- **`src_operator`**: (`OperatorType`, default: `IDENTITY`) Transformation operator applied to source node embeddings before computing edge scores. Available options:
+  - `IDENTITY`: No transformation applied (returns embeddings unchanged)
+  - `TRANSLATION`: Adds edge-type specific embeddings (TransE-style: `embeddings + edge_type_embeddings`)
+  - `DIAGONAL`: Element-wise multiplication with edge-type embeddings (DistMult-style: `embeddings * edge_type_embeddings`)
+  - `COMPLEX_DIAGONAL`: Complex diagonal transformation with real/imaginary parts (ComplEx-style, requires even embedding dimension)
+  - `LINEAR`: Matrix multiplication with learned projection matrices (RESCAL-style: `embeddings @ projection_matrix`)
 
-- **`dst_operator`**: (`OperatorType`, default: `IDENTITY`) Transformation operator applied to destination node embeddings before computing edge scores.
+- **`dst_operator`**: (`OperatorType`, default: `IDENTITY`) Transformation operator applied to destination node embeddings before computing edge scores. Uses the same options as `src_operator`. Common patterns:
+  - **TransE**: `src_operator: TRANSLATION`, `dst_operator: IDENTITY`
+  - **DistMult**: `src_operator: DIAGONAL`, `dst_operator: IDENTITY`
+  - **ComplEx**: `src_operator: COMPLEX_DIAGONAL`, `dst_operator: IDENTITY`
+  - **RESCAL**: `src_operator: LINEAR`, `dst_operator: IDENTITY`
+  - **Matrix Factorization**: `src_operator: IDENTITY`, `dst_operator: IDENTITY`
 
 #### Runtime-Populated Parameters
 
