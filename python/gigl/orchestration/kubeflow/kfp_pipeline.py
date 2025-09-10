@@ -137,6 +137,8 @@ def generate_pipeline(
     Args:
         common_pipeline_component_configs (CommonPipelineComponentConfigs): Shared configuration between components.
         tag (Optiona[str]): Optional tag, which is provided will be used to tag the pipeline description.
+        notification_emails (Sequence[str]): Emails to send notification to.
+            See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
 
     Returns:
         An @kfp.dsl.pipeline decorated function to generated a pipeline.
