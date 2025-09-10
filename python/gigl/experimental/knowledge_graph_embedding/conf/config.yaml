@@ -1,12 +1,12 @@
 defaults:
-  - dataset: cora
-  - run: default
-  - model: default
-  - training: default
-  - validation: default
-  - testing: default
+  - dataset: cora           # Default dataset configuration (mapped to GraphConfig)
+  - run: default            # Runtime environment settings (RunConfig)
+  - model: default          # Model architecture configuration (ModelConfig)
+  - training: default       # Training process configuration (TrainConfig)
+  - validation: default     # Validation configuration (EvaluationPhaseConfig)
+  - testing: default        # Testing configuration (EvaluationPhaseConfig)
 
 hydra:
-  output_subdir: null
+  output_subdir: null       # Disable Hydra's default output subdirectory
   run:
-    dir: .
+    dir: .                  # Set output directory to current directory

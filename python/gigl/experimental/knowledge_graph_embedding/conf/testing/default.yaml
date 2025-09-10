@@ -1,9 +1,9 @@
 dataloader:
-  num_workers: 1
-step_frequency: 100
-num_batches: 10
+  num_workers: 1               # Number of worker processes for test data loading
+step_frequency: 100            # Evaluation frequency (typically once at end for testing)
+num_batches: 10                # Maximum batches to evaluate (can be larger for final assessment)
 sampling:
-  positive_edge_batch_size: 256
-  num_random_negatives_per_edge: 100
-  num_inbatch_negatives_per_edge: 0
-  negative_corruption_side: DST
+  positive_edge_batch_size: 256    # Number of positive edges per test batch
+  num_random_negatives_per_edge: 100  # Random negative samples per edge for final ranking
+  num_inbatch_negatives_per_edge: 0   # In-batch negatives (not used in testing)
+  negative_corruption_side: DST       # Corrupt destination nodes for negative sampling

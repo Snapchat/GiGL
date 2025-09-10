@@ -1,52 +1,53 @@
 # @package _global_
+# MAG240M experiment: Extended training with random negative sampling
 
 defaults:
-  - override /dataset: mag240/mag240_papers
+  - override /dataset: mag240/mag240_papers  # Use MAG240M papers dataset
 
 model:
-  node_embedding_dim: 128
-  embedding_similarity_type: DOT
-  src_operator: IDENTITY
-  dst_operator: IDENTITY
+  node_embedding_dim: 128              # 128-dim embeddings
+  embedding_similarity_type: DOT       # Use dot product similarity (different from in-batch version)
+  src_operator: IDENTITY               # No transformation on source embeddings
+  dst_operator: IDENTITY               # No transformation on destination embeddings
 
 training:
-  max_steps: 1000000
+  max_steps: 1000000                   # Very long training (1M steps) for extensive learning
   early_stopping:
-    patience: 3
+    patience: 3                        # Shorter patience for large-scale training
   dataloader:
-    num_workers: 16
+    num_workers: 16                    # More workers for large dataset loading
   sampling:
-    positive_edge_batch_size: 16384
-    num_inbatch_negatives_per_edge: 0
-    num_random_negatives_per_edge: 1024
-    negative_corruption_side: DST
+    positive_edge_batch_size: 16384    # Very large batch size for efficiency
+    num_inbatch_negatives_per_edge: 0  # No in-batch negatives
+    num_random_negatives_per_edge: 1024  # Many random negatives for high diversity
+    negative_corruption_side: DST      # Corrupt destination nodes
   optimizer:
     sparse:
-      lr: 0.1
-      weight_decay: 0.01
+      lr: 0.1                          # High learning rate for sparse embeddings
+      weight_decay: 0.01               # Stronger regularization for sparse
     dense:
-      lr: 0.001
-      weight_decay: 0.001
+      lr: 0.001                        # Lower learning rate for dense layers
+      weight_decay: 0.001              # Standard regularization for dense
   distributed:
-    num_processes_per_machine: 4
-    storage_reservation_percentage: 0.15
+    num_processes_per_machine: 4       # Distributed training with 4 processes
+    storage_reservation_percentage: 0.15  # Higher storage buffer for random negatives
   checkpointing:
-    save_every: 10000000
-    should_save_async: true
+    save_every: 10000000               # Infrequent checkpointing for very long runs
+    should_save_async: true            # Async saving for efficiency
   logging:
-    log_every: 1
+    log_every: 1                       # Log every step for monitoring
 
 validation:
-  num_batches: 10
-  step_frequency: 500
+  num_batches: 10                      # Limited batches for faster validation
+  step_frequency: 500                  # Validate every 500 steps (less frequent)
   dataloader:
-    num_workers: 3
+    num_workers: 3                     # Fewer workers for validation
   sampling:
-    positive_edge_batch_size: 16384
-    num_inbatch_negatives_per_edge: 0
-    num_random_negatives_per_edge: 1024
-    negative_corruption_side: DST
-  hit_rates_at_k:
-    - 1
-    - 10
-    - 100
+    positive_edge_batch_size: 16384    # Large validation batch size
+    num_inbatch_negatives_per_edge: 0  # No in-batch negatives in validation
+    num_random_negatives_per_edge: 1024  # Match training random negatives
+    negative_corruption_side: DST      # Match training corruption side
+  hit_rates_at_k:                      # Evaluation metrics
+    - 1                                # Hit@1 (most strict)
+    - 10                               # Hit@10 (moderate)
+    - 100                              # Hit@100 (most lenient)

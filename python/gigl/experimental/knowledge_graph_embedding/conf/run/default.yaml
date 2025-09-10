@@ -1,1 +1,1 @@
-should_use_cuda: true
+should_use_cuda: true         # Whether to use CUDA (GPU) acceleration (auto-adjusted based on availability)
