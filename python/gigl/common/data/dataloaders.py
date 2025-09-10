@@ -18,7 +18,7 @@ from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 logger = Logger()
 
 
-class SerializedGraphTensors(NamedTuple):
+class LoadedEntityTensors(NamedTuple):
     ids: torch.Tensor
     features: Optional[torch.Tensor]
     labels: Optional[torch.Tensor]
@@ -357,7 +357,7 @@ class TFRecordDataLoader:
         self,
         serialized_tf_record_info: SerializedTFRecordInfo,
         tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    ) -> SerializedGraphTensors:
+    ) -> LoadedEntityTensors:
         """
         Loads torch tensors from a set of TFRecord files.
 
@@ -365,7 +365,7 @@ class TFRecordDataLoader:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
         Returns:
-            SerializedGraphTensors: The (id_tensor, feature_tensor, label_tensor) for the loaded entities.
+            LoadedEntityTensors: The (id_tensor, feature_tensor, label_tensor) for the loaded entities.
         """
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
@@ -438,7 +438,7 @@ class TFRecordDataLoader:
             else:
                 empty_label = None
 
-            return SerializedGraphTensors(
+            return LoadedEntityTensors(
                 ids=empty_entity, features=empty_feature, labels=empty_label
             )
 
@@ -500,6 +500,6 @@ class TFRecordDataLoader:
         logger.info(
             f"Converted {num_entities_processed:,} {entity_type.name} to torch tensors in {end - start:.2f} seconds"
         )
-        return SerializedGraphTensors(
+        return LoadedEntityTensors(
             ids=id_tensor, features=output_feature_tensor, labels=output_label_tensor
         )
