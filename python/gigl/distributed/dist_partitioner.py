@@ -494,6 +494,9 @@ class DistPartitioner:
             - node id tensor on current machine of shape [num_nodes_on_current_rank] which has been registered through `register_node_ids`
         We assume that the node feature at node_feature[n] corresponds to the node id at node_id[n].
 
+        Note that the order of calling register_node_ids and register_node_features does not matter, but both must be called
+        prior to partitioning node features.
+
         For optimal memory management, it is recommended that the reference to node_features tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
         We do not need to perform `all_gather` calls here since register_node_ids is responsible for determining total number of nodes
@@ -529,6 +532,9 @@ class DistPartitioner:
             - node label tensor on current machine of shape [num_nodes_on_current_rank, label_dim]
             - node id tensor on current machine of shape [num_nodes_on_current_rank] which has been registered through `register_node_ids`
         We assume that the node label at node_labels[n] corresponds to the node id at node_id[n].
+
+        Note that the order of calling register_node_ids and register_node_labels does not matter, but both must be called
+        prior to partitioning node labels.
 
         For optimal memory management, it is recommended that the reference to node_labels tensor be deleted
         after calling this function using del <tensor>, as maintaining both original and intermediate tensors can cause OOM concerns.
@@ -915,14 +921,6 @@ class DistPartitioner:
         has_node_features = node_features is not None
         has_node_labels = node_labels is not None
 
-        self._remove_key_from_member_dict("_node_ids", node_type)
-        self._remove_key_from_member_dict("_num_nodes", node_type)
-        self._remove_key_from_member_dict("_max_node_ids", node_type)
-        self._remove_key_from_member_dict("_node_feat", node_type)
-        self._remove_key_from_member_dict("_node_feat_dim", node_type)
-        self._remove_key_from_member_dict("_node_labels", node_type)
-        self._remove_key_from_member_dict("_node_labels_dim", node_type)
-
         def _node_feature_partition_fn(node_feature_ids, _):
             return target_node_partition_book[node_feature_ids]
 
@@ -935,6 +933,14 @@ class DistPartitioner:
             total_val_size=num_nodes,
             generate_pb=False,
         )
+
+        self._remove_key_from_member_dict("_node_ids", node_type)
+        self._remove_key_from_member_dict("_num_nodes", node_type)
+        self._remove_key_from_member_dict("_max_node_ids", node_type)
+        self._remove_key_from_member_dict("_node_feat", node_type)
+        self._remove_key_from_member_dict("_node_feat_dim", node_type)
+        self._remove_key_from_member_dict("_node_labels", node_type)
+        self._remove_key_from_member_dict("_node_labels_dim", node_type)
 
         # Since the unpartitioned node ids, features and labels are large, we would like to delete them when
         # they are no longer needed to free memory.
@@ -959,8 +965,6 @@ class DistPartitioner:
                     ids=partitioned_ids,
                 )
 
-                gc.collect()
-
             else:
                 node_feature_partition_data = None
 
@@ -972,8 +976,6 @@ class DistPartitioner:
                     feats=torch.cat([r[node_label_ind] for r in partitioned_results]),
                     ids=partitioned_ids,
                 )
-
-                gc.collect()
 
             else:
                 node_label_partition_data = None
@@ -1321,6 +1323,11 @@ class DistPartitioner:
         We should partition node features and labels together so that the ids of the partitioned node features and labels
         are the same, leading to an overall smaller memory footprint and faster partitioning.
 
+        Note that we must have registered node ids with `register_node_ids` and obtaining a node partition book with `partition_node` before calling
+        this function. If labels are not registered (i.e we don't call `register_node_labels`), we will only partition node features.
+        Likewise, if features are not registered (i.e we don't call `register_node_features`), we will only partition node labels.
+        At least one of node features or node labels must be registered prior to this function call.
+
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The Computed Node Partition Book
         Returns:
@@ -1351,7 +1358,7 @@ class DistPartitioner:
             input_entity=self._node_ids, is_node_entity=True, is_subset=False
         )
 
-        node_feature_types = set()
+        node_feature_types: set[NodeType] = set()
         if self._node_feat is not None:
             self._assert_data_type_consistency(
                 input_entity=self._node_feat, is_node_entity=True, is_subset=True
