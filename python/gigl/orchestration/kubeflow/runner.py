@@ -326,7 +326,7 @@ def _get_parser() -> argparse.ArgumentParser:
         "--notification_emails",
         action="append",
         default=[],
-        help="Email to send notification to.",
+        help="Email to send notification to. See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.",
     )
     return parser
 
@@ -385,7 +385,7 @@ if __name__ == "__main__":
                 dst_compiled_pipeline_path=compiled_pipeline_path,
                 additional_job_args=parsed_additional_job_args,
                 tag=args.pipeline_tag,
-                notification_emails=["kmonte@snap.com"],
+                notification_emails=args.notification_emails,
             )
             assert (
                 path == compiled_pipeline_path
@@ -412,7 +412,7 @@ if __name__ == "__main__":
             dst_compiled_pipeline_path=compiled_pipeline_path,
             additional_job_args=parsed_additional_job_args,
             tag=args.pipeline_tag,
-            notification_emails=["kmonte@snap.com"],
+            notification_emails=args.notification_emails,
         )
         logger.info(
             f"Pipeline finished compiling, exported to: {pipeline_bundle_path.uri}"
