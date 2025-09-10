@@ -471,7 +471,7 @@ class DistDataset(glt.distributed.DistDataset):
                     node_type,
                     node_labels,
                 ) in partition_output.partitioned_node_labels.items():
-                    labels_to_split_indices = node_labels.feats != -1
+                    labels_to_split_indices = (node_labels.feats != -1).squeeze()
                     node_ids_on_rank = get_ids_on_rank(
                         self._node_partition_book[node_type], rank=self._rank
                     )
@@ -484,7 +484,7 @@ class DistDataset(glt.distributed.DistDataset):
                 assert isinstance(self._node_partition_book, PartitionBook)
                 labels_to_split_indices = (
                     partition_output.partitioned_node_labels.feats != -1
-                )
+                ).squeeze()
                 node_ids_on_rank = get_ids_on_rank(
                     self._node_partition_book, rank=self._rank
                 )
