@@ -1,6 +1,10 @@
-______________________________________________________________________
+---
+description: Python coding patterns and conventions for GiGL
+globs: **.py
+alwaysApply: false
+---
 
-## description: Python coding patterns and conventions for GiGL globs: ["\*\*/\*.py"] alwaysApply: false
+
 
 # Key Principles
 
