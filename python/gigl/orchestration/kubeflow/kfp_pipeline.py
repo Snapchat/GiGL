@@ -255,7 +255,7 @@ def generate_pipeline(
             ):
                 _generate_component_tasks(
                     job_name=job_name,
-                    task_config_uri=template_or_frozen_config_uri,
+                    template_or_frozen_config_uri=template_or_frozen_config_uri,
                     resource_config_uri=resource_config_uri,
                     common_pipeline_component_configs=common_pipeline_component_configs,
                     start_at=start_at,
@@ -264,7 +264,7 @@ def generate_pipeline(
         else:
             _generate_component_tasks(
                 job_name=job_name,
-                task_config_uri=template_or_frozen_config_uri,
+                template_or_frozen_config_uri=template_or_frozen_config_uri,
                 resource_config_uri=resource_config_uri,
                 common_pipeline_component_configs=common_pipeline_component_configs,
                 start_at=start_at,
