@@ -26,6 +26,7 @@ logger = Logger()
 
 _ID_FMT = "{entity}_ids"
 _FEATURE_FMT = "{entity}_features"
+_LABEL_FMT = "{entity}_labels"
 _NODE_KEY = "node"
 _EDGE_KEY = "edge"
 _POSITIVE_LABEL_KEY = "positive_label"
@@ -115,6 +116,7 @@ def _data_loading_process(
 
         ids: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        labels: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
             graph_type,
             serialized_entity_tf_record_info,
@@ -130,6 +132,7 @@ def _data_loading_process(
             (
                 entity_ids,
                 entity_features,
+                entity_labels,
             ) = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
                 tf_dataset_options=tf_dataset_options,
@@ -148,6 +151,16 @@ def _data_loading_process(
                     f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
+            if entity_labels is not None:
+                labels[graph_type] = entity_labels
+                logger.info(
+                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                )
+            else:
+                logger.info(
+                    f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                )
+
         logger.info(
             f"Rank {rank} is attempting to share {entity_type} id memory for tfrecord directories: {all_tf_record_uris}"
         )
@@ -161,12 +174,22 @@ def _data_loading_process(
             share_memory(features)
             # We convert the features back to homogeneous from the default heterogeneous setup if our provided input was homogeneous
 
+        if labels:
+            logger.info(
+                f"Rank {rank} is attempting to share {entity_type} label memory for tfrecord directories: {all_tf_record_uris}"
+            )
+            share_memory(labels)
+
         output_dict[_ID_FMT.format(entity=entity_type)] = (
             list(ids.values())[0] if is_input_homogeneous else ids
         )
         if features:
             output_dict[_FEATURE_FMT.format(entity=entity_type)] = (
                 list(features.values())[0] if is_input_homogeneous else features
+            )
+        if labels:
+            output_dict[_LABEL_FMT.format(entity=entity_type)] = (
+                list(labels.values())[0] if is_input_homogeneous else labels
             )
 
         logger.info(
@@ -324,6 +347,7 @@ def load_torch_tensors_from_tf_record(
 
     node_ids = node_output_dict[_ID_FMT.format(entity=_NODE_KEY)]
     node_features = node_output_dict.get(_FEATURE_FMT.format(entity=_NODE_KEY), None)
+    node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
     edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
@@ -349,6 +373,7 @@ def load_torch_tensors_from_tf_record(
     return LoadedGraphTensors(
         node_ids=node_ids,
         node_features=node_features,
+        node_labels=node_labels,
         edge_index=edge_index,
         edge_features=edge_features,
         positive_label=positive_labels,
