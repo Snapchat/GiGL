@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # Needed for the auth w/ GCP to upload to Google Artifact Registry.
 
 jobs:
   build:
