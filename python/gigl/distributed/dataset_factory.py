@@ -674,12 +674,12 @@ def build_dataset_from_task_config_uri(
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
-        sample_edge_direction = args.get("sample_edge_direction", "in")
+        sample_edge_direction = args.get("sample_edge_direction", "out")
         args_path = "inferencerConfig.inferencerArgs"
     else:
         args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
         args_path = "trainerConfig.trainerArgs"
-        sample_edge_direction = args.get("sample_edge_direction", "in")
+        sample_edge_direction = args.get("sample_edge_direction", "out")
         num_val = float(args.get("num_val", "0.1"))
         num_test = float(args.get("num_test", "0.1"))
         task_metadata_pb_wrapper = gbml_config_pb_wrapper.task_metadata_pb_wrapper
