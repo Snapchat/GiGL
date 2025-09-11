@@ -8,8 +8,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
   build:
@@ -55,7 +53,7 @@ jobs:
         gcloud config set artifacts/location us-central1
         gcloud config set artifacts/repository gigl
         python -m twine check python/dist/*
-        python -m twine upload --repository-url https://us-central1-python.pkg.dev/${PROJECT_ID}/gigl python/dist/*
+        python -m twine upload --repository-url https://us-central1-python.pkg.dev/"$PROJECT_ID"/gigl python/dist/*
 
     - name: Post Publish Package
       if: always()
