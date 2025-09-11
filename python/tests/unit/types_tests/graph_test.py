@@ -273,7 +273,7 @@ class GraphTypesTyest(unittest.TestCase):
             ),
         ]
     )
-    def test_treat_labels_as_edges_success(
+    def test_treat_supervision_edges_as_graph_edges(
         self,
         _,
         node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -288,6 +288,7 @@ class GraphTypesTyest(unittest.TestCase):
         graph_tensors = LoadedGraphTensors(
             node_ids=node_ids,
             node_features=node_features,
+            node_labels=None,
             edge_index=edge_index,
             edge_features=edge_features,
             positive_label=positive_label,
