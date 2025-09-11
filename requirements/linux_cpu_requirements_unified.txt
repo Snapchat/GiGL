@@ -676,6 +676,7 @@ google-api-core[grpc]==2.24.2 \
     #   google-cloud-dlp
     #   google-cloud-language
     #   google-cloud-logging
+    #   google-cloud-pipeline-components
     #   google-cloud-pubsub
     #   google-cloud-pubsublite
     #   google-cloud-recommendations-ai
@@ -738,6 +739,7 @@ google-cloud-aiplatform==1.44.0 \
     # via
     #   apache-beam
     #   gigl (python/pyproject.toml)
+    #   google-cloud-pipeline-components
 google-cloud-appengine-logging==1.6.1 \
     --hash=sha256:48f4dcf43000899c7b411bc27181f70240e81a958a44e44ce800ba8e5d5184ac \
     --hash=sha256:f97bde36c7f7ff541123c2570813158bdda0c3f2385c8d32fdf1211c561ae56d
@@ -790,6 +792,9 @@ google-cloud-language==2.17.1 \
 google-cloud-logging==3.11.4 \
     --hash=sha256:1d465ac62df29fb94bba4d6b4891035e57d573d84541dd8a40eebbc74422b2f0 \
     --hash=sha256:32305d989323f3c58603044e2ac5d9cf23e9465ede511bbe90b4309270d3195c
+    # via gigl (python/pyproject.toml)
+google-cloud-pipeline-components==2.3.0 \
+    --hash=sha256:bfb6f04598f431577bdf40d3a937646eed16f703d95010379db138d4624be69c
     # via gigl (python/pyproject.toml)
 google-cloud-pubsub==2.29.0 \
     --hash=sha256:3ccc76ae623e408c7a80f2f81bfd3ab9dca1d61231cc2a063d569d021449481a \
@@ -1104,7 +1109,9 @@ keras==2.15.0 \
     # via tensorflow
 kfp==2.5.0 \
     --hash=sha256:13e0d87f5fc9b1b32f0138bbeb85f50eebf4d2b7058c52cc78597528ceb00a0c
-    # via gigl (python/pyproject.toml)
+    # via
+    #   gigl (python/pyproject.toml)
+    #   google-cloud-pipeline-components
 kfp-pipeline-spec==0.2.2 \
     --hash=sha256:e83b58ffed3f7ca154d62ab20e14dc9a1a3c9dad589e856dd2b421e226f3b8d0
     # via kfp
