@@ -1,9 +1,9 @@
 from enum import Enum
 from typing import Dict, List
 
-import applied_tasks.knowledge_graph_embedding.lib.constants.gcs as gcs_constants
+import gigl.experimental.knowledge_graph_embedding.lib.constants.gcs as gcs_constants
 import torch.distributed as dist
-from applied_tasks.knowledge_graph_embedding.common.graph_dataset import (
+from gigl.experimental.knowledge_graph_embedding.common.graph_dataset import (
     CONDENSED_EDGE_TYPE_FIELD,
     DST_FIELD,
     SRC_FIELD,
