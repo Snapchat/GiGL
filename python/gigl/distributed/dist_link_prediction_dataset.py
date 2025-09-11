@@ -481,7 +481,7 @@ class DistDataset(glt.distributed.DistDataset):
             elif isinstance(
                 partition_output.partitioned_node_labels, FeaturePartitionData
             ):
-                assert isinstance(self._node_partition_book, PartitionBook)
+                assert isinstance(self._node_partition_book, (torch.Tensor, PartitionBook))
                 labels_to_split_indices = (
                     partition_output.partitioned_node_labels.feats != -1
                 ).squeeze()
