@@ -31,9 +31,9 @@ RUNNING A PIPELINE:
             The value has to be of form: "<label_name>=<label_value>".
             NOTE: unlike SharedResourceConfig.resource_labels, these are *only* applied to the vertex ai pipeline run.
             Example: --run_labels=gigl-integration-test=true --run_labels=user=me
-        --notification_email: Email to send notification to.
+        --notification_emails: Emails to send notification to.
             See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
-            Example: --notification_emails=user@example.com
+            Example: --notification_emails=user@example.com --notification_emails=user2@example.com
 
     You can alternatively run_no_compile if you have a precompiled pipeline somewhere.
     python gigl.orchestration.kubeflow.runner --action=run_no_compile ...args
@@ -46,7 +46,7 @@ RUNNING A PIPELINE:
         --start_at
         --stop_after
         --pipeline_tag
-        --notification_email
+        --notification_emails
         --wait
 
 COMPILING A PIPELINE:
@@ -323,8 +323,9 @@ def _get_parser() -> argparse.ArgumentParser:
         """,
     )
     parser.add_argument(
-        "--notification_email",
-        default=None,
+        "--notification_emails",
+        action="append",
+        default=[],
         help="Email to send notification to. See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.",
     )
     return parser
@@ -397,7 +398,7 @@ if __name__ == "__main__":
             stop_after=args.stop_after,
             compiled_pipeline_path=compiled_pipeline_path,
             labels=parsed_labels if parsed_labels else None,
-            notification_email=args.notification_email,
+            notification_emails=args.notification_emails,
         )
 
         if args.wait:

@@ -1,5 +1,7 @@
 import os
-from typing import Final, Optional
+
+# KFP doesn't support list[str] for runtime parameters, so we need to use List instead.
+from typing import Final, List, Optional
 
 import kfp
 import kfp.dsl.pipeline_channel
@@ -230,14 +232,6 @@ def generate_pipeline(
         common_pipeline_component_configs (CommonPipelineComponentConfigs): Shared configuration between components.
         tag (Optiona[str]): Optional tag, which is provided will be used to tag the pipeline description.
 
-    Note: notification_email is a runtime parameter,
-    so it can get set easily via the run_keyword_args (and via web UI etc).
-    Do to the following reasons, we have not been able to enable multiple emails:
-        1. KFP pipeline runtime parameters do not support list[str], only str | int | float etc
-        2. Tasks in an ExitHandler must not depend on any other task (e.g. cannot write some parse_csv and use that in the handler
-        3. pipeline_task_final_status which the email component relies on must be in an exit handler
-            e.g. if I create some subpipeline that does the parse + email, the email won't be in the exit handler,
-            the pipeline it's in will be, and this doesn't work either.
 
     Returns:
         An @kfp.dsl.pipeline decorated function to generated a pipeline.
@@ -253,23 +247,11 @@ def generate_pipeline(
         resource_config_uri: str,
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
-        notification_email: Optional[str] = None,
+        notification_emails: Optional[List[str]] = None,
     ):
-        if notification_email:
-            with kfp.dsl.ExitHandler(
-                VertexNotificationEmailOp(
-                    recipients=[notification_email] if notification_email else []
-                )
-            ):
-                _generate_component_tasks(
-                    job_name=job_name,
-                    template_or_frozen_config_uri=template_or_frozen_config_uri,
-                    resource_config_uri=resource_config_uri,
-                    common_pipeline_component_configs=common_pipeline_component_configs,
-                    start_at=start_at,
-                    stop_after=stop_after,
-                )
-        else:
+        with kfp.dsl.ExitHandler(
+            VertexNotificationEmailOp(recipients=notification_emails)
+        ):
             _generate_component_tasks(
                 job_name=job_name,
                 template_or_frozen_config_uri=template_or_frozen_config_uri,
