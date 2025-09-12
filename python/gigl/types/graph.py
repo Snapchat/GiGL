@@ -107,30 +107,6 @@ class FeatureInfo:
     dtype: torch.dtype
 
 
-def _get_label_edges(
-    labeled_edge_index: torch.Tensor,
-    edge_dir: Literal["in", "out"],
-    labeled_edge_type: EdgeType,
-) -> tuple[EdgeType, torch.Tensor]:
-    """
-    If edge direction is `out`, return the provided edge type and edge index. Otherwise, reverse the edge type and flip the edge index rows
-    so that the labeled edge index may be the same direction as the rest of the edges.
-    Args:
-        labeled_edge_index (torch.Tensor): Edge index containing positive or negative labels for supervision
-        edge_dir (Literal["in", "out"]): Direction of edges in the graph
-        labeled_edge_type (EdgeType): Edge type used for the positive or negative labeled edges
-    Returns:
-        EdgeType: Labeled edge type, which has been reversed if edge_dir = "in"
-        torch.Tensor: Labeled edge index, which has its rows flipped if edge_dir = "in"
-    """
-    if edge_dir == "in":
-        rev_edge_type = reverse_edge_type(labeled_edge_type)
-        rev_labeled_edge_index = labeled_edge_index.flip(0)
-        return rev_edge_type, rev_labeled_edge_index
-    else:
-        return labeled_edge_type, labeled_edge_index
-
-
 # This dataclass should not be frozen, as we are expected to delete its members once they have been registered inside of the partitioner
 # in order to save memory.
 @dataclass
@@ -153,8 +129,6 @@ class LoadedGraphTensors:
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
         Convert positive and negative labels to edges. Converts this object in-place to a "heterogeneous" representation.
-        If the edge direction is "in", we must reverse the supervision edge type. This is because we assume that provided labels are directed
-        outwards in form (`anchor_node_type`, `relation`, `supervision_node_type`), and all edges in the edge index must be in the same direction.
 
         This function requires the following conditions and will throw if they are not met:
             1. The positive_label is not None
@@ -184,12 +158,7 @@ class LoadedGraphTensors:
                     "Detected multiple edge types in provided edge_index, but no edge types specified for provided positive label."
                 )
             positive_label_edge_type = message_passing_to_positive_label(main_edge_type)
-            labeled_edge_type, edge_index = _get_label_edges(
-                labeled_edge_index=self.positive_label,
-                edge_dir=edge_dir,
-                labeled_edge_type=positive_label_edge_type,
-            )
-            edge_index_with_labels[labeled_edge_type] = edge_index
+            edge_index_with_labels[positive_label_edge_type] = self.positive_label
             logger.info(
                 f"Treating homogeneous positive labels as edge type {positive_label_edge_type}."
             )
@@ -202,12 +171,7 @@ class LoadedGraphTensors:
                 positive_label_edge_type = message_passing_to_positive_label(
                     positive_label_type
                 )
-                labeled_edge_type, edge_index = _get_label_edges(
-                    labeled_edge_index=positive_label_tensor,
-                    edge_dir=edge_dir,
-                    labeled_edge_type=positive_label_edge_type,
-                )
-                edge_index_with_labels[labeled_edge_type] = edge_index
+                edge_index_with_labels[positive_label_edge_type] = positive_label_tensor
                 logger.info(
                     f"Treating heterogeneous positive labels {positive_label_type} as edge type {positive_label_edge_type}."
                 )
@@ -218,12 +182,7 @@ class LoadedGraphTensors:
                     "Detected multiple edge types in provided edge_index, but no edge types specified for provided negative label."
                 )
             negative_label_edge_type = message_passing_to_negative_label(main_edge_type)
-            labeled_edge_type, edge_index = _get_label_edges(
-                labeled_edge_index=self.negative_label,
-                edge_dir=edge_dir,
-                labeled_edge_type=negative_label_edge_type,
-            )
-            edge_index_with_labels[labeled_edge_type] = edge_index
+            edge_index_with_labels[negative_label_edge_type] = self.negative_label
             logger.info(
                 f"Treating homogeneous negative labels as edge type {negative_label_edge_type}."
             )
@@ -235,12 +194,7 @@ class LoadedGraphTensors:
                 negative_label_edge_type = message_passing_to_negative_label(
                     negative_label_type
                 )
-                labeled_edge_type, edge_index = _get_label_edges(
-                    labeled_edge_index=negative_label_tensor,
-                    edge_dir=edge_dir,
-                    labeled_edge_type=negative_label_edge_type,
-                )
-                edge_index_with_labels[labeled_edge_type] = edge_index
+                edge_index_with_labels[negative_label_edge_type] = negative_label_tensor
                 logger.info(
                     f"Treating heterogeneous negative labels {negative_label_type} as edge type {negative_label_edge_type}."
                 )
@@ -490,17 +444,3 @@ def to_homogeneous(
         n = next(iter(x.values()))
         return n
     return x
-
-
-def reverse_edge_type(edge_type: _EdgeType) -> _EdgeType:
-    """
-    Reverses the source and destination node types of the provided edge type
-    Args:
-        edge_type (EdgeType): The target edge to have its source and destinated node types reversed
-    Returns:
-        EdgeType: The reversed edge type
-    """
-    if isinstance(edge_type, EdgeType):
-        return EdgeType(edge_type[2], edge_type[1], edge_type[0])
-    else:
-        return (edge_type[2], edge_type[1], edge_type[0])

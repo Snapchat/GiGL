@@ -1186,12 +1186,19 @@ class DistPartitioner:
         """
         start_time = time.time()
 
-        if edge_type.src_node_type not in node_partition_book:
+        if self._should_assign_edges_by_src_node:
+            target_node_type = edge_type.src_node_type
+            target_edge_src_dst_index = 0
+        else:
+            target_node_type = edge_type.dst_node_type
+            target_edge_src_dst_index = 1
+
+        if target_node_type not in node_partition_book:
             raise ValueError(
-                f"Edge type {edge_type} source node type {edge_type.src_node_type} not found in the node partition book node keys: {node_partition_book.keys()}"
+                f"Edge type {edge_type} source node type {target_node_type} not found in the node partition book node keys: {node_partition_book.keys()}"
             )
 
-        target_node_partition_book = node_partition_book[edge_type.src_node_type]
+        target_node_partition_book = node_partition_book[target_node_type]
         if is_positive:
             assert (
                 self._positive_label_edge_index is not None
@@ -1217,9 +1224,9 @@ class DistPartitioner:
             ),
             # 'partition_fn' takes 'val_indices' as input, uses it as keys for partition,
             # and returns the partition index.
-            rank_indices=label_edge_index[0],
+            rank_indices=label_edge_index[target_edge_src_dst_index],
             partition_function=_label_pfn,
-            total_val_size=label_edge_index[0].size(0),
+            total_val_size=label_edge_index[target_edge_src_dst_index].size(0),
             generate_pb=False,
         )
 

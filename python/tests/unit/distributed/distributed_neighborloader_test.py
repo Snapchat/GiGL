@@ -1,6 +1,6 @@
 import unittest
 from collections.abc import Mapping
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -334,8 +334,13 @@ def _run_dblp_supervised(
         len(supervision_edge_types) == 1
     ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
     supervision_edge_type = supervision_edge_types[0]
-    anchor_node_type = supervision_edge_type.src_node_type
-    supervision_node_type = supervision_edge_type.dst_node_type
+    sampling_edge_direction = dataset.edge_dir
+    if sampling_edge_direction == "in":
+        anchor_node_type = supervision_edge_type.dst_node_type
+        supervision_node_type = supervision_edge_type.src_node_type
+    else:
+        anchor_node_type = supervision_edge_type.src_node_type
+        supervision_node_type = supervision_edge_type.dst_node_type
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
     fanout = [2, 2]
@@ -374,20 +379,28 @@ def _run_toy_heterogeneous_ablp(
     supervision_edge_types: list[EdgeType],
     fanout: Union[list[int], dict[EdgeType, list[int]]],
 ):
-    anchor_node_type = NodeType("user")
-    supervision_node_type = NodeType("story")
     assert (
         len(supervision_edge_types) == 1
     ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
     supervision_edge_type = supervision_edge_types[0]
+    labeled_edge_type = message_passing_to_positive_label(supervision_edge_type)
+    sampling_edge_direction = dataset.edge_dir
+
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
-    labeled_edge_type = EdgeType(
-        supervision_node_type, Relation("to_gigl_positive"), anchor_node_type
-    )
-    all_positive_supervision_nodes, all_anchor_nodes, _, _ = dataset.graph[
-        labeled_edge_type
-    ].topo.to_coo()
+    if sampling_edge_direction == "in":
+        anchor_node_type = supervision_edge_type.dst_node_type
+        supervision_node_type = supervision_edge_type.src_node_type
+        all_positive_supervision_nodes, all_anchor_nodes, _, _ = dataset.graph[
+            labeled_edge_type
+        ].topo.to_coo()
+    else:
+        anchor_node_type = supervision_edge_type.src_node_type
+        supervision_node_type = supervision_edge_type.dst_node_type
+        all_anchor_nodes, all_positive_supervision_nodes, _, _ = dataset.graph[
+            labeled_edge_type
+        ].topo.to_coo()
+
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=fanout,
@@ -819,9 +832,21 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, expected_data_count),
         )
 
+    @parameterized.expand(
+        [
+            param(
+                "Inward edge direction",
+                sampling_edge_direction="in",
+            ),
+            param(
+                "Outward edge direction",
+                sampling_edge_direction="out",
+            ),
+        ]
+    )
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def test_dblp_supervised(self):
+    def test_dblp_supervised(self, _, sampling_edge_direction: Literal["in", "out"]):
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -843,7 +868,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
         splitter = HashedNodeAnchorLinkSplitter(
-            sampling_direction="in",
+            sampling_direction=sampling_edge_direction,
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,
         )
@@ -851,7 +876,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=self._context,
-            sample_edge_direction="in",
+            sample_edge_direction=sampling_edge_direction,
             _ssl_positive_label_percentage=0.1,
             splitter=splitter,
         )
@@ -864,17 +889,19 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "Tensor-based partitioning, list fanout",
+                "Tensor-based partitioning, list fanout, inward edge direction",
                 partitioner_class=DistPartitioner,
                 fanout=[2, 2],
+                sampling_edge_direction="in",
             ),
             param(
-                "Range-based partitioning, list fanout",
+                "Range-based partitioning, list fanout, inward edge direction",
                 partitioner_class=DistRangePartitioner,
                 fanout=[2, 2],
+                sampling_edge_direction="in",
             ),
             param(
-                "Range-based partitioning, dict fanout",
+                "Range-based partitioning, dict fanout, inward edge direction",
                 partitioner_class=DistRangePartitioner,
                 fanout={
                     EdgeType(NodeType("user"), Relation("to"), NodeType("story")): [
@@ -886,6 +913,13 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
                         2,
                     ],
                 },
+                sampling_edge_direction="in",
+            ),
+            param(
+                "Range-based partitioning, list fanout, outward edge direction",
+                partitioner_class=DistRangePartitioner,
+                fanout=[2, 2],
+                sampling_edge_direction="out",
             ),
         ]
     )
@@ -894,6 +928,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         _,
         partitioner_class: type[DistPartitioner],
         fanout: Union[list[int], dict[EdgeType, list[int]]],
+        sampling_edge_direction: Literal["in", "out"],
     ):
         toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[
             HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
@@ -916,7 +951,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
         splitter = HashedNodeAnchorLinkSplitter(
-            sampling_direction="in",
+            sampling_direction=sampling_edge_direction,
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,
         )
@@ -924,7 +959,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
             distributed_context=self._context,
-            sample_edge_direction="in",
+            sample_edge_direction=sampling_edge_direction,
             _ssl_positive_label_percentage=0.1,
             splitter=splitter,
             partitioner_class=partitioner_class,
