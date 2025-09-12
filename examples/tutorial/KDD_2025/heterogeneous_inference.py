@@ -38,7 +38,7 @@ from gigl.common import Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter
 from gigl.common.logger import Logger
 from gigl.distributed import (
-    DistLinkPredictionDataset,
+    DistDataset,
     DistNeighborLoader,
     build_dataset_from_task_config_uri,
 )
@@ -54,7 +54,7 @@ def inference(
     process_number: int,
     process_count: int,
     port: int,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     embedding_output_uri: Uri,
     saved_model_uri: Uri,
     batch_size: int = 4,
