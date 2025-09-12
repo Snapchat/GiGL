@@ -1,7 +1,6 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Protocol
 
 import torch.distributed as dist
 from torch.utils.data import IterableDataset
@@ -262,10 +261,9 @@ class EdgeDatasetResourceBuilder:
         )
 
 
-class EdgeDatasetStrategy(ABC):
-    """Abstract strategy for creating different types of edge datasets."""
+class EdgeDatasetStrategy(Protocol):
+    """Protocol for creating different types of edge datasets."""
 
-    @abstractmethod
     def create_dataset(
         self,
         config: EdgeDatasetConfig,
@@ -274,9 +272,10 @@ class EdgeDatasetStrategy(ABC):
         **kwargs,
     ) -> IterableDataset:
         """Create a dataset for the given split."""
+        ...
 
 
-class BigQueryDatasetStrategy(EdgeDatasetStrategy):
+class BigQueryDatasetStrategy:
     """Strategy for creating BigQuery-based edge datasets."""
 
     def create_dataset(
@@ -295,7 +294,7 @@ class BigQueryDatasetStrategy(EdgeDatasetStrategy):
         )
 
 
-class GcsDatasetStrategy(EdgeDatasetStrategy):
+class GcsDatasetStrategy:
     """Strategy for creating GCS-based edge datasets (JSONL or Parquet)."""
 
     def __init__(self, format_type: EdgeDatasetFormat):
