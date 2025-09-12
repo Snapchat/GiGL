@@ -1075,7 +1075,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             partitioner.partition_node_features(node_pb)
 
-    def test_register_node_ids_re_registration_prevention(self) -> None:
+    def test_node_ids_re_registration(self) -> None:
         """Test that re-registering node IDs raises an error."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
 
@@ -1096,7 +1096,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Node IDs have already been registered"):
             partitioner.register_node_ids(node_ids=node_ids)
 
-    def test_register_edge_index_re_registration_prevention(self) -> None:
+    def test_edge_index_re_registration(self) -> None:
         """Test that re-registering edge indices raises an error."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
 
@@ -1109,6 +1109,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
 
+        # This would be set during registration of node ids
+        partitioner._is_input_homogeneous = True
+
         # First registration should work
         edge_index = torch.tensor([[0, 1], [1, 2]])
         partitioner.register_edge_index(edge_index=edge_index)
@@ -1117,7 +1120,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Edge indices have already been registered"):
             partitioner.register_edge_index(edge_index=edge_index)
 
-    def test_register_node_features_re_registration_prevention(self) -> None:
+    def test_node_features_re_registration(self) -> None:
         """Test that re-registering node features raises an error."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
 
@@ -1138,7 +1141,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Node features have already been registered"):
             partitioner.register_node_features(node_features=node_features)
 
-    def test_register_edge_features_re_registration_prevention(self) -> None:
+    def test_edge_features_re_registration(self) -> None:
         """Test that re-registering edge features raises an error."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
 
@@ -1151,6 +1154,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
 
+        # This would be set during registration of node ids
+        partitioner._is_input_homogeneous = True
+
         # First registration should work
         edge_features = torch.ones(2, 10)
         partitioner.register_edge_features(edge_features=edge_features)
@@ -1159,7 +1165,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Edge features have already been registered"):
             partitioner.register_edge_features(edge_features=edge_features)
 
-    def test_register_labels_re_registration_prevention(self) -> None:
+    def test_labels_re_registration(self) -> None:
         """Test that re-registering labels raises an error."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
 
@@ -1172,16 +1178,23 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
 
+        # This would be set during registration of node ids
+        partitioner._is_input_homogeneous = True
+
         # First registration should work
         pos_labels = torch.tensor([[0, 1], [1, 2]])
         partitioner.register_labels(label_edge_index=pos_labels, is_positive=True)
 
-        # Second registration should raise an error
+        # # Second registration should raise an error
         with self.assertRaisesRegex(ValueError, "Positive labels have already been registered"):
             partitioner.register_labels(label_edge_index=pos_labels, is_positive=True)
 
-        # Test negative labels separately
+        # Negative labels test
         partitioner2 = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # This would be set during registration of node ids
+        partitioner2._is_input_homogeneous = True
+
         neg_labels = torch.tensor([[0, 1], [1, 2]])
         partitioner2.register_labels(label_edge_index=neg_labels, is_positive=False)
 
@@ -1189,7 +1202,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Negative labels have already been registered"):
             partitioner2.register_labels(label_edge_index=neg_labels, is_positive=False)
 
-    def test_register_heterogeneous_re_registration_prevention(self) -> None:
+    def test_heterogeneous_re_registration(self) -> None:
         """Test re-registration prevention for heterogeneous data."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
 
@@ -1202,7 +1215,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
 
-        # Test heterogeneous node IDs
+        # Heterogeneous node IDs test
         node_ids = {
             USER_NODE_TYPE: torch.tensor([0, 1, 2]),
             ITEM_NODE_TYPE: torch.tensor([0, 1, 2])
@@ -1213,8 +1226,12 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Node IDs have already been registered"):
             partitioner.register_node_ids(node_ids=node_ids)
 
-        # Test heterogeneous edge indices
+        # Heterogeneous edge indices test
         partitioner2 = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # This would be set during registration of node ids
+        partitioner2._is_input_homogeneous = False
+
         edge_index = {
             USER_TO_USER_EDGE_TYPE: torch.tensor([[0, 1], [1, 2]])
         }
@@ -1223,7 +1240,6 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         # Second registration should raise an error
         with self.assertRaisesRegex(ValueError, "Edge indices have already been registered"):
             partitioner2.register_edge_index(edge_index=edge_index)
-
 
 if __name__ == "__main__":
     unittest.main()
