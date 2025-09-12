@@ -1,0 +1,30 @@
+# @package _global_
+# CORA experiment: Uses CORA dataset with in-batch negative sampling strategy
+
+defaults:
+  - override /dataset: cora/cora    # Use CORA citation network dataset
+
+model:
+  node_embedding_dim: 128           # 128-dim embeddings for CORA
+
+training:
+  max_steps: 10000                  # Train for 10k steps
+  checkpointing:
+    save_every: 500                 # Save checkpoints frequently for shorter runs
+  sampling:
+    num_random_negatives_per_edge: 0     # No random negatives
+    num_inbatch_negatives_per_edge: 16   # Use 16 in-batch negatives (memory efficient)
+  early_stopping:
+    patience: 10                    # Stop after 10 steps without improvement
+  optimizer:
+    sparse:
+      lr: 0.01                      # Higher learning rate for sparse embeddings
+      weight_decay: 0.01            # Stronger regularization for sparse
+    dense:
+      lr: 0.01                      # Higher learning rate for dense layers
+      weight_decay: 0.001           # Standard regularization for dense
+
+validation:
+  sampling:
+    num_random_negatives_per_edge: 0     # No random negatives in validation
+    num_inbatch_negatives_per_edge: 100  # More in-batch negatives for evaluation

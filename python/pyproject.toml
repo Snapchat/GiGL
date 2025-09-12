@@ -32,6 +32,7 @@ dependencies = [
     "google-cloud-aiplatform~=1.44.0",
     "google-cloud-dataproc",
     "google-cloud-logging",
+    "google-cloud-pipeline-components",
     "google-cloud-storage",
     # ipython and ipykernel are required for us to run jupyter notebooks as a part of our test suite.
     # See https://stackoverflow.com/questions/69759351/error-jupyter-client-kernelspec-nosuchkernel-no-such-kernel-named-python3-occu
