@@ -18,7 +18,7 @@ from gigl.distributed import (
     DistributedContext,
     build_dataset,
 )
-from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -553,7 +553,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
             ),
         )
 
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
         assert isinstance(dataset.node_labels, Feature)
@@ -599,7 +599,7 @@ class DistributedDatasetTestCase(unittest.TestCase):
             },
         )
 
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
         assert isinstance(dataset.node_labels, dict)
