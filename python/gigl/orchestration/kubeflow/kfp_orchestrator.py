@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union
@@ -58,7 +57,6 @@ class KfpOrchestrator:
         dst_compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         additional_job_args: Optional[dict[GiGLComponents, dict[str, str]]] = None,
         tag: Optional[str] = None,
-        notification_emails: Sequence[str] = (),
     ) -> Uri:
         """
         Compiles the GiGL Kubeflow pipeline.
@@ -71,8 +69,6 @@ class KfpOrchestrator:
             :data:`~gigl.constants.DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH`.
             additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
             tag (Optional[str]): Optional tag to include in the pipeline description.
-            notification_emails (Sequence[str]): Emails to send notification to.
-              See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
         Returns:
             Uri: The URI of the compiled pipeline.
         """
@@ -95,7 +91,6 @@ class KfpOrchestrator:
             generate_pipeline(
                 common_pipeline_component_configs=common_pipeline_component_configs,
                 tag=tag,
-                notification_emails=notification_emails,
             ),
             local_pipeline_bundle_path.uri,
         )
@@ -122,6 +117,7 @@ class KfpOrchestrator:
         stop_after: Optional[str] = None,
         compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         labels: Optional[dict[str, str]] = None,
+        notification_email: Optional[str] = None,
     ) -> aiplatform.PipelineJob:
         """
         Runs the GiGL Kubeflow pipeline.
@@ -134,6 +130,8 @@ class KfpOrchestrator:
             stop_after (Optional[str]): Component to stop the pipeline after. Defaults to None i.e. run entire pipeline.
             compiled_pipeline_path (Uri): Path to the compiled pipeline YAML file.
             labels (Optional[dict[str, str]]): Labels to associate with the run.
+            notification_email (Optional[str]): Email to send notification to.
+                See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
         Returns:
             aiplatform.PipelineJob: The created pipeline job.
         """
@@ -150,6 +148,7 @@ class KfpOrchestrator:
             "start_at": start_at,
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
+            "notification_email": notification_email,
         }
         if stop_after is not None:
             run_keyword_args["stop_after"] = stop_after
