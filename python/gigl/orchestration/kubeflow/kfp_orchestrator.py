@@ -153,7 +153,7 @@ class KfpOrchestrator:
         # Ideally, we'd be able to provide None and have it handle it, but for whatever reason
         # that's not supported atm. Passing in None gives the below error:
         # Notification email "recipients" parameter must specify at least one recipient.
-        if notification_emails is not None:
+        if notification_emails:
             run_keyword_args["notification_emails"] = notification_emails
         else:
             run_keyword_args["notification_emails"] = [
