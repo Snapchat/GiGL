@@ -362,7 +362,7 @@ class DistPartitioner:
         self._assert_and_get_rpc_setup()
 
         # Check if node data has already been registered
-        if self._node_ids is not None or len(self._node_types) > 0:
+        if self._node_ids is not None:
             raise ValueError("Node IDs have already been registered. Cannot re-register node data.")
 
         logger.info("Registering Nodes ...")
@@ -429,7 +429,7 @@ class DistPartitioner:
         self._assert_and_get_rpc_setup()
 
         # Check if edge data has already been registered
-        if self._edge_index is not None or len(self._edge_types) > 0:
+        if self._edge_index is not None:
             raise ValueError("Edge indices have already been registered. Cannot re-register edge data.")
 
         logger.info("Registering Edge Indices ...")
@@ -504,7 +504,7 @@ class DistPartitioner:
         self._assert_and_get_rpc_setup()
 
         # Check if node features have already been registered
-        if self._node_feat is not None or self._node_feat_dim is not None:
+        if self._node_feat is not None:
             raise ValueError("Node features have already been registered. Cannot re-register node feature data.")
 
         logger.info("Registering Node Features ...")
@@ -539,7 +539,7 @@ class DistPartitioner:
         self._assert_and_get_rpc_setup()
 
         # Check if edge features have already been registered
-        if self._edge_feat is not None or self._edge_feat_dim is not None:
+        if self._edge_feat is not None:
             raise ValueError("Edge features have already been registered. Cannot re-register edge feature data.")
 
         logger.info("Registering Edge Features ...")

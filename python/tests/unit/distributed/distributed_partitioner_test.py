@@ -1109,8 +1109,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
 
-        # This would be set during registration of node ids
-        partitioner._is_input_homogeneous = True
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_ids(torch.tensor([0, 1, 2]))
 
         # First registration should work
         edge_index = torch.tensor([[0, 1], [1, 2]])
@@ -1154,8 +1154,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
 
-        # This would be set during registration of node ids
-        partitioner._is_input_homogeneous = True
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_features(torch.ones(3, 5))
 
         # First registration should work
         edge_features = torch.ones(2, 10)
@@ -1165,7 +1165,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Edge features have already been registered"):
             partitioner.register_edge_features(edge_features=edge_features)
 
-    def test_labels_re_registration(self) -> None:
+    def test_positive_labels_re_registration(self) -> None:
         """Test that re-registering labels raises an error."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
 
@@ -1176,10 +1176,11 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             num_rpc_threads=4,
         )
 
+        # Positive labels test
         partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
 
-        # This would be set during registration of node ids
-        partitioner._is_input_homogeneous = True
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_ids(torch.tensor([0, 1, 2]))
 
         # First registration should work
         pos_labels = torch.tensor([[0, 1], [1, 2]])
@@ -1189,18 +1190,29 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Positive labels have already been registered"):
             partitioner.register_labels(label_edge_index=pos_labels, is_positive=True)
 
-        # Negative labels test
-        partitioner2 = DistPartitioner(should_assign_edges_by_src_node=True)
+    def test_negative_labels_re_registration(self) -> None:
+        """Test that re-registering labels raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
 
-        # This would be set during registration of node ids
-        partitioner2._is_input_homogeneous = True
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        # Negative labels test
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_ids(torch.tensor([0, 1, 2]))
 
         neg_labels = torch.tensor([[0, 1], [1, 2]])
-        partitioner2.register_labels(label_edge_index=neg_labels, is_positive=False)
+        partitioner.register_labels(label_edge_index=neg_labels, is_positive=False)
 
         # Second registration should raise an error
         with self.assertRaisesRegex(ValueError, "Negative labels have already been registered"):
-            partitioner2.register_labels(label_edge_index=neg_labels, is_positive=False)
+            partitioner.register_labels(label_edge_index=neg_labels, is_positive=False)
 
     def test_heterogeneous_re_registration(self) -> None:
         """Test re-registration prevention for heterogeneous data."""
@@ -1228,9 +1240,6 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         # Heterogeneous edge indices test
         partitioner2 = DistPartitioner(should_assign_edges_by_src_node=True)
-
-        # This would be set during registration of node ids
-        partitioner2._is_input_homogeneous = False
 
         edge_index = {
             USER_TO_USER_EDGE_TYPE: torch.tensor([[0, 1], [1, 2]])
