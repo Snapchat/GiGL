@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Dict, Iterable, Tuple
+from typing import Iterable
 
 import torch
 import torchrec
@@ -42,7 +42,7 @@ class NodeBatch(DataclassBatch):
         nodes: torch.Tensor,
         condensed_node_type: torch.Tensor,
         condensed_edge_type: torch.Tensor,
-        condensed_node_type_to_node_type_map: Dict[CondensedNodeType, NodeType],
+        condensed_node_type_to_node_type_map: dict[CondensedNodeType, NodeType],
     ) -> NodeBatch:
         """
         Creates a NodeBatch from a range of nodes. Each batch will contain
@@ -53,7 +53,7 @@ class NodeBatch(DataclassBatch):
             nodes: torch.Tensor: A tensor containing the node IDs.
             condensed_node_type: torch.Tensor: A tensor representing the condensed node type.
             condensed_edge_type: torch.Tensor: A tensor representing the condensed edge type.
-            condensed_node_type_to_node_type_map: Dict[CondensedNodeType, NodeType]: A mapping from condensed node types to node types.
+            condensed_node_type_to_node_type_map: dict[CondensedNodeType, NodeType]: A mapping from condensed node types to node types.
 
         Returns:
             NodeBatch: The created NodeBatch.
@@ -62,8 +62,8 @@ class NodeBatch(DataclassBatch):
         num_nodes = nodes.size()  # Inclusive of start and end
 
         cnt_keys = sorted(list(condensed_node_type_to_node_type_map.keys()))
-        lengths: Dict[CondensedNodeType, torch.Tensor] = dict()
-        values: Dict[CondensedNodeType, torch.Tensor] = dict()
+        lengths: dict[CondensedNodeType, torch.Tensor] = dict()
+        values: dict[CondensedNodeType, torch.Tensor] = dict()
 
         for cnt_key in cnt_keys:
             lengths[cnt_key] = (
@@ -90,15 +90,15 @@ class NodeBatch(DataclassBatch):
 
     def to_node_tensors(
         self,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Reconstructs the tensors comprising the NodeBatch.
 
         Args:
-            condensed_node_type_to_node_type_map (Dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
+            condensed_node_type_to_node_type_map (dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - nodes: torch.Tensor: The node IDs.
                 - condensed_node_type: torch.Tensor: The condensed node type.
                 - condensed_edge_type: torch.Tensor: The condensed edge type.
@@ -136,7 +136,7 @@ def collate_node_batch_from_range(
     nodes: Iterable[int],
     condensed_node_type: CondensedNodeType,
     condensed_edge_type: CondensedEdgeType,
-    condensed_node_type_to_node_type_map: Dict[CondensedNodeType, NodeType],
+    condensed_node_type_to_node_type_map: dict[CondensedNodeType, NodeType],
 ) -> NodeBatch:
     """
     Collates a batch of nodes into a NodeBatch.
@@ -146,7 +146,7 @@ def collate_node_batch_from_range(
         nodes (Iterable[int]): An iterable of node IDs.
         condensed_node_type (CondensedNodeType): The condensed node type for the batch.
         condensed_edge_type (CondensedEdgeType): The condensed edge type for the batch (relevant to inference).
-        condensed_node_type_to_node_type_map (Dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
+        condensed_node_type_to_node_type_map (dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
     """
     return NodeBatch.from_node_tensors(
         nodes=torch.tensor(nodes, dtype=torch.int32),

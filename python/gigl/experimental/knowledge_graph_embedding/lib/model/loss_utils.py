@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import Union
 
 import torch
 import torch.nn.functional as F
@@ -71,7 +71,7 @@ def infonce_loss(
 
 def average_pos_neg_scores(
     scores: torch.Tensor, labels: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Computes the average positive and negative scores from scores and labels.
 
@@ -80,7 +80,7 @@ def average_pos_neg_scores(
         labels: Label tensor of corresponding shape.  1s indicate positive, 0s indicate negative.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (avg_pos_score, avg_neg_score).  These are scalars,
+        tuple[torch.Tensor, torch.Tensor]: (avg_pos_score, avg_neg_score).  These are scalars,
         and the tensors are detached from the computation graph since we don't want to backprop.
     """
 
@@ -93,7 +93,7 @@ def average_pos_neg_scores(
 def hit_rate_at_k(
     scores: torch.Tensor,
     labels: torch.Tensor,
-    ks: Union[int, List[int]],
+    ks: Union[int, list[int]],
 ) -> torch.Tensor:
     """
     Computes HitRate@K using pure tensor operations.

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Dict, List, Tuple
 
 import torch
 import torchrec
@@ -51,9 +50,9 @@ class EdgeBatch(DataclassBatch):
         edges: torch.Tensor,
         condensed_edge_types: torch.Tensor,
         edge_labels: torch.Tensor,
-        condensed_node_type_to_node_type_map: Dict[CondensedNodeType, NodeType],
-        condensed_edge_type_to_condensed_node_type_map: Dict[
-            CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
+        condensed_node_type_to_node_type_map: dict[CondensedNodeType, NodeType],
+        condensed_edge_type_to_condensed_node_type_map: dict[
+            CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]
         ],
     ) -> EdgeBatch:
         """
@@ -64,18 +63,18 @@ class EdgeBatch(DataclassBatch):
             edges (torch.Tensor): A tensor of edges.
             condensed_edge_types (torch.Tensor): A tensor of condensed edge types.
             edge_labels (torch.Tensor): A tensor of edge labels.
-            condensed_node_type_to_node_type_map (Dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
-            condensed_edge_type_to_condensed_node_type_map (Dict[CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]]): A mapping from condensed edge types to condensed node types.
+            condensed_node_type_to_node_type_map (dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
+            condensed_edge_type_to_condensed_node_type_map (dict[CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]]): A mapping from condensed edge types to condensed node types.
         """
 
         num_edges = edges.size(0)
         # We canonicalize the order of keys so all KJTs are constructed the same way.
         # This ensures that when they are processed by EmbeddingBagCollections, the outputs are consistently ordered.
         cnt_keys = sorted(list(condensed_node_type_to_node_type_map.keys()))
-        lengths: Dict[CondensedNodeType, List[int]] = {
+        lengths: dict[CondensedNodeType, list[int]] = {
             key: [0] * (2 * num_edges) for key in cnt_keys
         }
-        values: Dict[CondensedNodeType, List[int]] = {key: [] for key in cnt_keys}
+        values: dict[CondensedNodeType, list[int]] = {key: [] for key in cnt_keys}
 
         for i, (edge, condensed_edge_type) in enumerate(
             zip(edges, condensed_edge_types)
@@ -108,10 +107,10 @@ class EdgeBatch(DataclassBatch):
 
     def to_edge_tensors(
         self,
-        condensed_edge_type_to_condensed_node_type_map: Dict[
-            CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
+        condensed_edge_type_to_condensed_node_type_map: dict[
+            CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]
         ],
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Reconstructs the edge tensors from the EdgeBatch.
         This is used for debugging and sanity checking the EdgeBatch.
@@ -175,7 +174,7 @@ class EdgeBatch(DataclassBatch):
         sampling_config: SamplingConfig,
         dataloader_config: DataloaderConfig,
         graph_metadata: GraphMetadataPbWrapper,
-        condensed_node_type_to_vocab_size_map: Dict[CondensedNodeType, int],
+        condensed_node_type_to_vocab_size_map: dict[CondensedNodeType, int],
         pin_memory: bool,
         should_loop: bool = True,
     ):
@@ -199,12 +198,12 @@ class EdgeBatch(DataclassBatch):
 
 
 def collate_edge_batch_from_heterogeneous_graph_edge_dict(
-    inputs: List[HeterogeneousGraphEdgeDict],
-    condensed_edge_type_to_condensed_node_type_map: Dict[
-        CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
+    inputs: list[HeterogeneousGraphEdgeDict],
+    condensed_edge_type_to_condensed_node_type_map: dict[
+        CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]
     ],
-    condensed_node_type_to_vocab_size_map: Dict[CondensedNodeType, int],
-    condensed_node_type_to_node_type_map: Dict[CondensedNodeType, NodeType],
+    condensed_node_type_to_vocab_size_map: dict[CondensedNodeType, int],
+    condensed_node_type_to_node_type_map: dict[CondensedNodeType, NodeType],
     num_random_negatives_per_edge: int = 0,
 ) -> EdgeBatch:
     """
@@ -214,10 +213,10 @@ def collate_edge_batch_from_heterogeneous_graph_edge_dict(
     and constructs an EdgeBatch (containing a TorchRec KeyedJaggedTensor and metadata).
 
     Args:
-        inputs (List[HeterogeneousGraphEdgeDict]): The input data.
-        condensed_edge_type_to_condensed_node_type_map (Dict[CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]]): A mapping from condensed edge types to condensed node types.
-        condensed_node_type_to_vocab_size_map (Dict[CondensedNodeType, int]): A mapping from condensed node types to vocab sizes.
-        condensed_node_type_to_node_type_map (Dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
+        inputs (list[HeterogeneousGraphEdgeDict]): The input data.
+        condensed_edge_type_to_condensed_node_type_map (dict[CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]]): A mapping from condensed edge types to condensed node types.
+        condensed_node_type_to_vocab_size_map (dict[CondensedNodeType, int]): A mapping from condensed node types to vocab sizes.
+        condensed_node_type_to_node_type_map (dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
         num_negative_samples_per_edge (int): The number of negative samples to generate for each positive edge.
 
     Returns:
@@ -261,16 +260,16 @@ def collate_edge_batch_from_heterogeneous_graph_edge_dict(
 
 
 def build_tensors_from_edge_dicts(
-    inputs: List[HeterogeneousGraphEdgeDict],
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    inputs: list[HeterogeneousGraphEdgeDict],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Converts a list of HeterogeneousGraphEdgeDict into tensors.
 
     Args:
-        inputs (List[HeterogeneousGraphEdgeDict]): A list of edge dictionaries.
+        inputs (list[HeterogeneousGraphEdgeDict]): A list of edge dictionaries.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
             - edges (torch.Tensor): A tensor of shape [num_edges, 2] containing the source and destination node IDs.
             - condensed_edge_types (torch.Tensor): A tensor of shape [num_edges] containing the condensed edge types.
             - labels (torch.Tensor): A tensor of shape [num_edges] containing labels (all set to 1).
@@ -295,12 +294,12 @@ def build_tensors_from_edge_dicts(
 
 
 def relationwise_batch_random_negative_sampling(
-    condensed_edge_type_to_condensed_node_type_map: Dict[
-        CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
+    condensed_edge_type_to_condensed_node_type_map: dict[
+        CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]
     ],
-    condensed_node_type_to_vocab_size_map: Dict[CondensedNodeType, int],
+    condensed_node_type_to_vocab_size_map: dict[CondensedNodeType, int],
     num_negatives_per_condensed_edge_type: int = 1,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Performs random negative sampling for each edge type.
 
@@ -310,9 +309,9 @@ def relationwise_batch_random_negative_sampling(
     These can be consumed in model training as negative samples which are shared across edges.
 
     Args:
-        condensed_edge_type_to_condensed_node_type_map (Dict[int, Tuple[int, int]]): A mapping from each edge type
+        condensed_edge_type_to_condensed_node_type_map (dict[int, tuple[int, int]]): A mapping from each edge type
             to a tuple of (source_node_type, destination_node_type) [R].
-        condensed_node_type_to_vocab_size_map (Dict[int, int]): A mapping from each node type to the size of its vocabulary.
+        condensed_node_type_to_vocab_size_map (dict[int, int]): A mapping from each node type to the size of its vocabulary.
         num_negatives_per_condensed_edge_type (int): The number of negative edges to sample per edge type [K].
 
     Returns:

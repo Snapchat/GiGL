@@ -1,4 +1,4 @@
-from typing import Callable, Tuple, Union
+from typing import Callable, Union
 
 import torch
 import torch.nn as nn
@@ -130,7 +130,7 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
     def fetch_src_and_dst_embeddings(
         self, edge_batch: EdgeBatch
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         num_edges = edge_batch.batch_size
         node_embeddings_kt: torchrec.KeyedTensor = self.large_embeddings(
             edge_batch.src_dst_pairs
@@ -167,7 +167,7 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
         src_embeddings: torch.Tensor,
         dst_embeddings: torch.Tensor,
         condensed_edge_types: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Apply the src and dst relation operators to the source and destination embeddings.
 
@@ -257,7 +257,7 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
     def forward(
         self, edge_batch: EdgeBatch
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Fetch node embeddings from the embedding layer
         src_embeddings, dst_embeddings = self.fetch_src_and_dst_embeddings(edge_batch)
         condensed_edge_types = edge_batch.condensed_edge_types
@@ -291,10 +291,10 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
             labels[self.active_sampling_config.positive_edge_batch_size :],
         )
 
-        pos_logits: torch.Tensor
-        pos_labels: torch.Tensor
-        neg_logits = list()
-        neg_labels = list()
+        pos_logits: torch.Tensor = torch.tensor([])
+        pos_labels: torch.Tensor = torch.tensor([])
+        neg_logits: list[torch.Tensor] = list()
+        neg_labels: list[torch.Tensor] = list()
 
         if self.active_sampling_config.num_inbatch_negatives_per_edge:
             # Do inbatch negative sampling and compute logits and labels
@@ -397,7 +397,7 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
     def phase(self) -> ModelPhase:
         return self.encoder_model.phase
 
-    def forward(self, batch: Union[EdgeBatch, NodeBatch]) -> Tuple[torch.Tensor, Tuple]:
+    def forward(self, batch: Union[EdgeBatch, NodeBatch]) -> tuple[torch.Tensor, tuple]:
         """
         If the batch is an EdgeBatch, compute the loss and return it along with
         the logits and labels.
