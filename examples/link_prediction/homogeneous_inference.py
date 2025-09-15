@@ -259,7 +259,7 @@ def _inference_process(
 
     barrier()
 
-    del data_loader
+    data_loader.shutdown()
     gc.collect()
 
     logger.info(
