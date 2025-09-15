@@ -1,7 +1,6 @@
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 
 from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
     NegativeSamplingCorruptionType,
@@ -105,21 +104,8 @@ def in_batch_relationwise_contrastive_similarity(
     B, D = src_embeddings.shape
 
     # Compute similarity matrix between src and dst embeddings
-    if scoring_function == SimilarityType.DOT:
-        sim_matrix = src_embeddings @ dst_embeddings.T
-    elif scoring_function == SimilarityType.COSINE:
-        src_norm = F.normalize(src_embeddings, dim=1)
-        dst_norm = F.normalize(dst_embeddings, dim=1)
-        sim_matrix = src_norm @ dst_norm.T
-    elif scoring_function == SimilarityType.EUCLIDEAN:
-        # Negative squared L2 distance (to make it similar to scoring_function)
-        src_sq = src_embeddings.pow(2).sum(dim=1, keepdim=True)  # [B, 1]
-        dst_sq = dst_embeddings.pow(2).sum(dim=1, keepdim=True)  # [B, 1]
-        sim_matrix = -(
-            src_sq - 2 * src_embeddings @ dst_embeddings.T + dst_sq.T
-        )  # [B, B]
-    else:
-        raise ValueError(f"Unsupported scoring_function: {scoring_function}")
+    sim_fn = scoring_function.get_similarity_function()
+    sim_matrix = sim_fn(src_embeddings, dst_embeddings)
 
     sim_matrix = sim_matrix / temperature  # [B, B]
 
@@ -341,21 +327,7 @@ def against_batch_relationwise_contrastive_similarity(
     N = negative_batch_src_embeddings.shape[0]
 
     # Precompute similarity matrix between [B] queries and [N] candidates
-    if scoring_function == SimilarityType.DOT:
-        sim_fn = lambda x, y: x @ y.T
-    elif scoring_function == SimilarityType.COSINE:
-        sim_fn = lambda x, y: F.normalize(x, dim=1) @ F.normalize(y, dim=1).T
-    elif scoring_function == SimilarityType.EUCLIDEAN:
-
-        def sim_fn(x, y):
-            x_sq = x.pow(2).sum(dim=1, keepdim=True)  # [B, 1]
-            y_sq = y.pow(2).sum(dim=1, keepdim=True)  # [N, 1]
-            return -(x_sq - 2 * x @ y.T + y_sq.T)  # negative squared L2
-
-    else:
-        raise ValueError(
-            f"Similarity type must be in {SimilarityType.COSINE, SimilarityType.DOT, SimilarityType.EUCLIDEAN}. Got {scoring_function}"
-        )
+    sim_fn = scoring_function.get_similarity_fn()
 
     # Build masks for valid negatives per relation type
     # [B, N]: True where edge types match
