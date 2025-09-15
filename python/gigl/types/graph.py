@@ -90,6 +90,14 @@ class PartitionOutput:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ]
 
+    # Partitioned node labels, May be None if node labels are not partitioned.
+    # In practice, we require the IDS of the partitioned node labels field to be equal to the ids of the partitioned node features field, if it exists.
+    # This is because the partitioned node labels should be partitioned along with the node features so that we don't need to track two separate node ID stores,
+    # which saves a lot of memory.
+    partitioned_node_labels: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ]
+
 
 @dataclass(frozen=True)
 class FeatureInfo:
@@ -131,6 +139,8 @@ class LoadedGraphTensors:
     node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     # Unpartitioned Node Features
     node_features: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
+    # Unpartitioned Node Labels
+    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
     # Unpartitioned Edge Index
     edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     # Unpartitioned Edge Features

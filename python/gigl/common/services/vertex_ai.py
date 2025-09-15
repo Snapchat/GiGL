@@ -252,6 +252,7 @@ class VertexAIService:
         template_path: Uri,
         run_keyword_args: dict[str, str],
         job_id: Optional[str] = None,
+        labels: Optional[dict[str, str]] = None,
         experiment: Optional[str] = None,
     ) -> aiplatform.PipelineJob:
         """
@@ -267,6 +268,7 @@ class VertexAIService:
                                     Note: The pipeline_name and display_name are *not* the same.
                                     Note: pipeline_name comes is defined in the `template_path` and ultimately comes from Python pipeline definition.
                                     If provided, must be unique.
+            labels (Optional[dict[str, str]]): Labels to associate with the run.
             experiment (Optional[str]): The name of the experiment to associate the run with.
         Returns:
             The PipelineJob created.
@@ -278,9 +280,16 @@ class VertexAIService:
             job_id=job_id,
             project=self._project,
             location=self._location,
+            labels=labels,
         )
         job.submit(service_account=self._service_account, experiment=experiment)
         logger.info(f"Created run: {job.resource_name}")
+        if experiment:
+            logger.info(
+                f"Associated run {job.resource_name} with experiment: {experiment}"
+            )
+        if labels:
+            logger.info(f"Associated run {job.resource_name} with labels: {labels}")
 
         return job
 
@@ -312,6 +321,7 @@ class VertexAIService:
             None
         """
         start_time = time.time()
+        logger.info(f"Waiting for run to complete: {resource_name}")
         run = aiplatform.PipelineJob.get(resource_name=resource_name)
         while start_time + timeout > time.time():
             # Note that accesses to `run.state` cause a network call under the hood.

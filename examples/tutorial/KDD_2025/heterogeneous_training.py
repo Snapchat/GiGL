@@ -48,7 +48,7 @@ from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed import (
     DistABLPLoader,
-    DistLinkPredictionDataset,
+    DistDataset,
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.utils import get_free_port
@@ -111,7 +111,7 @@ def run_validation(
 
 def get_data_loader(
     split: Literal["train", "val", "test"],
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     batch_size: int,
 ) -> Iterable[HeteroData]:
     node_type = QUERY_NODE_TYPE
@@ -147,7 +147,7 @@ def train(
     process_number: int,
     process_count: int,
     port: int,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     max_training_batches: int,
     batch_size: int = 4,
     val_every: int = 20,

@@ -27,6 +27,10 @@ RUNNING A PIPELINE:
             --additional_job_args=split_generator.some_other_arg='value'
             This passes additional_spark35_jar_file_uris="gs://path/to/jar" to subgraph_sampler at compile time and
             some_other_arg="value" to split_generator at compile time.
+        --run_labels: Labels to associate with the pipeline run.
+            The value has to be of form: "<label_name>=<label_value>".
+            NOTE: unlike SharedResourceConfig.resource_labels, these are *only* applied to the vertex ai pipeline run.
+            Example: --run_labels=gigl-integration-test=true --run_labels=user=me
 
     You can alternatively run_no_compile if you have a precompiled pipeline somewhere.
     python gigl.orchestration.kubeflow.runner --action=run_no_compile ...args
@@ -152,6 +156,12 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
             f"Missing values for the following flags for a {args.action} command: {missing_values}. "
             + f"All required flags are: {list(required_flags)}."
         )
+    if args.action == Action.COMPILE and args.run_labels:
+        raise ValueError(
+            "Labels are not supported for the compile action. "
+            "Please use the run action to run a pipeline with labels."
+            f"Labels provided: {args.run_labels}"
+        )
 
 
 logger = Logger()
@@ -191,7 +201,26 @@ def _parse_additional_job_args(
     return dict(result)  # Ensure the default dict is converted to a regular dict
 
 
-if __name__ == "__main__":
+def _parse_labels(labels: list[str]) -> dict[str, str]:
+    """
+    Parse the labels for the pipeline run.
+    Args:
+        labels list[str]: Each element is of form: "<label_name>=<label_value>"
+            Example: ["gigl-integration-test=true", "user=me"].
+    Returns dict[str, str]: The parsed labels.
+    """
+    result: dict[str, str] = {}
+    for label in labels:
+        label_name, label_value = label.split("=", 1)
+        result[label_name] = label_value
+    logger.info(f"Parsed labels: {result}")
+    return result
+
+
+def _get_parser() -> argparse.ArgumentParser:
+    """
+    Get the parser for the runner.py script.
+    """
     parser = argparse.ArgumentParser(
         description="Create the KF pipeline for GNN preprocessing/training/inference"
     )
@@ -278,14 +307,31 @@ if __name__ == "__main__":
         some_other_arg="value" to split_generator at compile time.
         """,
     )
+    parser.add_argument(
+        "--run_labels",
+        action="append",
+        default=[],
+        help="""Labels to associate with the pipeline run, of the form: --run_labels=label_name=label_value.
+        Only applicable for run and run_no_compile actions.
+        NOTE: unlike SharedResourceConfig.resource_labels, these are *only* applied to the vertex ai pipeline run.
+        Example: --run_labels=gigl-integration-test=true --run_labels=user=me
+        Which will taget the pipeline run with gigl-integration-test=true and user=me.
+        """,
+    )
 
+    return parser
+
+
+if __name__ == "__main__":
+    parser = _get_parser()
     args = parser.parse_args()
     logger.info(f"Beginning runner.py with args: {args}")
 
-    parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
-
     # Assert correctness of args
     _assert_required_flags(args)
+
+    parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
+    parsed_labels = _parse_labels(args.run_labels)
 
     # Set the default value for compiled_pipeline_path as we cannot set it in argparse as
     # for compile action this is a required flag so we cannot provide it a default value.
@@ -342,6 +388,7 @@ if __name__ == "__main__":
             start_at=args.start_at,
             stop_after=args.stop_after,
             compiled_pipeline_path=compiled_pipeline_path,
+            labels=parsed_labels if parsed_labels else None,
         )
 
         if args.wait:
