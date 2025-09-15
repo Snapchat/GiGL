@@ -12,7 +12,7 @@ import gigl.distributed.utils
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_context import DistributedContext
-from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -67,7 +67,7 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
 def _run_distributed_neighbor_loader(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     expected_data_count: int,
 ):
@@ -94,7 +94,7 @@ def _run_distributed_neighbor_loader(
 
 def _run_distributed_neighbor_loader_labeled_homogeneous(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     expected_data_count: int,
 ):
@@ -123,7 +123,7 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
 
 def _run_infinite_distributed_neighbor_loader(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     max_num_batches: int,
 ):
@@ -153,7 +153,7 @@ def _run_infinite_distributed_neighbor_loader(
 
 def _run_distributed_heterogeneous_neighbor_loader(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     expected_data_count: int,
 ):
@@ -180,7 +180,7 @@ def _run_distributed_heterogeneous_neighbor_loader(
 
 def _run_distributed_ablp_neighbor_loader(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     expected_node: torch.Tensor,
     expected_srcs: torch.Tensor,
@@ -250,7 +250,7 @@ def _run_distributed_ablp_neighbor_loader(
 
 def _run_cora_supervised(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     expected_data_count: int,
 ):
@@ -279,7 +279,7 @@ def _run_cora_supervised(
 
 def _run_multiple_neighbor_loader(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     expected_data_count: int,
 ):
@@ -326,7 +326,7 @@ def _run_multiple_neighbor_loader(
 
 def _run_dblp_supervised(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     supervision_edge_types: list[EdgeType],
 ):
@@ -369,7 +369,7 @@ def _run_dblp_supervised(
 
 def _run_toy_heterogeneous_ablp(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     context: DistributedContext,
     supervision_edge_types: list[EdgeType],
     fanout: Union[list[int], dict[EdgeType, list[int]]],
@@ -444,7 +444,7 @@ def _run_toy_heterogeneous_ablp(
 
 def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     batch_size: int,
 ):
     torch.distributed.init_process_group(
@@ -471,7 +471,7 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
 
 def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     batch_size: int,
 ):
     torch.distributed.init_process_group(
@@ -519,7 +519,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
 
 def _run_cora_supervised_node_classification(
     _,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     batch_size: int,
 ):
     """Run CORA supervised node classification test using DistNeighborLoader."""
@@ -710,8 +710,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_node_features=None,
             partitioned_negative_labels=None,
             partitioned_positive_labels=None,
+            partitioned_node_labels=None,
         )
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
         mp.spawn(
@@ -953,7 +954,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         )
 
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="in")
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="in")
 
         dataset.build(partition_output=partition_output)
 
@@ -1003,7 +1004,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             },
         )
 
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
         mp.spawn(

@@ -36,10 +36,7 @@ from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed import (
-    DistLinkPredictionDataset,
-    build_dataset_from_task_config_uri,
-)
+from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
 from gigl.module.models import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -67,7 +64,7 @@ def _inference_process(
     inference_batch_size: int,
     hid_dim: int,
     out_dim: int,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     inferencer_args: dict[str, str],
     inference_node_type: NodeType,
     node_type_to_feature_dim: dict[NodeType, int],
@@ -91,7 +88,7 @@ def _inference_process(
         inference_batch_size (int): Batch size to use for inference
         hid_dim (int): Hidden dimension of the model
         out_dim (int): Output dimension of the model
-        dataset (DistLinkPredictionDataset): Link prediction dataset built on current machine
+        dataset (DistDataset): Loaded Distributed Dataset for inference
         inferencer_args (dict[str, str]): Additional arguments for inferencer
         inference_node_type (NodeType): Node Type that embeddings should be generated for in current inference process. This is used to
             tag the embeddings written to GCS.
@@ -269,13 +266,14 @@ def _inference_process(
         f"--- Rank {rank} finished writing embeddings to GCS for node type {inference_node_type}, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
 
-    # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
-    # machine + process -- otherwise we may fail on processes which are still doing on-the-fly subgraph sampling. We then call `gc.collect()` to cleanup the memory
-    # used by the data_loader on the current machine.
+    # We first call barrier to ensure that all machines and processes have finished inference.
+    # Only once all machines have finished inference is it safe to shutdown the data loader.
+    # Otherwise, processes which are still sampling *will* fail as the loaders they are trying to communicatate with will be shutdown.
+    # We then call `gc.collect()` to cleanup the memory used by the data_loader on the current machine.
 
     barrier()
 
-    del data_loader
+    data_loader.shutdown()
     gc.collect()
 
     logger.info(
@@ -314,7 +312,7 @@ def _run_example_inference(
     )
 
     # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
-    # and registering that information to a DistLinkPredictionDataset class.
+    # and registering that information to a DistDataset class.
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
     )
