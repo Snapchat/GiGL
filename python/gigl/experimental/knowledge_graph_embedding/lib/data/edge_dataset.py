@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, List, Protocol
+from typing import Callable, Dict, List, Protocol, Tuple
 
 import torch.distributed as dist
 from torch.utils.data import IterableDataset
@@ -60,6 +60,13 @@ class SplitConfiguration:
     val_split_clause: str
     test_split_clause: str
 
+    def clause_per_split(self) -> List[Tuple[DatasetSplit, str]]:
+        return [
+            (DatasetSplit.TRAIN, self.train_split_clause),
+            (DatasetSplit.VAL, self.val_split_clause),
+            (DatasetSplit.TEST, self.test_split_clause),
+        ]
+
 
 @dataclass
 class EdgeDatasetConfig:
@@ -72,6 +79,23 @@ class EdgeDatasetConfig:
     graph_metadata: GraphMetadataPbWrapper
     format: EdgeDatasetFormat
     split_config: SplitConfiguration
+
+
+def _get_BigqueryEdgeDataReference_for_split(
+    output_bq_dataset: str,
+    applied_task_identifier: AppliedTaskIdentifier,
+    split: DatasetSplit,
+) -> BigqueryEdgeDataReference:
+    """Get a BigQuery edge data reference for a given split."""
+    return BigqueryEdgeDataReference(
+        reference_uri=BqUtils.join_path(
+            BqUtils.format_bq_path(output_bq_dataset),
+            f"{split.value}_edges_{applied_task_identifier}",
+        ),
+        src_identifier=SRC_FIELD,
+        dst_identifier=DST_FIELD,
+        edge_type=EdgeType("mixed", "mixed", "mixed"),
+    )
 
 
 class DistributedEdgeDatasetCoordinator:
@@ -124,18 +148,13 @@ class EdgeDatasetResourceBuilder:
         self.config = config
         self.bq_utils = BqUtils(project=get_resource_config().project)
         self.gcs_utils = GcsUtils(project=get_resource_config().project)
-        self.MIXED_EDGE_TYPE = EdgeType("mixed", "mixed", "mixed")
-        self.split_info = [
-            (DatasetSplit.TRAIN, config.split_config.train_split_clause),
-            (DatasetSplit.VAL, config.split_config.val_split_clause),
-            (DatasetSplit.TEST, config.split_config.test_split_clause),
-        ]
+        self.split_info = config.split_config.clause_per_split()
 
     def create_all_resources(self) -> None:
         """Create all required resources for edge datasets."""
         intermediate_table = self._build_intermediate_edges_table()
-        self._create_split_tables(intermediate_table)
-        self._export_to_gcs_if_needed()
+        self._create_tables_for_each_split(intermediate_table)
+        self._export_split_tables_to_gcs_if_needed()
 
     def _build_intermediate_edges_table(self) -> str:
         """Build an intermediate edges table by unioning multiple edge tables with split metadata."""
@@ -200,10 +219,14 @@ class EdgeDatasetResourceBuilder:
 
         return intermediate_edges_table
 
-    def _create_split_tables(self, intermediate_table: str) -> None:
+    def _create_tables_for_each_split(self, intermediate_table: str) -> None:
         """Create separate BigQuery tables for train/validation/test splits."""
         for split, split_clause in self.split_info:
-            table_reference = self._create_table_reference(split)
+            table_reference = _get_BigqueryEdgeDataReference_for_split(
+                self.config.output_bq_dataset,
+                self.config.applied_task_identifier,
+                split,
+            )
 
             random_column_field = "row_id"
             maybe_extra_field_selector = (
@@ -221,7 +244,7 @@ class EdgeDatasetResourceBuilder:
                 labels=dict(),
             )
 
-    def _export_to_gcs_if_needed(self) -> None:
+    def _export_split_tables_to_gcs_if_needed(self) -> None:
         """Export BigQuery tables to GCS if the format requires it."""
         if self.config.format not in (
             EdgeDatasetFormat.GCS_JSONL,
@@ -230,7 +253,11 @@ class EdgeDatasetResourceBuilder:
             return
 
         for split, _ in self.split_info:
-            table_reference = self._create_table_reference(split)
+            table_reference = _get_BigqueryEdgeDataReference_for_split(
+                self.config.output_bq_dataset,
+                self.config.applied_task_identifier,
+                split,
+            )
 
             gcs_target_path = GcsUri.join(
                 gcs_constants.get_edge_dataset_output_path(
@@ -248,18 +275,6 @@ class EdgeDatasetResourceBuilder:
                 else "PARQUET",
             )
 
-    def _create_table_reference(self, split: DatasetSplit) -> BigqueryEdgeDataReference:
-        """Create a BigQuery table reference for a given data split."""
-        return BigqueryEdgeDataReference(
-            reference_uri=BqUtils.join_path(
-                BqUtils.format_bq_path(self.config.output_bq_dataset),
-                f"{split.value}_edges_{self.config.applied_task_identifier}",
-            ),
-            src_identifier=SRC_FIELD,
-            dst_identifier=DST_FIELD,
-            edge_type=self.MIXED_EDGE_TYPE,
-        )
-
 
 class EdgeDatasetStrategy(Protocol):
     """Protocol for creating different types of edge datasets."""
@@ -268,7 +283,6 @@ class EdgeDatasetStrategy(Protocol):
         self,
         config: EdgeDatasetConfig,
         split: DatasetSplit,
-        table_reference: BigqueryEdgeDataReference,
         **kwargs,
     ) -> IterableDataset:
         """Create a dataset for the given split."""
@@ -282,9 +296,15 @@ class BigQueryDatasetStrategy:
         self,
         config: EdgeDatasetConfig,
         split: DatasetSplit,
-        table_reference: BigqueryEdgeDataReference,
         **kwargs,
     ) -> IterableDataset:
+        # Create table reference specific to BigQuery strategy
+        table_reference = _get_BigqueryEdgeDataReference_for_split(
+            config.output_bq_dataset,
+            config.applied_task_identifier,
+            split,
+        )
+
         random_column_field = "row_id"
         return BigQueryHeterogeneousGraphIterableDataset(
             table=table_reference.reference_uri,
@@ -305,7 +325,6 @@ class GcsDatasetStrategy:
         self,
         config: EdgeDatasetConfig,
         split: DatasetSplit,
-        table_reference: BigqueryEdgeDataReference,
         **kwargs,
     ) -> IterableDataset:
         gcs_target_path = GcsUri.join(
@@ -345,12 +364,7 @@ class EdgeDatasetFactory:
             "dst_field": DST_FIELD,
             "condensed_edge_type_field": CONDENSED_EDGE_TYPE_FIELD,
         }
-        self.MIXED_EDGE_TYPE = EdgeType("mixed", "mixed", "mixed")
-        self.split_info = [
-            (DatasetSplit.TRAIN, config.split_config.train_split_clause),
-            (DatasetSplit.VAL, config.split_config.val_split_clause),
-            (DatasetSplit.TEST, config.split_config.test_split_clause),
-        ]
+        self.split_info = config.split_config.clause_per_split()
 
     def create_datasets(self) -> Dict[DatasetSplit, IterableDataset]:
         """Create and return the edge datasets for each data split."""
@@ -358,20 +372,9 @@ class EdgeDatasetFactory:
         datasets: Dict[DatasetSplit, IterableDataset] = {}
 
         for split, _ in self.split_info:
-            table_reference = BigqueryEdgeDataReference(
-                reference_uri=BqUtils.join_path(
-                    BqUtils.format_bq_path(self.config.output_bq_dataset),
-                    f"{split.value}_edges_{self.config.applied_task_identifier}",
-                ),
-                src_identifier=SRC_FIELD,
-                dst_identifier=DST_FIELD,
-                edge_type=self.MIXED_EDGE_TYPE,
-            )
-
             datasets[split] = strategy.create_dataset(
                 config=self.config,
                 split=split,
-                table_reference=table_reference,
                 **self.heterogeneous_kwargs,
             )
 
