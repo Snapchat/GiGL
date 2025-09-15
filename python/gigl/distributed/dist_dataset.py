@@ -581,6 +581,13 @@ class DistDataset(glt.distributed.DistDataset):
             directed=True,
         )
 
+        if isinstance(partitioned_edge_index, Mapping):
+            logger.info(
+                f"Initialized heterogeneous graph to dataset with edge types: {partitioned_edge_index.keys()}"
+            )
+        else:
+            logger.info("Initialized homogeneous graph to dataset")
+
     def _initialize_node_features(
         self,
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
@@ -589,11 +596,12 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes node features in the dataset class. Can be None if there are no node features.
+        Initializes node features in the dataset class
 
         Args:
             node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
-            partitioned_node_features(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]): The partitioned graph data containing node features
+            partitioned_node_features(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]):
+                The partitioned graph data containing node features.
         """
         if isinstance(partitioned_node_features, FeaturePartitionData):
             assert isinstance(node_partition_book, (torch.Tensor, PartitionBook))
@@ -613,6 +621,7 @@ class DistDataset(glt.distributed.DistDataset):
                 dim=node_features.size(1),
                 dtype=node_features.dtype,
             )
+            logger.info("Initialized node features for homogeneous graph to dataset")
         elif (
             isinstance(partitioned_node_features, Mapping)
             and len(partitioned_node_features) > 0
@@ -658,6 +667,11 @@ class DistDataset(glt.distributed.DistDataset):
                 )
                 for node_type, node_features in node_type_to_node_features.items()
             }
+            logger.info(
+                f"Initialized node features for heterogeneous graph to dataset with node types: {node_type_to_node_features.keys()}"
+            )
+        else:
+            logger.info("Found no node features to initialize")
 
     def _initialize_node_labels(
         self,
@@ -667,11 +681,12 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes node labels in the dataset class. Can be None if there are no node labels.
+        Initializes node labels in the dataset class
 
         Args:
             node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
-            partitioned_node_labels(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]): The partitioned graph data containing node labels
+            partitioned_node_labels(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]):
+                The partitioned graph data containing node labels
         """
         if isinstance(partitioned_node_labels, FeaturePartitionData):
             assert isinstance(node_partition_book, (torch.Tensor, PartitionBook))
@@ -686,6 +701,7 @@ class DistDataset(glt.distributed.DistDataset):
                 node_label_data=node_labels,
                 id2idx=node_id2idx,
             )
+            logger.info("Initialized node labels for homogeneous graph to dataset")
 
         elif isinstance(partitioned_node_labels, Mapping):
             assert isinstance(
@@ -718,6 +734,11 @@ class DistDataset(glt.distributed.DistDataset):
                 node_label_data=node_type_to_node_labels,
                 id2idx=node_type_to_id2idx,
             )
+            logger.info(
+                f"Initialized node labels for heterogeneous graph to dataset with node types: {node_type_to_node_labels.keys()}"
+            )
+        else:
+            logger.info("Found no node labels to initialize")
 
     def _initialize_edge_features(
         self,
@@ -750,6 +771,7 @@ class DistDataset(glt.distributed.DistDataset):
                 dim=edge_features.size(1),
                 dtype=edge_features.dtype,
             )
+            logger.info("Initialized edge features for homogeneous graph to dataset")
         elif (
             isinstance(partitioned_edge_features, Mapping)
             and len(partitioned_edge_features) > 0
@@ -792,6 +814,11 @@ class DistDataset(glt.distributed.DistDataset):
                 )
                 for edge_type, edge_features in edge_type_to_edge_features.items()
             }
+            logger.info(
+                f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_type_to_edge_features.keys()}"
+            )
+        else:
+            logger.info("Found no edge features to initialize")
 
     def build(
         self,
