@@ -1219,6 +1219,27 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Node features have already been registered"):
             partitioner.register_node_features(node_features=node_features)
 
+    def test_node_labels_re_registration(self) -> None:
+        """Test that re-registering node labels raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # First registration should work
+        node_labels = torch.tensor([[0, 1], [1, 0], [0, 1]])
+        partitioner.register_node_labels(node_labels=node_labels)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(ValueError, "Node labels have already been registered"):
+            partitioner.register_node_labels(node_labels=node_labels)
+
     def test_edge_features_re_registration(self) -> None:
         """Test that re-registering edge features raises an error."""
         master_port = glt.utils.get_free_port(self._master_ip_address)
@@ -1327,6 +1348,18 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         # Second registration should raise an error
         with self.assertRaisesRegex(ValueError, "Edge indices have already been registered"):
             partitioner2.register_edge_index(edge_index=edge_index)
+
+        # Heterogeneous node labels test
+        partitioner3 = DistPartitioner(should_assign_edges_by_src_node=True)
+        node_labels = {
+            USER_NODE_TYPE: torch.tensor([[0, 1], [1, 0]]),
+            ITEM_NODE_TYPE: torch.tensor([[1, 0], [0, 1], [1, 1]])
+        }
+        partitioner3.register_node_labels(node_labels=node_labels)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(ValueError, "Node labels have already been registered"):
+            partitioner3.register_node_labels(node_labels=node_labels)
 
 if __name__ == "__main__":
     unittest.main()

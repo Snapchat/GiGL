@@ -558,6 +558,10 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Check if node labels have already been registered
+        if self._node_labels is not None:
+            raise ValueError("Node labels have already been registered. Cannot re-register node label data.")
+
         logger.info("Registering Node Labels ...")
 
         input_node_labels = self._convert_node_entity_to_heterogeneous_format(
