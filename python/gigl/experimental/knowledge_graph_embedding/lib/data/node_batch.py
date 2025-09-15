@@ -90,7 +90,7 @@ class NodeBatch(DataclassBatch):
 
     def to_node_tensors(
         self,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Reconstructs the tensors comprising the NodeBatch.
 
@@ -98,7 +98,7 @@ class NodeBatch(DataclassBatch):
             condensed_node_type_to_node_type_map (dict[CondensedNodeType, NodeType]): A mapping from condensed node types to node types.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - nodes: torch.Tensor: The node IDs.
                 - condensed_node_type: torch.Tensor: The condensed node type.
                 - condensed_edge_type: torch.Tensor: The condensed edge type.

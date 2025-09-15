@@ -16,7 +16,7 @@ def in_batch_relationwise_contrastive_similarity(
     scoring_function: SimilarityType = SimilarityType.COSINE,
     corrupt_side: NegativeSamplingCorruptionType = NegativeSamplingCorruptionType.DST,
     num_negatives: Optional[int] = None,  # Number of negatives to sample per instance
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Computes relation-aware in-batch contrastive similarity for knowledge graph embedding training.
 
@@ -104,7 +104,7 @@ def in_batch_relationwise_contrastive_similarity(
     B, D = src_embeddings.shape
 
     # Compute similarity matrix between src and dst embeddings
-    sim_fn = scoring_function.get_similarity_function()
+    sim_fn = scoring_function.get_similarity_fn()
     sim_matrix = sim_fn(src_embeddings, dst_embeddings)
 
     sim_matrix = sim_matrix / temperature  # [B, B]

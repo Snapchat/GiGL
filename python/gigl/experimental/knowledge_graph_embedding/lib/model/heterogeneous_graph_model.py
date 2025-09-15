@@ -56,11 +56,15 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
         self._assert_sampling_config_is_valid()
 
         # Define the embedding layers.
+        assert (
+            model_config.embeddings_config is not None
+        ), "Embedding config must be provided."
         self.large_embeddings = LargeEmbeddingLookup(
             embeddings_config=model_config.embeddings_config
         )
 
         # Define the operators applied to src and dst node types respectively
+        assert self.num_edge_types is not None, "Number of edge types must be provided."
         self.src_operator = model_config.src_operator.get_corresponding_module()(
             num_edge_types=self.num_edge_types,
             node_emb_dim=self.node_emb_dim,
@@ -91,11 +95,11 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
     @property
     def active_sampling_config(self) -> SamplingConfig:
         if self.phase == ModelPhase.TRAIN:
-            return self.training_sampling_config
+            return self.training_sampling_config  # type: ignore
         elif self.phase == ModelPhase.VAL:
-            return self.validation_sampling_config
+            return self.validation_sampling_config  # type: ignore
         elif self.phase == ModelPhase.TEST:
-            return self.testing_sampling_config
+            return self.testing_sampling_config  # type: ignore
         elif (
             self.phase == ModelPhase.INFERENCE_SRC
             or self.phase == ModelPhase.INFERENCE_DST
@@ -292,7 +296,6 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
         )
 
         pos_logits: torch.Tensor = torch.tensor([])
-        pos_labels: torch.Tensor = torch.tensor([])
         neg_logits: list[torch.Tensor] = list()
         neg_labels: list[torch.Tensor] = list()
 
@@ -338,10 +341,10 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
             neg_labels.append(against_batch_labels[:, 1:])
 
         # Concatenate positive and negative samples
-        neg_logits = torch.cat(neg_logits, dim=1)
-        neg_labels = torch.cat(neg_labels, dim=1)
-        logits = torch.cat([pos_logits, neg_logits], dim=1)
-        labels = torch.cat([pos_labels, neg_labels], dim=1)
+        all_neg_logits = torch.cat(neg_logits, dim=1)
+        all_neg_labels = torch.cat(neg_labels, dim=1)
+        logits = torch.cat([pos_logits, all_neg_logits], dim=1)
+        labels = torch.cat([pos_labels, all_neg_labels], dim=1)
 
         return logits, labels, pos_condensed_edge_types
 
@@ -416,7 +419,9 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
             or self.phase == ModelPhase.INFERENCE_DST
         ):
             # In inference phase, we only handle NodeBatch.
-            batch: NodeBatch
+            assert isinstance(
+                batch, NodeBatch
+            ), "Batch must be a NodeBatch in inference phase."
             node_embeddings = self.encoder_model.infer_node_batch(node_batch=batch)
             dummy_loss = torch.tensor(0.0)
             node_ids = batch.nodes.values()
@@ -426,7 +431,9 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
             )
         else:
             # We expect an EdgeBatch in training, validation, or testing phases.
-            batch: EdgeBatch
+            assert isinstance(
+                batch, EdgeBatch
+            ), "Batch must be an EdgeBatch in training, validation, or testing phases."
             logits: torch.Tensor
             labels: torch.Tensor
             logits, labels, condensed_edge_types = self.encoder_model(edge_batch=batch)

@@ -88,15 +88,17 @@ class EdgeBatch(DataclassBatch):
             lengths[src_cnt][2 * i] = 1
             lengths[dst_cnt][2 * i + 1] = 1
 
+        lengths_tensor: dict[CondensedNodeType, torch.Tensor] = dict()
+        values_tensor: dict[CondensedNodeType, torch.Tensor] = dict()
         for key in cnt_keys:
-            lengths[key] = torch.tensor(lengths[key], dtype=torch.int32)
-            values[key] = torch.tensor(values[key], dtype=torch.int32)
+            lengths_tensor[key] = torch.tensor(lengths[key], dtype=torch.int32)
+            values_tensor[key] = torch.tensor(values[key], dtype=torch.int32)
 
         # Flatten tensors
-        lengths = torch.cat([lengths[cnt] for cnt in cnt_keys], dim=0)
-        values = torch.cat([values[cnt] for cnt in cnt_keys], dim=0)
         src_dst_pairs = torchrec.KeyedJaggedTensor(
-            keys=cnt_keys, values=values, lengths=lengths
+            keys=cnt_keys,
+            values=torch.cat([values_tensor[cnt] for cnt in cnt_keys], dim=0),
+            lengths=torch.cat([lengths_tensor[cnt] for cnt in cnt_keys], dim=0),
         )
 
         return EdgeBatch(
@@ -163,10 +165,12 @@ class EdgeBatch(DataclassBatch):
             reconstructed_edges.append(
                 next(src_dst_pairs_values_iters[condensed_node_type])
             )
-        reconstructed_edges = torch.tensor(reconstructed_edges, dtype=torch.int32)
-        reconstructed_edges = reconstructed_edges.view(-1, 2)
+        reconstructed_edges_tensor = torch.tensor(
+            reconstructed_edges, dtype=torch.int32
+        )
+        reconstructed_edges_tensor = reconstructed_edges_tensor.view(-1, 2)
 
-        return reconstructed_edges, condensed_edge_types, edge_labels
+        return reconstructed_edges_tensor, condensed_edge_types, edge_labels
 
     @staticmethod
     def build_data_loader(

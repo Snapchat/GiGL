@@ -117,10 +117,10 @@ def hit_rate_at_k(
 
     if isinstance(ks, int):
         ks = [ks]
-    ks = torch.tensor(sorted(set(ks)), device=scores.device)
+    ks_tensor = torch.tensor(sorted(set(ks)), device=scores.device)
 
     # Get top max_k indices (shape B x max_k)
-    max_k = ks.max().item()
+    max_k = int(ks_tensor.max().item())
     topk_indices = torch.topk(scores, k=max_k, dim=1).indices  # shape: (B, max_k)
 
     # Gather corresponding labels for top-k entries
@@ -128,7 +128,7 @@ def hit_rate_at_k(
 
     # For each k, compute hit (positive appeared in top-k)
     hits_at_k = (topk_labels.cumsum(dim=1) > 0).float()  # (B, max_k)
-    hit_rates = hits_at_k[:, ks - 1].mean(dim=0)  # (len(ks),)
+    hit_rates = hits_at_k[:, ks_tensor - 1].mean(dim=0)  # (len(ks),)
     return hit_rates
 
 
