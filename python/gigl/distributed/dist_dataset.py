@@ -10,6 +10,7 @@ import graphlearn_torch as glt
 import torch
 from graphlearn_torch.data import Feature, Graph
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
+from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
@@ -603,75 +604,41 @@ class DistDataset(glt.distributed.DistDataset):
             partitioned_node_features(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]):
                 The partitioned graph data containing node features.
         """
-        if isinstance(partitioned_node_features, FeaturePartitionData):
-            assert isinstance(node_partition_book, (torch.Tensor, PartitionBook))
-            node_features = partitioned_node_features.feats
-            node_feature_ids = partitioned_node_features.ids
-            if isinstance(node_partition_book, RangePartitionBook):
-                node_id2idx = node_partition_book.id2index
-            else:
-                node_id2idx = id2idx(node_feature_ids)
 
-            self.init_node_features(
-                node_feature_data=node_features,
-                id2idx=node_id2idx,
-                with_gpu=False,
+        node_features, node_feature_id_to_index = _prepare_feature_data(
+            partition_book=node_partition_book,
+            partitioned_data=partitioned_node_features,
+        )
+
+        if node_features is None or node_feature_id_to_index is None:
+            logger.info("Found no node features to initialize")
+            return
+
+        self.init_node_features(
+            node_feature_data=node_features,
+            id2idx=node_feature_id_to_index,
+            with_gpu=False,
+        )
+
+        if isinstance(node_features, Mapping):
+            self._node_feature_info = {}
+            for node_type, node_features_per_node_type in node_features.items():
+                # We cannot make isinstance checks with NodeType, so we check
+                # if it is not an edge type, since it must be one of the two.
+                assert not isinstance(node_type, EdgeType)
+                self._node_feature_info[node_type] = FeatureInfo(
+                    dim=node_features_per_node_type.size(1),
+                    dtype=node_features_per_node_type.dtype,
+                )
+            logger.info(
+                f"Initialized node features for heterogeneous graph to dataset with node types: {node_features.keys()}"
             )
+        else:
             self._node_feature_info = FeatureInfo(
                 dim=node_features.size(1),
                 dtype=node_features.dtype,
             )
             logger.info("Initialized node features for homogeneous graph to dataset")
-        elif (
-            isinstance(partitioned_node_features, Mapping)
-            and len(partitioned_node_features) > 0
-        ):
-            assert isinstance(
-                node_partition_book, Mapping
-            ), f"Found heterogeneous partitioned node features, but no corresponding heterogeneous node partition book. Got node partition book of type {type(node_partition_book)}"
-            assert (
-                len(node_partition_book) > 0
-            ), f"Expected at least one node type in node partition book, got {node_partition_book.keys()}."
-
-            # Partitioned node features can be empty when there are no features but are
-            # labels, so we only populate the dictionary with non-empty features.
-            node_type_to_node_features = {
-                node_type: feature_partition_data.feats
-                for node_type, feature_partition_data in partitioned_node_features.items()
-            }
-            node_type_to_node_feature_ids = {
-                node_type: feature_partition_data.ids
-                for node_type, feature_partition_data in partitioned_node_features.items()
-            }
-            node_type_to_id2idx = {}
-            for (
-                node_type,
-                node_partition_book,
-            ) in node_partition_book.items():
-                if node_type in node_type_to_node_features:
-                    if isinstance(node_partition_book, RangePartitionBook):
-                        node_type_to_id2idx[node_type] = node_partition_book.id2index
-                    else:
-                        node_type_to_id2idx[node_type] = id2idx(
-                            node_type_to_node_feature_ids[node_type]
-                        )
-            self.init_node_features(
-                node_feature_data=node_type_to_node_features,
-                id2idx=node_type_to_id2idx,
-                with_gpu=False,
-            )
-            self._node_feature_info = {
-                node_type: FeatureInfo(
-                    dim=node_features.size(1),
-                    dtype=node_features.dtype,
-                )
-                for node_type, node_features in node_type_to_node_features.items()
-            }
-            logger.info(
-                f"Initialized node features for heterogeneous graph to dataset with node types: {node_type_to_node_features.keys()}"
-            )
-        else:
-            logger.info("Found no node features to initialize")
 
     def _initialize_node_labels(
         self,
@@ -688,57 +655,26 @@ class DistDataset(glt.distributed.DistDataset):
             partitioned_node_labels(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]):
                 The partitioned graph data containing node labels
         """
-        if isinstance(partitioned_node_labels, FeaturePartitionData):
-            assert isinstance(node_partition_book, (torch.Tensor, PartitionBook))
-            node_labels = partitioned_node_labels.feats
-            node_label_ids = partitioned_node_labels.ids
-            if isinstance(node_partition_book, RangePartitionBook):
-                node_id2idx = node_partition_book.id2index
-            else:
-                node_id2idx = id2idx(node_label_ids)
+        node_labels, node_label_id_to_index = _prepare_feature_data(
+            partition_book=node_partition_book,
+            partitioned_data=partitioned_node_labels,
+        )
 
-            self.init_node_labels(
-                node_label_data=node_labels,
-                id2idx=node_id2idx,
-            )
-            logger.info("Initialized node labels for homogeneous graph to dataset")
+        if node_labels is None or node_label_id_to_index is None:
+            logger.info("Found no node labels to initialize")
+            return
 
-        elif isinstance(partitioned_node_labels, Mapping):
-            assert isinstance(
-                node_partition_book, Mapping
-            ), f"Found heterogeneous partitioned node labels, but no corresponding heterogeneous node partition book. Got node partition book of type {type(node_partition_book)}"
-            assert (
-                len(node_partition_book) > 0
-            ), f"Expected at least one node type in node partition book, got {node_partition_book.keys()}."
-            node_type_to_node_labels = {
-                node_type: node_labels.feats
-                for node_type, node_labels in partitioned_node_labels.items()
-            }
-            node_type_to_node_label_ids = {
-                node_type: node_labels.ids
-                for node_type, node_labels in partitioned_node_labels.items()
-            }
-            node_type_to_id2idx = {}
-            for (
-                node_type,
-                node_partition_book,
-            ) in node_partition_book.items():
-                if node_type in node_type_to_node_labels:
-                    if isinstance(node_partition_book, RangePartitionBook):
-                        node_type_to_id2idx[node_type] = node_partition_book.id2index
-                    else:
-                        node_type_to_id2idx[node_type] = id2idx(
-                            node_type_to_node_label_ids[node_type]
-                        )
-            self.init_node_labels(
-                node_label_data=node_type_to_node_labels,
-                id2idx=node_type_to_id2idx,
-            )
+        self.init_node_labels(
+            node_label_data=node_labels,
+            id2idx=node_label_id_to_index,
+        )
+
+        if isinstance(node_labels, Mapping):
             logger.info(
-                f"Initialized node labels for heterogeneous graph to dataset with node types: {node_type_to_node_labels.keys()}"
+                f"Initialized node labels for heterogeneous graph to dataset with node types: {node_labels.keys()}"
             )
         else:
-            logger.info("Found no node labels to initialize")
+            logger.info("Initialized node labels for homogeneous graph to dataset")
 
     def _initialize_edge_features(
         self,
@@ -754,71 +690,38 @@ class DistDataset(glt.distributed.DistDataset):
             edge_partition_book(Union[PartitionBook, dict[EdgeType, PartitionBook]]): The partition book for edges
             partitioned_edge_features(Optional[Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]]): The partitioned graph data containing edge features
         """
-        if isinstance(partitioned_edge_features, FeaturePartitionData):
-            assert isinstance(edge_partition_book, (torch.Tensor, PartitionBook))
-            edge_features = partitioned_edge_features.feats
-            edge_feature_ids = partitioned_edge_features.ids
-            if isinstance(edge_partition_book, RangePartitionBook):
-                edge_id2idx = edge_partition_book.id2index
-            else:
-                edge_id2idx = id2idx(edge_feature_ids)
-            self.init_edge_features(
-                edge_feature_data=edge_features,
-                id2idx=edge_id2idx,
-                with_gpu=False,
+        edge_features, edge_feature_id_to_index = _prepare_feature_data(
+            partition_book=edge_partition_book,
+            partitioned_data=partitioned_edge_features,
+        )
+
+        if edge_features is None or edge_feature_id_to_index is None:
+            logger.info("Found no edge features to initialize")
+            return
+
+        self.init_edge_features(
+            edge_feature_data=edge_features,
+            id2idx=edge_feature_id_to_index,
+            with_gpu=False,
+        )
+
+        if isinstance(edge_features, Mapping):
+            self._edge_feature_info = {}
+            for edge_type, edge_features_per_edge_type in edge_features.items():
+                assert isinstance(edge_type, EdgeType)
+                self._edge_feature_info[edge_type] = FeatureInfo(
+                    dim=edge_features_per_edge_type.size(1),
+                    dtype=edge_features_per_edge_type.dtype,
+                )
+            logger.info(
+                f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"
             )
+        else:
             self._edge_feature_info = FeatureInfo(
                 dim=edge_features.size(1),
                 dtype=edge_features.dtype,
             )
-            logger.info("Initialized edge features for homogeneous graph to dataset")
-        elif (
-            isinstance(partitioned_edge_features, Mapping)
-            and len(partitioned_edge_features) > 0
-        ):
-            assert isinstance(
-                edge_partition_book, Mapping
-            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book. Got edge partition book of type {type(edge_partition_book)}"
-            assert (
-                len(edge_partition_book) > 0
-            ), f"Expected at least one edge type in edge partition book, got {edge_partition_book.keys()}."
-            edge_type_to_edge_features = {
-                edge_type: feature_partition_data.feats
-                for edge_type, feature_partition_data in partitioned_edge_features.items()
-            }
-            edge_type_to_edge_feature_ids = {
-                edge_type: feature_partition_data.ids
-                for edge_type, feature_partition_data in partitioned_edge_features.items()
-            }
-            edge_type_to_id2idx = {}
-            for (
-                edge_type,
-                edge_partition_book,
-            ) in edge_partition_book.items():
-                if isinstance(edge_partition_book, RangePartitionBook):
-                    edge_type_to_id2idx[edge_type] = edge_partition_book.id2index
-                # Not all edge types may have partitioned features.
-                elif edge_type in edge_type_to_edge_feature_ids:
-                    edge_type_to_id2idx[edge_type] = id2idx(
-                        edge_type_to_edge_feature_ids[edge_type]
-                    )
-            self.init_edge_features(
-                edge_feature_data=edge_type_to_edge_features,
-                id2idx=edge_type_to_id2idx,
-                with_gpu=False,
-            )
-            self._edge_feature_info = {
-                edge_type: FeatureInfo(
-                    dim=edge_features.size(1),
-                    dtype=edge_features.dtype,
-                )
-                for edge_type, edge_features in edge_type_to_edge_features.items()
-            }
-            logger.info(
-                f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_type_to_edge_features.keys()}"
-            )
-        else:
-            logger.info("Found no edge features to initialize")
+            logger.info(f"Initialized edge features for homogeneous graph to dataset")
 
     def build(
         self,
@@ -1060,6 +963,97 @@ def _append_non_split_node_ids(
         return torch.cat(
             [train_node_ids, val_node_ids, test_node_ids, node_ids_not_in_split]
         )
+
+
+def _prepare_feature_data(
+    partition_book: Union[
+        PartitionBook, dict[NodeType, PartitionBook], dict[EdgeType, PartitionBook]
+    ],
+    partitioned_data: Optional[
+        Union[
+            FeaturePartitionData,
+            dict[NodeType, FeaturePartitionData],
+            dict[EdgeType, FeaturePartitionData],
+        ]
+    ],
+) -> Tuple[
+    Optional[
+        Union[
+            torch.Tensor,
+            dict[NodeType, torch.Tensor],
+            dict[EdgeType, torch.Tensor],
+        ]
+    ],
+    Optional[
+        Union[
+            TensorDataType,
+            dict[NodeType, TensorDataType],
+            dict[EdgeType, TensorDataType],
+        ]
+    ],
+]:
+    """
+    Utility function to prepare feature/label data for initialization.
+
+    This function handles the common data preparation pattern shared by node features,
+    node labels, and edge features initialization. It extracts features, feature IDs,
+    and computes id2idx mappings for both homogeneous and heterogeneous cases.
+
+    Args:
+        partition_book: The partition book for the data type
+        partitioned_data: The partitioned data containing features/labels
+    Returns:
+        Tuple[
+            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor], dict[EdgeType, torch.Tensor]]]:
+                Partitioned features or labels
+            Optional[Union[TensorDataType, dict[NodeType, TensorDataType], dict[EdgeType, TensorDataType]]]:
+                Global id to local index tensor for features or labels
+        ]
+    """
+    if isinstance(partitioned_data, FeaturePartitionData):
+        # Homogeneous case
+        assert isinstance(partition_book, (torch.Tensor, PartitionBook))
+        features = partitioned_data.feats
+        feature_ids = partitioned_data.ids
+
+        if isinstance(partition_book, RangePartitionBook):
+            id_to_index = partition_book.id2index
+        else:
+            id_to_index = id2idx(feature_ids)
+
+        return features, id_to_index
+
+    elif isinstance(partitioned_data, Mapping) and len(partitioned_data) > 0:
+        # Heterogeneous case
+        assert isinstance(
+            partition_book, Mapping
+        ), f"Found heterogeneous partitioned data, but no corresponding heterogeneous partition book. \
+            Got partition book of type {type(partition_book)}."
+        assert (
+            len(partition_book) > 0
+        ), f"Expected at least one entity type in partition book, but got {partition_book.keys()}."
+
+        # Extract features and IDs by type
+        features_per_entity_type: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        id_to_index_per_entity_type: dict[
+            Union[NodeType, EdgeType], TensorDataType
+        ] = {}
+        for entity_key, partition_book_instance in partition_book.items():
+            if entity_key in partitioned_data:
+                features_per_entity_type[entity_key] = partitioned_data[
+                    entity_key  # type: ignore
+                ].feats
+                if isinstance(partition_book_instance, RangePartitionBook):
+                    id_to_index_per_entity_type[
+                        entity_key
+                    ] = partition_book_instance.id2index
+                else:
+                    id_to_index_per_entity_type[entity_key] = id2idx(
+                        partitioned_data[entity_key].ids  # type: ignore
+                    )
+        return features_per_entity_type, id_to_index_per_entity_type  # type: ignore
+    else:
+        return None, None
 
 
 ## Pickling Registration
