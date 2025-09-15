@@ -1,0 +1,24 @@
+max_steps: 10000               # Maximum number of training steps
+dataloader:
+  num_workers: 4               # Number of worker processes for data loading
+sampling:
+  positive_edge_batch_size: 256    # Number of positive (true) edges per batch
+  num_inbatch_negatives_per_edge: 0  # Negative samples from batch (memory-efficient)
+  num_random_negatives_per_edge: 16  # Random negative samples per edge (high diversity)
+  negative_corruption_side: DST      # Which side to corrupt (DST=destination, SRC=source)
+optimizer:
+  sparse:                      # Settings for sparse embeddings (nodes)
+    lr: 0.001                  # Learning rate for sparse parameters
+    weight_decay: 0.001        # L2 regularization for sparse parameters
+  dense:                       # Settings for dense parameters (linear layers)
+    lr: 0.001                  # Learning rate for dense parameters
+    weight_decay: 0.001        # L2 regularization for dense parameters
+distributed:
+  num_processes_per_machine: 4    # Number of training processes per machine (typically one per GPU)
+  storage_reservation_percentage: 0.15  # Storage buffer for TorchRec overhead
+checkpointing:
+  save_every: 500              # Save checkpoint every N training steps
+  should_save_async: false     # Whether to save checkpoints asynchronously
+  save_to_path: /tmp/kge_checkpoints  # Directory for saving checkpoints
+logging:
+  log_every: 1                 # Log training metrics every N steps

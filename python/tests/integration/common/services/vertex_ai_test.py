@@ -25,12 +25,24 @@ def adder(a: int, b: int) -> int:
     return a + b
 
 
+@kfp.dsl.component
+def division_by_zero(a: int) -> float:  # This is meant to fail
+    return a / 0
+
+
 @kfp.dsl.pipeline(name="kfp-integration-test")
 def get_pipeline() -> int:
     source_task = source()
     double_task = doubler(a=source_task.output)
     adder_task = adder(a=source_task.output, b=double_task.output)
     return adder_task.output
+
+
+@kfp.dsl.pipeline(name="kfp-integration-test-that-fails")
+def get_pipeline_that_fails() -> float:
+    source_task = source()
+    fails_task = division_by_zero(a=source_task.output)  # This is meant to fail
+    return fails_task.output
 
 
 class VertexAIPipelineIntegrationTest(unittest.TestCase):
@@ -85,6 +97,29 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             run = ps.get_pipeline_job_from_job_name(job.name)
             self.assertEqual(run.resource_name, job.resource_name)
             self.assertEqual(run.labels["gigl-integration-test"], "true")
+
+    def test_run_pipeline_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline_def = os.path.join(tmpdir, "pipeline_that_fails.yaml")
+            kfp.compiler.Compiler().compile(get_pipeline_that_fails, pipeline_def)
+            resource_config = get_resource_config()
+            ps = VertexAIService(
+                project=resource_config.project,
+                location=resource_config.region,
+                service_account=resource_config.service_account_email,
+                staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
+            )
+            job = ps.run_pipeline(
+                display_name="integration-test-pipeline-that-fails",
+                template_path=UriFactory.create_uri(pipeline_def),
+                run_keyword_args={},
+                experiment="gigl-integration-tests",
+                labels={"gigl-integration-test": "true"},
+            )
+            with self.assertRaises(RuntimeError):
+                ps.wait_for_run_completion(
+                    job.resource_name, timeout=60 * 30, polling_period_s=10
+                )
 
 
 if __name__ == "__main__":
