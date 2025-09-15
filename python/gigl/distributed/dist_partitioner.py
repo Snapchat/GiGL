@@ -368,6 +368,12 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Check if node data has already been registered
+        if self._node_ids is not None:
+            raise ValueError(
+                "Node IDs have already been registered. Cannot re-register node data."
+            )
+
         logger.info("Registering Nodes ...")
         input_node_ids = self._convert_node_entity_to_heterogeneous_format(
             input_node_entity=node_ids
@@ -430,6 +436,12 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Check if edge data has already been registered
+        if self._edge_index is not None:
+            raise ValueError(
+                "Edge indices have already been registered. Cannot re-register edge data."
+            )
 
         logger.info("Registering Edge Indices ...")
 
@@ -507,6 +519,12 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Check if node features have already been registered
+        if self._node_feat is not None:
+            raise ValueError(
+                "Node features have already been registered. Cannot re-register node feature data."
+            )
+
         logger.info("Registering Node Features ...")
 
         input_node_features = self._convert_node_entity_to_heterogeneous_format(
@@ -546,6 +564,12 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Check if node labels have already been registered
+        if self._node_labels is not None:
+            raise ValueError(
+                "Node labels have already been registered. Cannot re-register node label data."
+            )
+
         logger.info("Registering Node Labels ...")
 
         input_node_labels = self._convert_node_entity_to_heterogeneous_format(
@@ -577,6 +601,12 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Check if edge features have already been registered
+        if self._edge_feat is not None:
+            raise ValueError(
+                "Edge features have already been registered. Cannot re-register edge feature data."
+            )
 
         logger.info("Registering Edge Features ...")
 
@@ -612,6 +642,18 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Check if labels have already been registered
+        if is_positive:
+            if self._positive_label_edge_index is not None:
+                raise ValueError(
+                    "Positive labels have already been registered. Cannot re-register positive label data."
+                )
+        else:
+            if self._negative_label_edge_index is not None:
+                raise ValueError(
+                    "Negative labels have already been registered. Cannot re-register negative label data."
+                )
 
         input_label_edge_index = self._convert_edge_entity_to_heterogeneous_format(
             input_edge_entity=label_edge_index
