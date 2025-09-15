@@ -102,11 +102,7 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
         self.return_emb = return_emb
         self.linear_layer = linear_layer
         if linear_layer:
-            # TODO (mkolodner-sc): This is a temporary change I have listed here in draft PR for experimentation purposes
-            # -- remove before submitting this PR for review
-            self.linear = nn.Sequential(
-                nn.Linear(hid_dim, 1), nn.Sigmoid()  # Ensures output is between 0 and 1
-            )
+            self.linear = nn.Linear(hid_dim, out_dim)
 
     def forward(
         self,
