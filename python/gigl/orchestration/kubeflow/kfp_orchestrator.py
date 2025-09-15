@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 from google.cloud import aiplatform
 from kfp.compiler import Compiler
@@ -117,7 +117,7 @@ class KfpOrchestrator:
         stop_after: Optional[str] = None,
         compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         labels: Optional[dict[str, str]] = None,
-        notification_emails: Optional[List[str]] = None,
+        notification_emails: Optional[list[str]] = None,
     ) -> aiplatform.PipelineJob:
         """
         Runs the GiGL Kubeflow pipeline.
@@ -130,7 +130,7 @@ class KfpOrchestrator:
             stop_after (Optional[str]): Component to stop the pipeline after. Defaults to None i.e. run entire pipeline.
             compiled_pipeline_path (Uri): Path to the compiled pipeline YAML file.
             labels (Optional[dict[str, str]]): Labels to associate with the run.
-            notification_emails (Optional[List[str]]): Emails to send notification to.
+            notification_emails (Optional[list[str]]): Emails to send notification to.
                 See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
         Returns:
             aiplatform.PipelineJob: The created pipeline job.
@@ -149,7 +149,7 @@ class KfpOrchestrator:
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
         }
-        # We need to proviode *some* notification emails, other wise the cleanup component will fail.
+        # We need to provide *some* notification emails, other wise the cleanup component will fail.
         # Ideally, we'd be able to provide None and have it handle it, but for whatever reason
         # that's not supported atm. Passing in None gives the below error:
         # Notification email "recipients" parameter must specify at least one recipient.
