@@ -395,17 +395,15 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Handles data splitting and computes node IDs and optional split node ids for the current machine.
-
         This method:
-        - Performs data splitting for training, validation, and testing
-        - Gets node IDs on the current machine from partition books
-        - If splits are provided, organizes them into train/val/test and appends non-split nodes
+        - Sets the node ID tensor on the current machine, derived from the node partition book
+        - If a splitter is provided, splits and sets the training, validation, and testing node IDs
 
         Args:
             node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
-            splitter(Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): The splitter to use for data splitting
-            partitioned_edge_index(Optional[Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]]): The partitioned edge index. Only required if we are splitting on edges.
+            splitter(Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): The splitter to use for data splitting.
+            partitioned_edge_index(Optional[Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]]):
+                The partitioned edge index. Only required if we are splitting on edges.
         """
 
         # We compute the node ids on the current machine, which will be used as input to the DistNeighborLoader.
@@ -548,15 +546,15 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_graph(
         self,
-        partitioned_edge_index: Optional[
-            Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]
+        partitioned_edge_index: Union[
+            GraphPartitionData, dict[EdgeType, GraphPartitionData]
         ],
     ) -> None:
         """
         Initializes the graph structure with edge index and edge IDs from partition output.
 
         Args:
-            partitioned_edge_index(Optional[Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]]): The partitioned graph data
+            partitioned_edge_index(Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]): The partitioned graph data
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -566,7 +564,7 @@ class DistDataset(glt.distributed.DistDataset):
         if isinstance(partitioned_edge_index, GraphPartitionData):
             edge_index = partitioned_edge_index.edge_index
             edge_ids = partitioned_edge_index.edge_ids
-        elif isinstance(partitioned_edge_index, Mapping):
+        else:
             edge_index = {
                 edge_type: graph_partition_data.edge_index
                 for edge_type, graph_partition_data in partitioned_edge_index.items()
@@ -575,10 +573,6 @@ class DistDataset(glt.distributed.DistDataset):
                 edge_type: graph_partition_data.edge_ids
                 for edge_type, graph_partition_data in partitioned_edge_index.items()
             }
-        else:
-            raise ValueError(
-                f"Got an unexpected type for partitioned edge index: {type(partitioned_edge_index)}"
-            )
 
         self.init_graph(
             edge_index=edge_index,
@@ -595,7 +589,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes node features in the dataset class.
+        Initializes node features in the dataset class. Can be None if there are no node features.
 
         Args:
             node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
@@ -673,7 +667,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes node labels in the dataset class.
+        Initializes node labels in the dataset class. Can be None if there are no node labels.
 
         Args:
             node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
@@ -733,7 +727,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
     ) -> None:
         """
-        Initializes edge features in the dataset class.
+        Initializes edge features in the dataset class. Can be None if therea re no edge features
 
         Args:
             edge_partition_book(Union[PartitionBook, dict[EdgeType, PartitionBook]]): The partition book for edges
@@ -823,6 +817,10 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         start_time = time.time()
+
+        assert (
+            partition_output.partitioned_edge_index is not None
+        ), "Edge index must be present in the partition output"
 
         # Handle data splitting and compute node IDs
         self._split_and_initialize_node_ids(
