@@ -1,5 +1,5 @@
 """
-DatasetFactory is responsible for building and returning a DistLinkPredictionDataset class or subclass. It does this by spawning a
+DatasetFactory is responsible for building and returning a DistDataset class or subclass. It does this by spawning a
 process which initializes rpc + worker group, loads and builds a partitioned dataset, and shuts down the rpc + worker group.
 """
 import time
@@ -29,7 +29,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
 from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
-from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.utils import (
@@ -40,10 +40,9 @@ from gigl.distributed.utils import (
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
-from gigl.types.graph import FeaturePartitionData, PartitionOutput
 from gigl.utils.data_splitters import (
     HashedNodeAnchorLinkSplitter,
     HashedNodeSplitter,
@@ -53,136 +52,6 @@ from gigl.utils.data_splitters import (
 )
 
 logger = Logger()
-
-
-def _get_labels_from_features(
-    feature_and_label_tensor: torch.Tensor, label_dim: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Given a combined tensor of features and labels, returns the features and labels separately.
-    Args:
-        feature_and_label_tensor (torch.Tensor): Tensor of features and labels
-        label_dim (int): Dimension of the labels
-    Returns:
-        feature_tensor (torch.Tensor): Tensor of features
-        label_tensor (torch.Tensor): Tensor of labels
-    """
-
-    if len(feature_and_label_tensor.shape) != 2:
-        raise ValueError(
-            f"Expected tensor to be 2D for extracting labels, but got shape {feature_and_label_tensor.shape}"
-        )
-
-    _, feature_and_label_dim = feature_and_label_tensor.shape
-
-    if not (0 <= label_dim <= feature_and_label_dim):
-        raise ValueError(
-            f"Got invalid label dim {label_dim} for extracting labels which must inclusively be between 0 and {feature_and_label_dim} for tensor of shape {feature_and_label_tensor.shape}"
-        )
-
-    feature_dim = feature_and_label_dim - label_dim
-
-    return (
-        feature_and_label_tensor[:, :feature_dim],
-        feature_and_label_tensor[:, feature_dim:],
-    )
-
-
-# TODO (mkolodner-sc): Move this function to the partitioner once the partitioner accepts and returns
-# the node labels as separate fields from the node features.
-def _extract_node_labels_from_features(
-    partition_output: PartitionOutput,
-    feature_dim: Union[int, dict[NodeType, int]],
-) -> None:
-    """
-    Extract node labels from node features and set them in partition_output in-place, handling both heterogeneous and homogeneous cases.
-
-    Args:
-        partition_output (PartitionOutput): The partition output containing partitioned_node_features; will have partitioned_node_labels set
-        feature_dim (Union[int, dict[NodeType, int]]): Dimension of the node features.
-    """
-    node_labels: Optional[
-        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
-    ] = None
-
-    label_dim: int
-
-    if isinstance(partition_output.partitioned_node_features, Mapping):
-        node_labels = {}
-        for (
-            node_type,
-            node_feature,
-        ) in partition_output.partitioned_node_features.items():
-            # feature_dim can be heterogeneous for a heterogeneous node features
-            if isinstance(feature_dim, Mapping):
-                feature_dim_for_current_node_type = feature_dim[node_type]
-            # feature_dim can be homogeneous for a dictionary of node features, since we inject positive and negative label
-            # types as edge types, thus storing the homogeneous graph internally as heterogeneous
-            else:
-                feature_dim_for_current_node_type = feature_dim
-            label_dim = node_feature.feats.shape[1] - feature_dim_for_current_node_type
-            if label_dim > 0:
-                (
-                    node_features_for_node_type,
-                    node_label_for_node_type,
-                ) = _get_labels_from_features(node_feature.feats, label_dim=label_dim)
-                node_labels[node_type] = FeaturePartitionData(
-                    feats=node_label_for_node_type, ids=node_feature.ids
-                )
-                # After extracting labels from the combined feature + label tensor, are there any actual features left?
-                # If not, we delete the node type from the partitioned node features.
-                if node_features_for_node_type.numel():
-                    partition_output.partitioned_node_features[
-                        node_type
-                    ] = FeaturePartitionData(
-                        feats=node_features_for_node_type, ids=node_feature.ids
-                    )
-                else:
-                    del partition_output.partitioned_node_features[node_type]
-
-                del node_feature
-
-        # If there are no node labels across all node types, we set the partitioned node labels to None
-        if not node_labels:
-            node_labels = None
-
-        # If there are no node features across all node types after removing labels, we set the partitioned node features to None
-        if not partition_output.partitioned_node_features:
-            partition_output.partitioned_node_features = None
-
-    elif isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
-        # feature_dim must be homogeneous if partitioned node features is homogeneous
-        if not isinstance(feature_dim, int):
-            raise ValueError(
-                f"Expected feature dim to be homogeneous for heterogeneous features, got {type(feature_dim)}"
-            )
-        label_dim = (
-            partition_output.partitioned_node_features.feats.shape[1] - feature_dim
-        )
-        if label_dim > 0:
-            node_features, node_label = _get_labels_from_features(
-                partition_output.partitioned_node_features.feats, label_dim=label_dim
-            )
-            node_labels = FeaturePartitionData(
-                feats=node_label, ids=partition_output.partitioned_node_features.ids
-            )
-            # After extracting labels from the combined feature + label tensor, are there any actual features left?
-            # If not, we delete the set the partitioned node features to None
-            if node_features.numel():
-                partition_output.partitioned_node_features = FeaturePartitionData(
-                    feats=node_features,
-                    ids=partition_output.partitioned_node_features.ids,
-                )
-            else:
-                partition_output.partitioned_node_features = None
-
-    else:
-        raise ValueError(
-            f"Expected to have partitioned node features if labels are present, but got node features {partition_output.partitioned_node_features}"
-        )
-
-    partition_output.partitioned_node_labels = node_labels
-    del node_labels
 
 
 @tf_on_cpu
@@ -195,9 +64,9 @@ def _load_and_build_partitioned_dataset(
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
-) -> DistLinkPredictionDataset:
+) -> DistDataset:
     """
-    Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistLinkPredictionDataset class.
+    Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
     We require init_rpc and init_worker_group have been called to set up the rpc and context, respectively, prior to calling this function. If this is not
     set up beforehand, this function will throw an error.
     Args:
@@ -212,7 +81,7 @@ def _load_and_build_partitioned_dataset(
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
     Returns:
-        DistLinkPredictionDataset: Initialized dataset with partitioned graph information
+        DistDataset: Initialized dataset with partitioned graph information
 
     """
     assert (
@@ -300,6 +169,8 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_node_features(
             node_features=loaded_graph_tensors.node_features
         )
+    if loaded_graph_tensors.node_labels is not None:
+        partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
     if loaded_graph_tensors.edge_features is not None:
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
@@ -323,30 +194,14 @@ def _load_and_build_partitioned_dataset(
         loaded_graph_tensors.edge_features,
         loaded_graph_tensors.positive_label,
         loaded_graph_tensors.negative_label,
+        loaded_graph_tensors.node_labels,
     )
     del loaded_graph_tensors
 
     partition_output = partitioner.partition()
 
-    # TODO (mkolodner-sc): Move this call to the partitioner once the partitioner accepts and returns
-    # the node labels as separate fields from the node features.
-
-    _extract_node_labels_from_features(
-        partition_output=partition_output,
-        feature_dim={
-            node_type: node_metadata.feature_dim
-            for node_type, node_metadata in serialized_graph_metadata.node_entity_info.items()
-        }
-        if isinstance(serialized_graph_metadata.node_entity_info, Mapping)
-        else serialized_graph_metadata.node_entity_info.feature_dim,
-    )
-
-    logger.info(
-        f"Initializing DistLinkPredictionDataset instance with edge direction {edge_dir}"
-    )
-    dataset = DistLinkPredictionDataset(
-        rank=rank, world_size=world_size, edge_dir=edge_dir
-    )
+    logger.info(f"Initializing DistDataset instance with edge direction {edge_dir}")
+    dataset = DistDataset(rank=rank, world_size=world_size, edge_dir=edge_dir)
 
     dataset.build(
         partition_output=partition_output,
@@ -358,7 +213,7 @@ def _load_and_build_partitioned_dataset(
 
 def _build_dataset_process(
     process_number_on_current_machine: int,
-    output_dict: MutableMapping[str, DistLinkPredictionDataset],
+    output_dict: MutableMapping[str, DistDataset],
     serialized_graph_metadata: SerializedGraphMetadata,
     master_ip_address: str,
     master_dataset_building_ports: Tuple[int, int],
@@ -377,7 +232,7 @@ def _build_dataset_process(
         1. Initializing worker group and rpc connections
         2. Loading Torch tensors from serialized TFRecords
         3. Partition loaded Torch tensors across multiple machines
-        4. Loading and formatting graph and feature partition data into a `DistLinkPredictionDataset` class, which will be used during inference
+        4. Loading and formatting graph and feature partition data into a `DistDataset` class, which will be used during inference
         5. Tearing down these connections
     Steps 2-4 are done by the `load_and_build_partitioned_dataset` function.
 
@@ -391,7 +246,7 @@ def _build_dataset_process(
     Args:
         process_number_on_current_machine (int): Process number on current machine. This parameter is required and provided by mp.spawn.
             This is always set to 1 for dataset building.
-        output_dict (MutableMapping[str, DistLinkPredictionDataset]): A dictionary spawned by a mp.manager which the built dataset
+        output_dict (MutableMapping[str, DistDataset]): A dictionary spawned by a mp.manager which the built dataset
             will be written to for use by the parent process
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         master_ip_address (str): IP address of the master node
@@ -443,7 +298,7 @@ def _build_dataset_process(
             rank=node_rank,
         )
 
-    output_dataset: DistLinkPredictionDataset = _load_and_build_partitioned_dataset(
+    output_dataset: DistDataset = _load_and_build_partitioned_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         edge_dir=sample_edge_direction,
@@ -477,9 +332,9 @@ def build_dataset(
     _dataset_building_port: Optional[
         int
     ] = None,  # WARNING: This field will be deprecated in the future
-) -> DistLinkPredictionDataset:
+) -> DistDataset:
     """
-    Launches a spawned process for building and returning a DistLinkPredictionDataset instance provided some
+    Launches a spawned process for building and returning a DistDataset instance provided some
     SerializedGraphMetadata.
 
     It is expected that there is only one `build_dataset` call per node (machine).
@@ -511,7 +366,7 @@ def build_dataset(
             be initialized from the current torch.distributed context.
 
     Returns:
-        DistLinkPredictionDataset: Built GraphLearn-for-PyTorch Dataset class
+        DistDataset: Built GraphLearn-for-PyTorch Dataset class
     """
     if distributed_context is not None:
         logger.warning(
@@ -605,7 +460,7 @@ def build_dataset(
         ),
     )
 
-    output_dataset: DistLinkPredictionDataset = output_dict["dataset"]
+    output_dataset: DistDataset = output_dict["dataset"]
 
     logger.info(
         f"Dataset Building finished on rank {node_rank} of {node_world_size}, which took {time.time()-dataset_building_start_time:.2f} seconds"
@@ -619,7 +474,7 @@ def build_dataset_from_task_config_uri(
     distributed_context: Optional[DistributedContext] = None,
     is_inference: bool = True,
     _tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
-) -> DistLinkPredictionDataset:
+) -> DistDataset:
     """
     Builds a dataset from a provided `task_config_uri` as part of GiGL orchestration. Parameters to
     this step should be provided in the `inferenceArgs` field of the GbmlConfig for inference or the

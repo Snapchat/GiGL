@@ -1,0 +1,32 @@
+# MAG240M papers dataset configuration (subset of MAG240M dataset)
+metadata:  # Graph structure definition following GraphMetadata protobuf format
+  node_types:
+    - paper                            # Single node type: academic papers from MAG240M
+  edge_types:
+    - dst_node_type: paper             # Citation edges between papers
+      relation: cites                  # Relation type: citation relationship
+      src_node_type: paper
+  condensed_edge_type_map:             # Mapping from integer IDs to edge type definitions
+    0:
+      dst_node_type: paper
+      relation: cites
+      src_node_type: paper
+  condensed_node_type_map:             # Mapping from integer IDs to node type names
+    0: paper
+
+raw_graph_data:                       # BigQuery data sources before preprocessing
+  node_data:                          # List of BigQuery node data sources
+    - _target_: gigl.src.data_preprocessor.lib.ingest.bigquery.BigqueryNodeDataReference
+      node_type: paper                # Type of nodes this source provides
+      reference_uri: external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper  # BigQuery table URI for MAG240M papers
+      identifier: paper                # Column name for paper identifiers
+  edge_data:                          # List of BigQuery edge data sources
+    - _target_: gigl.src.data_preprocessor.lib.ingest.bigquery.BigqueryEdgeDataReference
+      edge_type:                      # Edge type specification
+        _target_: gigl.src.common.types.graph_data.EdgeType
+        src_node_type: paper          # Source node type
+        relation: cites               # Edge relation
+        dst_node_type: paper          # Destination node type
+      reference_uri: external-snap-ci-github-gigl.public_gigl.datasets_mag240m_paper_cites_paper_copy  # BigQuery table URI for citation edges
+      src_identifier: paper1          # Column name for source paper identifiers
+      dst_identifier: paper2          # Column name for destination paper identifiers

@@ -1,0 +1,32 @@
+# CORA citation network dataset configuration
+metadata:  # Graph structure definition following GraphMetadata protobuf format
+  node_types:
+    - paper                            # Single node type: academic papers
+  edge_types:
+    - dst_node_type: paper             # Citation edges between papers
+      relation: cites                  # Relation type: citation relationship
+      src_node_type: paper
+  condensed_edge_type_map:             # Mapping from integer IDs to edge type definitions
+    0:
+      dst_node_type: paper
+      relation: cites
+      src_node_type: paper
+  condensed_node_type_map:             # Mapping from integer IDs to node type names
+    0: paper
+
+raw_graph_data:                       # BigQuery data sources before preprocessing
+  node_data:                          # List of BigQuery node data sources
+    - _target_: gigl.src.data_preprocessor.lib.ingest.bigquery.BigqueryNodeDataReference
+      node_type: paper                # Type of nodes this source provides
+      reference_uri: external-snap-ci-github-gigl.public_gigl.cora_homogeneous_node_anchor_edge_features_paper_nodes_2025-07-24--18-12-02-UTC  # BigQuery table URI
+      identifier: node_id              # Column name for node identifiers
+  edge_data:                          # List of BigQuery edge data sources
+    - _target_: gigl.src.data_preprocessor.lib.ingest.bigquery.BigqueryEdgeDataReference
+      edge_type:                      # Edge type specification
+        _target_: gigl.src.common.types.graph_data.EdgeType
+        src_node_type: paper          # Source node type
+        relation: cites               # Edge relation
+        dst_node_type: paper          # Destination node type
+      reference_uri: external-snap-ci-github-gigl.public_gigl.cora_homogeneous_node_anchor_edge_features_paper-cites-paper_edges_main_2025-07-24--18-12-02-UTC  # BigQuery table URI for edges
+      src_identifier: src             # Column name for source node identifiers
+      dst_identifier: dst             # Column name for destination node identifiers
