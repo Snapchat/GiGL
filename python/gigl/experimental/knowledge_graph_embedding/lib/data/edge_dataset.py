@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, List, Protocol, Tuple
+from typing import Dict, List, Optional, Protocol, Tuple
 
 import torch.distributed as dist
 from torch.utils.data import IterableDataset
@@ -52,8 +52,8 @@ class EdgeDatasetFormat(str, Enum):
 
 
 @dataclass
-class SplitConfiguration:
-    """Configuration for dataset splitting parameters."""
+class PerSplitFilteredEdgeBigqueryMetadata:
+    """Configuration parameters to filter BigQuery tables by split (train/val/test)."""
 
     split_columns: List[str]
     train_split_clause: str
@@ -69,16 +69,16 @@ class SplitConfiguration:
 
 
 @dataclass
-class EdgeDatasetConfig:
-    """Configuration for edge dataset building parameters."""
+class PerSplitFilteredEdgeDatasetConfig:
+    """Configuration parameters to build filtered datasets by split (train/val/test)."""
 
     distributed_context: DistributedContext
     enumerated_edge_metadata: List[EnumeratorEdgeTypeMetadata]
     applied_task_identifier: AppliedTaskIdentifier
     output_bq_dataset: str
     graph_metadata: GraphMetadataPbWrapper
-    format: EdgeDatasetFormat
-    split_config: SplitConfiguration
+    split_dataset_format: EdgeDatasetFormat
+    split_config: PerSplitFilteredEdgeBigqueryMetadata
 
 
 def _get_BigqueryEdgeDataReference_for_split(
@@ -98,53 +98,10 @@ def _get_BigqueryEdgeDataReference_for_split(
     )
 
 
-class DistributedEdgeDatasetCoordinator:
-    """Handles distributed coordination for edge dataset building."""
-
-    def __init__(self, distributed_context: DistributedContext):
-        self.distributed_context = distributed_context
-        self.we_initialized_dist = False
-
-    def __enter__(self):
-        """Initialize distributed context if needed."""
-        if not is_distributed_available_and_initialized():
-            logger.info(
-                f"Building edge datasets -- Initializing torch distributed for {self.distributed_context.global_rank}..."
-            )
-            dist.init_process_group(
-                backend="cpu:gloo,cuda:nccl",
-                world_size=self.distributed_context.global_world_size,
-                rank=self.distributed_context.global_rank,
-                init_method=f"tcp://{self.distributed_context.main_worker_ip_address}:23456",
-            )
-            logger.info(
-                f"Using backend: {dist.get_backend()} for distributed dataset building."
-            )
-            self.we_initialized_dist = True
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Cleanup distributed context if we initialized it."""
-        if self.we_initialized_dist:
-            logger.info(
-                f"Finished building edge datasets -- tearing down torch distributed for {self.distributed_context.global_rank}..."
-            )
-            dist.destroy_process_group()
-
-    def coordinate_resource_creation(self, creation_func: Callable[[], None]) -> None:
-        """Coordinate resource creation across distributed ranks."""
-        # Rank 0 will create the resources, and all ranks will wait for it to finish.
-        # This is to ensure that resource creation doesn't happen across multiple ranks,
-        # since this will create redundant resources and potentially cause issues.
-        if self.distributed_context.global_rank == 0:
-            creation_func()
-        dist.barrier()  # Ensure all ranks have created the resources
-
-
-class EdgeDatasetResourceBuilder:
+class PerSplitFilteredEdgeDatasetBuilder:
     """Handles creation of edge dataset resources (BigQuery tables and GCS exports)."""
 
-    def __init__(self, config: EdgeDatasetConfig):
+    def __init__(self, config: PerSplitFilteredEdgeDatasetConfig):
         self.config = config
         self.bq_utils = BqUtils(project=get_resource_config().project)
         self.gcs_utils = GcsUtils(project=get_resource_config().project)
@@ -152,11 +109,11 @@ class EdgeDatasetResourceBuilder:
 
     def create_all_resources(self) -> None:
         """Create all required resources for edge datasets."""
-        intermediate_table = self._build_intermediate_edges_table()
-        self._create_tables_for_each_split(intermediate_table)
-        self._export_split_tables_to_gcs_if_needed()
+        intermediate_table = self._build_intermediate_all_edges_table()
+        self._create_filtered_tables_for_each_split(intermediate_table)
+        self._export_filtered_tables_to_gcs_if_needed()
 
-    def _build_intermediate_edges_table(self) -> str:
+    def _build_intermediate_all_edges_table(self) -> str:
         """Build an intermediate edges table by unioning multiple edge tables with split metadata."""
         # Create an intermediate edges table with some split-related metadata.
         has_split_columns = len(self.config.split_config.split_columns) > 0
@@ -219,7 +176,7 @@ class EdgeDatasetResourceBuilder:
 
         return intermediate_edges_table
 
-    def _create_tables_for_each_split(self, intermediate_table: str) -> None:
+    def _create_filtered_tables_for_each_split(self, intermediate_table: str) -> None:
         """Create separate BigQuery tables for train/validation/test splits."""
         for split, split_clause in self.split_info:
             table_reference = _get_BigqueryEdgeDataReference_for_split(
@@ -231,7 +188,7 @@ class EdgeDatasetResourceBuilder:
             random_column_field = "row_id"
             maybe_extra_field_selector = (
                 f", RAND() as {random_column_field}"
-                if self.config.format == EdgeDatasetFormat.BIGQUERY
+                if self.config.split_dataset_format == EdgeDatasetFormat.BIGQUERY
                 else ""
             )
 
@@ -244,9 +201,9 @@ class EdgeDatasetResourceBuilder:
                 labels=dict(),
             )
 
-    def _export_split_tables_to_gcs_if_needed(self) -> None:
+    def _export_filtered_tables_to_gcs_if_needed(self) -> None:
         """Export BigQuery tables to GCS if the format requires it."""
-        if self.config.format not in (
+        if self.config.split_dataset_format not in (
             EdgeDatasetFormat.GCS_JSONL,
             EdgeDatasetFormat.GCS_PARQUET,
         ):
@@ -271,17 +228,17 @@ class EdgeDatasetResourceBuilder:
                 bq_table_path=table_reference.reference_uri,
                 destination_gcs_uri=destination_glob_path,
                 destination_format="NEWLINE_DELIMITED_JSON"
-                if self.config.format == EdgeDatasetFormat.GCS_JSONL
+                if self.config.split_dataset_format == EdgeDatasetFormat.GCS_JSONL
                 else "PARQUET",
             )
 
 
-class EdgeDatasetStrategy(Protocol):
-    """Protocol for creating different types of edge datasets."""
+class PerSplitIterableDatasetStrategy(Protocol):
+    """Protocol for creating different types of iterable datasets with filtered datasets for each split."""
 
     def create_dataset(
         self,
-        config: EdgeDatasetConfig,
+        config: PerSplitFilteredEdgeDatasetConfig,
         split: DatasetSplit,
         **kwargs,
     ) -> IterableDataset:
@@ -289,12 +246,12 @@ class EdgeDatasetStrategy(Protocol):
         ...
 
 
-class BigQueryDatasetStrategy:
-    """Strategy for creating BigQuery-based edge datasets."""
+class PerSplitIterableDatasetBigqueryStrategy:
+    """Strategy for creating BigQuery-based iterable datasets with filtered datasets for each split."""
 
     def create_dataset(
         self,
-        config: EdgeDatasetConfig,
+        config: PerSplitFilteredEdgeDatasetConfig,
         split: DatasetSplit,
         **kwargs,
     ) -> IterableDataset:
@@ -314,7 +271,7 @@ class BigQueryDatasetStrategy:
         )
 
 
-class GcsDatasetStrategy:
+class PerSplitIterableDatasetGcsStrategy:
     """Strategy for creating GCS-based edge datasets (JSONL or Parquet)."""
 
     def __init__(self, format_type: EdgeDatasetFormat):
@@ -323,7 +280,7 @@ class GcsDatasetStrategy:
 
     def create_dataset(
         self,
-        config: EdgeDatasetConfig,
+        config: PerSplitFilteredEdgeDatasetConfig,
         split: DatasetSplit,
         **kwargs,
     ) -> IterableDataset:
@@ -345,17 +302,17 @@ class GcsDatasetStrategy:
         return dataset_cls(file_uris=files_at_glob_path, **kwargs)
 
 
-class EdgeDatasetFactory:
-    """Factory for creating edge datasets using appropriate strategies."""
+class PerSplitIterableDatasetFactory:
+    """Factory for creating per-split edge datasets using appropriate strategies."""
 
-    def __init__(self, config: EdgeDatasetConfig):
+    def __init__(self, config: PerSplitFilteredEdgeDatasetConfig):
         self.config = config
         self.strategy_map = {
-            EdgeDatasetFormat.BIGQUERY: BigQueryDatasetStrategy(),
-            EdgeDatasetFormat.GCS_JSONL: GcsDatasetStrategy(
+            EdgeDatasetFormat.BIGQUERY: PerSplitIterableDatasetBigqueryStrategy(),
+            EdgeDatasetFormat.GCS_JSONL: PerSplitIterableDatasetGcsStrategy(
                 EdgeDatasetFormat.GCS_JSONL
             ),
-            EdgeDatasetFormat.GCS_PARQUET: GcsDatasetStrategy(
+            EdgeDatasetFormat.GCS_PARQUET: PerSplitIterableDatasetGcsStrategy(
                 EdgeDatasetFormat.GCS_PARQUET
             ),
         }
@@ -368,7 +325,7 @@ class EdgeDatasetFactory:
 
     def create_datasets(self) -> Dict[DatasetSplit, IterableDataset]:
         """Create and return the edge datasets for each data split."""
-        strategy = self.strategy_map[self.config.format]
+        strategy = self.strategy_map[self.config.split_dataset_format]
         datasets: Dict[DatasetSplit, IterableDataset] = {}
 
         for split, _ in self.split_info:
@@ -387,7 +344,7 @@ def build_edge_datasets(
     applied_task_identifier: AppliedTaskIdentifier,
     output_bq_dataset: str,
     graph_metadata: GraphMetadataPbWrapper,
-    split_columns: List[str] = list(),
+    split_columns: Optional[List[str]] = None,
     train_split_clause: str = "rand_split BETWEEN 0 AND 0.8",
     val_split_clause: str = "rand_split BETWEEN 0.8 AND 0.9",
     test_split_clause: str = "rand_split BETWEEN 0.9 AND 1",
@@ -419,30 +376,59 @@ def build_edge_datasets(
         project: GCP project ID.
     """
 
+    if split_columns is None:
+        split_columns = list()
+
     # Create configuration objects
-    split_config = SplitConfiguration(
+    bq_split_metadata = PerSplitFilteredEdgeBigqueryMetadata(
         split_columns=split_columns,
         train_split_clause=train_split_clause,
         val_split_clause=val_split_clause,
         test_split_clause=test_split_clause,
     )
 
-    config = EdgeDatasetConfig(
+    config = PerSplitFilteredEdgeDatasetConfig(
         distributed_context=distributed_context,
         enumerated_edge_metadata=enumerated_edge_metadata,
         applied_task_identifier=applied_task_identifier,
         output_bq_dataset=output_bq_dataset,
         graph_metadata=graph_metadata,
-        format=format,
-        split_config=split_config,
+        split_dataset_format=format,
+        split_config=bq_split_metadata,
     )
 
-    # Use context manager for distributed coordination
-    with DistributedEdgeDatasetCoordinator(distributed_context) as coordinator:
-        # Create resources using the builder
-        resource_builder = EdgeDatasetResourceBuilder(config)
-        coordinator.coordinate_resource_creation(resource_builder.create_all_resources)
+    # Handle distributed initialization if needed
+    we_initialized_dist = False
+    if not is_distributed_available_and_initialized():
+        logger.info(
+            f"Building edge datasets -- Initializing torch distributed for {distributed_context.global_rank}..."
+        )
+        dist.init_process_group(
+            backend="cpu:gloo,cuda:nccl",
+            world_size=distributed_context.global_world_size,
+            rank=distributed_context.global_rank,
+            init_method=f"tcp://{distributed_context.main_worker_ip_address}:23456",
+        )
+        logger.info(
+            f"Using backend: {dist.get_backend()} for distributed dataset building."
+        )
+        we_initialized_dist = True
 
-        # Create and return datasets using the factory
-        factory = EdgeDatasetFactory(config)
+    try:
+        # Run BQ / GCS operations to create filtered datasets
+        # Only rank 0 creates these datasets to avoid duplicate operations, all ranks wait for completion
+        split_data_builder = PerSplitFilteredEdgeDatasetBuilder(config)
+        if distributed_context.global_rank == 0:
+            split_data_builder.create_all_resources()
+        dist.barrier()  # Ensure all ranks wait for resource creation to complete
+
+        # Create and return torch IterableDatasets for each split using the factory
+        factory = PerSplitIterableDatasetFactory(config)
         return factory.create_datasets()
+    finally:
+        # Cleanup distributed context if we initialized it
+        if we_initialized_dist:
+            logger.info(
+                f"Finished building edge datasets -- tearing down torch distributed for {distributed_context.global_rank}..."
+            )
+            dist.destroy_process_group()
