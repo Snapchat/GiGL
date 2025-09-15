@@ -1,5 +1,8 @@
 from enum import Enum
-from typing import Type
+from typing import Callable, Type
+
+import torch
+import torch.nn.functional as F
 
 from gigl.experimental.knowledge_graph_embedding.lib.model.operators import (
     ComplexDiagonalOperator,
@@ -22,6 +25,31 @@ class SimilarityType(str, Enum):
 
     def __str__(self):
         return self.value
+
+    def get_similarity_fn(self) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+        """
+        Returns the corresponding similarity function for the similarity type.
+
+        The returned function takes two tensors x and y and returns their similarity
+        matrix. For x with shape [B, D] and y with shape [N, D], returns [B, N].
+
+        Returns:
+            Callable[[torch.Tensor, torch.Tensor], torch.Tensor]: The similarity function.
+        """
+        if self == SimilarityType.DOT:
+            return lambda x, y: x @ y.T
+        elif self == SimilarityType.COSINE:
+            return lambda x, y: F.normalize(x, dim=1) @ F.normalize(y, dim=1).T
+        elif self == SimilarityType.EUCLIDEAN:
+
+            def euclidean_sim(x, y):
+                x_sq = x.pow(2).sum(dim=1, keepdim=True)  # [B, 1]
+                y_sq = y.pow(2).sum(dim=1, keepdim=True)  # [N, 1]
+                return -(x_sq - 2 * x @ y.T + y_sq.T)  # negative squared L2
+
+            return euclidean_sim
+        else:
+            raise ValueError(f"Unknown similarity type: {self}")
 
 
 class OperatorType(str, Enum):
