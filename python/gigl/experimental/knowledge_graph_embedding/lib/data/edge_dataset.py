@@ -22,7 +22,7 @@ from gigl.experimental.knowledge_graph_embedding.common.graph_dataset import (
 )
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.dataset_split import DatasetSplit
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.data_preprocessor.lib.enumerate.utils import EnumeratorEdgeTypeMetadata
@@ -94,7 +94,7 @@ def _get_BigqueryEdgeDataReference_for_split(
         ),
         src_identifier=SRC_FIELD,
         dst_identifier=DST_FIELD,
-        edge_type=EdgeType("mixed", "mixed", "mixed"),
+        edge_type=EdgeType(NodeType("mixed"), Relation("mixed"), NodeType("mixed")),
     )
 
 
@@ -307,7 +307,7 @@ class PerSplitIterableDatasetFactory:
 
     def __init__(self, config: PerSplitFilteredEdgeDatasetConfig):
         self.config = config
-        self.strategy_map = {
+        self.strategy_map: Dict[EdgeDatasetFormat, PerSplitIterableDatasetStrategy] = {
             EdgeDatasetFormat.BIGQUERY: PerSplitIterableDatasetBigqueryStrategy(),
             EdgeDatasetFormat.GCS_JSONL: PerSplitIterableDatasetGcsStrategy(
                 EdgeDatasetFormat.GCS_JSONL
@@ -407,7 +407,6 @@ def build_edge_datasets(
             backend="cpu:gloo,cuda:nccl",
             world_size=distributed_context.global_world_size,
             rank=distributed_context.global_rank,
-            init_method=f"tcp://{distributed_context.main_worker_ip_address}:23456",
         )
         logger.info(
             f"Using backend: {dist.get_backend()} for distributed dataset building."
