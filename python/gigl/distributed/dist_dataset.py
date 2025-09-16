@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Tuple, TypeVar, Union
 
 import graphlearn_torch as glt
 import torch
@@ -29,6 +29,8 @@ from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeSplitter
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
+
+_EntityType = TypeVar("_EntityType", NodeType, EdgeType)
 
 
 class DistDataset(glt.distributed.DistDataset):
@@ -966,29 +968,24 @@ def _append_non_split_node_ids(
 
 
 def _prepare_feature_data(
-    partition_book: Union[
-        PartitionBook, dict[NodeType, PartitionBook], dict[EdgeType, PartitionBook]
-    ],
+    partition_book: Union[PartitionBook, dict[_EntityType, PartitionBook]],
     partitioned_data: Optional[
         Union[
             FeaturePartitionData,
-            dict[NodeType, FeaturePartitionData],
-            dict[EdgeType, FeaturePartitionData],
+            dict[_EntityType, FeaturePartitionData],
         ]
     ],
 ) -> Tuple[
     Optional[
         Union[
             torch.Tensor,
-            dict[NodeType, torch.Tensor],
-            dict[EdgeType, torch.Tensor],
+            dict[_EntityType, torch.Tensor],
         ]
     ],
     Optional[
         Union[
             TensorDataType,
-            dict[NodeType, TensorDataType],
-            dict[EdgeType, TensorDataType],
+            dict[_EntityType, TensorDataType],
         ]
     ],
 ]:
@@ -1034,14 +1031,12 @@ def _prepare_feature_data(
         ), f"Expected at least one entity type in partition book, but got {partition_book.keys()}."
 
         # Extract features and IDs by type
-        features_per_entity_type: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
-        id_to_index_per_entity_type: dict[
-            Union[NodeType, EdgeType], TensorDataType
-        ] = {}
+        features_per_entity_type: dict[_EntityType, torch.Tensor] = {}
+        id_to_index_per_entity_type: dict[_EntityType, TensorDataType] = {}
         for entity_key, partition_book_instance in partition_book.items():
             if entity_key in partitioned_data:
                 features_per_entity_type[entity_key] = partitioned_data[
-                    entity_key  # type: ignore
+                    entity_key
                 ].feats
                 if isinstance(partition_book_instance, RangePartitionBook):
                     id_to_index_per_entity_type[
@@ -1049,9 +1044,9 @@ def _prepare_feature_data(
                     ] = partition_book_instance.id2index
                 else:
                     id_to_index_per_entity_type[entity_key] = id2idx(
-                        partitioned_data[entity_key].ids  # type: ignore
+                        partitioned_data[entity_key].ids
                     )
-        return features_per_entity_type, id_to_index_per_entity_type  # type: ignore
+        return features_per_entity_type, id_to_index_per_entity_type
     else:
         return None, None
 
