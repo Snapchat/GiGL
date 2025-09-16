@@ -997,13 +997,13 @@ def _prepare_feature_data(
     and computes id2idx mappings for both homogeneous and heterogeneous cases.
 
     Args:
-        partition_book: The partition book for the data type
-        partitioned_data: The partitioned data containing features/labels
+        partition_book (Union[PartitionBook, dict[_EntityType, PartitionBook]]): The partition book for the data type
+        partitioned_data (Optional[Union[FeaturePartitionData, dict[_EntityType, FeaturePartitionData]]]): The partitioned data containing features/labels
     Returns:
         Tuple[
-            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor], dict[EdgeType, torch.Tensor]]]:
+            Optional[Union[torch.Tensor, dict[_EntityType, torch.Tensor]]]:
                 Partitioned features or labels
-            Optional[Union[TensorDataType, dict[NodeType, TensorDataType], dict[EdgeType, TensorDataType]]]:
+            Optional[Union[TensorDataType, dict[_EntityType, TensorDataType]]]:
                 Global id to local index tensor for features or labels
         ]
     """
