@@ -408,9 +408,9 @@ class DistABLPLoader(DistLoader):
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
             input_type=anchor_node_type,
-            positive_labels=positive_labels,
-            negative_labels=negative_labels,
-            supervision_node_type=supervision_node_type,
+            positive_labels=torch.cat(all_positive_labels, dim=0),
+            negative_labels=torch.cat(all_negative_labels, dim=0),
+            supervision_node_type=supervision_node_types,
         )
 
         sampling_config = SamplingConfig(
