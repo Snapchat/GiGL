@@ -297,9 +297,14 @@ class DistABLPLoader(DistLoader):
         ) = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
         self._supervision_edge_type = supervision_edge_type
 
+        curr_process_nodes = shard_nodes_by_process(
+            input_nodes=anchor_node_ids,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
+        )
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset=dataset,
-            node_ids=anchor_node_ids,
+            node_ids=curr_process_nodes,
             positive_label_edge_type=self._positive_label_edge_type,
             negative_label_edge_type=self._negative_label_edge_type,
         )
@@ -314,12 +319,6 @@ class DistABLPLoader(DistLoader):
 
         num_neighbors = patch_fanout_for_sampling(
             dataset.get_edge_types(), num_neighbors
-        )
-
-        curr_process_nodes = shard_nodes_by_process(
-            input_nodes=anchor_node_ids,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
         )
 
         self._node_feature_info = dataset.node_feature_info
