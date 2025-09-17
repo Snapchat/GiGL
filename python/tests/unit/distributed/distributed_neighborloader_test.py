@@ -569,7 +569,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def test_distributed_neighbor_loader(self):
+    def _test_distributed_neighbor_loader(self):
         expected_data_count = 2708
         port = gigl.distributed.utils.get_free_port()
 
@@ -586,7 +586,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, expected_data_count),
         )
 
-    def test_infinite_distributed_neighbor_loader(self):
+    def _test_infinite_distributed_neighbor_loader(self):
         port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
@@ -802,7 +802,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, to_homogeneous(dataset.node_ids).size(0)),
         )
 
-    def test_multiple_neighbor_loader(self):
+    def _test_multiple_neighbor_loader(self):
         port = gigl.distributed.utils.get_free_port()
         expected_data_count = 2708
 

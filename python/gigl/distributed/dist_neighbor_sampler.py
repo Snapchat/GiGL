@@ -49,7 +49,8 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             }
         else:
             negative_label_by_node_types = None
-
+        print(f"positive_label_by_node_types: {positive_label_by_node_types}")
+        print(f"negative_label_by_node_types: {negative_label_by_node_types}")
         input_seeds_builder: dict[
             Union[str, NodeType], list[torch.Tensor]
         ] = collections.defaultdict(list)
@@ -65,19 +66,22 @@ class DistABLPNeighborSampler(DistNeighborSampler):
                 input_seeds_builder[node_type].append(
                     negative_seeds[negative_seeds != PADDING_NODE]
                 )
+        print(f"input_seeds_builder: {input_seeds_builder}")
         input_nodes: dict[Union[str, NodeType], torch.Tensor] = {
             node_type: torch.cat(seeds, dim=0)
             for node_type, seeds in input_seeds_builder.items()
         }
-
+        print(f"input_nodes: {input_nodes}")
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
-        metadata: dict[str, dict[NodeType, torch.Tensor]] = {
-            "positive_labels": positive_label_by_node_types
-        }
+        metadata: dict[str, torch.Tensor] = {}
+        for node_type in positive_label_by_node_types:
+            metadata[f"gigl_positive_labels.{node_type}"] = positive_label_by_node_types[node_type]
         if negative_label_by_node_types is not None:
-            metadata["negative_labels"] = negative_label_by_node_types
+            for node_type in negative_label_by_node_types:
+                metadata[f"gigl_negative_labels.{node_type}"] = negative_label_by_node_types[node_type]
+        print(f"metadata: {metadata}")
         output: NeighborOutput
         if is_hetero:
             assert input_type is not None
@@ -87,7 +91,9 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             out_edges_hetero: dict[EdgeType, list[torch.Tensor]] = {}
             num_sampled_nodes_hetero: dict[NodeType, list[torch.Tensor]] = {}
             num_sampled_edges_hetero: dict[EdgeType, list[torch.Tensor]] = {}
+            print("Getting src_dict")
             src_dict = inducer.init_node(input_nodes)
+            print(f"src_dict: {src_dict}")
             batch = {input_type: input_seeds}
             merge_dict(src_dict, out_nodes_hetero)
             count_dict(src_dict, num_sampled_nodes_hetero, 1)
@@ -187,5 +193,5 @@ class DistABLPNeighborSampler(DistNeighborSampler):
 
         # Reclaim inducer into pool.
         self.inducer_pool.put(inducer)
-
+        print(f"sample_output: {sample_output}")
         return sample_output
