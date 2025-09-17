@@ -19,7 +19,7 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         # TODO (mkolodner-sc): Support multiple positive and negative label node types
         positive_labels: torch.Tensor,
         negative_labels: Optional[torch.Tensor],
-        supervision_node_type: Optional[Union[str, NodeType]],
+        supervision_node_types: Optional[list[Union[str, NodeType]]],
     ):
         """
         Args:
@@ -27,13 +27,13 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
             input_type (Optional[Union[str, NodeType]]): Node type of the anchor nodes
             positive_labels (torch.Tensor): Positive label nodes to fanout from
             negative_labels (Optional[torch.Tensor]): Negative label nodes to fanout from
-            supervision_node_type (Optional[Union[str, NodeType]]): Node type of the positive and negative labels. GiGL
+            supervision_node_types (Optional[list[Union[str, NodeType]]]): Node type of the positive and negative labels. GiGL
                 currently only supports one supervision node type, this may be revisited in the future
         """
         super().__init__(node, input_type)
         self.positive_labels = positive_labels
         self.negative_labels = negative_labels
-        self.supervision_node_type = supervision_node_type
+        self.supervision_node_types = supervision_node_types
 
     def __len__(self) -> int:
         return self.node.shape[0]
@@ -49,5 +49,5 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
             negative_labels=self.negative_labels[index]
             if self.negative_labels is not None
             else None,
-            supervision_node_type=self.supervision_node_type,
+            supervision_node_types=self.supervision_node_types,
         )

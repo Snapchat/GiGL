@@ -53,7 +53,7 @@ class DistABLPLoader(DistLoader):
             ]
         ] = None,
         # TODO(kmonte): Support multiple supervision edge types.
-        supervision_edge_type: Optional[EdgeType] = None,
+        supervision_edge_type: Optional[Union[EdgeType, list[EdgeType]]] = None,
         num_workers: int = 1,
         batch_size: int = 1,
         pin_memory_device: Optional[torch.device] = None,
@@ -170,6 +170,12 @@ class DistABLPLoader(DistLoader):
         master_ip_address: str
         should_cleanup_distributed_context: bool = False
 
+        if supervision_edge_type is not None:
+            supervision_edge_types = supervision_edge_type if isinstance(supervision_edge_type, list) else [supervision_edge_type]
+        else:
+            supervision_edge_types = []
+        del supervision_edge_type
+
         if context:
             assert (
                 local_process_world_size is not None
@@ -236,8 +242,9 @@ class DistABLPLoader(DistLoader):
                 f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
             )
         self._is_input_heterogeneous: bool = False
+        supervision_node_types: list[NodeType] = []
         if isinstance(input_nodes, tuple):
-            if supervision_edge_type is None:
+            if len(supervision_edge_types) == 0:
                 raise ValueError(
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
@@ -245,23 +252,23 @@ class DistABLPLoader(DistLoader):
             anchor_node_type, anchor_node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
-            assert (
-                supervision_edge_type[0] == anchor_node_type
-            ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
-                got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
-            supervision_node_type = supervision_edge_type[2]
+            for supervision_edge_type in supervision_edge_types:
+                assert (
+                    supervision_edge_type[0] == anchor_node_type
+                ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
+                    got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
+                supervision_node_types.append(supervision_edge_type[2])
             if dataset.edge_dir == "in":
-                supervision_edge_type = reverse_edge_type(supervision_edge_type)
-
+                supervision_edge_types = [reverse_edge_type(supervision_edge_type) for supervision_edge_type in supervision_edge_types]
         elif isinstance(input_nodes, torch.Tensor):
-            if supervision_edge_type is not None:
+            if len(supervision_edge_types) > 0:
                 raise ValueError(
                     f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
                 )
             anchor_node_ids = input_nodes
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-            supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            supervision_node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
         elif input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -278,10 +285,10 @@ class DistABLPLoader(DistLoader):
 
             anchor_node_ids = dataset.node_ids
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-            supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            supervision_node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
 
-        missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
+        missing_edge_types = set(supervision_edge_types) - set(dataset.graph.keys())
         if missing_edge_types:
             raise ValueError(
                 f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
@@ -291,18 +298,26 @@ class DistABLPLoader(DistLoader):
             raise ValueError(
                 f"input_nodes must be a 1D tensor, got {anchor_node_ids.shape}."
             )
-        (
-            self._positive_label_edge_type,
-            self._negative_label_edge_type,
-        ) = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
-        self._supervision_edge_type = supervision_edge_type
 
-        positive_labels, negative_labels = get_labels_for_anchor_nodes(
-            dataset=dataset,
-            node_ids=anchor_node_ids,
-            positive_label_edge_type=self._positive_label_edge_type,
-            negative_label_edge_type=self._negative_label_edge_type,
-        )
+        self._positive_label_edge_types: list[EdgeType] = []
+        self._negative_label_edge_types: list[EdgeType] = []
+        for supervision_edge_type in supervision_edge_types:
+            self._positive_label_edge_types.append(supervision_edge_type)
+            self._negative_label_edge_types.append(supervision_edge_type)
+
+        self._supervision_edge_types = supervision_edge_types
+        all_positive_labels: list[torch.Tensor] = []
+        all_negative_labels: list[torch.Tensor] = []
+        for supervision_edge_type in supervision_edge_types:
+            positive_labels, negative_labels = get_labels_for_anchor_nodes(
+                dataset=dataset,
+                node_ids=anchor_node_ids,
+                positive_label_edge_type=supervision_edge_type,
+                negative_label_edge_type=supervision_edge_type,
+            )
+            all_positive_labels.append(positive_labels)
+            all_negative_labels.append(negative_labels)
+
 
         self.to_device = (
             pin_memory_device
