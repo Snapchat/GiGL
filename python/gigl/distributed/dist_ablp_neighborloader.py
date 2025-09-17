@@ -34,7 +34,6 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     reverse_edge_type,
-    select_label_edge_types,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
@@ -171,7 +170,11 @@ class DistABLPLoader(DistLoader):
         should_cleanup_distributed_context: bool = False
 
         if supervision_edge_type is not None:
-            supervision_edge_types = supervision_edge_type if isinstance(supervision_edge_type, list) else [supervision_edge_type]
+            supervision_edge_types = (
+                supervision_edge_type
+                if isinstance(supervision_edge_type, list)
+                else [supervision_edge_type]
+            )
         else:
             supervision_edge_types = []
         del supervision_edge_type
@@ -259,7 +262,10 @@ class DistABLPLoader(DistLoader):
                     got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
                 supervision_node_types.append(supervision_edge_type[2])
             if dataset.edge_dir == "in":
-                supervision_edge_types = [reverse_edge_type(supervision_edge_type) for supervision_edge_type in supervision_edge_types]
+                supervision_edge_types = [
+                    reverse_edge_type(supervision_edge_type)
+                    for supervision_edge_type in supervision_edge_types
+                ]
         elif isinstance(input_nodes, torch.Tensor):
             if len(supervision_edge_types) > 0:
                 raise ValueError(
@@ -317,7 +323,6 @@ class DistABLPLoader(DistLoader):
             )
             all_positive_labels.append(positive_labels)
             all_negative_labels.append(negative_labels)
-
 
         self.to_device = (
             pin_memory_device

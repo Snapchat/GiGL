@@ -17,9 +17,10 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         node: torch.Tensor,
         input_type: Optional[Union[str, NodeType]],
         # TODO (mkolodner-sc): Support multiple positive and negative label node types
-        positive_labels: torch.Tensor,
-        negative_labels: Optional[torch.Tensor],
-        supervision_node_types: Optional[list[Union[str, NodeType]]],
+        positive_label_by_node_types: dict[Union[str, NodeType], torch.Tensor],
+        negative_label_by_node_types: Optional[
+            dict[Union[str, NodeType], torch.Tensor]
+        ],
     ):
         """
         Args:
@@ -31,9 +32,9 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
                 currently only supports one supervision node type, this may be revisited in the future
         """
         super().__init__(node, input_type)
-        self.positive_labels = positive_labels
-        self.negative_labels = negative_labels
-        self.supervision_node_types = supervision_node_types
+
+        self.positive_label_by_node_types = positive_label_by_node_types
+        self.negative_label_by_node_types = negative_label_by_node_types
 
     def __len__(self) -> int:
         return self.node.shape[0]
@@ -45,9 +46,14 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         return ABLPNodeSamplerInput(
             node=self.node[index],
             input_type=self.input_type,
-            positive_labels=self.positive_labels[index],
-            negative_labels=self.negative_labels[index]
-            if self.negative_labels is not None
+            positive_label_by_node_types={
+                node_type: self.positive_label_by_node_types[node_type][index]
+                for node_type in self.positive_label_by_node_types
+            },
+            negative_label_by_node_types={
+                node_type: self.negative_label_by_node_types[node_type][index]
+                for node_type in self.negative_label_by_node_types
+            }
+            if self.negative_label_by_node_types is not None
             else None,
-            supervision_node_types=self.supervision_node_types,
         )
