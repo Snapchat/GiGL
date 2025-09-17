@@ -73,7 +73,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
-        metadata: dict[str, torch.Tensor] = {
+        metadata: dict[str, dict[NodeType, torch.Tensor]] = {
             "positive_labels": positive_label_by_node_types
         }
         if negative_label_by_node_types is not None:

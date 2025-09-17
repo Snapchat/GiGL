@@ -34,6 +34,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     reverse_edge_type,
+    select_label_edge_types,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
@@ -269,7 +270,7 @@ class DistABLPLoader(DistLoader):
         elif isinstance(input_nodes, torch.Tensor):
             if len(supervision_edge_types) > 0:
                 raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_types}"
                 )
             anchor_node_ids = input_nodes
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -284,9 +285,9 @@ class DistABLPLoader(DistLoader):
                 raise ValueError(
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
-            if supervision_edge_type is not None:
+            if len(supervision_edge_types) > 0:
                 raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_type}"
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_types}"
                 )
 
             anchor_node_ids = dataset.node_ids
@@ -307,22 +308,25 @@ class DistABLPLoader(DistLoader):
 
         self._positive_label_edge_types: list[EdgeType] = []
         self._negative_label_edge_types: list[EdgeType] = []
-        for supervision_edge_type in supervision_edge_types:
-            self._positive_label_edge_types.append(supervision_edge_type)
-            self._negative_label_edge_types.append(supervision_edge_type)
-
         self._supervision_edge_types = supervision_edge_types
-        all_positive_labels: list[torch.Tensor] = []
-        all_negative_labels: list[torch.Tensor] = []
+        all_positive_labels: dict[Union[str, NodeType], torch.Tensor] = {}
+        all_negative_labels: dict[Union[str, NodeType], torch.Tensor] = {}
+
         for supervision_edge_type in supervision_edge_types:
+            positive_label_edge_type, negative_label_edge_type = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
+            self._positive_label_edge_types.append(positive_label_edge_type)
+            if negative_label_edge_type is not None:
+                self._negative_label_edge_types.append(negative_label_edge_type)
+
             positive_labels, negative_labels = get_labels_for_anchor_nodes(
                 dataset=dataset,
                 node_ids=anchor_node_ids,
-                positive_label_edge_type=supervision_edge_type,
-                negative_label_edge_type=supervision_edge_type,
+                positive_label_edge_type=positive_label_edge_type,
+                negative_label_edge_type=negative_label_edge_type,
             )
-            all_positive_labels.append(positive_labels)
-            all_negative_labels.append(negative_labels)
+            all_positive_labels[positive_label_edge_type[2]] = positive_labels
+            if negative_label_edge_type is not None and negative_labels is not None:
+                all_negative_labels[negative_label_edge_type[2]] = negative_labels
 
         self.to_device = (
             pin_memory_device
@@ -413,9 +417,8 @@ class DistABLPLoader(DistLoader):
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
             input_type=anchor_node_type,
-            positive_labels=torch.cat(all_positive_labels, dim=0),
-            negative_labels=torch.cat(all_negative_labels, dim=0),
-            supervision_node_type=supervision_node_types,
+            positive_label_by_node_types=all_positive_labels,
+            negative_label_by_node_types=all_negative_labels,
         )
 
         sampling_config = SamplingConfig(
