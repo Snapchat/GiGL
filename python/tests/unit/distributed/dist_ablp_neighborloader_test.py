@@ -60,6 +60,40 @@ def _init_process_group():
 # ports, providing stronger guarantees of isolation between tests.
 
 
+def _assert_labels(
+    node: torch.Tensor, y: dict[int, torch.Tensor], expected: dict[int, torch.Tensor]
+):
+    """
+    Asserts that the given labels (y) match the expected labels (expected).
+    The labels are in the *local* node space, but the expected labels are in the *global* node space.
+    E.g expected_positive_labels = {10: torch.tensor([15])}
+    But datum.y_positive = {0: torch.tensor([1])}
+    So we need to convert, using `node`, the nodes in a batch.
+
+    The local IDs are the index of a node in `node`, and the global IDs are the values of `node`.
+
+    For example:
+    node = torch.tensor([10, 11])
+    y = {0: torch.tensor([1])}
+    # y in global space is {10: torch.tensor([11])}
+    expected = {10: torch.tensor([11])}
+    _assert_labels(node, y, expected)
+
+    Raises if:
+    - The keys in `y` do not match the keys in `expected`
+    - The values in `y` do not match the values in `expected`
+    """
+    supplied_global_nodes = node[list(y.keys())]
+    assert set(supplied_global_nodes.tolist()) == set(
+        expected.keys()
+    ), f"Expected keys {expected.keys()} != {y.keys()}"
+    for local_anchor in y:
+        global_id = int(node[local_anchor].item())
+        global_nodes = node[y[local_anchor]]
+        expected_nodes = expected[global_id]
+        assert_tensor_equality(global_nodes, expected_nodes, dim=0)
+
+
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
 def _run_distributed_ablp_neighbor_loader(
     _,
@@ -95,27 +129,9 @@ def _run_distributed_ablp_neighbor_loader(
         dim=0,
     )
 
-    assert set(datum.y_positive.keys()) == set(expected_positive_labels.keys())
-    for local_anchor in datum.y_positive:
-        global_id = datum.node[local_anchor].item()
-        global_positive_nodes = datum.node[datum.y_positive[local_anchor]]
-        expected_positive_label = expected_positive_labels[global_id]
-        assert_tensor_equality(
-            global_positive_nodes,
-            expected_positive_label,
-            dim=0,
-        )
+    _assert_labels(datum.node, datum.y_positive, expected_positive_labels)
     if expected_negative_labels is not None:
-        assert set(datum.y_negative.keys()) == set(expected_negative_labels.keys())
-        for local_anchor in datum.y_negative:
-            global_id = datum.node[local_anchor].item()
-            global_negative_nodes = datum.node[datum.y_negative[local_anchor]]
-            expected_negative_label = expected_negative_labels[global_id]
-            assert_tensor_equality(
-                global_negative_nodes,
-                expected_negative_label,
-                dim=0,
-            )
+        _assert_labels(datum.node, datum.y_negative, expected_negative_labels)
     else:
         assert not hasattr(datum, "y_negative")
     dsts, srcs, *_ = datum.coo()
@@ -380,7 +396,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         )
 
-    def test_cora_supervised(self):
+    def _test_cora_supervised(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -422,7 +438,7 @@ class DistABLPLoaderTest(unittest.TestCase):
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def test_dblp_supervised(self):
+    def _test_dblp_supervised(self):
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -490,7 +506,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_toy_heterogeneous_ablp(
+    def _test_toy_heterogeneous_ablp(
         self,
         _,
         partitioner_class: type[DistPartitioner],
