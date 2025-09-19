@@ -585,6 +585,7 @@ class DistABLPLoader(DistLoader):
                     node_type_to_local_node_to_global_node[e_type[2]] = data[e_type[2]].node
         else:
             node_type_to_local_node_to_global_node[DEFAULT_HOMOGENEOUS_NODE_TYPE] = data.node
+        print(f"{node_type_to_local_node_to_global_node=}")
         output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
@@ -592,6 +593,8 @@ class DistABLPLoader(DistLoader):
             dict
         )
         for edge_type, label_tensor in positive_labels.items():
+            print(f"{edge_type=}")
+            print(f"{label_tensor=}")
             for local_anchor_node_id in range(label_tensor.size(0)):
                 positive_mask = (
                     node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(1)
@@ -608,6 +611,8 @@ class DistABLPLoader(DistLoader):
 
         if negative_labels is not None:
             for edge_type, label_tensor in negative_labels.items():
+                print(f"{edge_type=}")
+                print(f"{label_tensor=}")
                 for local_anchor_node_id in range(label_tensor.size(0)):
                     negative_mask = (
                         node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(1)

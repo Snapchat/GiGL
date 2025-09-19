@@ -215,6 +215,7 @@ def _run_distributed_ablp_neighbor_loader(
         expected_node,
         dim=0,
     )
+    assert set(datum.y_positive.keys()) == set(expected_positive_labels.keys()), f"{datum.y_positive.keys()=} != {expected_positive_labels.keys()=}"
     for local_anchor in datum.y_positive:
         global_id = datum.node[local_anchor].item()
         global_positive_nodes = datum.node[datum.y_positive[local_anchor]]
@@ -225,6 +226,7 @@ def _run_distributed_ablp_neighbor_loader(
             dim=0,
         )
     if expected_negative_labels is not None:
+        assert set(datum.y_negative.keys()) == set(expected_negative_labels.keys()), f"{datum.y_negative.keys()=} != {expected_negative_labels.keys()=}"
         for local_anchor in datum.y_negative:
             global_id = datum.node[local_anchor].item()
             global_negative_nodes = datum.node[datum.y_negative[local_anchor]]
