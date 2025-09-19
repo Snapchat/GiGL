@@ -755,7 +755,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def _test_ablp_dataloader(
+    def test_ablp_dataloader(
         self,
         _,
         labeled_edges,

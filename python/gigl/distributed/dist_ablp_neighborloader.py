@@ -329,7 +329,7 @@ class DistABLPLoader(DistLoader):
 
             positive_labels, negative_labels = get_labels_for_anchor_nodes(
                 dataset=dataset,
-                node_ids=curr_process_nodes,
+                node_ids=anchor_node_ids,
                 positive_label_edge_type=positive_label_edge_type,
                 negative_label_edge_type=negative_label_edge_type,
             )
@@ -585,10 +585,10 @@ class DistABLPLoader(DistLoader):
                     node_type_to_local_node_to_global_node[e_type[2]] = data[e_type[2]].node
         else:
             node_type_to_local_node_to_global_node[DEFAULT_HOMOGENEOUS_NODE_TYPE] = data.node
-        output_positive_labels: dict[NodeType, dict[int, torch.Tensor]] = defaultdict(
+        output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
-        output_negative_labels: dict[NodeType, dict[int, torch.Tensor]] = defaultdict(
+        output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
         for edge_type, label_tensor in positive_labels.items():
@@ -625,15 +625,15 @@ class DistABLPLoader(DistLoader):
         print(f"{output_negative_labels=}")
         if len(output_positive_labels) == 1 and list(output_positive_labels.keys())[
             0
-        ] == message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE):
-            data.y_positive = output_positive_labels[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+        ] == DEFAULT_HOMOGENEOUS_EDGE_TYPE:
+            data.y_positive = output_positive_labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         else:
             data.y_positive = output_positive_labels
 
         if len(output_negative_labels) == 1 and list(output_negative_labels.keys())[
             0
-        ] == message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE):
-            data.y_negative = output_negative_labels[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+        ] == DEFAULT_HOMOGENEOUS_EDGE_TYPE:
+            data.y_negative = output_negative_labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         elif len(output_negative_labels) > 0:
             data.y_negative = output_negative_labels
 
