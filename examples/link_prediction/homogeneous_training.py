@@ -315,7 +315,8 @@ def _training_process(
     logger.info(f"---Rank {rank} training process started")
 
     device = get_available_device(local_process_rank=local_rank)
-
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device)
     logger.info(f"---Rank {rank}  training process set device {device}")
 
     logger.info(f"---Rank {rank} training process group initialized")

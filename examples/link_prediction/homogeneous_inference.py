@@ -122,7 +122,7 @@ def _inference_process(
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
-    if device.type == "cuda":
+    if torch.cuda.is_available():
         # If using GPU, we set the device to the local process rank's GPU
         logger.info(
             f"Using GPU {device} with index {device.index} on local rank: {local_rank} for inference"
