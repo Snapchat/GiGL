@@ -3,7 +3,7 @@ from typing import Any, Optional, Union
 import torch
 from graphlearn_torch.sampler import NodeSamplerInput
 
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 
 class ABLPNodeSamplerInput(NodeSamplerInput):
@@ -17,10 +17,8 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         node: torch.Tensor,
         input_type: Optional[Union[str, NodeType]],
         # TODO (mkolodner-sc): Support multiple positive and negative label node types
-        positive_label_by_node_types: dict[Union[str, NodeType], torch.Tensor],
-        negative_label_by_node_types: Optional[
-            dict[Union[str, NodeType], torch.Tensor]
-        ],
+        positive_label_by_edge_types: dict[EdgeType, torch.Tensor],
+        negative_label_by_edge_types: Optional[dict[EdgeType, torch.Tensor]],
     ):
         """
         Args:
@@ -33,8 +31,8 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         """
         super().__init__(node, input_type)
 
-        self.positive_label_by_node_types = positive_label_by_node_types
-        self.negative_label_by_node_types = negative_label_by_node_types
+        self.positive_label_by_edge_types = positive_label_by_edge_types
+        self.negative_label_by_edge_types = negative_label_by_edge_types
 
     def __len__(self) -> int:
         return self.node.shape[0]
@@ -46,14 +44,14 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         return ABLPNodeSamplerInput(
             node=self.node[index],
             input_type=self.input_type,
-            positive_label_by_node_types={
-                node_type: self.positive_label_by_node_types[node_type][index]
-                for node_type in self.positive_label_by_node_types
+            positive_label_by_edge_types={
+                edge_type: self.positive_label_by_edge_types[edge_type][index]
+                for edge_type in self.positive_label_by_edge_types
             },
-            negative_label_by_node_types={
-                node_type: self.negative_label_by_node_types[node_type][index]
-                for node_type in self.negative_label_by_node_types
+            negative_label_by_edge_types={
+                edge_type: self.negative_label_by_edge_types[edge_type][index]
+                for edge_type in self.negative_label_by_edge_types
             }
-            if self.negative_label_by_node_types is not None
+            if self.negative_label_by_edge_types is not None
             else None,
         )

@@ -614,7 +614,6 @@ def get_labels_for_anchor_nodes(
         negative_node_topo = dataset.graph[negative_label_edge_type].topo
     else:
         negative_node_topo = None
-
     # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
     positive_labels = _get_padded_labels(
         node_ids, positive_node_topo, allow_non_existant_node_ids=False
@@ -627,7 +626,6 @@ def get_labels_for_anchor_nodes(
         )
     else:
         negative_labels = None
-
     return positive_labels, negative_labels
 
 

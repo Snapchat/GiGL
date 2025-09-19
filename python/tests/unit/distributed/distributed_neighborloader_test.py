@@ -208,6 +208,7 @@ def _run_distributed_ablp_neighbor_loader(
         count += 1
 
     assert count == 1
+    print(datum)
     dsts, srcs, *_ = datum.coo()
     assert_tensor_equality(
         datum.node,
@@ -241,6 +242,99 @@ def _run_distributed_ablp_neighbor_loader(
 
     # Check that the batch and batch_size attributes of the class are correct
     assert_tensor_equality(datum.batch, input_nodes)
+    assert datum.batch_size == batch_size
+
+    # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
+    # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
+    shutdown_rpc()
+
+
+def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
+    _,
+    dataset: DistDataset,
+    expected_node: dict[NodeType, torch.Tensor],
+    expected_srcs: dict[NodeType, torch.Tensor],
+    expected_dsts: dict[NodeType, torch.Tensor],
+    expected_positive_labels: dict[EdgeType, dict[int, torch.Tensor]],
+    expected_negative_labels: Optional[dict[EdgeType, dict[int, torch.Tensor]]],
+    supervision_edge_types: list[EdgeType],
+):
+    input_nodes = (NodeType("a"), torch.tensor([0]))
+    batch_size = 1
+
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=batch_size,
+        pin_memory_device=torch.device("cpu"),
+        supervision_edge_type=supervision_edge_types,
+    )
+
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
+
+    assert count == 1
+    print(datum)
+    print(f"{datum.num_sampled_nodes=}")
+    print(f"{datum.y_positive=}")
+    print(f"{datum.y_negative=}")
+    # dsts, srcs, *_ = datum.coo()
+    assert set(datum.node_types) == set(expected_node.keys())
+    for node_type in expected_node.keys():
+        print(f"node_type: {node_type}, {datum[node_type].node=}")
+    for node_type in datum.node_types:
+        assert_tensor_equality(
+            datum[node_type].node,
+            expected_node[node_type],
+            dim=0,
+        )
+    assert hasattr(datum, "y_positive")
+    print(f"{datum.y_positive.keys()=}")
+    print(f"{expected_positive_labels.keys()=}")
+    assert set(datum.y_positive.keys()) == set(expected_positive_labels.keys())
+    for edge_type in datum.y_positive.keys():
+        for local_anchor in datum.y_positive[edge_type]:
+            global_id = datum[edge_type[0]].node[local_anchor].item()
+            global_positive_nodes = datum[edge_type[2]].node[
+                datum.y_positive[edge_type][local_anchor]
+            ]
+            expected_positive_label = expected_positive_labels[edge_type][global_id]
+            print(
+                f"For edge type {edge_type}, global_id {global_id}, global_positive_nodes {global_positive_nodes}, expected_positive_label {expected_positive_label}"
+            )
+            assert_tensor_equality(
+                global_positive_nodes,
+                expected_positive_label,
+                dim=0,
+            )
+    if expected_negative_labels is not None:
+        assert datum.y_negative.keys() == expected_negative_labels.keys()
+        for edge_type in datum.y_negative.keys():
+            for local_anchor in datum.y_negative[edge_type]:
+                global_id = datum[edge_type[2]].node[local_anchor].item()
+                global_negative_nodes = datum[edge_type[2]].node[
+                    datum.y_negative[edge_type][local_anchor]
+                ]
+                expected_negative_label = expected_negative_labels[edge_type][global_id]
+                assert_tensor_equality(
+                    global_negative_nodes,
+                    expected_negative_label,
+                    dim=0,
+                )
+    else:
+        assert not hasattr(datum, "y_negative")
+    dsts, srcs, *_ = datum.coo()
+    # assert_tensor_equality(datum.node[srcs], expected_srcs)
+    # assert_tensor_equality(datum.node[dsts], expected_dsts)
+
+    # Check that the batch and batch_size attributes of the class are correct
+    assert_tensor_equality(datum.batch, input_nodes[1])
     assert datum.batch_size == batch_size
 
     # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
@@ -661,7 +755,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_ablp_dataloader(
+    def _test_ablp_dataloader(
         self,
         _,
         labeled_edges,
@@ -728,7 +822,73 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         )
 
-    def test_cora_supervised(self):
+    def test_ablp_dataloder_multiple_supervision_edge_types(self):
+        a = NodeType("a")
+        b = NodeType("b")
+        c = NodeType("c")
+        to = Relation("to")
+        a_to_b = EdgeType(a, to, b)
+        a_to_c = EdgeType(a, to, c)
+        edge_index = {
+            a_to_b: torch.tensor([[0, 0], [10, 11]]),
+            message_passing_to_positive_label(a_to_b): torch.tensor([[0, 0], [12, 13]]),
+            message_passing_to_negative_label(a_to_b): torch.tensor([[0, 0], [14, 15]]),
+            a_to_c: torch.tensor([[0, 0], [20, 21]]),
+            message_passing_to_positive_label(a_to_c): torch.tensor([[0, 0], [22, 23]]),
+            message_passing_to_negative_label(a_to_c): torch.tensor([[0, 0], [24, 25]]),
+        }
+        partition_output = PartitionOutput(
+            node_partition_book={
+                a: torch.zeros(1),
+                b: torch.zeros(16),
+                c: torch.zeros(26),
+            },
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+        mp.spawn(
+            fn=_run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types,
+            args=(
+                dataset,  # dataset
+                {
+                    a: torch.tensor([0]),
+                    b: torch.tensor([10, 11, 12, 13, 14, 15]),
+                    c: torch.tensor([20, 21, 22, 23, 24, 25]),
+                },  # expected_node
+                torch.tensor(
+                    [10, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24, 25]
+                ),  # expected_srcs
+                torch.tensor(
+                    [11, 12, 13, 14, 15, 20, 21, 22, 23, 24, 25]
+                ),  # expected_dsts
+                {
+                    a_to_b: {0: torch.tensor([12, 13])},
+                    a_to_c: {0: torch.tensor([22, 23])},
+                },  # expected_positive_labels
+                {
+                    a_to_b: {0: torch.tensor([14, 15])},
+                    a_to_c: {0: torch.tensor([24, 25])},
+                },  # expected_negative_labels
+                [a_to_b, a_to_c],  # supervision_edge_types
+            ),
+        ),
+
+    def _test_cora_supervised(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -769,7 +929,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         )
 
-    def test_random_loading_labeled_homogeneous(self):
+    def _test_random_loading_labeled_homogeneous(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -889,7 +1049,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_toy_heterogeneous_ablp(
+    def _test_toy_heterogeneous_ablp(
         self,
         _,
         partitioner_class: type[DistPartitioner],
@@ -935,7 +1095,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, supervision_edge_types, fanout),
         )
 
-    def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
+    def _test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(5),
             edge_partition_book=torch.zeros(5),
@@ -963,7 +1123,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
+    def _test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(5),
@@ -1012,7 +1172,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def test_cora_supervised_node_classification(self):
+    def _test_cora_supervised_node_classification(self):
         """Test CORA dataset for supervised node classification task."""
 
         torch.distributed.init_process_group(

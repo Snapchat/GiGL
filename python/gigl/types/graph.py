@@ -21,8 +21,8 @@ DEFAULT_HOMOGENEOUS_EDGE_TYPE = EdgeType(
     dst_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-_POSITIVE_LABEL_TAG = "gigl_positive"
-_NEGATIVE_LABEL_TAG = "gigl_negative"
+_POSITIVE_LABEL_TAG = "_gigl_positive"
+_NEGATIVE_LABEL_TAG = "_gigl_negative"
 
 # We really should support PyG EdgeType natively but since we type ignore it that's not ideal atm...
 # We can use this TypeVar to try and stem the bleeding (hopefully).
@@ -267,7 +267,7 @@ def message_passing_to_positive_label(
     """
     edge_type = (
         str(message_passing_edge_type[0]),
-        f"{message_passing_edge_type[1]}_{_POSITIVE_LABEL_TAG}",
+        f"{message_passing_edge_type[1]}{_POSITIVE_LABEL_TAG}",
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
@@ -291,7 +291,7 @@ def message_passing_to_negative_label(
     """
     edge_type = (
         str(message_passing_edge_type[0]),
-        f"{message_passing_edge_type[1]}_{_NEGATIVE_LABEL_TAG}",
+        f"{message_passing_edge_type[1]}{_NEGATIVE_LABEL_TAG}",
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
@@ -316,6 +316,24 @@ def is_label_edge_type(
     return _POSITIVE_LABEL_TAG in str(edge_type[1]) or _NEGATIVE_LABEL_TAG in str(
         edge_type[1]
     )
+
+
+def label_edge_type_to_message_passing_edge_type(
+    label_edge_type: _EdgeType,
+) -> _EdgeType:
+    """Convert a label edge type to a message passing edge type."""
+    if not is_label_edge_type(label_edge_type):
+        raise ValueError(f"Expected a label edge type, got {label_edge_type}")
+    if label_edge_type[1].endswith(_POSITIVE_LABEL_TAG):
+        relation = label_edge_type[1].replace(_POSITIVE_LABEL_TAG, "")
+    elif label_edge_type[1].endswith(_NEGATIVE_LABEL_TAG):
+        relation = label_edge_type[1].replace(_NEGATIVE_LABEL_TAG, "")
+    else:
+        raise ValueError(f"Expected a label edge type, got {label_edge_type}")
+    if isinstance(label_edge_type, EdgeType):
+        return EdgeType(label_edge_type[0], Relation(relation), label_edge_type[2])
+    else:
+        return (label_edge_type[0], relation, label_edge_type[2])
 
 
 def select_label_edge_types(
