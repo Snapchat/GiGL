@@ -356,7 +356,8 @@ def _training_process(
 
     # We use one training device for each local process
     device = get_available_device(local_process_rank=local_rank)
-
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device)
     logger.info(f"---Rank {rank} training process set device {device}")
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
