@@ -268,7 +268,7 @@ def _run_toy_heterogeneous_ablp(
     shutdown_rpc()
 
 
-class DistributedNeighborLoaderTest(unittest.TestCase):
+class DistABLPLoaderTest(unittest.TestCase):
     def tearDown(self):
         if torch.distributed.is_initialized():
             print("Destroying process group")
