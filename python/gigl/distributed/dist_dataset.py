@@ -447,9 +447,6 @@ class DistDataset(glt.distributed.DistDataset):
                 self._node_ids = _append_non_split_node_ids(
                     train_nodes, val_nodes, test_nodes, node_ids_on_machine
                 )
-                # do gc to save memory.
-                del train_nodes, val_nodes, test_nodes, node_ids_on_machine
-                gc.collect()
             else:
                 logger.info(
                     "Node ids will be all nodes on this machine, derived from the partition book."
@@ -490,14 +487,6 @@ class DistDataset(glt.distributed.DistDataset):
                         test_nodes,
                         node_ids_on_machine_per_node_type,
                     )
-                    # do gc to save memory.
-                    del (
-                        train_nodes,
-                        val_nodes,
-                        test_nodes,
-                        node_ids_on_machine_per_node_type,
-                    )
-                    gc.collect()
                 else:
                     raise ValueError(f"We should not get here, whoops!")
             self._node_ids = node_ids_by_node_type
@@ -760,7 +749,7 @@ class DistDataset(glt.distributed.DistDataset):
             splits=splits,
         )
 
-        del splits
+        del node_ids_on_machine, splits
         gc.collect()
 
         # Initialize Graph and get edge data for splitting
