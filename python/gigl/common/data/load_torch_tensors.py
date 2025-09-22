@@ -272,6 +272,7 @@ def load_torch_tensors_from_tf_record(
         },
     )
 
+    positive_label_data_loading_process = None
     if serialized_graph_metadata.positive_label_entity_info is not None:
         positive_label_data_loading_process = ctx.Process(
             target=_data_loading_process,
@@ -287,6 +288,7 @@ def load_torch_tensors_from_tf_record(
     else:
         logger.info(f"No positive labels detected from input data")
 
+    negative_label_data_loading_process = None
     if serialized_graph_metadata.negative_label_entity_info is not None:
         negative_label_data_loading_process = ctx.Process(
             target=_data_loading_process,
@@ -307,16 +309,16 @@ def load_torch_tensors_from_tf_record(
         logger.info("Loading Serialized TFRecord Data in Parallel ...")
         node_data_loading_process.start()
         edge_data_loading_process.start()
-        if serialized_graph_metadata.positive_label_entity_info is not None:
+        if positive_label_data_loading_process is not None:
             positive_label_data_loading_process.start()
-        if serialized_graph_metadata.negative_label_entity_info is not None:
+        if negative_label_data_loading_process is not None:
             negative_label_data_loading_process.start()
 
         node_data_loading_process.join()
         edge_data_loading_process.join()
-        if serialized_graph_metadata.positive_label_entity_info is not None:
+        if positive_label_data_loading_process is not None:
             positive_label_data_loading_process.join()
-        if serialized_graph_metadata.negative_label_entity_info is not None:
+        if negative_label_data_loading_process is not None:
             negative_label_data_loading_process.join()
     else:
         # In this setting, we start and join each process one-at-a-time in order to achieve sequential tensor loading
@@ -329,10 +331,10 @@ def load_torch_tensors_from_tf_record(
         edge_data_loading_process.join()
         node_data_loading_process.start()
         node_data_loading_process.join()
-        if serialized_graph_metadata.positive_label_entity_info is not None:
+        if positive_label_data_loading_process is not None:
             positive_label_data_loading_process.start()
             positive_label_data_loading_process.join()
-        if serialized_graph_metadata.negative_label_entity_info is not None:
+        if negative_label_data_loading_process is not None:
             negative_label_data_loading_process.start()
             negative_label_data_loading_process.join()
 

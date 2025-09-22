@@ -128,6 +128,7 @@ class SimpleHGNConv(MessagePassing):
 
         # For each head, project edge features to out_dim and correct NaNs.
         # Output shape: [num_edges, num_heads, edge_in_dim]
+        edge_emb = None
         if edge_feat is not None and self.edge_in_dim is not None:
             edge_emb = self.efeat_drop(edge_feat)
             edge_emb = torch.matmul(edge_emb, self.W_efeat).view(
@@ -150,7 +151,7 @@ class SimpleHGNConv(MessagePassing):
 
         h_efeat_term = (
             0
-            if edge_feat is None or self.edge_in_dim is None
+            if edge_feat is None or self.edge_in_dim is None or edge_emb is None
             else (self.a_efeat * edge_emb).sum(dim=-1)
         )
         alpha = self.leakyrelu(h_l_term + h_r_term + h_etype_term + h_efeat_term)

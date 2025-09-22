@@ -1033,6 +1033,12 @@ class SubgraphSamplerTest(unittest.TestCase):
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
         )
+        # Initialize src_node_type from the first supervision edge type
+        src_node_type = (
+            NodeType(supervision_edge_types[0].src_node_type)
+            if supervision_edge_types
+            else NodeType("default")
+        )
         if (
             not gbml_config_pb_wrapper.shared_config.should_include_isolated_nodes_in_training
         ):

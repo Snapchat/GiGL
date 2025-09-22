@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import cast
+from typing import List, Optional, cast
 
 import torch
 from google.protobuf.json_format import ParseDict
@@ -78,6 +78,8 @@ class HeterogeneousGraphSparseEmbeddingConfig:
         raw_graph_data = OmegaConf.select(
             config, "dataset.raw_graph_data", default=None
         )
+        raw_node_data = None
+        raw_edge_data = None
         if raw_graph_data:
             raw_node_data = [instantiate(entry) for entry in raw_graph_data.node_data]
             raw_edge_data = [instantiate(entry) for entry in raw_graph_data.edge_data]
@@ -85,6 +87,8 @@ class HeterogeneousGraphSparseEmbeddingConfig:
         enumerated_graph_data = OmegaConf.select(
             config, "dataset.enumerated_graph_data", default=None
         )
+        enumerated_node_data = None
+        enumerated_edge_data = None
         if enumerated_graph_data:
             enumerated_node_data = [
                 instantiate(entry) for entry in enumerated_graph_data.node_data

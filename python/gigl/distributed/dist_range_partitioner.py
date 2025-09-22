@@ -289,6 +289,7 @@ class DistRangePartitioner(DistPartitioner):
                 dim=0,
             )
 
+        partitioned_edge_features = None
         if edge_feat_dim is not None:
             if len(res_list) == 0:
                 partitioned_edge_features = torch.empty(0, edge_feat_dim)
@@ -325,8 +326,10 @@ class DistRangePartitioner(DistPartitioner):
                 edge_index=partitioned_edge_index,
                 edge_ids=partitioned_edge_ids,
             )
-            current_feat_part = FeaturePartitionData(
-                feats=partitioned_edge_features, ids=None
+            current_feat_part = (
+                FeaturePartitionData(feats=partitioned_edge_features, ids=None)
+                if partitioned_edge_features is not None
+                else None
             )
             logger.info(
                 f"Got edge range-based partition book for edge type {edge_type} on rank {self._rank} with partition bounds: {edge_partition_book.partition_bounds}"

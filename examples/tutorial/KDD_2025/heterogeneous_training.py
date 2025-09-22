@@ -171,6 +171,7 @@ def train(
     )
     logger.info(f"Process {process_number} initialized model: {model}")
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.001)
+    loss = torch.tensor(0.0)  # Initialize loss in case loop doesn't execute
     for batch_idx, main_data in enumerate(train_loader):
         if batch_idx >= max_training_batches:
             break
@@ -249,6 +250,7 @@ if __name__ == "__main__":
     )
     assert isinstance(dataset.train_node_ids, Mapping)
     process_count = int(args.process_count)
+    max_training_batches = 0  # Initialize in case loop doesn't execute
     for node_type, node_ids in dataset.train_node_ids.items():
         logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")
         max_training_batches = node_ids.size(0) // (

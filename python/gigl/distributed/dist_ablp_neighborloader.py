@@ -280,6 +280,12 @@ class DistABLPLoader(DistLoader):
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
             supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        else:
+            raise ValueError(f"Unsupported input_nodes type: {type(input_nodes)}")
+            # These assignments are unreachable but help mypy understand the variables are defined
+            anchor_node_ids = torch.tensor([])
+            anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
 
         missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
         if missing_edge_types:

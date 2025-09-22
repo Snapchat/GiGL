@@ -290,6 +290,11 @@ class TranslatorTestCase(unittest.TestCase):
                 graph_metadata_pb_wrapper.edge_types,
                 serialized_positive_label_info_iterable,
             ):
+                condensed_edge_type = (
+                    graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map[
+                        edge_type
+                    ]
+                )
                 if preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                     condensed_edge_type
                 ].HasField(
@@ -384,6 +389,11 @@ class TranslatorTestCase(unittest.TestCase):
                 graph_metadata_pb_wrapper.edge_types,
                 serialized_negative_label_info_iterable,
             ):
+                condensed_edge_type = (
+                    graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map[
+                        edge_type
+                    ]
+                )
                 if preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                     condensed_edge_type
                 ].HasField(

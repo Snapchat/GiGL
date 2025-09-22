@@ -275,6 +275,9 @@ class GiglResourceConfigWrapper:
         """
 
         if not self._trainer_config:
+            _trainer_config: Union[
+                VertexAiResourceConfig, KFPResourceConfig, LocalResourceConfig
+            ]
             # TODO: (svij) Marked for deprecation
             if self.resource_config.HasField("trainer_config"):
                 logger.warning(
@@ -286,9 +289,6 @@ class GiglResourceConfigWrapper:
                 deprecated_config: DistributedTrainerConfig = (
                     self.resource_config.trainer_config
                 )
-                _trainer_config: Union[
-                    VertexAiResourceConfig, KFPResourceConfig, LocalResourceConfig
-                ]
                 if deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD) == _VERTEX_AI_TRAINER_CONFIG:  # type: ignore[arg-type]
                     logger.info(
                         f"Casting VertexAiTrainerConfig: ({deprecated_config.vertex_ai_trainer_config}) to VertexAiResourceConfig"
@@ -337,7 +337,8 @@ class GiglResourceConfigWrapper:
                 raise ValueError(
                     f"Trainer config not found in resource config; neither trainer_config nor trainer_resource_config is set: {self.resource_config}"
                 )
-        return _trainer_config
+            self._trainer_config = _trainer_config
+        return self._trainer_config
 
     @property
     def inferencer_config(

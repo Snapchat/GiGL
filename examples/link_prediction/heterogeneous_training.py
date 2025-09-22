@@ -365,6 +365,7 @@ def _training_process(
         remove_accidental_hits=True,
     )
 
+    training_start_time = time.time()  # Initialize before conditional block
     if not should_skip_training:
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
@@ -425,7 +426,6 @@ def _training_process(
         torch.distributed.barrier()
 
         # Entering the training loop
-        training_start_time = time.time()
         batch_idx = 0
         avg_train_loss = 0.0
         last_n_batch_avg_loss: list[float] = []

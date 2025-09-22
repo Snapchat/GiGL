@@ -1675,6 +1675,7 @@ class DistPartitioner:
             )
         else:
             partitioned_node_features = None
+            partitioned_node_labels = None
 
         if self._positive_label_edge_index is not None:
             partitioned_positive_edge_index = self.partition_labels(

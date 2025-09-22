@@ -22,6 +22,7 @@ def __safely_flush_metrics(
         Callable[[], Optional[OpsMetricPublisher]]
     ]
 ) -> None:
+    metrics_instance = None
     if get_metrics_service_instance_fn is not None:
         metrics_instance = get_metrics_service_instance_fn()
     if metrics_instance is not None:
@@ -81,6 +82,7 @@ def profileit(
     def inner(func: F) -> F:
         def wrap(*args: Any, **kwargs: Any) -> Any:
             raised_exception: Optional[Exception] = None
+            result = None
             started_at = time.time()
             try:
                 result = func(*args, **kwargs)
