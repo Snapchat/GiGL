@@ -389,63 +389,25 @@ class DistDataset(glt.distributed.DistDataset):
             f"load() is not supported for the {type(self)} class. Please use build() instead."
         )
 
-    def _split_and_initialize_node_ids(
+    def _initialize_node_ids(
         self,
-        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
-        splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]],
-        partitioned_edge_index: Optional[
-            Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]
+        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        splits: Optional[
+            Union[
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+            ]
         ],
     ) -> None:
         """
         This method:
         - Sets the node ID tensor on the current machine, derived from the node partition book
-        - If a splitter is provided, splits and sets the training, validation, and testing node IDs
+        - Sets the train, validation, and testing node IDs if splits are provided
 
         Args:
-            node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
-            splitter(Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): The splitter to use for data splitting.
-            partitioned_edge_index(Optional[Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]]):
-                The partitioned edge index. Only required if we are splitting on edges.
+            node_ids_on_machine(Union[torch.Tensor, dict[NodeType, torch.Tensor]]): The node ids on the current machine
+            splits(Optional[Union[Tuple[torch.Tensor, torch.Tensor, torch.Tensor], Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]]): The splits to use for data splitting.
         """
-
-        # We compute the node ids on the current machine, which will be used as input to the DistNeighborLoader.
-
-        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
-            {
-                node_type: get_ids_on_rank(partition_book, rank=self._rank)
-                for node_type, partition_book in node_partition_book.items()
-            }
-            if isinstance(node_partition_book, Mapping)
-            else get_ids_on_rank(node_partition_book, rank=self._rank)
-        )
-
-        # Handle data splitting
-        splits = None
-        if isinstance(splitter, NodeAnchorLinkSplitter):
-            split_start = time.time()
-            assert partitioned_edge_index is not None
-            edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
-                partitioned_edge_index.edge_index
-                if isinstance(partitioned_edge_index, GraphPartitionData)
-                else {
-                    edge_type: graph_partition_data.edge_index
-                    for edge_type, graph_partition_data in partitioned_edge_index.items()
-                }
-            )
-            logger.info("Starting splitting edges...")
-            splits = splitter(edge_index=edge_index)
-            logger.info(
-                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
-            )
-        elif isinstance(splitter, NodeSplitter):
-            split_start = time.time()
-            logger.info("Starting splitting nodes...")
-            # Every node is required to have a label, so we split among all ids on the current machine.
-            splits = splitter(node_ids=node_ids_on_machine)
-            logger.info(
-                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
-            )
 
         # If the nodes are split, then we set the total number of nodes in each split here.
         # Additionally, we append any node ids, for a given node type, that were *not* split to the end of "node ids"
@@ -543,9 +505,6 @@ class DistDataset(glt.distributed.DistDataset):
                 self._num_train = num_train_by_node_type
                 self._num_val = num_val_by_node_type
                 self._num_test = num_test_by_node_type
-
-        del splits
-        gc.collect()
 
     def _initialize_graph(
         self,
@@ -756,12 +715,53 @@ class DistDataset(glt.distributed.DistDataset):
             partition_output.partitioned_edge_index is not None
         ), "Edge index must be present in the partition output"
 
-        # Handle data splitting and compute node IDs
-        self._split_and_initialize_node_ids(
-            node_partition_book=partition_output.node_partition_book,
-            splitter=splitter,
-            partitioned_edge_index=partition_output.partitioned_edge_index,
+        # We compute the node ids on the current machine, which will be used as input to the neighbor loaders.
+        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
+            {
+                node_type: get_ids_on_rank(partition_book, rank=self._rank)
+                for node_type, partition_book in partition_output.node_partition_book.items()
+            }
+            if isinstance(partition_output.node_partition_book, Mapping)
+            else get_ids_on_rank(partition_output.node_partition_book, rank=self._rank)
         )
+
+        # Handle data splitting
+        splits = None
+        if isinstance(splitter, NodeAnchorLinkSplitter):
+            split_start = time.time()
+            assert partition_output.partitioned_edge_index is not None
+            edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+                partition_output.partitioned_edge_index.edge_index
+                if isinstance(
+                    partition_output.partitioned_edge_index, GraphPartitionData
+                )
+                else {
+                    edge_type: graph_partition_data.edge_index
+                    for edge_type, graph_partition_data in partition_output.partitioned_edge_index.items()
+                }
+            )
+            logger.info("Starting splitting edges...")
+            splits = splitter(edge_index=edge_index)
+            logger.info(
+                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
+            )
+        elif isinstance(splitter, NodeSplitter):
+            split_start = time.time()
+            logger.info("Starting splitting nodes...")
+            # Every node is required to have a label, so we split among all ids on the current machine.
+            splits = splitter(node_ids=node_ids_on_machine)
+            logger.info(
+                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
+            )
+
+        # Handle data splitting and compute node IDs
+        self._initialize_node_ids(
+            node_ids_on_machine=node_ids_on_machine,
+            splits=splits,
+        )
+
+        del splits
+        gc.collect()
 
         # Initialize Graph and get edge data for splitting
         self._initialize_graph(
