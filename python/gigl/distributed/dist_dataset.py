@@ -1048,7 +1048,7 @@ def _prepare_feature_data(
 
     elif isinstance(partitioned_data, Mapping):
         assert (
-            len(partitioned_data) == 0
+            len(partitioned_data) > 0
         ), f"Expected at least one entity type in partitioned data, but got {partitioned_data.keys()}."
         # Heterogeneous case
         assert isinstance(
