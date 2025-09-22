@@ -57,10 +57,49 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
 
 
+def _assert_labels(
+    node: torch.Tensor, y: dict[int, torch.Tensor], expected: dict[int, torch.Tensor]
+):
+    """
+    Asserts that the given labels (y) match the expected labels (expected).
+    The labels are in the *local* node space, but the expected labels are in the *global* node space.
+    E.g expected_positive_labels = {10: torch.tensor([15])}
+    But datum.y_positive = {0: torch.tensor([1])}
+    So we need to convert, using `node`, the nodes in a batch.
+    The local IDs are the index of a node in `node`, and the global IDs are the values of `node`.
+    For example:
+    node = torch.tensor([10, 11])
+    y = {0: torch.tensor([1])}
+    # y in global space is {10: torch.tensor([11])}
+    expected = {10: torch.tensor([11])}
+    _assert_labels(node, y, expected)
+
+    Args:
+        node (torch.Tensor): The node tensor, N, where N is the number of nodes in the batch,
+        where the local IDs are the index of a node in the tensor,
+        and the global IDs are the values of the tensor.
+        y (dict[int, torch.Tensor]): The labels in the local node space.
+            The tensors are of shape [X], where X is the number of labels for the current anchor node.
+        expected (dict[int, torch.Tensor]): The labels in the global node space.
+            The tensors are of shape [X], where X is the number of labels for the current anchor node.
+    Raises if:
+    - The keys in `y` do not match the keys in `expected`
+    - The values in `y` do not match the values in `expected`
+    """
+    supplied_global_nodes = node[list(y.keys())]
+    assert set(supplied_global_nodes.tolist()) == set(
+        expected.keys()
+    ), f"Expected keys {expected.keys()} != {y.keys()}"
+    for local_anchor in y:
+        global_id = int(node[local_anchor].item())
+        global_nodes = node[y[local_anchor]]
+        expected_nodes = expected[global_id]
+        assert_tensor_equality(global_nodes, expected_nodes, dim=0)
+
+
 def _run_distributed_ablp_neighbor_loader(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     expected_node: torch.Tensor,
     expected_srcs: torch.Tensor,
     expected_dsts: torch.Tensor,
@@ -93,25 +132,9 @@ def _run_distributed_ablp_neighbor_loader(
         expected_node,
         dim=0,
     )
-    for local_anchor in datum.y_positive:
-        global_id = datum.node[local_anchor].item()
-        global_positive_nodes = datum.node[datum.y_positive[local_anchor]]
-        expected_positive_label = expected_positive_labels[global_id]
-        assert_tensor_equality(
-            global_positive_nodes,
-            expected_positive_label,
-            dim=0,
-        )
+    _assert_labels(datum.node, datum.y_positive, expected_positive_labels)
     if expected_negative_labels is not None:
-        for local_anchor in datum.y_negative:
-            global_id = datum.node[local_anchor].item()
-            global_negative_nodes = datum.node[datum.y_negative[local_anchor]]
-            expected_negative_label = expected_negative_labels[global_id]
-            assert_tensor_equality(
-                global_negative_nodes,
-                expected_negative_label,
-                dim=0,
-            )
+        _assert_labels(datum.node, datum.y_negative, expected_negative_labels)
     else:
         assert not hasattr(datum, "y_negative")
     dsts, srcs, *_ = datum.coo()
@@ -130,7 +153,6 @@ def _run_distributed_ablp_neighbor_loader(
 def _run_cora_supervised(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     expected_data_count: int,
 ):
     torch.distributed.init_process_group(
@@ -388,7 +410,6 @@ class DistABLPLoaderTest(unittest.TestCase):
             fn=_run_distributed_ablp_neighbor_loader,
             args=(
                 dataset,
-                self._context,
                 expected_node,
                 expected_srcs,
                 expected_dsts,
@@ -431,7 +452,6 @@ class DistABLPLoaderTest(unittest.TestCase):
             fn=_run_cora_supervised,
             args=(
                 dataset,
-                self._context,
                 to_homogeneous(
                     dataset.train_node_ids
                 ).numel(),  # Use to_homogeneous to make MyPy happy since dataset.train_node_ids is a dict.
