@@ -480,7 +480,7 @@ def _training_process(
             # We unwrap the model from DDP to save it
             # We do this so we can use the model without DDP later, e.g. for inference.
             save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
-    else:
+    else:  # should_skip training is True, meaning we should only run testing
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
         model = init_example_gigl_homogeneous_model(
             node_feature_dim=node_feature_dim,
