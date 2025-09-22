@@ -274,7 +274,7 @@ def _run_toy_heterogeneous_ablp(
     shutdown_rpc()
 
 
-class DistributedNeighborLoaderTest(unittest.TestCase):
+class DistABLPLoaderTest(unittest.TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
         self._world_size = 1
@@ -438,8 +438,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         )
 
-        # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
-
+    # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_dblp_supervised(self):
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
