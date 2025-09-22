@@ -138,30 +138,30 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             )
         # To unify logic between homogeneous and heterogeneous cases, we define an iterable which we'll loop over.
         # Each iteration contains an EdgeType, an edge partition book, and a graph consisting of edge indices and ids.
-        entity_iterable: Iterable[
+        entity_iterable: list[
             Tuple[EdgeType, Optional[PartitionBook], GraphPartitionData]
-        ]
+        ] = []
         if isinstance(output_edge_index, abc.Mapping):
             if isinstance(output_edge_partition_book, abc.Mapping):
-                entity_iterable = [
-                    (
-                        edge_type,
-                        output_edge_partition_book[edge_type]
-                        if edge_type in output_edge_partition_book
-                        else None,
-                        output_edge_index[edge_type],
+                for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
+                    entity_iterable.append(
+                        (
+                            edge_type,
+                            output_edge_partition_book[edge_type]
+                            if edge_type in output_edge_partition_book
+                            else None,
+                            output_edge_index[edge_type],
+                        )
                     )
-                    for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
-                ]
             elif output_edge_partition_book is None:
-                entity_iterable = [
-                    (
-                        edge_type,
-                        None,
-                        output_edge_index[edge_type],
+                for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
+                    entity_iterable.append(
+                        (
+                            edge_type,
+                            None,
+                            output_edge_index[edge_type],
+                        )
                     )
-                    for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
-                ]
             else:
                 raise ValueError(
                     f"The output edge partition book of type {type(output_edge_partition_book)} is not compatible with the output edge index of type {type(output_edge_index)}."

@@ -1475,7 +1475,9 @@ class DistPartitioner:
             Union[
                 Tuple[GraphPartitionData, FeaturePartitionData, PartitionBook],
                 Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
-            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous
+            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
+            The second and third elements of this tuple are only present if there are edge features to partition, and are None
+            otherwise.
         """
 
         self._assert_and_get_rpc_setup()
@@ -1545,6 +1547,9 @@ class DistPartitioner:
             for edge_type, num_edges in self._num_edges.items()
         }
 
+        # If partitioned_edge_features or edge_partition_book is empty, we return None. This is becauuse we assert
+        # that any registered edge feature is non-empty, so if we encounter an empty dictionary in this case, this means
+        # we never registered edge features and we can safely return None here.
         if self._is_input_homogeneous:
             logger.info(
                 f"Partitioned {to_homogeneous(formatted_num_edges)} edges for homogeneous dataset"
