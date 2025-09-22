@@ -573,18 +573,18 @@ def _training_process(
         log_every_n_batch=log_every_n_batch,
     )
 
+    # Memory cleanup and waiting for all processes to finish
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
+        torch.cuda.synchronize()  # Ensures all CUDA operations have finished
+    torch.distributed.barrier()  # Waits for all processes to reach the current point
+
     test_main_loader.shutdown()
     test_random_negative_loader.shutdown()
 
     logger.info(
         f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
     )
-
-    # Memory cleanup and waiting for all processes to finish
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
-        torch.cuda.synchronize()  # Ensures all CUDA operations have finished
-    torch.distributed.barrier()  # Waits for all processes to reach the current point
 
     torch.distributed.destroy_process_group()
 
