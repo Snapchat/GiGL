@@ -93,7 +93,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         is_heterogeneous: bool,
         should_assign_edges_by_src_node: bool,
         output_node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
-        output_edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]],
+        output_edge_partition_book: Optional[
+            Union[PartitionBook, dict[EdgeType, PartitionBook]]
+        ],
         output_edge_index: Union[
             GraphPartitionData, dict[EdgeType, GraphPartitionData]
         ],
@@ -139,32 +141,46 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         entity_iterable: Iterable[
             Tuple[EdgeType, Optional[PartitionBook], GraphPartitionData]
         ]
-        is_edge_partition_book_heterogeneous = isinstance(
-            output_edge_partition_book, abc.Mapping
-        )
-        if is_edge_partition_book_heterogeneous and isinstance(
-            output_edge_index, abc.Mapping
-        ):
-            entity_iterable = [
-                (
-                    edge_type,
-                    output_edge_partition_book[edge_type]
-                    if edge_type in output_edge_partition_book
-                    else None,
-                    output_edge_index[edge_type],
+        if isinstance(output_edge_index, abc.Mapping):
+            if isinstance(output_edge_partition_book, abc.Mapping):
+                entity_iterable = [
+                    (
+                        edge_type,
+                        output_edge_partition_book[edge_type]
+                        if edge_type in output_edge_partition_book
+                        else None,
+                        output_edge_index[edge_type],
+                    )
+                    for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
+                ]
+            elif output_edge_partition_book is None:
+                entity_iterable = [
+                    (
+                        edge_type,
+                        None,
+                        output_edge_index[edge_type],
+                    )
+                    for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
+                ]
+            else:
+                raise ValueError(
+                    f"The output edge partition book of type {type(output_edge_partition_book)} is not compatible with the output edge index of type {type(output_edge_index)}."
                 )
-                for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
-            ]
-        elif not is_edge_partition_book_heterogeneous and isinstance(
-            output_edge_index, GraphPartitionData
-        ):
-            entity_iterable = [
-                (USER_TO_USER_EDGE_TYPE, output_edge_partition_book, output_edge_index)
-            ]
         else:
-            raise ValueError(
-                f"The output edge partition book of type {type(output_edge_partition_book)} and the output graph of type {type(output_edge_index)} are not compatible."
-            )
+            if isinstance(output_edge_partition_book, (PartitionBook, torch.Tensor)):
+                entity_iterable = [
+                    (
+                        USER_TO_USER_EDGE_TYPE,
+                        output_edge_partition_book,
+                        output_edge_index,
+                    )
+                ]
+            elif output_edge_partition_book is None:
+                entity_iterable = [(USER_TO_USER_EDGE_TYPE, None, output_edge_index)]
+            else:
+                raise ValueError(
+                    f"The output edge partition book of type {type(output_edge_partition_book)} is not compatible with the output edge index of type {type(output_edge_index)}."
+                )
 
         for edge_type, edge_partition_book, graph in entity_iterable:
             node_partition_book: PartitionBook
@@ -742,12 +758,25 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 input_data_strategy
                 == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
             ):
+                self.assertIsNone(partition_output.edge_partition_book)
                 self.assertIsNone(partition_output.partitioned_edge_features)
                 self.assertIsNone(partition_output.partitioned_node_features)
                 self.assertIsNone(partition_output.partitioned_node_labels)
                 self.assertIsNone(partition_output.partitioned_positive_labels)
                 self.assertIsNone(partition_output.partitioned_negative_labels)
             else:
+                assert (
+                    partition_output.edge_partition_book is not None
+                ), f"Must create edge partition book for strategy {input_data_strategy.value}"
+                if isinstance(partition_output.edge_partition_book, abc.Mapping):
+                    for (
+                        edge_type,
+                        partition_book,
+                    ) in partition_output.edge_partition_book.items():
+                        assert partition_book is not None
+                else:
+                    assert partition_output.edge_partition_book is not None
+
                 assert (
                     partition_output.partitioned_node_features is not None
                 ), f"Must partition node features for strategy {input_data_strategy.value}"

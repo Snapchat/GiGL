@@ -989,10 +989,7 @@ def _prepare_feature_data(
 def _prepare_feature_data(
     partition_book: dict[_EntityType, PartitionBook],
     partitioned_data: dict[_EntityType, FeaturePartitionData],
-) -> Tuple[
-    Optional[dict[_EntityType, torch.Tensor]],
-    Optional[dict[_EntityType, TensorDataType]],
-]:
+) -> Tuple[dict[_EntityType, torch.Tensor], dict[_EntityType, TensorDataType],]:
     ...
 
 
@@ -1049,7 +1046,10 @@ def _prepare_feature_data(
 
         return features, id_to_index
 
-    elif isinstance(partitioned_data, Mapping) and len(partitioned_data) > 0:
+    elif isinstance(partitioned_data, Mapping):
+        assert (
+            len(partitioned_data) == 0
+        ), f"Expected at least one entity type in partitioned data, but got {partitioned_data.keys()}."
         # Heterogeneous case
         assert isinstance(
             partition_book, Mapping
