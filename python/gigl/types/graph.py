@@ -62,7 +62,7 @@ class PartitionOutput:
     node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
 
     # Edge partition book
-    edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]]
+    edge_partition_book: Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]
 
     # Partitioned edge index on current rank. This field will always be populated after partitioning. However, we may set this
     # field to None during dataset.build() in order to minimize the peak memory usage, and as a result type this as Optional.
