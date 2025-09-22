@@ -313,8 +313,9 @@ def is_label_edge_type(
     Returns:
         bool: True if the edge type is a label edge type, False otherwise.
     """
-    return _POSITIVE_LABEL_TAG in str(edge_type[1]) or _NEGATIVE_LABEL_TAG in str(
-        edge_type[1]
+    relation = str(edge_type[1])
+    return relation.endswith(_POSITIVE_LABEL_TAG) or relation.endswith(
+        _NEGATIVE_LABEL_TAG
     )
 
 
@@ -326,9 +327,12 @@ def label_edge_type_to_message_passing_edge_type(
         raise ValueError(f"Edge type {label_edge_type} is not a label edge type.")
     relation = str(label_edge_type[1])
     if relation.endswith(_POSITIVE_LABEL_TAG):
-        relation = relation[: -len(_POSITIVE_LABEL_TAG)]
+        relation = relation.removesuffix(_POSITIVE_LABEL_TAG)
     elif relation.endswith(_NEGATIVE_LABEL_TAG):
-        relation = relation[: -len(_NEGATIVE_LABEL_TAG)]
+        relation = relation.removesuffix(_NEGATIVE_LABEL_TAG)
+    else:
+        raise ValueError(f"Edge type {label_edge_type} is not a label edge type.")
+
     if isinstance(label_edge_type, EdgeType):
         return EdgeType(label_edge_type[0], Relation(relation), label_edge_type[2])
     else:
