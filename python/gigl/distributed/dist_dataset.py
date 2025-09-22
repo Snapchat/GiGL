@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, TypeVar, Union
+from typing import Literal, Optional, Tuple, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
@@ -562,11 +562,13 @@ class DistDataset(glt.distributed.DistDataset):
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
-        edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        edge_ids: Union[Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]]
         if isinstance(partitioned_edge_index, GraphPartitionData):
-            edge_index = partitioned_edge_index.edge_index
-            edge_ids = partitioned_edge_index.edge_ids
+            edge_index: Union[
+                torch.Tensor, dict[EdgeType, torch.Tensor]
+            ] = partitioned_edge_index.edge_index
+            edge_ids: Union[
+                Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
+            ] = partitioned_edge_index.edge_ids
         else:
             edge_index = {
                 edge_type: graph_partition_data.edge_index
@@ -965,6 +967,33 @@ def _append_non_split_node_ids(
         return torch.cat(
             [train_node_ids, val_node_ids, test_node_ids, node_ids_not_in_split]
         )
+
+
+@overload
+def _prepare_feature_data(
+    partition_book: PartitionBook,
+    partitioned_data: None,
+) -> Tuple[None, None]:
+    ...
+
+
+@overload
+def _prepare_feature_data(
+    partition_book: PartitionBook,
+    partitioned_data: FeaturePartitionData,
+) -> Tuple[torch.Tensor, TensorDataType]:
+    ...
+
+
+@overload
+def _prepare_feature_data(
+    partition_book: dict[_EntityType, PartitionBook],
+    partitioned_data: dict[_EntityType, FeaturePartitionData],
+) -> Tuple[
+    Optional[dict[_EntityType, torch.Tensor]],
+    Optional[dict[_EntityType, TensorDataType]],
+]:
+    ...
 
 
 def _prepare_feature_data(
