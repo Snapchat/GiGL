@@ -56,35 +56,6 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 # or other memory issues. Calling these functions in separate proceses also allows us to use shutdown_rpc() to ensure cleanup of
 # ports, providing stronger guarantees of isolation between tests.
 
-def _assert_labels(
-    node: torch.Tensor, y: dict[int, torch.Tensor], expected: dict[int, torch.Tensor]
-):
-    """
-    Asserts that the given labels (y) match the expected labels (expected).
-    The labels are in the *local* node space, but the expected labels are in the *global* node space.
-    E.g expected_positive_labels = {10: torch.tensor([15])}
-    But datum.y_positive = {0: torch.tensor([1])}
-    So we need to convert, using `node`, the nodes in a batch.
-    The local IDs are the index of a node in `node`, and the global IDs are the values of `node`.
-    For example:
-    node = torch.tensor([10, 11])
-    y = {0: torch.tensor([1])}
-    # y in global space is {10: torch.tensor([11])}
-    expected = {10: torch.tensor([11])}
-    _assert_labels(node, y, expected)
-    Raises if:
-    - The keys in `y` do not match the keys in `expected`
-    - The values in `y` do not match the values in `expected`
-    """
-    supplied_global_nodes = node[list(y.keys())]
-    assert set(supplied_global_nodes.tolist()) == set(
-        expected.keys()
-    ), f"Expected keys {expected.keys()} != {y.keys()}"
-    for local_anchor in y:
-        global_id = int(node[local_anchor].item())
-        global_nodes = node[y[local_anchor]]
-        expected_nodes = expected[global_id]
-        assert_tensor_equality(global_nodes, expected_nodes, dim=0)
 
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
 def _run_distributed_neighbor_loader(
@@ -374,7 +345,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def _test_distributed_neighbor_loader(self):
+    def test_distributed_neighbor_loader(self):
         expected_data_count = 2708
         port = gigl.distributed.utils.get_free_port()
 
@@ -391,7 +362,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, expected_data_count),
         )
 
-    def _test_infinite_distributed_neighbor_loader(self):
+    def test_infinite_distributed_neighbor_loader(self):
         port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
@@ -463,7 +434,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, self._context, to_homogeneous(dataset.node_ids).size(0)),
         )
 
-    def _test_multiple_neighbor_loader(self):
+    def test_multiple_neighbor_loader(self):
         port = gigl.distributed.utils.get_free_port()
         expected_data_count = 2708
 
@@ -508,7 +479,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def _test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
+    def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(5),
@@ -557,7 +528,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def _test_cora_supervised_node_classification(self):
+    def test_cora_supervised_node_classification(self):
         """Test CORA dataset for supervised node classification task."""
 
         torch.distributed.init_process_group(
