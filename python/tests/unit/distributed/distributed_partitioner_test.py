@@ -2,7 +2,7 @@
 
 import unittest
 from collections import abc, defaultdict
-from typing import Iterable, MutableMapping, Optional, Tuple, Type, Union
+from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import graphlearn_torch as glt
 import torch
@@ -93,7 +93,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         is_heterogeneous: bool,
         should_assign_edges_by_src_node: bool,
         output_node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
-        output_edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]],
+        output_edge_partition_book: Optional[
+            Union[PartitionBook, dict[EdgeType, PartitionBook]]
+        ],
         output_edge_index: Union[
             GraphPartitionData, dict[EdgeType, GraphPartitionData]
         ],
@@ -136,35 +138,49 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             )
         # To unify logic between homogeneous and heterogeneous cases, we define an iterable which we'll loop over.
         # Each iteration contains an EdgeType, an edge partition book, and a graph consisting of edge indices and ids.
-        entity_iterable: Iterable[
+        entity_iterable: list[
             Tuple[EdgeType, Optional[PartitionBook], GraphPartitionData]
-        ]
-        is_edge_partition_book_heterogeneous = isinstance(
-            output_edge_partition_book, abc.Mapping
-        )
-        if is_edge_partition_book_heterogeneous and isinstance(
-            output_edge_index, abc.Mapping
-        ):
-            entity_iterable = [
-                (
-                    edge_type,
-                    output_edge_partition_book[edge_type]
-                    if edge_type in output_edge_partition_book
-                    else None,
-                    output_edge_index[edge_type],
+        ] = []
+        if isinstance(output_edge_index, abc.Mapping):
+            if isinstance(output_edge_partition_book, abc.Mapping):
+                for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
+                    entity_iterable.append(
+                        (
+                            edge_type,
+                            output_edge_partition_book[edge_type]
+                            if edge_type in output_edge_partition_book
+                            else None,
+                            output_edge_index[edge_type],
+                        )
+                    )
+            elif output_edge_partition_book is None:
+                for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
+                    entity_iterable.append(
+                        (
+                            edge_type,
+                            None,
+                            output_edge_index[edge_type],
+                        )
+                    )
+            else:
+                raise ValueError(
+                    f"The output edge partition book of type {type(output_edge_partition_book)} is not compatible with the output edge index of type {type(output_edge_index)}."
                 )
-                for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
-            ]
-        elif not is_edge_partition_book_heterogeneous and isinstance(
-            output_edge_index, GraphPartitionData
-        ):
-            entity_iterable = [
-                (USER_TO_USER_EDGE_TYPE, output_edge_partition_book, output_edge_index)
-            ]
         else:
-            raise ValueError(
-                f"The output edge partition book of type {type(output_edge_partition_book)} and the output graph of type {type(output_edge_index)} are not compatible."
-            )
+            if isinstance(output_edge_partition_book, (PartitionBook, torch.Tensor)):
+                entity_iterable = [
+                    (
+                        USER_TO_USER_EDGE_TYPE,
+                        output_edge_partition_book,
+                        output_edge_index,
+                    )
+                ]
+            elif output_edge_partition_book is None:
+                entity_iterable = [(USER_TO_USER_EDGE_TYPE, None, output_edge_index)]
+            else:
+                raise ValueError(
+                    f"The output edge partition book of type {type(output_edge_partition_book)} is not compatible with the output edge index of type {type(output_edge_index)}."
+                )
 
         for edge_type, edge_partition_book, graph in entity_iterable:
             node_partition_book: PartitionBook
@@ -248,38 +264,41 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 self.assertTrue(edge_type not in expected_edge_feat_types)
                 self.assertTrue(edge_partition_book is None)
 
-    def _assert_node_feature_outputs(
+    def _assert_node_data_outputs(
         self,
         rank: int,
         is_heterogeneous: bool,
         is_range_based_partition: bool,
         should_assign_edges_by_src_node: bool,
         output_graph: Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]],
-        output_node_feat: Union[
+        output_node_data: Union[
             FeaturePartitionData, dict[NodeType, FeaturePartitionData]
         ],
         expected_node_types: list[NodeType],
         expected_edge_types: list[EdgeType],
+        entity_name: Literal["features", "labels"],
     ) -> None:
         """
-        Checks correctness for node feature outputs of partitioning
+        Checks correctness for node feature or label outputs of partitioning
         Args:
             rank (int): Rank from current output
             is_heterogeneous (bool): Whether the output is expected to be homogeneous or heterogeneous
             is_range_based_partition (bool): Whether range-based partitioning was used
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
             output_graph: (Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]): Output edge indices and ids from partitioning, either a GraphPartitionData if homogeneous or a dict[EdgeType, GraphPartitionData] if heterogeneous
-            output_node_feat (Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]): Output node features from partitioning, either a FeaturePartitionData if homogeneous or a dict[NodeType, FeaturePartitionData] if heterogeneous
+            output_node_data (Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]): Output node features or labels from partitioning, either a FeaturePartitionData if homogeneous or a dict[NodeType, FeaturePartitionData] if heterogeneous
             expected_node_types (list[NodeType]): Expected node types for heterogeneous input
             expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
+            entity_name (Literal["features", "labels"]): The name of the entity to validate
         """
+
         self._assert_data_type_correctness(
             output_data=output_graph,
             is_heterogeneous=is_heterogeneous,
             expected_entity_types=expected_edge_types,
         )
         self._assert_data_type_correctness(
-            output_data=output_node_feat,
+            output_data=output_node_data,
             is_heterogeneous=is_heterogeneous,
             expected_entity_types=expected_node_types,
         )
@@ -290,16 +309,16 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         if is_heterogeneous:
             assert isinstance(
                 output_graph, abc.Mapping
-            ), "Homogeneous output detected from node features for heterogeneous input"
+            ), f"Homogeneous output detected from node {entity_name} for heterogeneous input"
             entity_iterable = list(output_graph.items())
         else:
             assert isinstance(
                 output_graph, GraphPartitionData
-            ), "Heterogeneous output detected from node features for homogeneous input"
+            ), f"Heterogeneous output detected from node {entity_name} for homogeneous input"
             entity_iterable = [(USER_TO_USER_EDGE_TYPE, output_graph)]
 
         for edge_type, graph in entity_iterable:
-            node_feat: Optional[FeaturePartitionData]
+            node_data: Optional[FeaturePartitionData]
             node_ids: torch.Tensor
             if should_assign_edges_by_src_node:
                 target_node_type = edge_type.src_node_type
@@ -314,47 +333,62 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
             if is_heterogeneous:
                 assert isinstance(
-                    output_node_feat, abc.Mapping
-                ), "Found homogeneous node features for heterogeneous input"
-                node_feat = output_node_feat[target_node_type]
+                    output_node_data, abc.Mapping
+                ), f"Found homogeneous node {entity_name} for heterogeneous input"
+                node_data = output_node_data[target_node_type]
             else:
                 assert isinstance(
-                    output_node_feat, FeaturePartitionData
-                ), "Found heterogeneous node features for homogeneous input"
-                node_feat = output_node_feat
+                    output_node_data, FeaturePartitionData
+                ), f"Found heterogeneous node {entity_name} for homogeneous input"
+                node_data = output_node_data
 
-            # We expect the number of output node features to be the same as the number of nodes input to the partitioner on the current rank, as the input and output node ids per rank
-            # should both be equal in number across all ranks, meaning that node features are also equal in number.
+            # We expect the number of output node data to be the same as the number of nodes input to the partitioner on the current rank, as the input and output node ids per rank
+            # should both be equal in number across all ranks, meaning that node data are also equal in number.
             # This is because each node id is the source node of exactly one edge in the mocked graph.
             self.assertEqual(
-                node_feat.feats.size(0),
+                node_data.feats.size(0),
                 num_nodes_on_rank,
             )
-            # We expect the node ids on the current rank from the graph to be the same as the node ids on the current rank from the features.
-            # If we are using range-based partitioning, the node feature object does not store ids. If we are using tensor-based partitioning,
-            # node feature stores ids, and we need to check that they are the same as they nodes on the current rank, independent of the order.
+            # We expect the node ids on the current rank from the graph to be the same as the node ids on the current rank from the data.
+            # If we are using range-based partitioning, the node data object does not store ids. If we are using tensor-based partitioning,
+            # node data stores ids, and we need to check that they are the same as they nodes on the current rank, independent of the order.
             if is_range_based_partition:
-                node_feat_ids = node_ids
+                node_data_ids = node_ids
             else:
-                assert node_feat.ids is not None
-                node_feat_ids = node_feat.ids
-                assert_tensor_equality(tensor_a=node_ids, tensor_b=node_feat.ids, dim=0)
-            # We expect the shape of the node features to be equal to the expected node feature dimension
-            self.assertEqual(
-                node_feat.feats.size(1),
-                NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
-            )
-            # We expect the value of each node feature to be equal to its corresponding node id / 10 on the currently mocked input
-            for idx, n_id in enumerate(node_feat_ids):
-                assert_tensor_equality(
-                    tensor_a=node_feat.feats[idx],
-                    tensor_b=torch.ones(
-                        NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
-                        dtype=torch.float32,
-                    )
-                    * n_id
-                    * 0.1,
+                assert node_data.ids is not None
+                node_data_ids = node_data.ids
+                assert_tensor_equality(tensor_a=node_ids, tensor_b=node_data.ids, dim=0)
+
+            # Validate dimensions and values based on whether this is labels or features
+            if entity_name == "labels":
+                # We expect the shape of the node labels to have one label per node
+                self.assertEqual(
+                    node_data.feats.size(1),
+                    1,
                 )
+                # We expect the value of each node label to be equal to its corresponding node id on the currently mocked input
+                for idx, n_id in enumerate(node_data_ids):
+                    assert_tensor_equality(
+                        tensor_a=node_data.feats[idx],
+                        tensor_b=torch.tensor([n_id], dtype=torch.int64),
+                    )
+            else:
+                # We expect the shape of the node features to be equal to the expected node feature dimension
+                self.assertEqual(
+                    node_data.feats.size(1),
+                    NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
+                )
+                # We expect the value of each node feature to be equal to its corresponding node id / 10 on the currently mocked input
+                for idx, n_id in enumerate(node_data_ids):
+                    assert_tensor_equality(
+                        tensor_a=node_data.feats[idx],
+                        tensor_b=torch.ones(
+                            NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
+                            dtype=torch.float32,
+                        )
+                        * n_id
+                        * 0.1,
+                    )
 
     def _assert_edge_feature_outputs(
         self,
@@ -676,6 +710,10 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
         unified_output_node_feat: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
 
+        unified_output_node_labels: dict[NodeType, list[torch.Tensor]] = defaultdict(
+            list
+        )
+
         unified_output_edge_feat: dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
 
         unified_output_pos_label: dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
@@ -720,11 +758,25 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 input_data_strategy
                 == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
             ):
+                self.assertIsNone(partition_output.edge_partition_book)
                 self.assertIsNone(partition_output.partitioned_edge_features)
                 self.assertIsNone(partition_output.partitioned_node_features)
+                self.assertIsNone(partition_output.partitioned_node_labels)
                 self.assertIsNone(partition_output.partitioned_positive_labels)
                 self.assertIsNone(partition_output.partitioned_negative_labels)
             else:
+                assert (
+                    partition_output.edge_partition_book is not None
+                ), f"Must create edge partition book for strategy {input_data_strategy.value}"
+                if isinstance(partition_output.edge_partition_book, abc.Mapping):
+                    for (
+                        edge_type,
+                        partition_book,
+                    ) in partition_output.edge_partition_book.items():
+                        assert partition_book is not None
+                else:
+                    assert partition_output.edge_partition_book is not None
+
                 assert (
                     partition_output.partitioned_node_features is not None
                 ), f"Must partition node features for strategy {input_data_strategy.value}"
@@ -740,15 +792,16 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     partition_output.partitioned_negative_labels is not None
                 ), f"Must partition negative labels for strategy {input_data_strategy.value}"
 
-                self._assert_node_feature_outputs(
+                self._assert_node_data_outputs(
                     rank=rank,
                     is_heterogeneous=is_heterogeneous,
                     is_range_based_partition=is_range_based_partition,
                     should_assign_edges_by_src_node=should_assign_edges_by_src_node,
                     output_graph=partitioned_edge_index,
-                    output_node_feat=partition_output.partitioned_node_features,
+                    output_node_data=partition_output.partitioned_node_features,
                     expected_node_types=MOCKED_HETEROGENEOUS_NODE_TYPES,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
+                    entity_name="features",
                 )
 
                 if isinstance(partition_output.partitioned_node_features, abc.Mapping):
@@ -760,6 +813,33 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 else:
                     unified_output_node_feat[USER_NODE_TYPE].append(
                         partition_output.partitioned_node_features.feats
+                    )
+
+                assert (
+                    partition_output.partitioned_node_labels is not None
+                ), f"Must partition node labels for strategy {input_data_strategy.value}"
+
+                self._assert_node_data_outputs(
+                    rank=rank,
+                    is_heterogeneous=is_heterogeneous,
+                    is_range_based_partition=is_range_based_partition,
+                    should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+                    output_graph=partitioned_edge_index,
+                    output_node_data=partition_output.partitioned_node_labels,
+                    expected_node_types=MOCKED_HETEROGENEOUS_NODE_TYPES,
+                    expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
+                    entity_name="labels",
+                )
+
+                if isinstance(partition_output.partitioned_node_labels, abc.Mapping):
+                    for (
+                        node_type,
+                        node_labels,
+                    ) in partition_output.partitioned_node_labels.items():
+                        unified_output_node_labels[node_type].append(node_labels.feats)
+                else:
+                    unified_output_node_labels[USER_NODE_TYPE].append(
+                        partition_output.partitioned_node_labels.feats
                     )
 
                 self._assert_edge_feature_outputs(
@@ -859,6 +939,23 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 tensor_a=expected_node_feat, tensor_b=partitioned_node_feat, dim=0
             )
 
+        ## Checking for the union of node labels across all ranks equals to the full set from the input
+
+        for node_type in unified_output_node_labels:
+            # First, we get the expected node labels from the mocked input for this node type
+            expected_node_labels = MOCKED_UNIFIED_GRAPH.node_labels[node_type]
+            partitioned_node_labels_list = unified_output_node_labels[node_type]
+
+            # We combine the output node labels across all the ranks
+            partitioned_node_labels = torch.cat(partitioned_node_labels_list, dim=0)
+
+            # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 0
+            assert_tensor_equality(
+                tensor_a=expected_node_labels,
+                tensor_b=partitioned_node_labels,
+                dim=0,
+            )
+
         ## Checking for the union of edge features across all ranks equals to the full set from the input
 
         for edge_type in unified_output_edge_feat:
@@ -936,9 +1033,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 partitioner.partition()
 
         node_partition_book = partitioner.partition_node()
-        partitioner.partition_node_features(node_partition_book)
+        partitioner.partition_node_features_and_labels(node_partition_book)
 
-        # Assert that calling partition_node after calling partition() and partition_node_features raises error, as the inputs have been cleaned up at this point
+        # Assert that calling partition_node after calling partition() and partition_node_features_and_labels raises error, as the inputs have been cleaned up at this point
         with self.subTest(partitioner=partitioner):
             with self.assertRaisesRegex(
                 AssertionError, "Must have registered nodes prior to partitioning them"
@@ -951,34 +1048,44 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         empty_node_ids = torch.empty(0)
         empty_edge_index = torch.empty((2, 0))
         empty_node_features = torch.empty((0, 5))
+        empty_node_labels = torch.empty((0, 1))
         empty_edge_features = torch.empty((0, 10))
         empty_pos_label = torch.empty((2, 0))
         empty_neg_label = torch.empty((2, 0))
 
-        # Test partitioning with empty node_ids, empty node_feats, empty edge_feats, and empty edge index
+        # Test partitioning with empty node_ids, empty node_feats, empty node_labels, empty edge_feats, and empty edge index
         partitioner.register_node_ids(node_ids=empty_node_ids)
         partitioner.register_edge_index(edge_index=empty_edge_index)
         partitioner.register_node_features(node_features=empty_node_features)
+        partitioner.register_node_labels(node_labels=empty_node_labels)
         partitioner.register_edge_features(edge_features=empty_edge_features)
         partitioner.register_labels(label_edge_index=empty_pos_label, is_positive=True)
         partitioner.register_labels(label_edge_index=empty_neg_label, is_positive=False)
 
         partitioned_output = partitioner.partition()
-        assert not isinstance(
-            partitioned_output.partitioned_node_features, abc.Mapping
-        ) and not isinstance(
-            partitioned_output.partitioned_edge_features, abc.Mapping
-        ), "Got heterogeneous features, but expected homogeneous output"
+        assert (
+            not isinstance(partitioned_output.partitioned_node_features, abc.Mapping)
+            and not isinstance(
+                partitioned_output.partitioned_edge_features, abc.Mapping
+            )
+            and not isinstance(partitioned_output.partitioned_node_labels, abc.Mapping)
+        ), "Got heterogeneous features/labels, but expected homogeneous output"
 
         assert (
             partitioned_output.partitioned_node_features is not None
             and partitioned_output.partitioned_edge_features is not None
-        ), "Features should not be None"
+            and partitioned_output.partitioned_node_labels is not None
+        ), "Features and labels should not be None"
 
         assert (
             partitioned_output.partitioned_node_features.feats.shape
             == empty_node_features.shape
         ), f"Node Features should be empty, but got shape {partitioned_output.partitioned_node_features.feats.shape}"
+
+        assert (
+            partitioned_output.partitioned_node_labels.feats.shape
+            == empty_node_labels.shape
+        ), f"Node Labels should be empty, but got shape {partitioned_output.partitioned_node_labels.feats.shape}"
 
         assert (
             partitioned_output.partitioned_edge_features.feats.shape
@@ -991,6 +1098,315 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 AssertionError, "Must have registered nodes prior to partitioning them"
             ):
                 partitioner.partition()
+
+    @parameterized.expand(
+        [
+            param(
+                "Missing Node ID -- homogeneous",
+                node_ids=torch.tensor([0, 2, 3]),
+            ),
+            param(
+                "Duplicate Node ID with all node ids present-- homogeneous",
+                node_ids=torch.tensor([0, 0, 1, 2]),
+            ),
+            param(
+                "Negative Node ID -- homogeneous",
+                node_ids=torch.tensor([-1, 0, 2]),
+            ),
+            param(
+                "Duplicate Node ID with node ids missing -- homogeneous",
+                node_ids=torch.tensor([0, 0, 2]),
+            ),
+            param(
+                "Missing Node ID -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 2, 3]),
+                },
+            ),
+            param(
+                "Duplicate Node ID with all node ids present -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 0, 1, 2]),
+                },
+            ),
+            param(
+                "Duplicate Node ID with node ids missing -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 0, 2]),
+                },
+            ),
+            param(
+                "Duplicate Node ID with node ids missing -- heterogeneous",
+                node_ids={
+                    USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+                    ITEM_NODE_TYPE: torch.tensor([0, 0, 2]),
+                },
+            ),
+        ]
+    )
+    def test_partitioning_invalid_node_ids(
+        self, _, node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ) -> None:
+        # We expect node IDs across all machines to be contiguous starting from 0 to total_num_nodes - 1.
+        # This test checks that the partitioner raises an error when this assumption is not met.
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(
+            should_assign_edges_by_src_node=True,
+        )
+
+        node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+
+        if isinstance(node_ids, torch.Tensor):
+            node_features = torch.ones(node_ids.shape[0], 2)
+        else:
+            node_features = {
+                node_type: torch.ones(node_ids[node_type].shape[0], 2)
+                for node_type in node_ids.keys()
+            }
+
+        partitioner.register_node_ids(node_ids=node_ids)
+        partitioner.register_node_features(node_features=node_features)
+        node_pb = partitioner.partition_node()
+
+        with self.assertRaises(ValueError):
+            partitioner.partition_node_features_and_labels(node_pb)
+
+    def test_node_ids_re_registration(self) -> None:
+        """Test that re-registering node IDs raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # First registration should work
+        node_ids = torch.tensor([0, 1, 2])
+        partitioner.register_node_ids(node_ids=node_ids)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Node IDs have already been registered"
+        ):
+            partitioner.register_node_ids(node_ids=node_ids)
+
+    def test_edge_index_re_registration(self) -> None:
+        """Test that re-registering edge indices raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_ids(torch.tensor([0, 1, 2]))
+
+        # First registration should work
+        edge_index = torch.tensor([[0, 1], [1, 2]])
+        partitioner.register_edge_index(edge_index=edge_index)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Edge indices have already been registered"
+        ):
+            partitioner.register_edge_index(edge_index=edge_index)
+
+    def test_node_features_re_registration(self) -> None:
+        """Test that re-registering node features raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # First registration should work
+        node_features = torch.ones(3, 5)
+        partitioner.register_node_features(node_features=node_features)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Node features have already been registered"
+        ):
+            partitioner.register_node_features(node_features=node_features)
+
+    def test_node_labels_re_registration(self) -> None:
+        """Test that re-registering node labels raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # First registration should work
+        node_labels = torch.tensor([[0, 1], [1, 0], [0, 1]])
+        partitioner.register_node_labels(node_labels=node_labels)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Node labels have already been registered"
+        ):
+            partitioner.register_node_labels(node_labels=node_labels)
+
+    def test_edge_features_re_registration(self) -> None:
+        """Test that re-registering edge features raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_features(torch.ones(3, 5))
+
+        # First registration should work
+        edge_features = torch.ones(2, 10)
+        partitioner.register_edge_features(edge_features=edge_features)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Edge features have already been registered"
+        ):
+            partitioner.register_edge_features(edge_features=edge_features)
+
+    def test_positive_labels_re_registration(self) -> None:
+        """Test that re-registering labels raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        # Positive labels test
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_ids(torch.tensor([0, 1, 2]))
+
+        # First registration should work
+        pos_labels = torch.tensor([[0, 1], [1, 2]])
+        partitioner.register_labels(label_edge_index=pos_labels, is_positive=True)
+
+        # # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Positive labels have already been registered"
+        ):
+            partitioner.register_labels(label_edge_index=pos_labels, is_positive=True)
+
+    def test_negative_labels_re_registration(self) -> None:
+        """Test that re-registering labels raises an error."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        # Negative labels test
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # In order to set the _is_input_homogeneous flag to True
+        partitioner.register_node_ids(torch.tensor([0, 1, 2]))
+
+        neg_labels = torch.tensor([[0, 1], [1, 2]])
+        partitioner.register_labels(label_edge_index=neg_labels, is_positive=False)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Negative labels have already been registered"
+        ):
+            partitioner.register_labels(label_edge_index=neg_labels, is_positive=False)
+
+    def test_heterogeneous_re_registration(self) -> None:
+        """Test re-registration prevention for heterogeneous data."""
+        master_port = glt.utils.get_free_port(self._master_ip_address)
+
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        # Heterogeneous node IDs test
+        node_ids = {
+            USER_NODE_TYPE: torch.tensor([0, 1, 2]),
+            ITEM_NODE_TYPE: torch.tensor([0, 1, 2]),
+        }
+        partitioner.register_node_ids(node_ids=node_ids)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Node IDs have already been registered"
+        ):
+            partitioner.register_node_ids(node_ids=node_ids)
+
+        # Heterogeneous edge indices test
+        partitioner2 = DistPartitioner(should_assign_edges_by_src_node=True)
+
+        edge_index = {USER_TO_USER_EDGE_TYPE: torch.tensor([[0, 1], [1, 2]])}
+        partitioner2.register_edge_index(edge_index=edge_index)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Edge indices have already been registered"
+        ):
+            partitioner2.register_edge_index(edge_index=edge_index)
+
+        # Heterogeneous node labels test
+        partitioner3 = DistPartitioner(should_assign_edges_by_src_node=True)
+        node_labels = {
+            USER_NODE_TYPE: torch.tensor([[0, 1], [1, 0]]),
+            ITEM_NODE_TYPE: torch.tensor([[1, 0], [0, 1], [1, 1]]),
+        }
+        partitioner3.register_node_labels(node_labels=node_labels)
+
+        # Second registration should raise an error
+        with self.assertRaisesRegex(
+            ValueError, "Node labels have already been registered"
+        ):
+            partitioner3.register_node_labels(node_labels=node_labels)
 
 
 if __name__ == "__main__":

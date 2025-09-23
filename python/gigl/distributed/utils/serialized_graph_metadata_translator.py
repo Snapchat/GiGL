@@ -41,6 +41,7 @@ def _build_serialized_tfrecord_entity_info(
         feature_spec=feature_spec_dict,
         feature_dim=preprocessed_metadata.feature_dim,
         entity_key=entity_key,
+        label_keys=list(preprocessed_metadata.label_keys),
         tfrecord_uri_pattern=tfrecord_uri_pattern,
     )
 

@@ -45,7 +45,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed import (
     DistABLPLoader,
-    DistLinkPredictionDataset,
+    DistDataset,
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -77,7 +77,7 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
 
 
 def _setup_dataloaders(
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     split: Literal["train", "val", "test"],
     supervision_edge_type: EdgeType,
     num_neighbors: list[int],
@@ -91,7 +91,7 @@ def _setup_dataloaders(
     """
     Sets up main and random dataloaders for training and testing purposes
     Args:
-        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training and testing
+        dataset (DistDataset): Loaded Distributed Dataset for training and testing
         split (Literal["train", "val", "test"]): The current split which we are loading data for
         num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
         sampling_workers_per_process (int): sampling_workers_per_process (int): Number of sampling workers per training/testing process
@@ -284,7 +284,7 @@ def _training_process(
     local_world_size: int,
     machine_rank: int,
     machine_world_size: int,
-    dataset: DistLinkPredictionDataset,
+    dataset: DistDataset,
     supervision_edge_type: EdgeType,
     node_type_to_feature_dim: dict[NodeType, int],
     edge_type_to_feature_dim: dict[EdgeType, int],
@@ -314,7 +314,7 @@ def _training_process(
         local_world_size (int): Number of training processes spawned by each machine
         machine_rank (int): Rank of the current machine
         machine_world_size (int): Total number of machines
-        dataset (DistLinkPredictionDataset): Loaded Distributed Dataset for training
+        dataset (DistDataset): Loaded Distributed Dataset for training
         supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
         node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
         edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension for the model per edge type
@@ -356,7 +356,8 @@ def _training_process(
 
     # We use one training device for each local process
     device = get_available_device(local_process_rank=local_rank)
-
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device)
     logger.info(f"---Rank {rank} training process set device {device}")
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -511,7 +512,16 @@ def _training_process(
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
 
-    else:
+        # We save the model on the process with the 0th node rank and 0th local rank.
+        if machine_rank == 0 and local_rank == 0:
+            logger.info(
+                f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
+            )
+            # We unwrap the model from DDP to save it
+            # We do this so we can use the model without DDP later, e.g. for inference.
+            save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
+
+    else:  # should_skip_training is True, meaning we should only run testing
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
         model = init_example_gigl_heterogeneous_model(
             node_type_to_feature_dim=node_type_to_feature_dim,
@@ -530,6 +540,7 @@ def _training_process(
         )
 
     logger.info(f"---Rank {rank} started testing")
+    testing_start_time = time.time()
 
     model.eval()
 
@@ -562,25 +573,18 @@ def _training_process(
         log_every_n_batch=log_every_n_batch,
     )
 
-    test_main_loader.shutdown()
-    test_random_negative_loader.shutdown()
-
-    logger.info(f"---Rank {rank} finished testing")
-
     # Memory cleanup and waiting for all processes to finish
     if torch.cuda.is_available():
         torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
         torch.cuda.synchronize()  # Ensures all CUDA operations have finished
     torch.distributed.barrier()  # Waits for all processes to reach the current point
 
-    # We save the model on the process with the 0th node rank and 0th local rank.
-    if machine_rank == 0 and local_rank == 0:
-        logger.info(
-            f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
-        )
-        # We unwrap the model from DDP to save it
-        # We do this so we can use the model without DDP later, e.g. for inference.
-        save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
+    test_main_loader.shutdown()
+    test_random_negative_loader.shutdown()
+
+    logger.info(
+        f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
+    )
 
     torch.distributed.destroy_process_group()
 

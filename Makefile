@@ -2,13 +2,17 @@ include dep_vars.env
 
 SHELL := /bin/bash
 CONDA_ENV_NAME=gnn
+# Ensure that python, pip, and pip-tools versions are consistent with the ones in:
+# .github/actions/setup-python-tools/action.yml
 PYTHON_VERSION=3.9
 PIP_VERSION=25.0.1
+PIP_TOOLS_VERSION=7.4.1
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
 PWD=$(shell pwd)
+
 
 # You can override GIGL_PROJECT by setting it in your environment i.e.
 # adding `export GIGL_PROJECT=your_project` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -29,6 +33,8 @@ PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_config.yaml
+# Default path for compiled KFP pipeline
+GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yaml
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
@@ -37,7 +43,7 @@ GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # but since we don't push those dependenices (or their documentation) to git,
 # then when we *check* the format of those files, we will fail.
 # Thus, we only want to format the Markdown files that we explicitly include in our repo.
-MD_FILES:=$(shell if [ ! ${GIT_BRANCH} ]; then echo "."; else git ls-tree --name-only -r ${GIT_BRANCH} . | grep ".md"; fi;)
+MD_FILES:=$(shell if [ ! ${GIT_BRANCH} ]; then echo "."; else git ls-tree --name-only -r ${GIT_BRANCH} . | grep "\.md$$"; fi;)
 
 
 get_ver_hash:
@@ -46,7 +52,7 @@ get_ver_hash:
 	$(eval GIT_COMMIT=$(shell git log -1 --pretty=format:"%H"))
 
 initialize_environment:
-	conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools
+	conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools=${PIP_TOOLS_VERSION}
 	@echo "If conda environment was successfully installed, ensure to activate it and run \`make install_dev_deps\` or \`make install_deps\` to complete setup"
 
 clean_environment:
@@ -260,155 +266,62 @@ push_dev_workbench_docker_image: compile_jars
 	@python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 
-# Generic make target to run e2e tests. Used by other make targets to run e2e tests.
-# See usage w/ run_cora_nalp_e2e_kfp_test, run_cora_snc_e2e_kfp_test, run_cora_udl_e2e_kfp_test
-# and run_all_e2e_tests
-_run_e2e_kfp_test: compile_jars push_new_docker_images
-	$(eval TRIMMED_BRANCH:=$(shell echo "${GIT_BRANCH}" | tr '/' '_' | tr '-' '_' | cut -c 1-20 | tr '[:upper:]' '[:lower:]'))
-	$(eval TRIMMED_TIME:=$(shell date +%s | tail -c 6))
-	@should_wait_for_job_to_finish=false
-	@( \
-		set -e; \
-		read -a task_config_uris <<< "$(task_config_uris_str)"; \
-		read -a resource_config_uris <<< "$(resource_config_uris_str)"; \
-		read -a job_name_prefixes_str <<< "$(job_name_prefixes_str)"; \
-		read -a should_compile_then_run <<< "$(should_compile_then_run_str)"; \
-		if [ $${#task_config_uris[@]} -ne $${#resource_config_uris[@]} ] || [ $${#task_config_uris[@]} -ne $${#job_name_prefixes_str[@]} ] || [ $${#task_config_uris[@]} -ne $${#should_compile_then_run[@]} ]; then \
-			echo "Error: Arrays are not of the same length"; \
-			echo "  task_config_uris = $${task_config_uris[@]}"; \
-			echo "  resource_config_uris = $${resource_config_uris[@]}";\
-			echo "  job_name_prefixes_str = $${job_name_prefixes_str[@]}"; \
-			echo "  should_compile_then_run = $${should_compile_then_run_str[@]}"; \
-			exit 1; \
-		fi; \
-		for i in $${!task_config_uris[@]}; do \
-			job_name="$${job_name_prefixes_str[$$i]}_${TRIMMED_BRANCH}_${TRIMMED_TIME}"; \
-			echo "$${job_name} will use compile_then_run = $${should_compile_then_run[$$i]}"; \
-			if [ "$${should_compile_then_run[$$i]}" == "true" ]; then \
-				compiled_pipeline_path="/tmp/gigl/$${job_name}.yaml"; \
-				CMD="python -m gigl.orchestration.kubeflow.runner \
-					--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG} \
-					--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG} \
-					--container_image_dataflow=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG} \
-					--action=compile \
-					--pipeline_tag=$(GIT_HASH) \
-					--compiled_pipeline_path='$${compiled_pipeline_path}'"; \
-				echo "Compiling pipeline: $$CMD"; \
-				eval "$${CMD}"; \
-				CMD="python -m gigl.orchestration.kubeflow.runner \
-					--action=run_no_compile \
-					$(if $(filter ${should_wait_for_job_to_finish},true),--wait,) \
-					--job_name='$${job_name}' \
-					--start_at='config_populator' \
-					--task_config_uri='$${task_config_uris[$$i]}' \
-					--resource_config_uri='$${resource_config_uris[$$i]}' \
-					--compiled_pipeline_path='$${compiled_pipeline_path}'"; \
-				echo "Running from precompiled pipeline: $$CMD"; \
-			else \
-				CMD="python -m gigl.orchestration.kubeflow.runner \
-					--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG} \
-					--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG} \
-					--container_image_dataflow=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG} \
-					--action=run \
-					$(if $(filter ${should_wait_for_job_to_finish},true),--wait,) \
-					--job_name='$${job_name}' \
-					--start_at='config_populator' \
-					--pipeline_tag=$(GIT_HASH) \
-					--task_config_uri='$${task_config_uris[$$i]}' \
-					--resource_config_uri='$${resource_config_uris[$$i]}'"; \
-				echo "Running: $$CMD"; \
-			fi; \
-			if [ "$(should_send_job_to_background)" == true ]; then \
-				echo "Will run CMD in background..."; \
-				eval "$${CMD} &"; \
-				pids+=($$!); \
-			else \
-				eval "$${CMD}"; \
-			fi; \
-		done; \
-		if [ "$(should_send_job_to_background)" == true ]; then \
-			echo "Waiting for background jobs to finish..."; \
-			for pid in "$${pids[@]}"; do \
-				wait "$$pid"; \
-			done; \
-			echo "All background jobs finished"; \
-		fi; \
-	)
+# Set compiled_pipeline path so compile_gigl_kubeflow_pipeline knows where to save the pipeline to so
+# that the e2e test can use it.
+run_cora_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_cora_nalp_e2e_test: compile_gigl_kubeflow_pipeline
+run_cora_nalp_e2e_test:
+	python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_names="cora_nalp_test"
 
+run_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
+run_cora_snc_e2e_test:
+	python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_names="cora_snc_test"
 
+run_cora_udl_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_cora_udl_e2e_test: compile_gigl_kubeflow_pipeline
+run_cora_udl_e2e_test:
+	python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_names="cora_udl_test"
 
-# cora_nalp_test_on is run by compiling the pipeline first then using the compiled pipeline to run the job
-# Vs. all other pipelines right now are run directly i.e. compilation + run together in the same process
-run_cora_nalp_e2e_kfp_test: job_name_prefixes_str:="cora_nalp_test_on"
-run_cora_nalp_e2e_kfp_test: task_config_uris_str:="gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml"
-run_cora_nalp_e2e_kfp_test: resource_config_uris_str:="deployment/configs/e2e_cicd_resource_config.yaml"
-run_cora_nalp_e2e_kfp_test: should_compile_then_run_str:="true"
-run_cora_nalp_e2e_kfp_test: _run_e2e_kfp_test
+run_dblp_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_dblp_nalp_e2e_test: compile_gigl_kubeflow_pipeline
+run_dblp_nalp_e2e_test:
+	python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_names="dblp_nalp_test"
 
-run_cora_snc_e2e_kfp_test: job_name_prefixes_str:="cora_snc_test_on"
-run_cora_snc_e2e_kfp_test: task_config_uris_str:="gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml"
-run_cora_snc_e2e_kfp_test: resource_config_uris_str:="deployment/configs/e2e_cicd_resource_config.yaml"
-run_cora_snc_e2e_kfp_test: should_compile_then_run_str:="false"
-run_cora_snc_e2e_kfp_test: _run_e2e_kfp_test
+run_hom_cora_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_hom_cora_sup_e2e_test: compile_gigl_kubeflow_pipeline
+run_hom_cora_sup_e2e_test:
+	python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_names="hom_cora_sup_test"
 
-# Note UDL dataset produces a transient issue due to UDL Split Strategy
-# where in some cases the root node doesn't properly get added back to
-# the returned subgraph. Meaning, trainer will fail.
-run_cora_udl_e2e_kfp_test: job_name_prefixes_str:="cora_udl_test_on"
-run_cora_udl_e2e_kfp_test: task_config_uris_str:="gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml"
-run_cora_udl_e2e_kfp_test: resource_config_uris_str:="deployment/configs/e2e_cicd_resource_config.yaml"
-run_cora_udl_e2e_kfp_test: should_compile_then_run_str:="false"
-run_cora_udl_e2e_kfp_test: _run_e2e_kfp_test
+run_het_dblp_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_het_dblp_sup_e2e_test: compile_gigl_kubeflow_pipeline
+run_het_dblp_sup_e2e_test:
+	python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_names="het_dblp_sup_test"
 
-run_dblp_nalp_e2e_kfp_test: job_name_prefixes_str:="dblp_nalp_test_on"
-run_dblp_nalp_e2e_kfp_test: task_config_uris_str:="gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml"
-run_dblp_nalp_e2e_kfp_test: resource_config_uris_str:="deployment/configs/e2e_cicd_resource_config.yaml"
-run_dblp_nalp_e2e_kfp_test: should_compile_then_run_str:="false"
-run_dblp_nalp_e2e_kfp_test: _run_e2e_kfp_test
-
-run_hom_cora_sup_test: job_name_prefixes_str:="cora_glt_udl_test_on"
-run_hom_cora_sup_test: task_config_uris_str:="examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml"
-run_hom_cora_sup_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
-run_hom_cora_sup_test: should_compile_then_run_str:="false"
-run_hom_cora_sup_test: _run_e2e_kfp_test
-
-run_het_dblp_sup_test: job_name_prefixes_str:="dblp_glt_test_on"
-run_het_dblp_sup_test: task_config_uris_str:="examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml"
-run_het_dblp_sup_test: resource_config_uris_str:="deployment/configs/e2e_glt_resource_config.yaml"
-run_het_dblp_sup_test: should_compile_then_run_str:="false"
-run_het_dblp_sup_test: _run_e2e_kfp_test
-
-# Spawns a background job for each e2e test defined by job_name_prefix, task_config_uri, and resource_config_uri
-# Waits for all jobs to finish since should_wait_for_job_to_finish:=true
-run_all_e2e_tests: should_send_job_to_background:=true
-run_all_e2e_tests: should_wait_for_job_to_finish:=true
-run_all_e2e_tests: job_name_prefixes_str:=\
-		"cora_nalp_test_on" \
-		"cora_snc_test_on" \
-		"dblp_nalp_test_on" \
-		"cora_glt_udl_test_on" \
-		"dblp_glt_test_on"
-# Removed UDL due to transient issue:
-# "gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml"
-run_all_e2e_tests: task_config_uris_str:=\
-		"gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml" \
-		"gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml" \
-		"gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml" \
-		"examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml" \
-		"examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml"
-run_all_e2e_tests: resource_config_uris_str:=\
-		"deployment/configs/e2e_cicd_resource_config.yaml"\
-		"deployment/configs/e2e_cicd_resource_config.yaml"\
-		"deployment/configs/e2e_cicd_resource_config.yaml"\
-		"deployment/configs/e2e_glt_resource_config.yaml"\
-		"deployment/configs/e2e_glt_resource_config.yaml"
-run_all_e2e_tests: should_compile_then_run_str:=\
-		"true" \
-		"false" \
-		"false" \
-		"false" \
-		"false"
-run_all_e2e_tests: _run_e2e_kfp_test
+run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_all_e2e_tests: compile_gigl_kubeflow_pipeline
+run_all_e2e_tests:
+	python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml"
 
 
 # Compile an instance of a kfp pipeline
@@ -454,6 +367,8 @@ run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps,
 		--task_config_uri=$(task_config_uri) \
 		--resource_config_uri=$(resource_config_uri) \
 		--pipeline_tag=$(GIT_HASH) \
+		--run_labels="gigl_commit=$(GIT_HASH)" \
+		--run_labels="gigl_version=$(GIGL_VERSION)" \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
 
 
@@ -480,7 +395,6 @@ compile_protos:
 		--proto_path=proto \
 		--scala_out=scala/common/src/main/scala \
 		proto/snapchat/research/gbml/*.proto
-
 
 	tools/scalapbc/scalapbc-0.11.14/bin/scalapbc \
 		--proto_path=proto \

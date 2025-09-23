@@ -114,15 +114,16 @@ class GLTTrainer:
             accelerator_count=trainer_resource_config.gpu_limit,
             replica_count=trainer_resource_config.num_replicas,
             labels=resource_config.get_resource_labels(
-                component=GiGLComponents.Inferencer
+                component=GiGLComponents.Trainer
             ),
             timeout_s=trainer_resource_config.timeout
             if trainer_resource_config.timeout
             else None,
         )
+
         vertex_ai_service = VertexAIService(
             project=resource_config.project,
-            location=resource_config.region,
+            location=resource_config.vertex_ai_trainer_region,
             service_account=resource_config.service_account_email,
             staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
         )
@@ -205,8 +206,8 @@ if __name__ == "__main__":
 
     initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
 
-    glt_inferencer = GLTTrainer()
-    glt_inferencer.run(
+    glt_trainer = GLTTrainer()
+    glt_trainer.run(
         applied_task_identifier=applied_task_identifier,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,

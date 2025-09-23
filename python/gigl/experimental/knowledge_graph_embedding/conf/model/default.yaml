@@ -1,0 +1,4 @@
+node_embedding_dim: 128         # Dimensionality of node embeddings (higher = more complex relationships)
+embedding_similarity_type: COSINE  # Method for computing similarity (COSINE or DOT)
+src_operator: IDENTITY           # Transformation applied to source node embeddings
+dst_operator: IDENTITY           # Transformation applied to destination node embeddings

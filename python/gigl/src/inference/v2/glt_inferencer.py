@@ -122,9 +122,10 @@ class GLTInferencer:
             if inferencer_resource_config.timeout
             else None,
         )
+
         vertex_ai_service = VertexAIService(
             project=resource_config_wrapper.project,
-            location=resource_config_wrapper.region,
+            location=resource_config_wrapper.vertex_ai_inferencer_region,
             service_account=resource_config_wrapper.service_account_email,
             staging_bucket=resource_config_wrapper.temp_assets_regional_bucket_path.uri,
         )

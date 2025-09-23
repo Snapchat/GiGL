@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import getpass
 import inspect
 import subprocess
@@ -13,6 +14,14 @@ class Param:
     description: str
     long_description: str = ""
     required: bool = True
+
+
+GCP_DL_IMAGES_REPO = "projects/deeplearning-platform-release/global/images"
+# Support for the default GCP DL image used below ends on August 1, 2026
+# It becomes not available after August 1, 2027.
+# See `machine_boot_image` arg description for more details.
+DEFAULT_GCP_DL_IMAGE = f"common-cu128-ubuntu-2204-nvidia-570-v20250728"
+DEFAULT_GCP_DL_IMAGE_SUPPORT_END_DATE = datetime.datetime(2026, 8, 1)
 
 
 class SupportedParams:
@@ -38,20 +47,30 @@ class SupportedParams:
                 default=f"{whoami}-gigl-dev-instance",
                 description="Name of the VM instance",
             ),
-            "machine_type": Param(default="n1-highmem-32", description="Machine type"),
+            "machine_type": Param(
+                default="n1-highmem-32",
+                description="Machine type. Note: Some GPUs require specific machine types. \n"
+                + "   See: https://cloud.google.com/compute/docs/gpus for more info.",
+            ),
             "accelerator_type": Param(
-                default="nvidia-tesla-t4", description="GPU accelerator type"
+                default="nvidia-tesla-t4",
+                description="GPU accelerator type: [nvidia-tesla-t4, nvidia-tesla-v100, etc.] \n"
+                + "   See: https://cloud.google.com/compute/docs/gpus#gpu-models for availibility, \n"
+                + "   and ensure GPU is compatible with machine type.",
             ),
             "accelerator_count": Param(
-                default="4", description="Number of GPUs to attach to the VM"
+                default="4",
+                description="Number of GPUs to attach to the VM, enter '0' if no accelerators should be attached",
             ),
             "machine_boot_image": Param(
-                default="projects/ml-images/global/images/c0-deeplearning-common-cu124-v20250325-debian-11-py310-conda",
+                default=DEFAULT_GCP_DL_IMAGE,
                 description="Boot image for the VM.",
-                long_description="You can find images google provides @ https://cloud.google.com/deep-learning-vm/docs/images. \n"
-                + "Please ensure to use an image whose cuda version is compatible with GiGL.\n"
-                + "See the following for GiGL supported cuda versions: "
-                + "https://snapchat.github.io/GiGL/docs/user_guide/getting_started/installation.html#supported-environments",
+                long_description="Please ensure to use an image whose cuda version is compatible with your repo.\n"
+                + "   If using GiGL, see the following for GiGL supported cuda versions: \n"
+                + "   https://snapchat.github.io/GiGL/docs/user_guide/getting_started/installation.html#supported-environments \n"
+                + "   To find images available, run: \n"
+                + "   `gcloud compute images list --project deeplearning-platform-release --no-standard-images`"
+                + "   See: https://cloud.google.com/deep-learning-vm/docs/images for more info.",
             ),
             "boot_drive_size_gb": Param(
                 default="1000", description="Boot disk size in GB"
@@ -146,7 +165,7 @@ class GCPInstanceOpsAgentPolicyCreator:
         zone: str,
     ) -> None:
         """
-        Create an OPS agent policy for the given project and zone.
+        Create an OPS agent policy for the given project and zone.\n
         See: https://cloud.google.com/stackdriver/docs/solutions/agents/ops-agent/agent-policies-overview
         """
         policy_name = GCPInstanceOpsAgentPolicyCreator.get_policy_ops_agent_policy_name(
@@ -209,7 +228,7 @@ if __name__ == "__main__":
                 required_clause = "(required)" if param.required else "(optional)"
                 input_question = f"-> {param.description}{long_description_clause} {required_clause}: "
             else:
-                input_question = f"-> {param.description}{long_description_clause}\nDefaults to: [{param.default}]: "
+                input_question = f"-> {param.description}{long_description_clause}\n   *Defaults to: [{param.default}]: "
 
             values[key] = input(input_question).strip() or param.default  # type: ignore
             if not values[key] and param.required:
@@ -274,6 +293,22 @@ if __name__ == "__main__":
         if values.get("reservation")
         else ""
     )
+    accelerator_clause = ""
+    if values["accelerator_count"] != "0":
+        accelerator_clause = f"--accelerator=count={values['accelerator_count']},type={values['accelerator_type']}"
+
+    if values["machine_boot_image"] == DEFAULT_GCP_DL_IMAGE:
+        if datetime.datetime.now() > DEFAULT_GCP_DL_IMAGE_SUPPORT_END_DATE:
+            print(
+                f"ERROR:: The default GCP DL image is no longer supported: {DEFAULT_GCP_DL_IMAGE}\n"
+                + "To find available images, run:\n"
+                + "gcloud compute images list \ \n\t--project deeplearning-platform-release \ \n\t--format='value(NAME)' \ \n\t--no-standard-images\n"
+                + "See: https://cloud.google.com/deep-learning-vm/docs/images for more info."
+            )
+            raise RuntimeError(
+                f"Default GCP DL image is no longer supported: {DEFAULT_GCP_DL_IMAGE}"
+            )
+    machine_boot_full_name = f"{GCP_DL_IMAGES_REPO}/{values['machine_boot_image']}"
 
     gcloud_cmd = inspect.cleandoc(
         f"""
@@ -287,13 +322,13 @@ if __name__ == "__main__":
         --provisioning-model=STANDARD \
         --service-account={values['service_account']} \
         --scopes=https://www.googleapis.com/auth/cloud-platform \
-        --accelerator=count={values['accelerator_count']},type={values['accelerator_type']} \
-        --create-disk=auto-delete=yes,boot=yes,device-name={values['machine_name']},image={values['machine_boot_image']},mode=rw,size={values['boot_drive_size_gb']},type=pd-ssd \
+        --create-disk=auto-delete=yes,boot=yes,device-name={values['machine_name']},image={machine_boot_full_name},mode=rw,size={values['boot_drive_size_gb']},type=pd-ssd \
         --no-shielded-secure-boot \
         --shielded-vtpm \
         --shielded-integrity-monitoring \
         --labels=goog-ec-src=vm_add-gcloud{ops_agent_clause}{extra_labels_clause} \
         --reservation-affinity=any \
+        {accelerator_clause} \
         {reservation_clause}
         """
     ).strip()

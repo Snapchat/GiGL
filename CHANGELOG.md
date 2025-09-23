@@ -6,9 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+- Added suport to load arbritary yamls given a dataclass definition
+- Added custom Omegaconf resolver for `${git_hash:}`
+- Added Omegaconf resolvers when parsing yamls; added custom resolver for `${now:}`
 - Support `URI / URI_LIKE`, similar to `pathlib.Path`.
 
 ### Added
+
+- Added support for NodeAnchorSplitter
+
+- Add support for loading, partitioning, and separate node labels from features
+
+- Add earlier check if invalid Node IDs are provided to the partitioner
+
+- Add support for labeling VAI pipeline runs
+
+- Add Node classification support in dataset factory and dataloaders
 
 ### Changed
 
@@ -17,5 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Removed
 
 ### Fixed
+
+- Fix bug introduced when we sort the feature keys in the preprocessed metadata pb wrapper
 
 ## [0.0.7] - TODO
