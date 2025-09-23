@@ -583,8 +583,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_node_features=None,
             partitioned_negative_labels=None,
             partitioned_positive_labels=None,
+            partitioned_node_labels=None,
         )
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
         mp.spawn(
@@ -605,8 +606,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             partitioned_node_features=None,
             partitioned_negative_labels=None,
             partitioned_positive_labels=None,
+            partitioned_node_labels=None,
         )
-        dataset = DistLinkPredictionDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
         mp.spawn(
