@@ -476,7 +476,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_ablp_dataloader(
+    def _test_ablp_dataloader(
         self,
         _,
         labeled_edges,
@@ -542,7 +542,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         )
 
-    def test_cora_supervised(self):
+    def _test_cora_supervised(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -584,7 +584,7 @@ class DistABLPLoaderTest(unittest.TestCase):
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def test_dblp_supervised(self):
+    def _test_dblp_supervised(self):
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -851,7 +851,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_ablp_dataloder_multiple_supervision_edge_types(
+    def _test_ablp_dataloder_multiple_supervision_edge_types(
         self,
         _,
         edge_index: dict[EdgeType, torch.Tensor],

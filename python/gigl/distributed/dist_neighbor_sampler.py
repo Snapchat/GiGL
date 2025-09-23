@@ -55,6 +55,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             node_type: torch.cat(seeds, dim=0).to(self.device)
             for node_type, seeds in input_seeds_builder.items()
         }
+        print(f"{input_nodes=}")
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
