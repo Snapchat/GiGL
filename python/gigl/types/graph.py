@@ -62,7 +62,7 @@ class PartitionOutput:
     node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
 
     # Edge partition book
-    edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]]
+    edge_partition_book: Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]
 
     # Partitioned edge index on current rank. This field will always be populated after partitioning. However, we may set this
     # field to None during dataset.build() in order to minimize the peak memory usage, and as a result type this as Optional.
@@ -313,8 +313,9 @@ def is_label_edge_type(
     Returns:
         bool: True if the edge type is a label edge type, False otherwise.
     """
-    return _POSITIVE_LABEL_TAG in str(edge_type[1]) or _NEGATIVE_LABEL_TAG in str(
-        edge_type[1]
+    relation = str(edge_type[1])
+    return relation.endswith(_POSITIVE_LABEL_TAG) or relation.endswith(
+        _NEGATIVE_LABEL_TAG
     )
 
 
@@ -323,13 +324,15 @@ def label_edge_type_to_message_passing_edge_type(
 ) -> _EdgeType:
     """Convert a label edge type to a message passing edge type."""
     if not is_label_edge_type(label_edge_type):
-        raise ValueError(f"Expected a label edge type, got {label_edge_type}")
-    if label_edge_type[1].endswith(_POSITIVE_LABEL_TAG):
-        relation = label_edge_type[1].replace(_POSITIVE_LABEL_TAG, "")
-    elif label_edge_type[1].endswith(_NEGATIVE_LABEL_TAG):
-        relation = label_edge_type[1].replace(_NEGATIVE_LABEL_TAG, "")
+        raise ValueError(f"Edge type {label_edge_type} is not a label edge type.")
+    relation = str(label_edge_type[1])
+    if relation.endswith(_POSITIVE_LABEL_TAG):
+        relation = relation.removesuffix(_POSITIVE_LABEL_TAG)
+    elif relation.endswith(_NEGATIVE_LABEL_TAG):
+        relation = relation.removesuffix(_NEGATIVE_LABEL_TAG)
     else:
-        raise ValueError(f"Expected a label edge type, got {label_edge_type}")
+        raise ValueError(f"Edge type {label_edge_type} is not a label edge type.")
+
     if isinstance(label_edge_type, EdgeType):
         return EdgeType(label_edge_type[0], Relation(relation), label_edge_type[2])
     else:
