@@ -172,14 +172,12 @@ class DistABLPLoader(DistLoader):
         master_ip_address: str
         should_cleanup_distributed_context: bool = False
 
-        if supervision_edge_type is not None:
-            supervision_edge_types = (
-                supervision_edge_type
-                if isinstance(supervision_edge_type, list)
-                else [supervision_edge_type]
-            )
-        else:
+        if supervision_edge_type is None:
             supervision_edge_types = []
+        elif isinstance(supervision_edge_type, list):
+            supervision_edge_types = supervision_edge_type
+        else:
+            supervision_edge_types = [supervision_edge_type]
         del supervision_edge_type
 
         if context:
@@ -415,8 +413,6 @@ class DistABLPLoader(DistLoader):
             )
             torch.distributed.destroy_process_group()
 
-        logger.info(f"{all_positive_labels=}")
-        logger.info(f"{all_negative_labels=}")
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
             input_type=anchor_node_type,
@@ -534,7 +530,6 @@ class DistABLPLoader(DistLoader):
         metadata = {}
         positive_labels = {}
         negative_labels = {}
-        print(f"{msg=}")
         for k in list(msg.keys()):
             if k.startswith("#META.gigl_positive_labels."):
                 edge_type_str = k[len("#META.gigl_positive_labels.") :]
@@ -550,9 +545,6 @@ class DistABLPLoader(DistLoader):
                 meta_key = str(k[len("#META.") :])
                 metadata[meta_key] = msg[k].to(self.to_device)
                 del msg[k]
-        print(f"{positive_labels=}")
-        print(f"{negative_labels=}")
-        print(f"{metadata=}")
         return (msg, positive_labels, negative_labels)
 
     def _set_labels(
@@ -589,7 +581,6 @@ class DistABLPLoader(DistLoader):
             node_type_to_local_node_to_global_node[
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
             ] = data.node
-        print(f"{node_type_to_local_node_to_global_node=}")
         output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
@@ -597,8 +588,6 @@ class DistABLPLoader(DistLoader):
             dict
         )
         for edge_type, label_tensor in positive_labels.items():
-            print(f"{edge_type=}")
-            print(f"{label_tensor=}")
             for local_anchor_node_id in range(label_tensor.size(0)):
                 positive_mask = (
                     node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(1)
@@ -615,8 +604,6 @@ class DistABLPLoader(DistLoader):
 
         if negative_labels is not None:
             for edge_type, label_tensor in negative_labels.items():
-                print(f"{edge_type=}")
-                print(f"{label_tensor=}")
                 for local_anchor_node_id in range(label_tensor.size(0)):
                     negative_mask = (
                         node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(
@@ -632,8 +619,6 @@ class DistABLPLoader(DistLoader):
                         self.to_device
                     )
                     # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
-        print(f"{output_positive_labels=}")
-        print(f"{output_negative_labels=}")
         if (
             len(output_positive_labels) == 1
             and list(output_positive_labels.keys())[0] == DEFAULT_HOMOGENEOUS_EDGE_TYPE

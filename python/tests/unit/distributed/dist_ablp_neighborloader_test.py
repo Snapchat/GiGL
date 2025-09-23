@@ -339,8 +339,6 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 
     assert count == 1
     assert set(datum.node_types) == set(expected_node.keys())
-    for node_type in expected_node.keys():
-        print(f"node_type: {node_type}, {datum[node_type].node=}")
     for node_type in datum.node_types:
         assert_tensor_equality(
             datum[node_type].node,
@@ -356,9 +354,6 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
                 datum.y_positive[edge_type][local_anchor]
             ]
             expected_positive_label = expected_positive_labels[edge_type][global_id]
-            print(
-                f"For edge type {edge_type}, global_id {global_id}, global_positive_nodes {global_positive_nodes}, expected_positive_label {expected_positive_label}"
-            )
             assert_tensor_equality(
                 global_positive_nodes,
                 expected_positive_label,
@@ -372,13 +367,7 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
                 global_negative_nodes = datum[edge_type[2]].node[
                     datum.y_negative[edge_type][local_anchor]
                 ]
-                print(
-                    f"For edge type {edge_type}, global_id {global_id}, global_negative_nodes {global_negative_nodes}, expected_negative_labels {expected_negative_labels}"
-                )
                 expected_negative_label = expected_negative_labels[edge_type][global_id]
-                print(
-                    f"For edge type {edge_type}, global_id {global_id}, global_negative_nodes {global_negative_nodes}, expected_negative_label {expected_negative_label}"
-                )
                 assert_tensor_equality(
                     global_negative_nodes,
                     expected_negative_label,
@@ -393,8 +382,6 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
         for edge_type, edges in expected_edges.items()
     }
     dsts, srcs, *_ = datum.coo()
-    print(f"{srcs=}")
-    print(f"{dsts=}")
     assert set(expected_edges.keys()) == set(dsts.keys())
     assert set(expected_edges.keys()) == set(srcs.keys())
     for edge_type in expected_edges.keys():
