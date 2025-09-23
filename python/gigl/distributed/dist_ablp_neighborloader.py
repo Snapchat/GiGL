@@ -35,8 +35,6 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     label_edge_type_to_message_passing_edge_type,
-    message_passing_to_negative_label,
-    message_passing_to_positive_label,
     reverse_edge_type,
     select_label_edge_types,
 )
@@ -580,11 +578,17 @@ class DistABLPLoader(DistLoader):
         if isinstance(data, HeteroData):
             for e_type in self._supervision_edge_types:
                 if self.edge_dir == "in":
-                    node_type_to_local_node_to_global_node[e_type[0]] = data[e_type[0]].node
+                    node_type_to_local_node_to_global_node[e_type[0]] = data[
+                        e_type[0]
+                    ].node
                 else:
-                    node_type_to_local_node_to_global_node[e_type[2]] = data[e_type[2]].node
+                    node_type_to_local_node_to_global_node[e_type[2]] = data[
+                        e_type[2]
+                    ].node
         else:
-            node_type_to_local_node_to_global_node[DEFAULT_HOMOGENEOUS_NODE_TYPE] = data.node
+            node_type_to_local_node_to_global_node[
+                DEFAULT_HOMOGENEOUS_NODE_TYPE
+            ] = data.node
         print(f"{node_type_to_local_node_to_global_node=}")
         output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
@@ -615,7 +619,9 @@ class DistABLPLoader(DistLoader):
                 print(f"{label_tensor=}")
                 for local_anchor_node_id in range(label_tensor.size(0)):
                     negative_mask = (
-                        node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(1)
+                        node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(
+                            1
+                        )
                         == label_tensor[local_anchor_node_id]
                     )  # shape [N, M], where N is the number of nodes and M is the number of negative labels for the current anchor node
 
@@ -628,16 +634,18 @@ class DistABLPLoader(DistLoader):
                     # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
         print(f"{output_positive_labels=}")
         print(f"{output_negative_labels=}")
-        if len(output_positive_labels) == 1 and list(output_positive_labels.keys())[
-            0
-        ] == DEFAULT_HOMOGENEOUS_EDGE_TYPE:
+        if (
+            len(output_positive_labels) == 1
+            and list(output_positive_labels.keys())[0] == DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        ):
             data.y_positive = output_positive_labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         else:
             data.y_positive = output_positive_labels
 
-        if len(output_negative_labels) == 1 and list(output_negative_labels.keys())[
-            0
-        ] == DEFAULT_HOMOGENEOUS_EDGE_TYPE:
+        if (
+            len(output_negative_labels) == 1
+            and list(output_negative_labels.keys())[0] == DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        ):
             data.y_negative = output_negative_labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         elif len(output_negative_labels) > 0:
             data.y_negative = output_negative_labels
