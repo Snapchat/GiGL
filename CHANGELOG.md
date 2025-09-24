@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Add Node classification support in dataset factory and dataloaders
 
+- Enable support for multipler supervision edge types in DistABLPLoader
+
 ### Changed
 
 ### Deprecated
