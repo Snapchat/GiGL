@@ -116,6 +116,43 @@ message VertexAiResourceConfig {
     uint32 num_workers = 1;
  }
 
+ // Configuration for Mutlipool Vertex AI jobs.
+ // See https://cloud.google.com/vertex-ai/docs/training/distributed-training for more info.
+ // NOTE: The first worker pool will be split into the primary replica and "Workers".
+ // For example:
+ // pools = [
+ //   {
+ //     "machine_type": "n1-standard-8",
+ //     "num_replicas": 16
+ //   },
+ //   {
+ //     "machine_type": "n1-standard-8",
+ //     "gpu_type": "nvidia-tesla-v100",
+ //     "gpu_limit": 1,
+ //     "num_replicas": 16
+ //   }
+ // ]
+ // Will have the Primary be: {}
+ // {
+ //   "machine_type": "n1-standard-8",
+ //   "num_replicas": 1
+ // }
+ // And the Workers be:
+ // {
+ //   "machine_type": "n1-standard-8",
+ //   "num_replicas": 15
+ // }
+ // And the parameter servers be:
+ // {
+ //   "machine_type": "n1-standard-8",
+ //   "gpu_type": "nvidia-tesla-v100",
+ //   "gpu_limit": 1,
+ //   "num_replicas": 16
+ // }
+ message VertexAiMultiPoolConfig {
+  repeated VertexAiResourceConfig pools = 1;
+ }
+
 // (deprecated)
 // Configuration for distributed training resources
 message DistributedTrainerConfig {
@@ -132,6 +169,7 @@ message TrainerResourceConfig {
    VertexAiResourceConfig vertex_ai_trainer_config = 1;
    KFPResourceConfig kfp_trainer_config = 2;
    LocalResourceConfig local_trainer_config = 3;
+   VertexAiMultiPoolConfig vertex_ai_multi_pool_trainer_config = 4;
  }
 }
 
@@ -141,6 +179,7 @@ message InferencerResourceConfig {
    VertexAiResourceConfig vertex_ai_inferencer_config = 1;
    DataflowResourceConfig dataflow_inferencer_config = 2;
    LocalResourceConfig local_inferencer_config = 3;
+   VertexAiMultiPoolConfig vertex_ai_multi_pool_inferencer_config = 4;
  }
 }
 

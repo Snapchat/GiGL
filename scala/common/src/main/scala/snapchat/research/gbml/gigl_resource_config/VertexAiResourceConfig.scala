@@ -19,8 +19,9 @@ package snapchat.research.gbml.gigl_resource_config
   *   Timeout in seconds for the job. If unset or zero, will use the default &#64; google.cloud.aiplatform.CustomJob, which is 7 days:
   *   https://github.com/googleapis/python-aiplatform/blob/58fbabdeeefd1ccf1a9d0c22eeb5606aeb9c2266/google/cloud/aiplatform/jobs.py#L2252-L2253
   * @param gcpRegionOverride
-  *   Region override.
+  *   Region override
   *   If provided, then the Vertex AI Job will be launched in the provided region.
+  *   Otherwise, will launch jobs in the region specified at CommonComputeConfig.region
   *   ex: "us-west1"
   *   NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -&gt; gcp_region_override
   */
