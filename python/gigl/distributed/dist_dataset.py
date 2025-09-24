@@ -1038,7 +1038,8 @@ def _prepare_feature_data(
     elif isinstance(partitioned_data, Mapping):
         assert (
             len(partitioned_data) > 0
-        ), f"Expected at least one entity type in partitioned data, but got {partitioned_data.keys()}."
+        ), f"Expected at least one entity type in partitioned data, but got no entities. In heterogeneous settings, \
+            please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
         # Heterogeneous case
         assert isinstance(
             partition_book, Mapping
@@ -1046,7 +1047,8 @@ def _prepare_feature_data(
             Got partition book of type {type(partition_book)}."
         assert (
             len(partition_book) > 0
-        ), f"Expected at least one entity type in partition book, but got {partition_book.keys()}."
+        ), f"Expected at least one entity type in partition book, but got no entities. In heterogeneous settings, \
+            please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
 
         # Extract features and IDs by type
         features_per_entity_type: dict[_EntityType, torch.Tensor] = {}
