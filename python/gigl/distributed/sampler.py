@@ -34,6 +34,14 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         self._positive_label_by_edge_types = positive_label_by_edge_types
         self._negative_label_by_edge_types = negative_label_by_edge_types
 
+    @property
+    def positive_label_by_edge_types(self) -> dict[EdgeType, torch.Tensor]:
+        return self._positive_label_by_edge_types
+
+    @property
+    def negative_label_by_edge_types(self) -> dict[EdgeType, torch.Tensor]:
+        return self._negative_label_by_edge_types
+
     def __len__(self) -> int:
         return self.node.shape[0]
 

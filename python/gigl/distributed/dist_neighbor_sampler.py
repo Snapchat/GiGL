@@ -52,14 +52,14 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             Union[str, NodeType], list[torch.Tensor]
         ] = defaultdict(list)
         input_seeds_builder[input_type].append(input_seeds)
-        for edge_type, label_tensor in inputs._positive_label_by_edge_types.items():
+        for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
             input_seeds_builder[edge_type[label_edge_index]].append(
                 label_tensor[label_tensor != PADDING_NODE].to(self.device)
             )
             metadata[
                 f"{POSITIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
             ] = label_tensor
-        for edge_type, label_tensor in inputs._negative_label_by_edge_types.items():
+        for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
             input_seeds_builder[edge_type[label_edge_index]].append(
                 label_tensor[label_tensor != PADDING_NODE].to(self.device)
             )
