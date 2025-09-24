@@ -40,14 +40,15 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             Union[str, NodeType], list[torch.Tensor]
         ] = collections.defaultdict(list)
         input_seeds_builder[input_type].append(input_seeds)
+        label_edge_index = 0 if self.edge_dir == "in" else 2
         for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
-            input_seeds_builder[edge_type[2]].append(
+            input_seeds_builder[edge_type[label_edge_index]].append(
                 label_tensor[label_tensor != PADDING_NODE].to(self.device)
             )
             metadata[f"gigl_positive_labels.{str(tuple(edge_type))}"] = label_tensor
         if inputs.negative_label_by_edge_types is not None:
             for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
-                input_seeds_builder[edge_type[2]].append(
+                input_seeds_builder[edge_type[label_edge_index]].append(
                     label_tensor[label_tensor != PADDING_NODE].to(self.device)
                 )
                 metadata[f"gigl_negative_labels.{str(tuple(edge_type))}"] = label_tensor
@@ -55,7 +56,6 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             node_type: torch.cat(seeds, dim=0).to(self.device)
             for node_type, seeds in input_seeds_builder.items()
         }
-        print(f"{input_nodes=}")
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"

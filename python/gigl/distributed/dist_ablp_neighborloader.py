@@ -412,14 +412,12 @@ class DistABLPLoader(DistLoader):
                 f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
             )
             torch.distributed.destroy_process_group()
-
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
             input_type=anchor_node_type,
             positive_label_by_edge_types=all_positive_labels,
             negative_label_by_edge_types=all_negative_labels,
         )
-
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -569,14 +567,8 @@ class DistABLPLoader(DistLoader):
         node_type_to_local_node_to_global_node: dict[NodeType, torch.Tensor] = {}
         if isinstance(data, HeteroData):
             for e_type in self._supervision_edge_types:
-                if self.edge_dir == "in":
-                    node_type_to_local_node_to_global_node[e_type[0]] = data[
-                        e_type[0]
-                    ].node
-                else:
-                    node_type_to_local_node_to_global_node[e_type[2]] = data[
-                        e_type[2]
-                    ].node
+                node_type_to_local_node_to_global_node[e_type[0]] = data[e_type[0]].node
+                node_type_to_local_node_to_global_node[e_type[2]] = data[e_type[2]].node
         else:
             node_type_to_local_node_to_global_node[
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -587,10 +579,13 @@ class DistABLPLoader(DistLoader):
         output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
+        edge_index = 0 if self.edge_dir == "in" else 2
         for edge_type, label_tensor in positive_labels.items():
             for local_anchor_node_id in range(label_tensor.size(0)):
                 positive_mask = (
-                    node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(1)
+                    node_type_to_local_node_to_global_node[
+                        edge_type[edge_index]
+                    ].unsqueeze(1)
                     == label_tensor[local_anchor_node_id]
                 )  # shape [N, P], where N is the number of nodes and P is the number of positive labels for the current anchor node
 
@@ -606,9 +601,9 @@ class DistABLPLoader(DistLoader):
             for edge_type, label_tensor in negative_labels.items():
                 for local_anchor_node_id in range(label_tensor.size(0)):
                     negative_mask = (
-                        node_type_to_local_node_to_global_node[edge_type[2]].unsqueeze(
-                            1
-                        )
+                        node_type_to_local_node_to_global_node[
+                            edge_type[edge_index]
+                        ].unsqueeze(1)
                         == label_tensor[local_anchor_node_id]
                     )  # shape [N, M], where N is the number of nodes and M is the number of negative labels for the current anchor node
 
@@ -619,22 +614,15 @@ class DistABLPLoader(DistLoader):
                         self.to_device
                     )
                     # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
-        if (
-            len(output_positive_labels) == 1
-            and list(output_positive_labels.keys())[0] == DEFAULT_HOMOGENEOUS_EDGE_TYPE
-        ):
-            data.y_positive = output_positive_labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+        if len(output_positive_labels) == 1:
+            data.y_positive = next(iter(output_positive_labels.values()))
         else:
             data.y_positive = output_positive_labels
 
-        if (
-            len(output_negative_labels) == 1
-            and list(output_negative_labels.keys())[0] == DEFAULT_HOMOGENEOUS_EDGE_TYPE
-        ):
-            data.y_negative = output_negative_labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+        if len(output_negative_labels) == 1:
+            data.y_negative = next(iter(output_negative_labels.values()))
         elif len(output_negative_labels) > 0:
             data.y_negative = output_negative_labels
-
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:

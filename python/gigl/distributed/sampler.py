@@ -55,3 +55,6 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
             if self.negative_label_by_edge_types is not None
             else None,
         )
+
+    def __repr__(self) -> str:
+        return f"ABLPNodeSamplerInput(\n\tnode={self.node},\n\tinput_type={self.input_type},\n\tpositive_label_by_edge_types={self.positive_label_by_edge_types},\n\tnegative_label_by_edge_types={self.negative_label_by_edge_types}\n)"

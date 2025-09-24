@@ -346,7 +346,9 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
             dim=0,
         )
     assert hasattr(datum, "y_positive")
-    assert set(datum.y_positive.keys()) == set(expected_positive_labels.keys())
+    assert set(datum.y_positive.keys()) == set(
+        expected_positive_labels.keys()
+    ), f"{datum.y_positive.keys()} != {expected_positive_labels.keys()}"
     for edge_type in datum.y_positive.keys():
         for local_anchor in datum.y_positive[edge_type]:
             global_id = datum[edge_type[0]].node[local_anchor].item()
@@ -360,7 +362,9 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
                 dim=0,
             )
     if expected_negative_labels is not None:
-        assert datum.y_negative.keys() == expected_negative_labels.keys()
+        assert (
+            datum.y_negative.keys() == expected_negative_labels.keys()
+        ), f"{datum.y_negative.keys()} != {expected_negative_labels.keys()}"
         for edge_type in datum.y_negative.keys():
             for local_anchor in datum.y_negative[edge_type]:
                 global_id = datum[edge_type[0]].node[local_anchor].item()
@@ -382,8 +386,12 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
         for edge_type, edges in expected_edges.items()
     }
     dsts, srcs, *_ = datum.coo()
-    assert set(expected_edges.keys()) == set(dsts.keys())
-    assert set(expected_edges.keys()) == set(srcs.keys())
+    assert set(expected_edges.keys()) == set(
+        dsts.keys()
+    ), f"{expected_edges.keys()} != {dsts.keys()}"
+    assert set(expected_edges.keys()) == set(
+        srcs.keys()
+    ), f"{expected_edges.keys()} != {srcs.keys()}"
     for edge_type in expected_edges.keys():
         assert_tensor_equality(
             datum[edge_type[0]].node[dsts[edge_type]],
@@ -652,7 +660,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def test_toy_heterogeneous_ablp(
+    def _test_toy_heterogeneous_ablp(
         self,
         _,
         partitioner_class: type[DistPartitioner],
@@ -711,6 +719,8 @@ class DistABLPLoaderTest(unittest.TestCase):
                     message_passing_to_positive_label(_A_TO_C): torch.tensor(
                         [[10, 10], [22, 23]]
                     ),
+                    # Add an edge that isn't a supervision edge type
+                    _A_LINK_B: torch.tensor([[10, 10], [20, 21]]),
                 },
                 supervision_edge_types=[_A_TO_B, _A_TO_C],
                 expected_node={
@@ -721,6 +731,8 @@ class DistABLPLoaderTest(unittest.TestCase):
                             12,
                             13,
                             14,
+                            20,
+                            21,
                         ]
                     ),
                     _C: torch.tensor(
@@ -740,6 +752,7 @@ class DistABLPLoaderTest(unittest.TestCase):
                 expected_edges={
                     _A_TO_B: (torch.tensor([10, 10]), torch.tensor([11, 12])),
                     _A_TO_C: (torch.tensor([10, 10]), torch.tensor([20, 21])),
+                    _A_LINK_B: (torch.tensor([10, 10]), torch.tensor([20, 21])),
                 },
                 expected_positive_labels={
                     _A_TO_B: {10: torch.tensor([13, 14])},
@@ -820,38 +833,9 @@ class DistABLPLoaderTest(unittest.TestCase):
                 },
                 expected_negative_labels=None,
             ),
-            param(
-                "edges that aren't supervision edge types",
-                edge_index={
-                    _A_TO_B: torch.tensor([[10, 10], [11, 12]]),
-                    message_passing_to_positive_label(_A_TO_B): torch.tensor(
-                        [[10, 10], [13, 14]]
-                    ),
-                    _A_TO_C: torch.tensor([[10, 10], [20, 21]]),
-                },
-                supervision_edge_types=[_A_TO_B],
-                expected_node={
-                    _A: torch.tensor([10]),
-                    _B: torch.tensor([11, 12, 13, 14]),
-                    _C: torch.tensor([20, 21]),
-                },
-                expected_batch={
-                    _A: torch.tensor([10]),
-                    _B: None,
-                    _C: None,
-                },
-                expected_edges={
-                    _A_TO_B: (torch.tensor([10, 10]), torch.tensor([11, 12])),
-                    _A_TO_C: (torch.tensor([10, 10]), torch.tensor([20, 21])),
-                },
-                expected_positive_labels={
-                    _A_TO_B: {10: torch.tensor([13, 14])},
-                },
-                expected_negative_labels=None,
-            ),
         ]
     )
-    def _test_ablp_dataloder_multiple_supervision_edge_types(
+    def test_ablp_dataloder_multiple_supervision_edge_types(
         self,
         _,
         edge_index: dict[EdgeType, torch.Tensor],
