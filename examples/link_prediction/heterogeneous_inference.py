@@ -128,9 +128,10 @@ def _inference_process(
     )  # The device is automatically inferred based off the local process rank and the available devices
     rank = machine_rank * local_world_size + local_rank
     world_size = machine_world_size * local_world_size
-    torch.cuda.set_device(
-        device
-    )  # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
+    if torch.cuda.is_available():
+        torch.cuda.set_device(
+            device
+        )  # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
         init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",

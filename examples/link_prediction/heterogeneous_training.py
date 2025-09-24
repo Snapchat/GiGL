@@ -356,7 +356,8 @@ def _training_process(
 
     # We use one training device for each local process
     device = get_available_device(local_process_rank=local_rank)
-
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device)
     logger.info(f"---Rank {rank} training process set device {device}")
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -511,7 +512,16 @@ def _training_process(
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
 
-    else:
+        # We save the model on the process with the 0th node rank and 0th local rank.
+        if machine_rank == 0 and local_rank == 0:
+            logger.info(
+                f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
+            )
+            # We unwrap the model from DDP to save it
+            # We do this so we can use the model without DDP later, e.g. for inference.
+            save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
+
+    else:  # should_skip_training is True, meaning we should only run testing
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
         model = init_example_gigl_heterogeneous_model(
             node_type_to_feature_dim=node_type_to_feature_dim,
@@ -530,6 +540,7 @@ def _training_process(
         )
 
     logger.info(f"---Rank {rank} started testing")
+    testing_start_time = time.time()
 
     model.eval()
 
@@ -562,25 +573,18 @@ def _training_process(
         log_every_n_batch=log_every_n_batch,
     )
 
-    test_main_loader.shutdown()
-    test_random_negative_loader.shutdown()
-
-    logger.info(f"---Rank {rank} finished testing")
-
     # Memory cleanup and waiting for all processes to finish
     if torch.cuda.is_available():
         torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
         torch.cuda.synchronize()  # Ensures all CUDA operations have finished
     torch.distributed.barrier()  # Waits for all processes to reach the current point
 
-    # We save the model on the process with the 0th node rank and 0th local rank.
-    if machine_rank == 0 and local_rank == 0:
-        logger.info(
-            f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
-        )
-        # We unwrap the model from DDP to save it
-        # We do this so we can use the model without DDP later, e.g. for inference.
-        save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
+    test_main_loader.shutdown()
+    test_random_negative_loader.shutdown()
+
+    logger.info(
+        f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
+    )
 
     torch.distributed.destroy_process_group()
 
