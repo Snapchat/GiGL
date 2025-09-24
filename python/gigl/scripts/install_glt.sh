@@ -46,7 +46,7 @@ then
     # Thus, checking out a specific commit instead of a tagged version.
     git clone https://github.com/alibaba/graphlearn-for-pytorch.git \
         && cd graphlearn-for-pytorch \
-        && git checkout 26fe3d4e050b081bc51a79dc9547f244f5d314da \
+        && git checkout 88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9 \
         && git submodule update --init \
         && bash install_dependencies.sh
     if has_cuda_driver;

@@ -566,6 +566,56 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         )
 
+    def test_isolated_heterogeneous_neighbor_loader(
+        self,
+    ):
+        partition_output = PartitionOutput(
+            node_partition_book={"author": torch.zeros(18)},
+            edge_partition_book=None,
+            partitioned_edge_index={
+                EdgeType(
+                    NodeType("author"), Relation("to"), NodeType("author")
+                ): GraphPartitionData(
+                    edge_index=torch.tensor([[10], [15]]), edge_ids=None
+                )
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_distributed_heterogeneous_neighbor_loader,
+            args=(dataset, self._context, 18),
+        )
+
+    def test_isolated_homogeneous_neighbor_loader(
+        self,
+    ):
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(18),
+            edge_partition_book=None,
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[10], [15]]), edge_ids=None
+            ),
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader,
+            args=(dataset, self._context, 18),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
