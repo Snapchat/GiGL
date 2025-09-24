@@ -571,7 +571,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     ):
         partition_output = PartitionOutput(
             node_partition_book={"author": torch.zeros(18)},
-            edge_partition_book={},
+            edge_partition_book=None,
             partitioned_edge_index={
                 EdgeType(
                     NodeType("author"), Relation("to"), NodeType("author")
@@ -598,7 +598,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     ):
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(18),
-            edge_partition_book=torch.zeros(0),
+            edge_partition_book=None,
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[10], [15]]), edge_ids=None
             ),
