@@ -31,6 +31,9 @@ from gigl.src.data_preprocessor.lib.ingest.bigquery import BigqueryEdgeDataRefer
 logger = Logger()
 
 
+_ROW_ID_FIELD = "row_id"
+
+
 class EdgeDatasetFormat(str, Enum):
     """
     Enumeration of supported edge dataset output formats.
@@ -87,6 +90,9 @@ def _get_BigqueryEdgeDataReference_for_split(
     split: DatasetSplit,
 ) -> BigqueryEdgeDataReference:
     """Get a BigQuery edge data reference for a given split."""
+
+    # This table contains edges of multiple edge types, which are reflected in a condensed_edge_type
+    # field.  Hence, we use a mixed edge type in the reference.
     return BigqueryEdgeDataReference(
         reference_uri=BqUtils.join_path(
             BqUtils.format_bq_path(output_bq_dataset),
@@ -185,9 +191,8 @@ class PerSplitFilteredEdgeDatasetBuilder:
                 split,
             )
 
-            random_column_field = "row_id"
             maybe_extra_field_selector = (
-                f", RAND() as {random_column_field}"
+                f", RAND() as {_ROW_ID_FIELD}"
                 if self.config.split_dataset_format == EdgeDatasetFormat.BIGQUERY
                 else ""
             )
@@ -262,10 +267,9 @@ class PerSplitIterableDatasetBigqueryStrategy:
             split,
         )
 
-        random_column_field = "row_id"
         return BigQueryHeterogeneousGraphIterableDataset(
             table=table_reference.reference_uri,
-            random_column=random_column_field,
+            random_column=_ROW_ID_FIELD,
             project=get_resource_config().project,
             **kwargs,
         )
@@ -345,9 +349,9 @@ def build_edge_datasets(
     output_bq_dataset: str,
     graph_metadata: GraphMetadataPbWrapper,
     split_columns: Optional[List[str]] = None,
-    train_split_clause: str = "rand_split BETWEEN 0 AND 0.8",
-    val_split_clause: str = "rand_split BETWEEN 0.8 AND 0.9",
-    test_split_clause: str = "rand_split BETWEEN 0.9 AND 1",
+    train_split_clause: str = "rand_split >= 0 AND rand_split < 0.8",
+    val_split_clause: str = "rand_split >= 0.8 AND rand_split < 0.9",
+    test_split_clause: str = "rand_split >= 0.9 AND rand_split <= 1",
     format: EdgeDatasetFormat = EdgeDatasetFormat.GCS_PARQUET,
 ) -> Dict[DatasetSplit, IterableDataset]:
     """
@@ -404,7 +408,7 @@ def build_edge_datasets(
             f"Building edge datasets -- Initializing torch distributed for {distributed_context.global_rank}..."
         )
         dist.init_process_group(
-            backend="cpu:gloo,cuda:nccl",
+            backend="gloo",
             world_size=distributed_context.global_world_size,
             rank=distributed_context.global_rank,
         )
