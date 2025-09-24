@@ -4,12 +4,13 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Tuple, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
 from graphlearn_torch.data import Feature, Graph
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
+from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
@@ -28,6 +29,8 @@ from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeSplitter
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
+
+_EntityType = TypeVar("_EntityType", NodeType, EdgeType)
 
 
 class DistDataset(glt.distributed.DistDataset):
@@ -386,319 +389,29 @@ class DistDataset(glt.distributed.DistDataset):
             f"load() is not supported for the {type(self)} class. Please use build() instead."
         )
 
-    def build(
+    def _initialize_node_ids(
         self,
-        partition_output: PartitionOutput,
-        splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
+        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        splits: Optional[
+            Union[
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+            ]
+        ],
     ) -> None:
         """
-        Provided some partition graph information, this method stores these tensors inside of the class for
-        subsequent live subgraph sampling using a GraphLearn-for-PyTorch NeighborLoader.
-
-        Note that this method will clear the following fields from the provided partition_output:
-            * `partitioned_edge_index`
-            * `partitioned_node_features`
-            * `partitioned_edge_features`
-        We do this to decrease the peak memory usage during the build process by removing these intermediate assets.
+        This method:
+        - Sets the node ID tensor on the current machine, derived from the node partition book
+        - Sets the train, validation, and testing node IDs if splits are provided
 
         Args:
-            partition_output (PartitionOutput): Partitioned Graph to be stored in the DistDataset class
-            splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): A function that takes in an edge index or node and returns:
-                                                            * a tuple of train, val, and test node ids, if heterogeneous
-                                                            * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
-                                               Optional as not all datasets need to be split on, e.g. if we're doing inference.
+            node_ids_on_machine(Union[torch.Tensor, dict[NodeType, torch.Tensor]]): The node ids on the current machine
+            splits(Optional[Union[Tuple[torch.Tensor, torch.Tensor, torch.Tensor], Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]]): The splits to use for data splitting.
         """
 
-        logger.info(
-            f"Rank {self._rank} starting building dataset class from partitioned graph ..."
-        )
-
-        start_time = time.time()
-
-        self._node_partition_book = partition_output.node_partition_book
-        self._edge_partition_book = partition_output.edge_partition_book
-
-        # Initialize Graph
-
-        # The edge index must always be provided, the field is optional so we can gc it later once
-        # it's been used.
-        if partition_output.partitioned_edge_index is None:
-            raise ValueError("Must provide partitioned edge index when using build()")
-
-        # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
-        # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
-        partitioned_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        partitioned_edge_ids: Union[
-            Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
-        ]
-        if isinstance(partition_output.partitioned_edge_index, GraphPartitionData):
-            partitioned_edge_index = partition_output.partitioned_edge_index.edge_index
-            partitioned_edge_ids = partition_output.partitioned_edge_index.edge_ids
-        else:
-            partitioned_edge_index = {
-                edge_type: graph_partition_data.edge_index
-                for edge_type, graph_partition_data in partition_output.partitioned_edge_index.items()
-            }
-            partitioned_edge_ids = {
-                edge_type: graph_partition_data.edge_ids
-                for edge_type, graph_partition_data in partition_output.partitioned_edge_index.items()
-            }
-
-        self.init_graph(
-            edge_index=partitioned_edge_index,
-            edge_ids=partitioned_edge_ids,
-            graph_mode="CPU",
-            directed=True,
-        )
-
-        # Splitting logic for training
-        if isinstance(splitter, NodeAnchorLinkSplitter):
-            split_start = time.time()
-            logger.info("Starting splitting edges...")
-            splits = splitter(edge_index=partitioned_edge_index)
-            logger.info(
-                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
-            )
-        elif isinstance(splitter, NodeSplitter):
-            split_start = time.time()
-            logger.info("Starting splitting nodes...")
-            # Every node is required to have a label, so we split among all ids on the current machine.
-            node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
-                {
-                    node_type: get_ids_on_rank(partition_book, rank=self._rank)
-                    for node_type, partition_book in self._node_partition_book.items()
-                }
-                if isinstance(self._node_partition_book, Mapping)
-                else get_ids_on_rank(self._node_partition_book, rank=self._rank)
-            )
-            splits = splitter(node_ids=node_ids)
-            del node_ids
-            logger.info(
-                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
-            )
-        else:
-            splits = None
-
-        partition_output.partitioned_edge_index = None
-        del (
-            partitioned_edge_index,
-            partitioned_edge_ids,
-        )
-        gc.collect()
-
-        # Initialize Node Features
-        if isinstance(partition_output.partitioned_node_features, FeaturePartitionData):
-            assert isinstance(
-                partition_output.node_partition_book, (torch.Tensor, PartitionBook)
-            )
-            partitioned_node_features = partition_output.partitioned_node_features.feats
-            partitioned_node_feature_ids = (
-                partition_output.partitioned_node_features.ids
-            )
-            if isinstance(partition_output.node_partition_book, RangePartitionBook):
-                node_id2idx = partition_output.node_partition_book.id2index
-            else:
-                node_id2idx = id2idx(partitioned_node_feature_ids)
-
-            self.init_node_features(
-                node_feature_data=partitioned_node_features,
-                id2idx=node_id2idx,
-                with_gpu=False,
-            )
-            self._node_feature_info = FeatureInfo(
-                dim=partitioned_node_features.size(1),
-                dtype=partitioned_node_features.dtype,
-            )
-            del partitioned_node_features, partitioned_node_feature_ids, node_id2idx
-        elif isinstance(partition_output.partitioned_node_features, Mapping):
-            assert isinstance(partition_output.node_partition_book, Mapping)
-
-            # Partitioned node features can be empty when there are no features but are
-            # labels, so we only populate the dictionary with non-empty features.
-            node_type_to_partitioned_node_features = {
-                node_type: feature_partition_data.feats
-                for node_type, feature_partition_data in partition_output.partitioned_node_features.items()
-            }
-            node_type_to_partitioned_node_feature_ids = {
-                node_type: feature_partition_data.ids
-                for node_type, feature_partition_data in partition_output.partitioned_node_features.items()
-            }
-            node_type_to_id2idx = {}
-            for (
-                node_type,
-                node_partition_book,
-            ) in partition_output.node_partition_book.items():
-                if node_type in node_type_to_partitioned_node_features:
-                    if isinstance(node_partition_book, RangePartitionBook):
-                        node_type_to_id2idx[node_type] = node_partition_book.id2index
-                    else:
-                        node_type_to_id2idx[node_type] = id2idx(
-                            node_type_to_partitioned_node_feature_ids[node_type]
-                        )
-            self.init_node_features(
-                node_feature_data=node_type_to_partitioned_node_features,
-                id2idx=node_type_to_id2idx,
-                with_gpu=False,
-            )
-            self._node_feature_info = {
-                node_type: FeatureInfo(
-                    dim=feature_partition_data.size(1),
-                    dtype=feature_partition_data.dtype,
-                )
-                for node_type, feature_partition_data in node_type_to_partitioned_node_features.items()
-            }
-            del (
-                node_type_to_partitioned_node_features,
-                node_type_to_partitioned_node_feature_ids,
-                node_type_to_id2idx,
-            )
-
-        partition_output.partitioned_node_features = None
-
-        gc.collect()
-
-        # Initialize Node Labels
-
-        if isinstance(partition_output.partitioned_node_labels, FeaturePartitionData):
-            assert isinstance(
-                partition_output.node_partition_book, (torch.Tensor, PartitionBook)
-            )
-            partitioned_node_labels = partition_output.partitioned_node_labels.feats
-            partitioned_node_label_ids = partition_output.partitioned_node_labels.ids
-            if isinstance(partition_output.node_partition_book, RangePartitionBook):
-                node_id2idx = partition_output.node_partition_book.id2index
-            else:
-                node_id2idx = id2idx(partitioned_node_label_ids)
-
-            self.init_node_labels(
-                node_label_data=partitioned_node_labels,
-                id2idx=node_id2idx,
-            )
-            del (
-                partitioned_node_labels,
-                partitioned_node_label_ids,
-                node_id2idx,
-            )
-
-        elif isinstance(partition_output.partitioned_node_labels, Mapping):
-            node_type_to_partitioned_node_labels = {
-                node_type: node_label_partition_data.feats
-                for node_type, node_label_partition_data in partition_output.partitioned_node_labels.items()
-            }
-            node_type_to_partitioned_node_label_ids = {
-                node_type: node_label_partition_data.ids
-                for node_type, node_label_partition_data in partition_output.partitioned_node_labels.items()
-            }
-            node_type_to_id2idx = {}
-            for (
-                node_type,
-                node_partition_book,
-            ) in partition_output.node_partition_book.items():
-                if node_type in node_type_to_partitioned_node_labels:
-                    if isinstance(node_partition_book, RangePartitionBook):
-                        node_type_to_id2idx[node_type] = node_partition_book.id2index
-                    else:
-                        node_type_to_id2idx[node_type] = id2idx(
-                            node_type_to_partitioned_node_label_ids[node_type]
-                        )
-            self.init_node_labels(
-                node_label_data=node_type_to_partitioned_node_labels,
-                id2idx=node_type_to_id2idx,
-            )
-
-            del (
-                node_type_to_partitioned_node_labels,
-                node_type_to_partitioned_node_label_ids,
-                node_type_to_id2idx,
-            )
-
-        partition_output.partitioned_node_labels = None
-
-        gc.collect()
-
-        # Initialize Edge Features
-        if isinstance(partition_output.partitioned_edge_features, FeaturePartitionData):
-            assert isinstance(
-                partition_output.edge_partition_book, (torch.Tensor, PartitionBook)
-            )
-            partitioned_edge_features = partition_output.partitioned_edge_features.feats
-            partition_edge_feat_ids = partition_output.partitioned_edge_features.ids
-            if isinstance(partition_output.edge_partition_book, RangePartitionBook):
-                edge_id2idx = partition_output.edge_partition_book.id2index
-            else:
-                edge_id2idx = id2idx(partition_edge_feat_ids)
-            self.init_edge_features(
-                edge_feature_data=partitioned_edge_features,
-                id2idx=edge_id2idx,
-                with_gpu=False,
-            )
-            self._edge_feature_info = FeatureInfo(
-                dim=partitioned_edge_features.size(1),
-                dtype=partitioned_edge_features.dtype,
-            )
-            del partitioned_edge_features, partition_edge_feat_ids, edge_id2idx
-        elif (
-            isinstance(partition_output.partitioned_edge_features, Mapping)
-            and len(partition_output.partitioned_edge_features) > 0
-        ):
-            assert isinstance(
-                partition_output.edge_partition_book, Mapping
-            ), f"Found heterogeneous partitioned edge features, but no corresponding heterogeneous edge partition book. Got edge partition book of type {type(partition_output.edge_partition_book)}"
-            assert (
-                len(partition_output.edge_partition_book) > 0
-            ), f"Expected at least one edge type in edge partition book, got {partition_output.edge_partition_book.keys()}."
-            edge_type_to_partitioned_edge_features = {
-                edge_type: feature_partition_data.feats
-                for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()
-            }
-            edge_type_to_partitioned_edge_feature_ids = {
-                edge_type: feature_partition_data.ids
-                for edge_type, feature_partition_data in partition_output.partitioned_edge_features.items()
-            }
-            edge_type_to_id2idx = {}
-            for (
-                edge_type,
-                edge_partition_book,
-            ) in partition_output.edge_partition_book.items():
-                if isinstance(edge_partition_book, RangePartitionBook):
-                    edge_type_to_id2idx[edge_type] = edge_partition_book.id2index
-                # Not all edge types may have partitioned features.
-                elif edge_type in edge_type_to_partitioned_edge_feature_ids:
-                    edge_type_to_id2idx[edge_type] = id2idx(
-                        edge_type_to_partitioned_edge_feature_ids[edge_type]
-                    )
-            self.init_edge_features(
-                edge_feature_data=edge_type_to_partitioned_edge_features,
-                id2idx=edge_type_to_id2idx,
-                with_gpu=False,
-            )
-            self._edge_feature_info = {
-                edge_type: FeatureInfo(
-                    dim=feature_partition_data.size(1),
-                    dtype=feature_partition_data.dtype,
-                )
-                for edge_type, feature_partition_data in edge_type_to_partitioned_edge_features.items()
-            }
-            del (
-                edge_type_to_partitioned_edge_features,
-                edge_type_to_partitioned_edge_feature_ids,
-                edge_type_to_id2idx,
-            )
-
-        partition_output.partitioned_edge_features = None
-
-        gc.collect()
-
-        # Initializing Positive and Negative Edge Labels
-        self._positive_edge_label = partition_output.partitioned_positive_labels
-        self._negative_edge_label = partition_output.partitioned_negative_labels
-
-        # TODO (mkolodner-sc): Enable custom params for init_graph, init_node_features, and init_edge_features
-
-        # We compute the node ids on the current machine, which will be used as input to the DistNeighborLoader.
-        # If the nodes were split, then we set the total number of nodes in each split here.
+        # If the nodes are split, then we set the total number of nodes in each split here.
         # Additionally, we append any node ids, for a given node type, that were *not* split to the end of "node ids"
-        # so that all node ids on a given machine are included in the dataset.
+        # so that all node ids on a given machine are included in the dataset in self._node_ids.
         # This is done with `_append_non_split_node_ids`.
         # An example here is if we have:
         #   train_nodes: [1, 2, 3]
@@ -713,10 +426,7 @@ class DistDataset(glt.distributed.DistDataset):
 
         # For tensor based partitioning, the partition_book will be a torch.Tensor under-the-hood. We need to check if this is a torch.Tensor
         # here, as it will not be recognized by `isinstance` as a `PartitionBook` since torch.Tensor doesn't directly inherit from `PartitionBook`.
-        if isinstance(self._node_partition_book, (torch.Tensor, PartitionBook)):
-            node_ids_on_machine = get_ids_on_rank(
-                partition_book=self._node_partition_book, rank=self._rank
-            )
+        if isinstance(node_ids_on_machine, torch.Tensor):
             if splits is not None:
                 logger.info("Using node ids that we got from the splitter.")
                 if not isinstance(splits, tuple):
@@ -737,9 +447,6 @@ class DistDataset(glt.distributed.DistDataset):
                 self._node_ids = _append_non_split_node_ids(
                     train_nodes, val_nodes, test_nodes, node_ids_on_machine
                 )
-                # do gc to save memory.
-                del train_nodes, val_nodes, test_nodes, node_ids_on_machine
-                gc.collect()
             else:
                 logger.info(
                     "Node ids will be all nodes on this machine, derived from the partition book."
@@ -751,16 +458,21 @@ class DistDataset(glt.distributed.DistDataset):
             num_val_by_node_type: dict[NodeType, int] = {}
             num_test_by_node_type: dict[NodeType, int] = {}
             if splits is not None and isinstance(splits, tuple):
+                node_types = (
+                    node_ids_on_machine.keys()
+                    if isinstance(node_ids_on_machine, Mapping)
+                    else []
+                )
                 raise ValueError(
-                    f"Got splits as a tuple, which is intended for homogeneous graphs. We recieved the node types: {self._node_partition_book.keys()}. Please use a splitter that returns a mapping of tensors."
+                    f"Got splits as a tuple, which is intended for homogeneous graphs. We recieved the node types: {node_types}. Please use a splitter that returns a mapping of tensors."
                 )
-            for node_type, node_pb in self._node_partition_book.items():
-                node_ids_on_machine = get_ids_on_rank(
-                    partition_book=node_pb, rank=self._rank
-                )
+            for (
+                node_type,
+                node_ids_on_machine_per_node_type,
+            ) in node_ids_on_machine.items():
                 if splits is None or node_type not in splits:
                     logger.info(f"Did not split for node type {node_type}.")
-                    node_ids_by_node_type[node_type] = node_ids_on_machine
+                    node_ids_by_node_type[node_type] = node_ids_on_machine_per_node_type
                 elif splits is not None:
                     logger.info(
                         f"Using node ids that we got from the splitter for node type {node_type}."
@@ -770,11 +482,11 @@ class DistDataset(glt.distributed.DistDataset):
                     num_val_by_node_type[node_type] = val_nodes.numel()
                     num_test_by_node_type[node_type] = test_nodes.numel()
                     node_ids_by_node_type[node_type] = _append_non_split_node_ids(
-                        train_nodes, val_nodes, test_nodes, node_ids_on_machine
+                        train_nodes,
+                        val_nodes,
+                        test_nodes,
+                        node_ids_on_machine_per_node_type,
                     )
-                    # do gc to save memory.
-                    del train_nodes, val_nodes, test_nodes, node_ids_on_machine
-                    gc.collect()
                 else:
                     raise ValueError(f"We should not get here, whoops!")
             self._node_ids = node_ids_by_node_type
@@ -782,6 +494,303 @@ class DistDataset(glt.distributed.DistDataset):
                 self._num_train = num_train_by_node_type
                 self._num_val = num_val_by_node_type
                 self._num_test = num_test_by_node_type
+
+    def _initialize_graph(
+        self,
+        partitioned_edge_index: Union[
+            GraphPartitionData, dict[EdgeType, GraphPartitionData]
+        ],
+    ) -> None:
+        """
+        Initializes the graph structure with edge index and edge IDs from partition output.
+
+        Args:
+            partitioned_edge_index(Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]): The partitioned graph data
+        """
+
+        # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
+        # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
+        if isinstance(partitioned_edge_index, GraphPartitionData):
+            edge_index: Union[
+                torch.Tensor, dict[EdgeType, torch.Tensor]
+            ] = partitioned_edge_index.edge_index
+            edge_ids: Union[
+                Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
+            ] = partitioned_edge_index.edge_ids
+        else:
+            edge_index = {
+                edge_type: graph_partition_data.edge_index
+                for edge_type, graph_partition_data in partitioned_edge_index.items()
+            }
+            edge_ids = {
+                edge_type: graph_partition_data.edge_ids
+                for edge_type, graph_partition_data in partitioned_edge_index.items()
+            }
+
+        self.init_graph(
+            edge_index=edge_index,
+            edge_ids=edge_ids,
+            graph_mode="CPU",
+            directed=True,
+        )
+
+        if isinstance(partitioned_edge_index, Mapping):
+            logger.info(
+                f"Initialized heterogeneous graph to dataset with edge types: {partitioned_edge_index.keys()}"
+            )
+        else:
+            logger.info("Initialized homogeneous graph to dataset")
+
+    def _initialize_node_features(
+        self,
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        partitioned_node_features: Optional[
+            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+        ],
+    ) -> None:
+        """
+        Initializes node features in the dataset class
+
+        Args:
+            node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
+            partitioned_node_features(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]):
+                The partitioned graph data containing node features.
+        """
+
+        node_features, node_feature_id_to_index = _prepare_feature_data(
+            partition_book=node_partition_book,
+            partitioned_data=partitioned_node_features,
+        )
+
+        if node_features is None or node_feature_id_to_index is None:
+            logger.info("Found no node features to initialize")
+            return
+
+        self.init_node_features(
+            node_feature_data=node_features,
+            id2idx=node_feature_id_to_index,
+            with_gpu=False,
+        )
+
+        if isinstance(node_features, Mapping):
+            self._node_feature_info = {}
+            for node_type, node_features_per_node_type in node_features.items():
+                # We cannot make isinstance checks with NodeType, so we check
+                # if it is not an edge type, since it must be one of the two.
+                assert not isinstance(node_type, EdgeType)
+                self._node_feature_info[node_type] = FeatureInfo(
+                    dim=node_features_per_node_type.size(1),
+                    dtype=node_features_per_node_type.dtype,
+                )
+            logger.info(
+                f"Initialized node features for heterogeneous graph to dataset with node types: {node_features.keys()}"
+            )
+        else:
+            self._node_feature_info = FeatureInfo(
+                dim=node_features.size(1),
+                dtype=node_features.dtype,
+            )
+            logger.info("Initialized node features for homogeneous graph to dataset")
+
+    def _initialize_node_labels(
+        self,
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        partitioned_node_labels: Optional[
+            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+        ],
+    ) -> None:
+        """
+        Initializes node labels in the dataset class
+
+        Args:
+            node_partition_book(Union[PartitionBook, dict[NodeType, PartitionBook]]): The partition book for nodes
+            partitioned_node_labels(Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]):
+                The partitioned graph data containing node labels
+        """
+        node_labels, node_label_id_to_index = _prepare_feature_data(
+            partition_book=node_partition_book,
+            partitioned_data=partitioned_node_labels,
+        )
+
+        if node_labels is None or node_label_id_to_index is None:
+            logger.info("Found no node labels to initialize")
+            return
+
+        self.init_node_labels(
+            node_label_data=node_labels,
+            id2idx=node_label_id_to_index,
+        )
+
+        if isinstance(node_labels, Mapping):
+            logger.info(
+                f"Initialized node labels for heterogeneous graph to dataset with node types: {node_labels.keys()}"
+            )
+        else:
+            logger.info("Initialized node labels for homogeneous graph to dataset")
+
+    def _initialize_edge_features(
+        self,
+        edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]],
+        partitioned_edge_features: Optional[
+            Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
+        ],
+    ) -> None:
+        """
+        Initializes edge features in the dataset class. Can be None if therea re no edge features
+
+        Args:
+            edge_partition_book(Union[PartitionBook, dict[EdgeType, PartitionBook]]): The partition book for edges
+            partitioned_edge_features(Optional[Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]]): The partitioned graph data containing edge features
+        """
+        edge_features, edge_feature_id_to_index = _prepare_feature_data(
+            partition_book=edge_partition_book,
+            partitioned_data=partitioned_edge_features,
+        )
+
+        if edge_features is None or edge_feature_id_to_index is None:
+            logger.info("Found no edge features to initialize")
+            return
+
+        self.init_edge_features(
+            edge_feature_data=edge_features,
+            id2idx=edge_feature_id_to_index,
+            with_gpu=False,
+        )
+
+        if isinstance(edge_features, Mapping):
+            self._edge_feature_info = {}
+            for edge_type, edge_features_per_edge_type in edge_features.items():
+                assert isinstance(edge_type, EdgeType)
+                self._edge_feature_info[edge_type] = FeatureInfo(
+                    dim=edge_features_per_edge_type.size(1),
+                    dtype=edge_features_per_edge_type.dtype,
+                )
+            logger.info(
+                f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"
+            )
+        else:
+            self._edge_feature_info = FeatureInfo(
+                dim=edge_features.size(1),
+                dtype=edge_features.dtype,
+            )
+            logger.info(f"Initialized edge features for homogeneous graph to dataset")
+
+    def build(
+        self,
+        partition_output: PartitionOutput,
+        splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
+    ) -> None:
+        """
+        Provided some partition graph information, this method stores these tensors inside of the class for
+        subsequent live subgraph sampling using a GraphLearn-for-PyTorch NeighborLoader.
+
+        Note that this method will remove all the fields from the provided partition_output:
+        We do this to decrease the peak memory usage during the build process by removing these intermediate assets.
+
+        Args:
+            partition_output (PartitionOutput): Partitioned Graph to be stored in the DistDataset class
+            splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): A function that takes in an edge index or node and returns:
+                                                            * a tuple of train, val, and test node ids, if heterogeneous
+                                                            * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
+                                               Optional as not all datasets need to be split on, e.g. if we're doing inference.
+        """
+        logger.info(
+            f"Rank {self._rank} starting building dataset class from partitioned graph ..."
+        )
+
+        start_time = time.time()
+
+        assert (
+            partition_output.partitioned_edge_index is not None
+        ), "Edge index must be present in the partition output"
+
+        # We compute the node ids on the current machine, which will be used as input to the neighbor loaders.
+        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
+            {
+                node_type: get_ids_on_rank(partition_book, rank=self._rank)
+                for node_type, partition_book in partition_output.node_partition_book.items()
+            }
+            if isinstance(partition_output.node_partition_book, Mapping)
+            else get_ids_on_rank(partition_output.node_partition_book, rank=self._rank)
+        )
+
+        # Handle data splitting
+        splits = None
+        if isinstance(splitter, NodeAnchorLinkSplitter):
+            split_start = time.time()
+            assert partition_output.partitioned_edge_index is not None
+            edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+                partition_output.partitioned_edge_index.edge_index
+                if isinstance(
+                    partition_output.partitioned_edge_index, GraphPartitionData
+                )
+                else {
+                    edge_type: graph_partition_data.edge_index
+                    for edge_type, graph_partition_data in partition_output.partitioned_edge_index.items()
+                }
+            )
+            logger.info("Starting splitting edges...")
+            splits = splitter(edge_index=edge_index)
+            logger.info(
+                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
+            )
+        elif isinstance(splitter, NodeSplitter):
+            split_start = time.time()
+            logger.info("Starting splitting nodes...")
+            # Every node is required to have a label, so we split among all ids on the current machine.
+            splits = splitter(node_ids=node_ids_on_machine)
+            logger.info(
+                f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
+            )
+
+        # Handle data splitting and compute node IDs
+        self._initialize_node_ids(
+            node_ids_on_machine=node_ids_on_machine,
+            splits=splits,
+        )
+
+        del node_ids_on_machine, splits
+        gc.collect()
+
+        # Initialize Graph and get edge data for splitting
+        self._initialize_graph(
+            partitioned_edge_index=partition_output.partitioned_edge_index
+        )
+        partition_output.partitioned_edge_index = None
+        gc.collect()
+
+        self._initialize_node_features(
+            node_partition_book=partition_output.node_partition_book,
+            partitioned_node_features=partition_output.partitioned_node_features,
+        )
+        partition_output.partitioned_node_features = None
+        gc.collect()
+
+        self._initialize_node_labels(
+            node_partition_book=partition_output.node_partition_book,
+            partitioned_node_labels=partition_output.partitioned_node_labels,
+        )
+        partition_output.partitioned_node_labels = None
+        gc.collect()
+
+        self._initialize_edge_features(
+            edge_partition_book=partition_output.edge_partition_book,
+            partitioned_edge_features=partition_output.partitioned_edge_features,
+        )
+        partition_output.partitioned_edge_features = None
+        gc.collect()
+
+        self._node_partition_book = partition_output.node_partition_book
+        self._edge_partition_book = partition_output.edge_partition_book
+
+        self._positive_edge_label = partition_output.partitioned_positive_labels
+        self._negative_edge_label = partition_output.partitioned_negative_labels
+
+        partition_output.node_partition_book = None
+        partition_output.edge_partition_book = None
+
+        partition_output.partitioned_positive_labels = None
+        partition_output.partitioned_negative_labels = None
 
         logger.info(
             f"Rank {self._rank} finished building dataset class from partitioned graph in {time.time() - start_time:.2f} seconds. Waiting for other ranks to finish ..."
@@ -947,6 +956,119 @@ def _append_non_split_node_ids(
         return torch.cat(
             [train_node_ids, val_node_ids, test_node_ids, node_ids_not_in_split]
         )
+
+
+@overload
+def _prepare_feature_data(
+    partition_book: PartitionBook,
+    partitioned_data: None,
+) -> Tuple[None, None]:
+    ...
+
+
+@overload
+def _prepare_feature_data(
+    partition_book: PartitionBook,
+    partitioned_data: FeaturePartitionData,
+) -> Tuple[torch.Tensor, TensorDataType]:
+    ...
+
+
+@overload
+def _prepare_feature_data(
+    partition_book: dict[_EntityType, PartitionBook],
+    partitioned_data: dict[_EntityType, FeaturePartitionData],
+) -> Tuple[dict[_EntityType, torch.Tensor], dict[_EntityType, TensorDataType],]:
+    ...
+
+
+def _prepare_feature_data(
+    partition_book: Union[PartitionBook, dict[_EntityType, PartitionBook]],
+    partitioned_data: Optional[
+        Union[
+            FeaturePartitionData,
+            dict[_EntityType, FeaturePartitionData],
+        ]
+    ],
+) -> Tuple[
+    Optional[
+        Union[
+            torch.Tensor,
+            dict[_EntityType, torch.Tensor],
+        ]
+    ],
+    Optional[
+        Union[
+            TensorDataType,
+            dict[_EntityType, TensorDataType],
+        ]
+    ],
+]:
+    """
+    Utility function to prepare feature/label data for initialization.
+
+    This function handles the common data preparation pattern shared by node features,
+    node labels, and edge features initialization. It extracts features, feature IDs,
+    and computes id2idx mappings for both homogeneous and heterogeneous cases.
+
+    Args:
+        partition_book (Union[PartitionBook, dict[_EntityType, PartitionBook]]): The partition book for the data type
+        partitioned_data (Optional[Union[FeaturePartitionData, dict[_EntityType, FeaturePartitionData]]]): The partitioned data containing features/labels
+    Returns:
+        Tuple[
+            Optional[Union[torch.Tensor, dict[_EntityType, torch.Tensor]]]:
+                Partitioned features or labels
+            Optional[Union[TensorDataType, dict[_EntityType, TensorDataType]]]:
+                Global id to local index tensor for features or labels
+        ]
+    """
+    if isinstance(partitioned_data, FeaturePartitionData):
+        # Homogeneous case
+        assert isinstance(partition_book, (torch.Tensor, PartitionBook))
+        features = partitioned_data.feats
+        feature_ids = partitioned_data.ids
+
+        if isinstance(partition_book, RangePartitionBook):
+            id_to_index = partition_book.id2index
+        else:
+            id_to_index = id2idx(feature_ids)
+
+        return features, id_to_index
+
+    elif isinstance(partitioned_data, Mapping):
+        assert (
+            len(partitioned_data) > 0
+        ), f"Expected at least one entity type in partitioned data, but got no entities. In heterogeneous settings, \
+            please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
+        # Heterogeneous case
+        assert isinstance(
+            partition_book, Mapping
+        ), f"Found heterogeneous partitioned data, but no corresponding heterogeneous partition book. \
+            Got partition book of type {type(partition_book)}."
+        assert (
+            len(partition_book) > 0
+        ), f"Expected at least one entity type in partition book, but got no entities. In heterogeneous settings, \
+            please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
+
+        # Extract features and IDs by type
+        features_per_entity_type: dict[_EntityType, torch.Tensor] = {}
+        id_to_index_per_entity_type: dict[_EntityType, TensorDataType] = {}
+        for entity_key, partition_book_instance in partition_book.items():
+            if entity_key in partitioned_data:
+                features_per_entity_type[entity_key] = partitioned_data[
+                    entity_key
+                ].feats
+                if isinstance(partition_book_instance, RangePartitionBook):
+                    id_to_index_per_entity_type[
+                        entity_key
+                    ] = partition_book_instance.id2index
+                else:
+                    id_to_index_per_entity_type[entity_key] = id2idx(
+                        partitioned_data[entity_key].ids
+                    )
+        return features_per_entity_type, id_to_index_per_entity_type
+    else:
+        return None, None
 
 
 ## Pickling Registration
