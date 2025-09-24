@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Protocol, Tuple
+from typing import Optional, Protocol
 
 import torch.distributed as dist
 from torch.utils.data import IterableDataset
@@ -58,12 +58,12 @@ class EdgeDatasetFormat(str, Enum):
 class PerSplitFilteredEdgeBigqueryMetadata:
     """Configuration parameters to filter BigQuery tables by split (train/val/test)."""
 
-    split_columns: List[str]
+    split_columns: list[str]
     train_split_clause: str
     val_split_clause: str
     test_split_clause: str
 
-    def clause_per_split(self) -> List[Tuple[DatasetSplit, str]]:
+    def clause_per_split(self) -> list[tuple[DatasetSplit, str]]:
         return [
             (DatasetSplit.TRAIN, self.train_split_clause),
             (DatasetSplit.VAL, self.val_split_clause),
@@ -76,7 +76,7 @@ class PerSplitFilteredEdgeDatasetConfig:
     """Configuration parameters to build filtered datasets by split (train/val/test)."""
 
     distributed_context: DistributedContext
-    enumerated_edge_metadata: List[EnumeratorEdgeTypeMetadata]
+    enumerated_edge_metadata: list[EnumeratorEdgeTypeMetadata]
     applied_task_identifier: AppliedTaskIdentifier
     output_bq_dataset: str
     graph_metadata: GraphMetadataPbWrapper
@@ -141,7 +141,7 @@ class PerSplitFilteredEdgeDatasetBuilder:
             f"'{self.config.split_config.val_split_clause}', '{self.config.split_config.test_split_clause}'"
         )
 
-        edge_table_queries: List[str] = []
+        edge_table_queries: list[str] = []
         for edge_metadata in self.config.enumerated_edge_metadata:
             enumerated_reference = edge_metadata.enumerated_edge_data_reference
             edge_table = BqUtils.format_bq_path(
@@ -311,7 +311,7 @@ class PerSplitIterableDatasetFactory:
 
     def __init__(self, config: PerSplitFilteredEdgeDatasetConfig):
         self.config = config
-        self.strategy_map: Dict[EdgeDatasetFormat, PerSplitIterableDatasetStrategy] = {
+        self.strategy_map: dict[EdgeDatasetFormat, PerSplitIterableDatasetStrategy] = {
             EdgeDatasetFormat.BIGQUERY: PerSplitIterableDatasetBigqueryStrategy(),
             EdgeDatasetFormat.GCS_JSONL: PerSplitIterableDatasetGcsStrategy(
                 EdgeDatasetFormat.GCS_JSONL
@@ -327,10 +327,10 @@ class PerSplitIterableDatasetFactory:
         }
         self.split_info = config.split_config.clause_per_split()
 
-    def create_datasets(self) -> Dict[DatasetSplit, IterableDataset]:
+    def create_datasets(self) -> dict[DatasetSplit, IterableDataset]:
         """Create and return the edge datasets for each data split."""
         strategy = self.strategy_map[self.config.split_dataset_format]
-        datasets: Dict[DatasetSplit, IterableDataset] = {}
+        datasets: dict[DatasetSplit, IterableDataset] = {}
 
         for split, _ in self.split_info:
             datasets[split] = strategy.create_dataset(
@@ -344,16 +344,16 @@ class PerSplitIterableDatasetFactory:
 
 def build_edge_datasets(
     distributed_context: DistributedContext,
-    enumerated_edge_metadata: List[EnumeratorEdgeTypeMetadata],
+    enumerated_edge_metadata: list[EnumeratorEdgeTypeMetadata],
     applied_task_identifier: AppliedTaskIdentifier,
     output_bq_dataset: str,
     graph_metadata: GraphMetadataPbWrapper,
-    split_columns: Optional[List[str]] = None,
+    split_columns: Optional[list[str]] = None,
     train_split_clause: str = "rand_split >= 0 AND rand_split < 0.8",
     val_split_clause: str = "rand_split >= 0.8 AND rand_split < 0.9",
     test_split_clause: str = "rand_split >= 0.9 AND rand_split <= 1",
     format: EdgeDatasetFormat = EdgeDatasetFormat.GCS_PARQUET,
-) -> Dict[DatasetSplit, IterableDataset]:
+) -> dict[DatasetSplit, IterableDataset]:
     """
     Build edge datasets for training, validation, and testing.  This function
     reads edge data from BigQuery, filters it based on the provided split clauses,
