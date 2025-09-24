@@ -69,7 +69,10 @@ _A_LINK_B = EdgeType(_A, _LINK, _B)
 
 
 def _assert_labels(
-    node: torch.Tensor, y: dict[int, torch.Tensor], expected: dict[int, torch.Tensor]
+    src_node: torch.Tensor,
+    dst_node: torch.Tensor,
+    y: dict[int, torch.Tensor],
+    expected: dict[int, torch.Tensor],
 ):
     """
     Asserts that the given labels (y) match the expected labels (expected).
@@ -86,7 +89,8 @@ def _assert_labels(
     _assert_labels(node, y, expected)
 
     Args:
-        node (torch.Tensor): The node tensor, N, where N is the number of nodes in the batch,
+        src_node (torch.Tensor): The source (anchor) node tensor, [N], where N is the number of source nodes in the batch,
+        dst_node (torch.Tensor): The destination (supervision) node tensor, [N], where N is the number of destination nodes in the batch,
         where the local IDs are the index of a node in the tensor,
         and the global IDs are the values of the tensor.
         y (dict[int, torch.Tensor]): The labels in the local node space.
@@ -97,13 +101,13 @@ def _assert_labels(
     - The keys in `y` do not match the keys in `expected`
     - The values in `y` do not match the values in `expected`
     """
-    supplied_global_nodes = node[list(y.keys())]
+    supplied_global_nodes = src_node[list(y.keys())]
     assert set(supplied_global_nodes.tolist()) == set(
         expected.keys()
-    ), f"Expected keys {expected.keys()} != {y.keys()}"
+    ), f"Expected keys {expected.keys()} != {supplied_global_nodes.tolist()}"
     for local_anchor in y:
-        global_id = int(node[local_anchor].item())
-        global_nodes = node[y[local_anchor]]
+        global_id = int(src_node[local_anchor].item())
+        global_nodes = dst_node[y[local_anchor]]
         expected_nodes = expected[global_id]
         assert_tensor_equality(global_nodes, expected_nodes, dim=0)
 
@@ -143,9 +147,11 @@ def _run_distributed_ablp_neighbor_loader(
         expected_node,
         dim=0,
     )
-    _assert_labels(datum.node, datum.y_positive, expected_positive_labels)
+    _assert_labels(datum.node, datum.node, datum.y_positive, expected_positive_labels)
     if expected_negative_labels is not None:
-        _assert_labels(datum.node, datum.y_negative, expected_negative_labels)
+        _assert_labels(
+            datum.node, datum.node, datum.y_negative, expected_negative_labels
+        )
     else:
         assert not hasattr(datum, "y_negative")
     dsts, srcs, *_ = datum.coo()
@@ -350,33 +356,19 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
         expected_positive_labels.keys()
     ), f"{datum.y_positive.keys()} != {expected_positive_labels.keys()}"
     for edge_type in datum.y_positive.keys():
-        for local_anchor in datum.y_positive[edge_type]:
-            global_id = datum[edge_type[0]].node[local_anchor].item()
-            global_positive_nodes = datum[edge_type[2]].node[
-                datum.y_positive[edge_type][local_anchor]
-            ]
-            expected_positive_label = expected_positive_labels[edge_type][global_id]
-            assert_tensor_equality(
-                global_positive_nodes,
-                expected_positive_label,
-                dim=0,
-            )
+        _assert_labels(
+            datum[edge_type[0]].node,
+            datum[edge_type[2]].node,
+            datum.y_positive[edge_type],
+            expected_positive_labels[edge_type],
+        )
     if expected_negative_labels is not None:
-        assert (
-            datum.y_negative.keys() == expected_negative_labels.keys()
-        ), f"{datum.y_negative.keys()} != {expected_negative_labels.keys()}"
-        for edge_type in datum.y_negative.keys():
-            for local_anchor in datum.y_negative[edge_type]:
-                global_id = datum[edge_type[0]].node[local_anchor].item()
-                global_negative_nodes = datum[edge_type[2]].node[
-                    datum.y_negative[edge_type][local_anchor]
-                ]
-                expected_negative_label = expected_negative_labels[edge_type][global_id]
-                assert_tensor_equality(
-                    global_negative_nodes,
-                    expected_negative_label,
-                    dim=0,
-                )
+        _assert_labels(
+            datum[edge_type[0]].node,
+            datum[edge_type[2]].node,
+            datum.y_negative[edge_type],
+            expected_negative_labels[edge_type],
+        )
     else:
         assert not hasattr(datum, "y_negative")
 
@@ -484,7 +476,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def _test_ablp_dataloader(
+    def test_ablp_dataloader(
         self,
         _,
         labeled_edges,
@@ -550,7 +542,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         )
 
-    def _test_cora_supervised(self):
+    def test_cora_supervised(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -592,7 +584,7 @@ class DistABLPLoaderTest(unittest.TestCase):
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_dblp_supervised(self):
+    def test_dblp_supervised(self):
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -660,7 +652,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def _test_toy_heterogeneous_ablp(
+    def test_toy_heterogeneous_ablp(
         self,
         _,
         partitioner_class: type[DistPartitioner],
@@ -880,12 +872,12 @@ class DistABLPLoaderTest(unittest.TestCase):
             fn=_run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types,
             args=(
                 dataset,  # dataset
-                supervision_edge_types,
-                expected_node,
-                expected_batch,
-                expected_edges,
-                expected_positive_labels,
-                expected_negative_labels,
+                supervision_edge_types,  # supervision_edge_types
+                expected_node,  # expected_node
+                expected_batch,  # expected_batch
+                expected_edges,  # expected_edges
+                expected_positive_labels,  # expected_positive_labels
+                expected_negative_labels,  # expected_negative_labels
             ),
         ),
 

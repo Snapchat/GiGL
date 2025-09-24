@@ -185,11 +185,11 @@ class DistABLPLoader(DistLoader):
         should_cleanup_distributed_context: bool = False
 
         if supervision_edge_type is None:
-            supervision_edge_types = []
+            self._supervision_edge_types: list[EdgeType] = []
         elif isinstance(supervision_edge_type, list):
-            supervision_edge_types = supervision_edge_type
+            self._supervision_edge_types = supervision_edge_type
         else:
-            supervision_edge_types = [supervision_edge_type]
+            self._supervision_edge_types = [supervision_edge_type]
         del supervision_edge_type
 
         if context:
@@ -259,7 +259,7 @@ class DistABLPLoader(DistLoader):
             )
         self._is_input_heterogeneous: bool = False
         if isinstance(input_nodes, tuple):
-            if len(supervision_edge_types) == 0:
+            if len(self._supervision_edge_types) == 0:
                 raise ValueError(
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
@@ -267,24 +267,24 @@ class DistABLPLoader(DistLoader):
             anchor_node_type, anchor_node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
-            for supervision_edge_type in supervision_edge_types:
+            for supervision_edge_type in self._supervision_edge_types:
                 assert (
                     supervision_edge_type[0] == anchor_node_type
                 ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
                     got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
             if dataset.edge_dir == "in":
-                supervision_edge_types = [
+                self._supervision_edge_types = [
                     reverse_edge_type(supervision_edge_type)
-                    for supervision_edge_type in supervision_edge_types
+                    for supervision_edge_type in self._supervision_edge_types
                 ]
         elif isinstance(input_nodes, torch.Tensor):
-            if len(supervision_edge_types) > 0:
+            if len(self._supervision_edge_types) > 0:
                 raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_types}"
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
                 )
             anchor_node_ids = input_nodes
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self._supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         elif input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -294,16 +294,18 @@ class DistABLPLoader(DistLoader):
                 raise ValueError(
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
-            if len(supervision_edge_types) > 0:
+            if len(self._supervision_edge_types) > 0:
                 raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {supervision_edge_types}"
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
                 )
 
             anchor_node_ids = dataset.node_ids
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self._supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
-        missing_edge_types = set(supervision_edge_types) - set(dataset.graph.keys())
+        missing_edge_types = set(self._supervision_edge_types) - set(
+            dataset.graph.keys()
+        )
         if missing_edge_types:
             raise ValueError(
                 f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
@@ -322,11 +324,9 @@ class DistABLPLoader(DistLoader):
 
         self._positive_label_edge_types: list[EdgeType] = []
         self._negative_label_edge_types: list[EdgeType] = []
-        self._supervision_edge_types = supervision_edge_types
         all_positive_labels: dict[EdgeType, torch.Tensor] = {}
         all_negative_labels: dict[EdgeType, torch.Tensor] = {}
-        logger.info(f"{supervision_edge_types=}")
-        for supervision_edge_type in supervision_edge_types:
+        for supervision_edge_type in self._supervision_edge_types:
             (
                 positive_label_edge_type,
                 negative_label_edge_type,
@@ -344,6 +344,13 @@ class DistABLPLoader(DistLoader):
             all_positive_labels[positive_label_edge_type] = positive_labels
             if negative_label_edge_type is not None and negative_labels is not None:
                 all_negative_labels[negative_label_edge_type] = negative_labels
+
+        sampler_input = ABLPNodeSamplerInput(
+            node=curr_process_nodes,
+            input_type=anchor_node_type,
+            positive_label_by_edge_types=all_positive_labels,
+            negative_label_by_edge_types=all_negative_labels,
+        )
 
         self.to_device = (
             pin_memory_device
@@ -424,12 +431,7 @@ class DistABLPLoader(DistLoader):
                 f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
             )
             torch.distributed.destroy_process_group()
-        sampler_input = ABLPNodeSamplerInput(
-            node=curr_process_nodes,
-            input_type=anchor_node_type,
-            positive_label_by_edge_types=all_positive_labels,
-            negative_label_by_edge_types=all_negative_labels,
-        )
+
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -522,7 +524,7 @@ class DistABLPLoader(DistLoader):
     ) -> tuple[
         SampleMessage,
         dict[EdgeType, torch.Tensor],
-        Optional[dict[EdgeType, torch.Tensor]],
+        dict[EdgeType, torch.Tensor],
     ]:
         # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
         """
@@ -534,12 +536,12 @@ class DistABLPLoader(DistLoader):
             msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
         Returns:
             SampleMessage: Updated sample messsage with the label fields removed
-            dict[NodeType, torch.Tensor]: Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
-            Optional[dict[NodeType, torch.Tensor]]: Negative label ID tensor, where the ith row corresponds to the ith anchor node ID, can be None if dataset has no negative labels
+            dict[EdgeType, torch.Tensor]: Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
+            Optional[dict[EdgeType, torch.Tensor]]: Negative label ID tensor, where the ith row corresponds to the ith anchor node ID.
         """
-        metadata = {}
-        positive_labels = {}
-        negative_labels = {}
+        metadata: dict[str, torch.Tensor] = {}
+        positive_labels: dict[EdgeType, torch.Tensor] = {}
+        negative_labels: dict[EdgeType, torch.Tensor] = {}
         for k in list(msg.keys()):
             if k.startswith(f"#META.{POSITIVE_LABEL_METADATA_KEY}."):
                 edge_type_str = k[len(f"#META.{POSITIVE_LABEL_METADATA_KEY}.") :]
@@ -561,7 +563,7 @@ class DistABLPLoader(DistLoader):
         self,
         data: Union[Data, HeteroData],
         positive_labels: dict[EdgeType, torch.Tensor],
-        negative_labels: Optional[dict[EdgeType, torch.Tensor]],
+        negative_labels: dict[EdgeType, torch.Tensor],
     ) -> Union[Data, HeteroData]:
         """
         Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
@@ -569,9 +571,8 @@ class DistABLPLoader(DistLoader):
         exposed in the final HeteroData/Data object.
         Args:
             data (Union[Data, HeteroData]): Graph to provide labels for
-            positive_labels (dict[NodeType, torch.Tensor]): Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
-            negative_labels (Optional[dict[NodeType, torch.Tensor]]): Negative label ID tensor, where the ith row corresponds to the ith anchor node ID,
-                can be None if dataset has no negative labels
+            positive_labels (dict[EdgeType, torch.Tensor]): Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
+            negative_labels (dict[EdgeType, torch.Tensor]): Negative label ID tensor, where the ith row corresponds to the ith anchor node ID.
         Returns:
             Union[Data, HeteroData]: torch_geometric HeteroData/Data object with the filtered edge fields and labels set as properties of the instance
         """
