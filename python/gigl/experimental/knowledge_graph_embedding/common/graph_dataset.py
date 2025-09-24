@@ -1,7 +1,7 @@
 # This file can probably be gigl-generic utilities.
 # We include a few graph-related IterableDatasets backed by GCS and BigQuery
 
-from typing import Any, Iterator, List, Mapping, Optional, TypedDict
+from typing import Any, Iterator, List, Literal, Mapping, Optional, TypedDict
 
 import numpy as np
 import orjson
@@ -19,9 +19,9 @@ from gigl.src.training.v1.lib.data_loaders.utils import (
     get_data_split_for_current_worker,
 )
 
-SRC_FIELD = "src"
-DST_FIELD = "dst"
-CONDENSED_EDGE_TYPE_FIELD = "condensed_edge_type"
+SRC_FIELD: Literal["src"] = "src"
+DST_FIELD: Literal["dst"] = "dst"
+CONDENSED_EDGE_TYPE_FIELD: Literal["condensed_edge_type"] = "condensed_edge_type"
 
 
 class HeterogeneousGraphEdgeDict(TypedDict):

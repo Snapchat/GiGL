@@ -368,6 +368,12 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Check if node data has already been registered
+        if self._node_ids is not None:
+            raise ValueError(
+                "Node IDs have already been registered. Cannot re-register node data."
+            )
+
         logger.info("Registering Nodes ...")
         input_node_ids = self._convert_node_entity_to_heterogeneous_format(
             input_node_entity=node_ids
@@ -430,6 +436,12 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Check if edge data has already been registered
+        if self._edge_index is not None:
+            raise ValueError(
+                "Edge indices have already been registered. Cannot re-register edge data."
+            )
 
         logger.info("Registering Edge Indices ...")
 
@@ -507,6 +519,12 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Check if node features have already been registered
+        if self._node_feat is not None:
+            raise ValueError(
+                "Node features have already been registered. Cannot re-register node feature data."
+            )
+
         logger.info("Registering Node Features ...")
 
         input_node_features = self._convert_node_entity_to_heterogeneous_format(
@@ -546,6 +564,12 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Check if node labels have already been registered
+        if self._node_labels is not None:
+            raise ValueError(
+                "Node labels have already been registered. Cannot re-register node label data."
+            )
+
         logger.info("Registering Node Labels ...")
 
         input_node_labels = self._convert_node_entity_to_heterogeneous_format(
@@ -577,6 +601,12 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Check if edge features have already been registered
+        if self._edge_feat is not None:
+            raise ValueError(
+                "Edge features have already been registered. Cannot re-register edge feature data."
+            )
 
         logger.info("Registering Edge Features ...")
 
@@ -612,6 +642,18 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Check if labels have already been registered
+        if is_positive:
+            if self._positive_label_edge_index is not None:
+                raise ValueError(
+                    "Positive labels have already been registered. Cannot re-register positive label data."
+                )
+        else:
+            if self._negative_label_edge_index is not None:
+                raise ValueError(
+                    "Negative labels have already been registered. Cannot re-register negative label data."
+                )
 
         input_label_edge_index = self._convert_edge_entity_to_heterogeneous_format(
             input_edge_entity=label_edge_index
@@ -1420,8 +1462,8 @@ class DistPartitioner:
         ],
         Tuple[
             dict[EdgeType, GraphPartitionData],
-            dict[EdgeType, FeaturePartitionData],
-            dict[EdgeType, PartitionBook],
+            Optional[dict[EdgeType, FeaturePartitionData]],
+            Optional[dict[EdgeType, PartitionBook]],
         ],
     ]:
         """
@@ -1432,8 +1474,10 @@ class DistPartitioner:
         Returns:
             Union[
                 Tuple[GraphPartitionData, FeaturePartitionData, PartitionBook],
-                Tuple[dict[EdgeType, GraphPartitionData], dict[EdgeType, FeaturePartitionData], dict[EdgeType, PartitionBook]],
-            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous
+                Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
+            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
+            The second and third elements of this tuple are only present if there are edge features to partition, and are None
+            otherwise.
         """
 
         self._assert_and_get_rpc_setup()
@@ -1503,6 +1547,9 @@ class DistPartitioner:
             for edge_type, num_edges in self._num_edges.items()
         }
 
+        # If partitioned_edge_features or edge_partition_book is empty, we return None. This is becauuse we assert
+        # that any registered edge feature is non-empty, so if we encounter an empty dictionary in this case, this means
+        # we never registered edge features and we can safely return None here.
         if self._is_input_homogeneous:
             logger.info(
                 f"Partitioned {to_homogeneous(formatted_num_edges)} edges for homogeneous dataset"
@@ -1510,18 +1557,16 @@ class DistPartitioner:
             return (
                 to_homogeneous(partitioned_edge_index),
                 to_homogeneous(partitioned_edge_features)
-                if len(partitioned_edge_features) > 0
+                if partitioned_edge_features
                 else None,
-                to_homogeneous(edge_partition_book)
-                if len(edge_partition_book) > 0
-                else None,
+                to_homogeneous(edge_partition_book) if edge_partition_book else None,
             )
         else:
             logger.info(f"Partitioned {self._num_edges} edges per edge type")
             return (
                 partitioned_edge_index,
-                partitioned_edge_features,
-                edge_partition_book,
+                partitioned_edge_features if partitioned_edge_features else None,
+                edge_partition_book if edge_partition_book else None,
             )
 
     def partition_labels(

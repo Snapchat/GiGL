@@ -353,8 +353,8 @@ class DistRangePartitioner(DistPartitioner):
         ],
         tuple[
             dict[EdgeType, GraphPartitionData],
-            dict[EdgeType, FeaturePartitionData],
-            dict[EdgeType, PartitionBook],
+            Optional[dict[EdgeType, FeaturePartitionData]],
+            Optional[dict[EdgeType, PartitionBook]],
         ],
     ]:
         """
@@ -368,7 +368,7 @@ class DistRangePartitioner(DistPartitioner):
         Returns:
             Union[
                 Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]],
-                Tuple[dict[EdgeType, GraphPartitionData], dict[EdgeType, FeaturePartitionData], dict[EdgeType, PartitionBook]],
+                Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
             ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
         """
 
@@ -436,16 +436,14 @@ class DistRangePartitioner(DistPartitioner):
             return (
                 to_homogeneous(partitioned_edge_index),
                 to_homogeneous(partitioned_edge_features)
-                if len(partitioned_edge_features) > 0
+                if partitioned_edge_features
                 else None,
-                to_homogeneous(edge_partition_book)
-                if len(edge_partition_book) > 0
-                else None,
+                to_homogeneous(edge_partition_book) if edge_partition_book else None,
             )
         else:
             logger.info(f"Partitioned {formatted_num_edges} edges per edge type")
             return (
                 partitioned_edge_index,
-                partitioned_edge_features,
-                edge_partition_book,
+                partitioned_edge_features if partitioned_edge_features else None,
+                edge_partition_book if edge_partition_book else None,
             )
