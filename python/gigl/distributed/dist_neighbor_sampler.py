@@ -14,7 +14,11 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
-from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.sampler import (
+    NEGATIVE_LABEL_METADATA_KEY,
+    POSITIVE_LABEL_METADATA_KEY,
+    ABLPNodeSamplerInput,
+)
 from gigl.utils.data_splitters import PADDING_NODE
 
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
@@ -35,27 +39,40 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         assert isinstance(inputs, ABLPNodeSamplerInput)
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
+
+        # Since GLT swaps src/dst for edge_dir = "out",
+        # and GiGL assumes that supervision edge types are always (anchor_node_type, to, supervision_node_type),
+        # we need to index into supervision edge types accordingly.
+        label_edge_index = 0 if self.edge_dir == "in" else 2
+
+        # Go through the positive and negative labels and add them to the metadata and input seeds builder.
+        # We need to sample from the supervision nodes as well, and ensure that we are sampling from the correct node type.
         metadata: dict[str, torch.Tensor] = {}
         input_seeds_builder: dict[
             Union[str, NodeType], list[torch.Tensor]
         ] = collections.defaultdict(list)
         input_seeds_builder[input_type].append(input_seeds)
-        label_edge_index = 0 if self.edge_dir == "in" else 2
-        for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
+        for edge_type, label_tensor in inputs._positive_label_by_edge_types.items():
             input_seeds_builder[edge_type[label_edge_index]].append(
                 label_tensor[label_tensor != PADDING_NODE].to(self.device)
             )
-            metadata[f"gigl_positive_labels.{str(tuple(edge_type))}"] = label_tensor
-        if inputs.negative_label_by_edge_types is not None:
-            for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
+            metadata[
+                f"{POSITIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
+            ] = label_tensor
+        if inputs._negative_label_by_edge_types is not None:
+            for edge_type, label_tensor in inputs._negative_label_by_edge_types.items():
                 input_seeds_builder[edge_type[label_edge_index]].append(
                     label_tensor[label_tensor != PADDING_NODE].to(self.device)
                 )
-                metadata[f"gigl_negative_labels.{str(tuple(edge_type))}"] = label_tensor
+                metadata[
+                    f"{NEGATIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
+                ] = label_tensor
+
         input_nodes: dict[Union[str, NodeType], torch.Tensor] = {
             node_type: torch.cat(seeds, dim=0).to(self.device)
             for node_type, seeds in input_seeds_builder.items()
         }
+
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"

@@ -708,6 +708,7 @@ class DistABLPLoaderTest(unittest.TestCase):
 
     @parameterized.expand(
         [
+            # https://is.gd/zG8xIn
             param(
                 "positive edges",
                 edge_index={
@@ -760,6 +761,7 @@ class DistABLPLoaderTest(unittest.TestCase):
                 },
                 expected_negative_labels=None,
             ),
+            # https://is.gd/nTVBll
             param(
                 "positive and negative edges",
                 edge_index={
@@ -802,6 +804,7 @@ class DistABLPLoaderTest(unittest.TestCase):
                     _A_TO_C: {10: torch.tensor([24, 25])},
                 },
             ),
+            # https://is.gd/mO5cpW
             param(
                 "same nodes, different relation",
                 edge_index={

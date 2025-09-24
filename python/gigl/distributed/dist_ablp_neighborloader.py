@@ -20,7 +20,11 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
-from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.sampler import (
+    NEGATIVE_LABEL_METADATA_KEY,
+    POSITIVE_LABEL_METADATA_KEY,
+    ABLPNodeSamplerInput,
+)
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -54,7 +58,6 @@ class DistABLPLoader(DistLoader):
                 tuple[NodeType, torch.Tensor],
             ]
         ] = None,
-        # TODO(kmonte): Support multiple supervision edge types.
         supervision_edge_type: Optional[Union[EdgeType, list[EdgeType]]] = None,
         num_workers: int = 1,
         batch_size: int = 1,
@@ -111,6 +114,11 @@ class DistABLPLoader(DistLoader):
             - `y_positive`: {0: torch.tensor([1])} # 1 is the only positive label for node 0
             - `y_negative`: {0: torch.tensor([2])} # 2 is the only negative label for node 0
 
+        NOTE: both label fields will instead be `dict[EdgeType, dict[int, torch.Tensor]]` if multiple supervision edge types are provided.
+        e.g. if there are supervision edge types: (a, to, b) and (a, to, c), then the label fields could be:
+            - `y_positive`: {(a, to, b): {0: torch.tensor([1])}, (a, to, c): {0: torch.tensor([2])}}
+            - `y_negative`: {(a, to, b): {0: torch.tensor([3])}, (a, to, c): {0: torch.tensor([4])}}
+
         Args:
             dataset (DistDataset): The dataset to sample from.
             num_neighbors (list[int] or dict[tuple[str, str, str], list[int]]):
@@ -119,13 +127,17 @@ class DistABLPLoader(DistLoader):
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
             context (DistributedContext): Distributed context information of the current process.
-            local_process_rank (int): The local rank of the current process within a node.
-            local_process_world_size (int): The total number of processes within a node.
             input_nodes (Optional[torch.Tensor, tuple[NodeType, torch.Tensor]]):
                 Indices of seed nodes to start sampling from.
                 If set to `None` for homogeneous settings, all nodes will be considered.
                 In heterogeneous graphs, this flag must be passed in as a tuple that holds
                 the node type and node indices. (default: `None`)
+            supervision_edge_type (Optional[Union[EdgeType, list[EdgeType]]]):
+                The edge type(s) to use for supervision.
+                Must be None iff the dataset is labeled homogeneous.
+                If set to a single EdgeType, the positive and negative labels will be stored in the `y_positive` and `y_negative` fields of the Data object.
+                If set to a list of EdgeTypes, the positive and negative labels will be stored in the `y_positive` and `y_negative` fields of the Data object,
+                with the key being the EdgeType. (default: `None`)
             num_workers (int): How many workers to use (subprocesses to spwan) for
                     distributed neighbor sampling of the current process. (default: ``1``).
             batch_size (int, optional): how many samples per batch to load
@@ -529,13 +541,13 @@ class DistABLPLoader(DistLoader):
         positive_labels = {}
         negative_labels = {}
         for k in list(msg.keys()):
-            if k.startswith("#META.gigl_positive_labels."):
-                edge_type_str = k[len("#META.gigl_positive_labels.") :]
+            if k.startswith(f"#META.{POSITIVE_LABEL_METADATA_KEY}."):
+                edge_type_str = k[len(f"#META.{POSITIVE_LABEL_METADATA_KEY}.") :]
                 edge_type = ast.literal_eval(edge_type_str)
                 positive_labels[edge_type] = msg[k].to(self.to_device)
                 del msg[k]
-            elif k.startswith("#META.gigl_negative_labels."):
-                edge_type_str = k[len("#META.gigl_negative_labels.") :]
+            elif k.startswith(f"#META.{NEGATIVE_LABEL_METADATA_KEY}."):
+                edge_type_str = k[len(f"#META.{NEGATIVE_LABEL_METADATA_KEY}.") :]
                 edge_type = ast.literal_eval(edge_type_str)
                 negative_labels[edge_type] = msg[k].to(self.to_device)
                 del msg[k]
@@ -579,6 +591,9 @@ class DistABLPLoader(DistLoader):
         output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
+        # Since GLT swaps src/dst for edge_dir = "out",
+        # and GiGL assumes that supervision edge types are always (anchor_node_type, to, supervision_node_type),
+        # we need to index into supervision edge types accordingly.
         edge_index = 0 if self.edge_dir == "in" else 2
         for edge_type, label_tensor in positive_labels.items():
             for local_anchor_node_id in range(label_tensor.size(0)):
