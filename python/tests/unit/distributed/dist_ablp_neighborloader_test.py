@@ -1,5 +1,5 @@
-import collections
 import unittest
+from collections import defaultdict
 from typing import Optional, Union
 
 import torch
@@ -841,7 +841,7 @@ class DistABLPLoaderTest(unittest.TestCase):
         expected_positive_labels: dict[EdgeType, dict[int, torch.Tensor]],
         expected_negative_labels: Optional[dict[EdgeType, dict[int, torch.Tensor]]],
     ):
-        nodes: dict[NodeType, list[torch.Tensor]] = collections.defaultdict(list)
+        nodes: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
         for edge_type, edge_idx in edge_index.items():
             nodes[edge_type[0]].append(edge_idx[0])
             nodes[edge_type[2]].append(edge_idx[1])

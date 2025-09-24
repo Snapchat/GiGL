@@ -1,5 +1,5 @@
 import asyncio
-import collections
+from collections import defaultdict
 from typing import Optional, Union
 
 import torch
@@ -50,7 +50,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         metadata: dict[str, torch.Tensor] = {}
         input_seeds_builder: dict[
             Union[str, NodeType], list[torch.Tensor]
-        ] = collections.defaultdict(list)
+        ] = defaultdict(list)
         input_seeds_builder[input_type].append(input_seeds)
         for edge_type, label_tensor in inputs._positive_label_by_edge_types.items():
             input_seeds_builder[edge_type[label_edge_index]].append(
