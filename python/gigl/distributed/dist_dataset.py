@@ -737,8 +737,34 @@ class DistDataset(glt.distributed.DistDataset):
         elif isinstance(splitter, NodeSplitter):
             split_start = time.time()
             logger.info("Starting splitting nodes...")
+            node_ids_to_split: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            if isinstance(partition_output.partitioned_node_labels, Mapping):
+                assert isinstance(node_ids_on_machine, Mapping)
+                node_ids_to_split = {}
+                for (
+                    node_type,
+                    node_labels,
+                ) in partition_output.partitioned_node_labels.items():
+                    labels_to_split_indices = (node_labels.feats != -1).squeeze()
+                    node_ids_to_split[node_type] = node_ids_on_machine[node_type][
+                        labels_to_split_indices
+                    ]
+            elif isinstance(partition_output.partitioned_node_labels, torch.Tensor):
+                assert isinstance(node_ids_on_machine, torch.Tensor)
+                labels_to_split_indices = (
+                    partition_output.partitioned_node_labels.feats != -1
+                ).squeeze()
+                node_ids_to_split = node_ids_on_machine[labels_to_split_indices]
+            else:
+                raise ValueError(
+                    f"Partitioned node labels cannot be None if a NodeSplitter is specified"
+                )
             # Every node is required to have a label, so we split among all ids on the current machine.
-            splits = splitter(node_ids=node_ids_on_machine)
+            splits = splitter(node_ids=node_ids_to_split)
+
+            del node_ids_to_split, labels_to_split_indices
+            gc.collect()
+
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )
