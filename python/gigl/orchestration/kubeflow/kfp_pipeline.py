@@ -251,7 +251,7 @@ def generate_pipeline(
     ):
         with kfp.dsl.ExitHandler(
             VertexNotificationEmailOp(recipients=notification_emails),
-            name="GiGL Alerts",
+            name="Gigl Alerts",
         ):
             _generate_component_tasks(
                 job_name=job_name,

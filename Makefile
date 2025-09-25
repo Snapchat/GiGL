@@ -44,6 +44,7 @@ GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # then when we *check* the format of those files, we will fail.
 # Thus, we only want to format the Markdown files that we explicitly include in our repo.
 MD_FILES:=$(shell if [ ! ${GIT_BRANCH} ]; then echo "."; else git ls-tree --name-only -r ${GIT_BRANCH} . | grep "\.md$$"; fi;)
+GIGL_ALERT_EMAILS?=""
 
 
 get_ver_hash:
@@ -367,6 +368,7 @@ run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps,
 		--task_config_uri=$(task_config_uri) \
 		--resource_config_uri=$(resource_config_uri) \
 		--pipeline_tag=$(GIT_HASH) \
+		$(if $(GIGL_ALERT_EMAILS),--notification_emails=$(GIGL_ALERT_EMAILS)) \
 		--run_labels="gigl_commit=$(GIT_HASH)" \
 		--run_labels="gigl_version=$(GIGL_VERSION)" \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
