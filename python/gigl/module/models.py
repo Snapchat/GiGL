@@ -1,4 +1,4 @@
-from typing import Optional, Union, Dict, List, Tuple
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
@@ -147,9 +147,11 @@ class LinkPredictionGNN(nn.Module):
 
         return LinkPredictionGNN(encoder=encoder, decoder=decoder)
 
-class TorchRecLightGCN(nn.Module):
+class LightGCN(nn.Module):
     """
     LightGCN model with TorchRec integration for distributed ID embeddings.
+
+    https://arxiv.org/pdf/2002.02126
 
     This class extends the basic LightGCN implementation to use TorchRec's
     distributed embedding tables for handling large-scale ID embeddings.
@@ -165,12 +167,12 @@ class TorchRecLightGCN(nn.Module):
 
     def __init__(
         self,
-        node_type_to_num_nodes: Dict[NodeType, int],
+        node_type_to_num_nodes: dict[NodeType, int],
         embedding_dim: int = 64,
         num_layers: int = 2,
         device: torch.device = torch.device("cuda"),
-        layer_weights: Optional[List[float]] = None,
-        torchrec_config: Optional[Dict] = None,
+        layer_weights: Optional[list[float]] = None,
+        torchrec_config: Optional[dict] = None,
     ):
         super().__init__()
 
@@ -195,8 +197,8 @@ class TorchRecLightGCN(nn.Module):
 
         # Build TorchRec EBC (one table per node type)
         # feature key naming convention: f"{node_type}_id"
-        self._feature_keys: List[str] = [f"{nt}_id" for nt in node_type_to_num_nodes.keys()]
-        tables: List[EmbeddingBagConfig] = []
+        self._feature_keys: list[str] = [f"{nt}_id" for nt in node_type_to_num_nodes.keys()]
+        tables: list[EmbeddingBagConfig] = []
         for nt, n in node_type_to_num_nodes.items():
             tables.append(
                 EmbeddingBagConfig(
@@ -218,8 +220,8 @@ class TorchRecLightGCN(nn.Module):
         self,
         data: Union[Data, HeteroData],
         device: torch.device,
-        output_node_types: Optional[List[NodeType]] = None,
-    ) -> Union[torch.Tensor, Dict[NodeType, torch.Tensor]]:
+        output_node_types: Optional[list[NodeType]] = None,
+    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
         """
         Forward pass of the LightGCN model.
 
@@ -271,9 +273,9 @@ class TorchRecLightGCN(nn.Module):
         self,
         data: HeteroData,
         device: torch.device,
-        output_node_types: List[NodeType],
-    ) -> Dict[NodeType, torch.Tensor]:
-        node_type_to_ids: Dict[str, torch.Tensor] = {}
+        output_node_types: list[NodeType],
+    ) -> dict[NodeType, torch.Tensor]:
+        node_type_to_ids: dict[str, torch.Tensor] = {}
         for nt in data.node_types:
             if hasattr(data[nt], "node_id"):
                 node_type_to_ids[nt] = data[nt].node_id.to(device)
@@ -282,13 +284,13 @@ class TorchRecLightGCN(nn.Module):
                     data[nt].num_nodes, device=device, dtype=torch.long
                 )
 
-        node_type_to_x0: Dict[str, torch.Tensor] = {}
+        node_type_to_x0: dict[str, torch.Tensor] = {}
         for nt, ids in node_type_to_ids.items():
             node_type_to_x0[nt] = self._torchrec_lookup_single_key(f"{nt}_id", ids)
 
         print(node_type_to_x0)
 
-        node_type_to_xs: Dict[str, List[torch.Tensor]] = {nt: [x0] for nt, x0 in node_type_to_x0.items()}
+        node_type_to_xs: dict[str, list[torch.Tensor]] = {nt: [x0] for nt, x0 in node_type_to_x0.items()}
         node_type_to_x = {nt: x0 for nt, x0 in node_type_to_x0.items()}
 
         print(node_type_to_xs)
@@ -310,7 +312,7 @@ class TorchRecLightGCN(nn.Module):
                     node_type_to_x[nt] = accum[nt] / float(degs[nt])
                 node_type_to_xs[nt].append(node_type_to_x[nt])
 
-        final_embeddings: Dict[str, torch.Tensor] = {}
+        final_embeddings: dict[str, torch.Tensor] = {}
         for nt in output_node_types:
             if nt not in node_type_to_xs:
                 final_embeddings[nt] = torch.empty(0, self.embedding_dim, device=device)
@@ -357,7 +359,7 @@ class TorchRecLightGCN(nn.Module):
         out = self.ebc(kjt)
         return out[key]                   # [B, D] for the requested key
 
-    def _weighted_layer_sum(self, xs: List[torch.Tensor]) -> torch.Tensor:
+    def _weighted_layer_sum(self, xs: list[torch.Tensor]) -> torch.Tensor:
         """
         xs must be [e^(0), e^(1), ..., e^(K)]
         """
@@ -371,7 +373,7 @@ class TorchRecLightGCN(nn.Module):
         return out
 
 def setup_torchrec_sharding(
-    model: TorchRecLightGCN,
+    model: LightGCN,
     world_size: int,
     local_world_size: int,
     use_cuda: bool = True,
