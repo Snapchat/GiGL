@@ -233,11 +233,11 @@ class TorchRecLightGCN(nn.Module):
         """
         if isinstance(data, HeteroData):
             output_node_types = output_node_types or list(data.node_types)
-            return self._forward_hetero(data, device, output_node_types)
+            return self._forward_heterogeneous(data, device, output_node_types)
         else:
-            return self._forward_homo(data, device)
+            return self._forward_homogeneous(data, device)
 
-    def _forward_homo(self, data: Data, device: torch.device) -> torch.Tensor:
+    def _forward_homogeneous(self, data: Data, device: torch.device) -> torch.Tensor:
         # Check if model is setup to be homogeneous
         if len(self._feature_keys) != 1:
             raise ValueError(
@@ -267,7 +267,7 @@ class TorchRecLightGCN(nn.Module):
         out = self._weighted_layer_sum(xs)
         return out
 
-    def _forward_hetero(
+    def _forward_heterogeneous(
         self,
         data: HeteroData,
         device: torch.device,
