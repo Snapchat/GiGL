@@ -1,10 +1,30 @@
-from typing import Optional, Union
+from typing import Optional, Union, Dict, List, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
+from torch.optim.optimizer import DeviceDict
 from torch_geometric.data import Data, HeteroData
+from torch_geometric.nn.conv import LGConv
+from torch_geometric import utils
 from typing_extensions import Self
+import torch.distributed as dist
+
+from torchrec.modules.embedding_configs import (
+    EmbeddingBagConfig,
+)
+from torchrec.modules.embedding_modules import (
+    EmbeddingBagCollection,
+)
+from torchrec.sparse.jagged_tensor import (
+    KeyedJaggedTensor,
+)
+
+from torchrec.distributed.planner import Topology, EmbeddingShardingPlanner
+from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
+from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
+from torchrec.distributed.embedding_types import EmbeddingComputeKernel
 
 from gigl.src.common.types.graph_data import NodeType
 
@@ -126,3 +146,271 @@ class LinkPredictionGNN(nn.Module):
             decoder = self._decoder
 
         return LinkPredictionGNN(encoder=encoder, decoder=decoder)
+
+class TorchRecLightGCN(nn.Module):
+    """
+    LightGCN model with TorchRec integration for distributed ID embeddings.
+
+    This class extends the basic LightGCN implementation to use TorchRec's
+    distributed embedding tables for handling large-scale ID embeddings.
+
+    Args:
+        node_type_to_num_nodes (Dict[NodeType, int]): map node types to counts
+        embedding_dim (int): Dimension of node embeddings D (default 64)
+        num_layers (int): K LightGCN propagation hops (default 2)
+        layer_weights (Optional[List[float]]): weights for [e^(0), e^(1), ..., e^(K)]
+            If None, uses uniform 1/(K+1).
+        torchrec_config (Optional[Dict]): reserved for future overrides
+    """
+
+    def __init__(
+        self,
+        node_type_to_num_nodes: Dict[NodeType, int],
+        embedding_dim: int = 64,
+        num_layers: int = 2,
+        device: torch.device = torch.device("cuda"),
+        layer_weights: Optional[List[float]] = None,
+        torchrec_config: Optional[Dict] = None,
+    ):
+        super().__init__()
+
+        self.node_type_to_num_nodes = node_type_to_num_nodes
+        self.embedding_dim = embedding_dim
+        self.num_layers = num_layers
+        self.device = device
+        self.torchrec_config = torchrec_config or {}
+
+        # Construct LightGCN α weights: include e^(0) + K propagated layers ==> K+1 weights
+        if layer_weights is None:
+            self.layer_weights = [1.0 / (num_layers + 1)] * (num_layers + 1)
+        else:
+            if len(layer_weights) != (num_layers + 1):
+                raise ValueError(
+                    f"layer_weights must have length K+1={num_layers+1}, got {len(layer_weights)}"
+                )
+            self.layer_weights = layer_weights
+        self.register_buffer(
+            "layer_weights_tensor", torch.tensor(self.layer_weights, dtype=torch.float32, device=device)
+        )
+
+        # Build TorchRec EBC (one table per node type)
+        # feature key naming convention: f"{node_type}_id"
+        self._feature_keys: List[str] = [f"{nt}_id" for nt in node_type_to_num_nodes.keys()]
+        tables: List[EmbeddingBagConfig] = []
+        for nt, n in node_type_to_num_nodes.items():
+            tables.append(
+                EmbeddingBagConfig(
+                    name=f"node_embedding_{nt}",
+                    embedding_dim=embedding_dim,
+                    num_embeddings=int(n),
+                    feature_names=[f"{nt}_id"],
+                )
+            )
+
+        self.ebc = EmbeddingBagCollection(tables=tables, device=self.device)
+
+        # Construct LightGCN propagation layers (LGConv = Ā X)
+        self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
+
+        self._is_sharded = False
+
+    def forward(
+        self,
+        data: Union[Data, HeteroData],
+        device: torch.device,
+        output_node_types: Optional[List[NodeType]] = None,
+    ) -> Union[torch.Tensor, Dict[NodeType, torch.Tensor]]:
+        """
+        Forward pass of the LightGCN model.
+
+        Args:
+            data: Graph data (homogeneous or heterogeneous)
+            device: Device to run the computation on
+            output_node_types: List of node types to return embeddings for (for heterogeneous graphs)
+
+        Returns:
+            Node embeddings for the specified node types
+        """
+        if isinstance(data, HeteroData):
+            output_node_types = output_node_types or list(data.node_types)
+            return self._forward_hetero(data, device, output_node_types)
+        else:
+            return self._forward_homo(data, device)
+
+    def _forward_homo(self, data: Data, device: torch.device) -> torch.Tensor:
+        # Check if model is setup to be homogeneous
+        if len(self._feature_keys) != 1:
+            raise ValueError(
+                "Homogeneous path expects exactly one node type; got "
+                f"{len(self._feature_keys)} types: {self._feature_keys}"
+            )
+        key = self._feature_keys[0]
+
+        node_ids = (
+            data.node_id.to(device)
+            if hasattr(data, "node_id")
+            else torch.arange(data.num_nodes, device=device, dtype=torch.long)
+        )
+        edge_index = data.edge_index.to(device)
+
+        # Lookup: e^(0) for this batch of node IDs
+        x0 = self._torchrec_lookup_single_key(key, node_ids)
+
+        # K LightGCN propagation steps with LGConv
+        xs = [x0]  # e^(0)
+        x = x0
+        for conv in self.convs:
+            x = conv(x, edge_index)
+            xs.append(x)
+
+        # Weighted sum over layers 0..K
+        out = self._weighted_layer_sum(xs)
+        return out
+
+    def _forward_hetero(
+        self,
+        data: HeteroData,
+        device: torch.device,
+        output_node_types: List[NodeType],
+    ) -> Dict[NodeType, torch.Tensor]:
+        node_type_to_ids: Dict[str, torch.Tensor] = {}
+        for nt in data.node_types:
+            if hasattr(data[nt], "node_id"):
+                node_type_to_ids[nt] = data[nt].node_id.to(device)
+            else:
+                node_type_to_ids[nt] = torch.arange(
+                    data[nt].num_nodes, device=device, dtype=torch.long
+                )
+
+        node_type_to_x0: Dict[str, torch.Tensor] = {}
+        for nt, ids in node_type_to_ids.items():
+            node_type_to_x0[nt] = self._torchrec_lookup_single_key(f"{nt}_id", ids)
+
+        print(node_type_to_x0)
+
+        node_type_to_xs: Dict[str, List[torch.Tensor]] = {nt: [x0] for nt, x0 in node_type_to_x0.items()}
+        node_type_to_x = {nt: x0 for nt, x0 in node_type_to_x0.items()}
+
+        print(node_type_to_xs)
+        print(node_type_to_x)
+
+        for _layer in range(self.num_layers):
+            accum = {nt: torch.zeros_like(node_type_to_x[nt]) for nt in node_type_to_x.keys()}
+            degs = {nt: 0 for nt in node_type_to_x.keys()}
+
+            for (src_nt, _rel, dst_nt), eidx in data.edge_index_dict.items():
+                conv = LGConv()
+                accum[dst_nt] = accum[dst_nt] + conv(node_type_to_x[src_nt], eidx.to(device))
+                degs[dst_nt] += 1
+                accum[src_nt] = accum[src_nt] + conv(node_type_to_x[dst_nt], eidx.flip(0).to(device))
+                degs[src_nt] += 1
+
+            for nt in accum.keys():
+                if degs[nt] > 0:
+                    node_type_to_x[nt] = accum[nt] / float(degs[nt])
+                node_type_to_xs[nt].append(node_type_to_x[nt])
+
+        final_embeddings: Dict[str, torch.Tensor] = {}
+        for nt in output_node_types:
+            if nt not in node_type_to_xs:
+                final_embeddings[nt] = torch.empty(0, self.embedding_dim, device=device)
+                continue
+            final_embeddings[nt] = self._weighted_layer_sum(node_type_to_xs[nt])
+
+        return final_embeddings
+
+    def _torchrec_lookup_single_key(self, key: str, ids: torch.Tensor) -> torch.Tensor:
+        """
+        Fetch per-id embeddings for a single feature key using EBC and KJT.
+
+        Construct a KJT that includes *all* EBC keys so the forward path is
+        consistent. For the requested key, we create B bags of length 1 (each ID).
+        For all other keys, we create B bags of length 0. SUM pooling then makes
+        non-requested keys contribute zeros, and the requested key is identity.
+        """
+        if key not in self._feature_keys:
+            raise KeyError(f"Unknown feature key '{key}'. Valid keys: {self._feature_keys}")
+
+        # Number of examples (one ID per "bag")
+        B = int(ids.numel())
+        device = ids.device
+
+        # Build lengths in key-major order: for each key, we give B lengths.
+        # - requested key: ones (each example has 1 id)
+        # - other keys: zeros (each example has 0 ids)
+        lengths_per_key = []
+        for k in self._feature_keys:
+            if k == key:
+                lengths_per_key.append(torch.ones(B, dtype=torch.long, device=device))
+            else:
+                lengths_per_key.append(torch.zeros(B, dtype=torch.long, device=device))
+
+        lengths = torch.cat(lengths_per_key, dim=0)
+
+        # Values only contain the requested key's ids (sum of other lengths is 0)
+        kjt = KeyedJaggedTensor.from_lengths_sync(
+            keys=self._feature_keys,       # include ALL keys known by EBC
+            values=ids.long(),             # only B values for the requested key
+            lengths=lengths,               # B lengths per key, concatenated key-major
+        )
+
+        out = self.ebc(kjt)
+        return out[key]                   # [B, D] for the requested key
+
+    def _weighted_layer_sum(self, xs: List[torch.Tensor]) -> torch.Tensor:
+        """
+        xs must be [e^(0), e^(1), ..., e^(K)]
+        """
+        if len(xs) != len(self.layer_weights_tensor):
+            raise ValueError(
+                f"Got {len(xs)} layer tensors but {len(self.layer_weights_tensor)} weights."
+            )
+        out = torch.zeros_like(xs[0])
+        for w, h in zip(self.layer_weights_tensor, xs):
+            out = out + w * h
+        return out
+
+def setup_torchrec_sharding(
+    model: TorchRecLightGCN,
+    world_size: int,
+    local_world_size: int,
+    use_cuda: bool = True,
+    compute_kernel: EmbeddingComputeKernel = EmbeddingComputeKernel.FUSED,
+) -> DMP:
+    """
+    Wrap the model with TorchRec DistributedModelParallel (DMP) and apply a sharding plan
+    to the EmbeddingBagCollection (EBC). After this, calls to model.ebc(...) are transparently
+    sharded, and sparse updates are fused during backward.
+
+    Returns:
+        The DMP-wrapped model. (Replaces the original module in-place typical usage.)
+    """
+    if not dist.is_initialized():
+        raise RuntimeError("torch.distributed process group is not initialized.")
+
+    device_type = "cuda" if use_cuda else "cpu"
+    topology = Topology(
+        world_size=world_size,
+        local_world_size=local_world_size,
+        compute_device=device_type,
+    )
+
+    # Planner proposes a sharding plan (row-wise for huge tables by default).
+    planner = EmbeddingShardingPlanner(topology=topology)
+
+    # Sharder tells DMP how to shard EBC modules.
+    sharders = [EmbeddingBagCollectionSharder(compute_kernel=compute_kernel)]
+
+    plan = planner.collective_plan(model, sharders=sharders, pg=dist.group.WORLD)
+
+    sharded_model = DMP(
+        module=model,
+        plan=plan,
+        sharders=sharders,
+        init_data_parallel=False,  # we only want model-parallel sharding for embeddings
+    )
+
+    # for downstream logic
+    sharded_model.module._is_sharded = True
+
+    return sharded_model
