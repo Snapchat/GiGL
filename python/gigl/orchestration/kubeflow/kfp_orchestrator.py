@@ -69,7 +69,6 @@ class KfpOrchestrator:
             :data:`~gigl.constants.DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH`.
             additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
             tag (Optional[str]): Optional tag to include in the pipeline description.
-
         Returns:
             Uri: The URI of the compiled pipeline.
         """
@@ -118,6 +117,7 @@ class KfpOrchestrator:
         stop_after: Optional[str] = None,
         compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         labels: Optional[dict[str, str]] = None,
+        notification_emails: Optional[list[str]] = None,
     ) -> aiplatform.PipelineJob:
         """
         Runs the GiGL Kubeflow pipeline.
@@ -130,6 +130,8 @@ class KfpOrchestrator:
             stop_after (Optional[str]): Component to stop the pipeline after. Defaults to None i.e. run entire pipeline.
             compiled_pipeline_path (Uri): Path to the compiled pipeline YAML file.
             labels (Optional[dict[str, str]]): Labels to associate with the run.
+            notification_emails (Optional[list[str]]): Emails to send notification to.
+                See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
         Returns:
             aiplatform.PipelineJob: The created pipeline job.
         """
@@ -147,6 +149,18 @@ class KfpOrchestrator:
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
         }
+        # We need to provide *some* notification emails, other wise the cleanup component will fail.
+        # Ideally, we'd be able to provide None and have it handle it, but for whatever reason
+        # that's not supported atm. Passing in None gives the below error:
+        # Notification email "recipients" parameter must specify at least one recipient.
+        if notification_emails:
+            run_keyword_args["notification_emails"] = notification_emails
+        else:
+            run_keyword_args["notification_emails"] = [
+                get_resource_config(
+                    resource_config_uri=resource_config_uri
+                ).service_account_email
+            ]
         if stop_after is not None:
             run_keyword_args["stop_after"] = stop_after
 
