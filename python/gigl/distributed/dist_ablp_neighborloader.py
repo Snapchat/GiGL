@@ -187,6 +187,10 @@ class DistABLPLoader(DistLoader):
         if supervision_edge_type is None:
             self._supervision_edge_types: list[EdgeType] = []
         elif isinstance(supervision_edge_type, list):
+            if not supervision_edge_type:
+                raise ValueError(
+                    "supervision_edge_type must be a non-empty list when providing multiple supervision edge types."
+                )
             self._supervision_edge_types = supervision_edge_type
         else:
             self._supervision_edge_types = [supervision_edge_type]

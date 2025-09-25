@@ -881,6 +881,77 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ),
 
+    @parameterized.expand(
+        [
+            param(
+                "Empty list of supervision edge types",
+                expected_error=ValueError,
+                expected_error_message="supervision_edge_type must be a non-empty list when providing multiple supervision edge types.",
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10])),
+                supervision_edge_type=[],
+            ),
+            param(
+                "Homogenous dataset",
+                expected_error=ValueError,
+                expected_error_message="The dataset must be heterogeneous for ABLP",
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10])),
+                supervision_edge_type=[_A_TO_B],
+            ),
+            param(
+                "No supervision edge type, heterogenous sampling",
+                expected_error=ValueError,
+                expected_error_message="When using heterogeneous ABLP, you must provide supervision_edge_types",
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10])),
+                supervision_edge_type=None,
+            ),
+            param(
+                "Mutiple supervision edge types, homogeneous sampling",
+                expected_error=ValueError,
+                expected_error_message="Expected supervision edge type to be None for homogeneous input nodes",
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10])),
+                supervision_edge_type=[_A_TO_B, _A_TO_C],
+            ),
+        ]
+    )
+    def test_ablp_dataloder_invalid_inputs(
+        self,
+        _: str,
+        expected_error: type[BaseException],
+        expected_error_message: str,
+        **kwargs,
+    ):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+        with self.assertRaises(expected_error, msg=expected_error_message):
+            DistABLPLoader(**kwargs)
+
 
 if __name__ == "__main__":
     unittest.main()
