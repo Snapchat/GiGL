@@ -300,7 +300,7 @@ class LocalResourceConfig(google.protobuf.message.Message):
 global___LocalResourceConfig = LocalResourceConfig
 
 class VertexAiMultiPoolConfig(google.protobuf.message.Message):
-    """Configuration for Mutlipool Vertex AI jobs.
+    """Configuration for Multipool Vertex AI jobs.
     See https://cloud.google.com/vertex-ai/docs/training/distributed-training for more info.
     NOTE: The first worker pool will be split into the primary replica and "Workers".
     For example:
