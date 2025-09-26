@@ -83,6 +83,7 @@ fi
 echo "Installing from ${req_file}"
 pip install -r $req_file $PIP_ARGS
 
+find . -name "post_install.py"
 
 python python/gigl/scripts/post_install.py
 
