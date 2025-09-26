@@ -116,6 +116,16 @@ message VertexAiResourceConfig {
     uint32 num_workers = 1;
  }
 
+ // Configuration for lauching Vertex AI clusters with both graph store and compute pools
+ // Under the hood, this uses Vertex AI Multi-Pool Training
+ // See https://cloud.google.com/vertex-ai/docs/training/distributed-training for more info.
+ // This cluster setup should be used when you want store your graph on separate machines from the compute machines
+ // e.g. you can get lots of big memory machines and separate gpu machines individually,
+ // but getting lots of gpu machines with lots of memory is challenging.
+ message VertexAiGraphStoreConfig {
+  VertexAiResourceConfig graph_store_pool = 1;
+  VertexAiResourceConfig compute_pool = 2;
+ }
 // (deprecated)
 // Configuration for distributed training resources
 message DistributedTrainerConfig {
@@ -132,6 +142,7 @@ message TrainerResourceConfig {
    VertexAiResourceConfig vertex_ai_trainer_config = 1;
    KFPResourceConfig kfp_trainer_config = 2;
    LocalResourceConfig local_trainer_config = 3;
+   VertexAiGraphStoreConfig vertex_ai_graph_store_trainer_config = 4;
  }
 }
 
@@ -141,6 +152,7 @@ message InferencerResourceConfig {
    VertexAiResourceConfig vertex_ai_inferencer_config = 1;
    DataflowResourceConfig dataflow_inferencer_config = 2;
    LocalResourceConfig local_inferencer_config = 3;
+   VertexAiGraphStoreConfig vertex_ai_graph_store_inferencer_config = 4;
  }
 }
 

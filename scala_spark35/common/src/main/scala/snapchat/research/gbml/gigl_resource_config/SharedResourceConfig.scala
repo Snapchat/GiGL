@@ -35,7 +35,7 @@ final case class SharedResourceConfig(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       resourceLabels.foreach { __v =>
@@ -116,8 +116,8 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
-  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(12)
-  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(12)
+  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(13)
+  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(13)
   def messageCompanionForFieldNumber(__number: _root_.scala.Int): _root_.scalapb.GeneratedMessageCompanion[_] = {
     var __out: _root_.scalapb.GeneratedMessageCompanion[_] = null
     (__number: @_root_.scala.unchecked) match {
@@ -172,63 +172,63 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = project
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = region
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(2, __value)
           }
         };
-        
+
         {
           val __value = tempAssetsBucket
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(3, __value)
           }
         };
-        
+
         {
           val __value = tempRegionalAssetsBucket
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(4, __value)
           }
         };
-        
+
         {
           val __value = permAssetsBucket
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(5, __value)
           }
         };
-        
+
         {
           val __value = tempAssetsBqDatasetName
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(6, __value)
           }
         };
-        
+
         {
           val __value = embeddingBqDatasetName
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(7, __value)
           }
         };
-        
+
         {
           val __value = gcpServiceAccountEmail
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(8, __value)
           }
         };
-        
+
         {
           val __value = dataflowRunner
           if (!__value.isEmpty) {
@@ -245,7 +245,7 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -373,7 +373,7 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
       def companion: snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.CommonComputeConfig.type = snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.CommonComputeConfig
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.SharedResourceConfig.CommonComputeConfig])
   }
-  
+
   object CommonComputeConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.CommonComputeConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.CommonComputeConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.CommonComputeConfig = {
@@ -505,7 +505,7 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.SharedResourceConfig.CommonComputeConfig])
   }
-  
+
   @SerialVersionUID(0L)
   final case class ResourceLabelsEntry(
       key: _root_.scala.Predef.String = "",
@@ -516,14 +516,14 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -540,7 +540,7 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -584,7 +584,7 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
       def companion: snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.ResourceLabelsEntry.type = snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.ResourceLabelsEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.SharedResourceConfig.ResourceLabelsEntry])
   }
-  
+
   object ResourceLabelsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.ResourceLabelsEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.ResourceLabelsEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.ResourceLabelsEntry = {
@@ -649,7 +649,7 @@ object SharedResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.SharedResourceConfig.ResourceLabelsEntry])
   }
-  
+
   implicit class SharedResourceConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.SharedResourceConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.SharedResourceConfig](_l) {
     def resourceLabels: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.resourceLabels)((c_, f_) => c_.copy(resourceLabels = f_))
     def commonComputeConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.SharedResourceConfig.CommonComputeConfig] = field(_.getCommonComputeConfig)((c_, f_) => c_.copy(commonComputeConfig = Option(f_)))

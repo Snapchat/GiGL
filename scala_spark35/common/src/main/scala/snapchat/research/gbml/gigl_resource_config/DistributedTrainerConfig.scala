@@ -39,7 +39,7 @@ final case class DistributedTrainerConfig(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       trainerConfig.vertexAiTrainerConfig.foreach { __v =>
@@ -131,8 +131,8 @@ object DistributedTrainerConfig extends scalapb.GeneratedMessageCompanion[snapch
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
-  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(9)
-  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(9)
+  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(10)
+  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(10)
   def messageCompanionForFieldNumber(__number: _root_.scala.Int): _root_.scalapb.GeneratedMessageCompanion[_] = {
     var __out: _root_.scalapb.GeneratedMessageCompanion[_] = null
     (__number: @_root_.scala.unchecked) match {
@@ -166,7 +166,7 @@ object DistributedTrainerConfig extends scalapb.GeneratedMessageCompanion[snapch
       override def number: _root_.scala.Int = 0
       override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
     }
-  
+
     @SerialVersionUID(0L)
     final case class VertexAiTrainerConfig(value: snapchat.research.gbml.gigl_resource_config.VertexAiTrainerConfig) extends snapchat.research.gbml.gigl_resource_config.DistributedTrainerConfig.TrainerConfig {
       type ValueType = snapchat.research.gbml.gigl_resource_config.VertexAiTrainerConfig
