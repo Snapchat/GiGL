@@ -120,7 +120,7 @@ class BigqueryNodeDataReference(NodeDataReference):
 class BigqueryEdgeDataReference(EdgeDataReference):
     # The key in the table that we will use to split the data into partitions. This should be used if we are operating on
     # very large tables, in which case we want to only read smaller slices of the table at a time to avoid oversized status update
-    # payloads. If not provided, the table will not be partitioned and willbe read in its entirety.
+    # payloads. If not provided, the table will not be partitioned and will be read in its entirety.
     partition_key: Optional[str] = None
     # The number of partitions to split the data into. If not provided but partition_key is provided, the table will be partitioned with a default
     # value of 20 partitions.
