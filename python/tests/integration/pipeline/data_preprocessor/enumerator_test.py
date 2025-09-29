@@ -88,6 +88,9 @@ _NEGATIVE_EDGE_FEATURE_RECORDS = [
     for (src, dst) in _NEGATIVE_EDGES
 ]
 
+_NODE_NUM_PARTITIONS = 2
+_EDGE_NUM_PARTITIONS = 3
+
 
 # TODO: (svij-sc) Cleanup this test
 class EnumeratorTest(unittest.TestCase):
@@ -452,72 +455,18 @@ class EnumeratorTest(unittest.TestCase):
             original_edge_feature_records=_NEGATIVE_EDGE_FEATURE_RECORDS,
         )
 
-    def test_for_correctness(self):
-        enumerator = Enumerator()
-        list_enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata]
-        list_enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata]
-        (
-            list_enumerator_node_type_metadata,
-            list_enumerator_edge_type_metadata,
-        ) = enumerator.run(
-            applied_task_identifier=AppliedTaskIdentifier(
-                self.__applied_task_identifier
-            ),
-            node_data_references=self.node_data_references,
-            edge_data_references=self.edge_data_references,
-            gcp_project=get_resource_config().project,
-        )
-
-        for node_metadata in list_enumerator_node_type_metadata:
-            self.__bq_tables_to_cleanup_on_teardown.append(
-                node_metadata.enumerated_node_data_reference.reference_uri
-            )
-            self.__bq_tables_to_cleanup_on_teardown.append(
-                node_metadata.bq_unique_node_ids_enumerated_table_name
-            )
-        for edge_metadata in list_enumerator_edge_type_metadata:
-            self.__bq_tables_to_cleanup_on_teardown.append(
-                edge_metadata.enumerated_edge_data_reference.reference_uri
-            )
-
-        map_enum_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata] = {
-            node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
-            for node_type_metadata in list_enumerator_node_type_metadata
-        }
-        map_enum_edge_type_metadata: dict[
-            Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
-        ] = {
-            (
-                edge_type_metadata.enumerated_edge_data_reference.edge_type,
-                edge_type_metadata.enumerated_edge_data_reference.edge_usage_type,
-            ): edge_type_metadata
-            for edge_type_metadata in list_enumerator_edge_type_metadata
-        }
-        int_to_orig_node_id_map: dict[
-            int, str
-        ] = self.fetch_enumerated_node_map_and_assert_correctness(
-            map_enum_node_type_metadata=map_enum_node_type_metadata
-        )
-        self.assert_enumerated_node_features_correctness(
-            int_to_orig_node_id_map=int_to_orig_node_id_map,
-            map_enum_node_type_metadata=map_enum_node_type_metadata,
-        )
-        self.assert_enumerated_edge_features_correctness(
-            int_to_orig_node_id_map=int_to_orig_node_id_map,
-            map_enum_edge_type_metadata=map_enum_edge_type_metadata,
-        )
-
-    def test_partition_based_node_reading(self):
-        """Test that partition-based reading works correctly for node data."""
-        # Create partitioned node data reference
-        partitioned_node_reference = BigqueryNodeDataReference(
-            reference_uri=self.__input_nodes_data_reference.reference_uri,
-            node_type=_PERSON_NODE_TYPE,
-            identifier=_PERSON_NODE_IDENTIFIER_FIELD,
-            partition_key=_PERSON_NODE_IDENTIFIER_FIELD,
-            num_partitions=2,
-        )
-
+    def _run_partitioned_enumeration_test_and_validate(
+        self,
+        test_suffix: str,
+        node_data_references: list[BigqueryNodeDataReference],
+        edge_data_references: list[BigqueryEdgeDataReference],
+    ) -> None:
+        """Helper method to run partition-based enumeration test and validate results.
+        Args:
+            test_suffix (str): Suffix for the applied task identifier
+            node_data_references (list[BigqueryNodeDataReference]): List of node data references
+            edge_data_references (list[BigqueryEdgeDataReference]): List of edge data references
+        """
         enumerator = Enumerator()
         list_enumerator_node_type_metadata_partitioned: list[EnumeratorNodeTypeMetadata]
         list_enumerator_edge_type_metadata_partitioned: list[EnumeratorEdgeTypeMetadata]
@@ -526,10 +475,10 @@ class EnumeratorTest(unittest.TestCase):
             list_enumerator_edge_type_metadata_partitioned,
         ) = enumerator.run(
             applied_task_identifier=AppliedTaskIdentifier(
-                f"{self.__applied_task_identifier}_partitioned_nodes_test"
+                f"{self.__applied_task_identifier}_{test_suffix}"
             ),
-            node_data_references=[partitioned_node_reference],
-            edge_data_references=self.edge_data_references,
+            node_data_references=node_data_references,
+            edge_data_references=edge_data_references,
             gcp_project=get_resource_config().project,
         )
 
@@ -546,28 +495,71 @@ class EnumeratorTest(unittest.TestCase):
                 edge_metadata.enumerated_edge_data_reference.reference_uri
             )
 
-        # Verify that the partitioned reading produces the same enumeration results
         map_enum_node_type_metadata_partitioned = {
             node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
             for node_type_metadata in list_enumerator_node_type_metadata_partitioned
         }
 
-        # Runs a bigquery command to fetch the enumerated node map
+        # Queries the BigQuery enumerated node ID table to reconstruct the integer-to-original ID mapping.
+        # Under the hood executes "SELECT original_node_id, enumerated_node_id FROM bq_unique_node_ids_enumerated_table"
+        # to build a dict[int -> str] mapping. Also validates enumeration correctness by checking that
+        # integer IDs are sequential (0 to n-1), within bounds, and that row count matches expected node count.
         int_to_orig_node_id_map_partitioned = (
             self.fetch_enumerated_node_map_and_assert_correctness(
                 map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned
             )
         )
 
-        # Asserts that all node data references are enumerated correctly
+        # Validates that node features are preserved during enumeration by:
+        # 1. Querying the enumerated node feature table in BigQuery to retrieve all node records
+        # 2. Converting enumerated integer node IDs back to original string IDs using int_to_orig_node_id_map
+        # 3. Creating hash sets of (original_node_id, feature_values) tuples for both:
+        #    - Original test data: _PERSON_NODE_FEATURE_RECORDS (Alice, Bob, Charlie with height/age/weight)
+        #    - Enumerated data: Retrieved from BigQuery after reverse-mapping integer IDs to original IDs
+        # 4. Asserting that both hash sets are identical.
         self.assert_enumerated_node_features_correctness(
             int_to_orig_node_id_map=int_to_orig_node_id_map_partitioned,
             map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned,
         )
 
-    def test_partition_based_edge_reading(self):
-        """Test that partition-based reading works correctly for edge data."""
-        # Create partitioned edge data references
+        # Create edge metadata dictionary for validation
+        map_enum_edge_type_metadata_partitioned = {
+            (
+                edge_type_metadata.enumerated_edge_data_reference.edge_type,
+                edge_type_metadata.enumerated_edge_data_reference.edge_usage_type,
+            ): edge_type_metadata
+            for edge_type_metadata in list_enumerator_edge_type_metadata_partitioned
+        }
+
+        # Validates edge enumeration correctness by comparing original vs enumerated edge data.
+        # Under the hood queries each enumerated edge table to fetch all rows, converts integer
+        # node IDs back to original string IDs using the mapping, then creates hash sets of both
+        # original and enumerated edge records to verify exact data preservation. Checks main,
+        # positive, and negative edge types separately.
+        self.assert_enumerated_edge_features_correctness(
+            int_to_orig_node_id_map=int_to_orig_node_id_map_partitioned,
+            map_enum_edge_type_metadata=map_enum_edge_type_metadata_partitioned,
+        )
+
+    def test_full_enumeration(self):
+        """Test that full table enumeration works correctly for both node and edge data."""
+        self._run_partitioned_enumeration_test_and_validate(
+            test_suffix="full_table_enumeration",
+            node_data_references=self.node_data_references,
+            edge_data_references=self.edge_data_references,
+        )
+
+    def test_partitioned_enumeration(self):
+        """Test that partitioned enumeration works correctly for both node and edge data."""
+
+        partitioned_node_reference = BigqueryNodeDataReference(
+            reference_uri=self.__input_nodes_data_reference.reference_uri,
+            node_type=_PERSON_NODE_TYPE,
+            identifier=_PERSON_NODE_IDENTIFIER_FIELD,
+            partition_key=_PERSON_NODE_IDENTIFIER_FIELD,
+            num_partitions=_NODE_NUM_PARTITIONS,
+        )
+
         partitioned_main_edges_reference = BigqueryEdgeDataReference(
             reference_uri=self.__input_main_edges_data_reference.reference_uri,
             edge_type=_MESSAGES_EDGE_TYPE,
@@ -575,7 +567,7 @@ class EnumeratorTest(unittest.TestCase):
             src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
             dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
             partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            num_partitions=3,
+            num_partitions=_EDGE_NUM_PARTITIONS,
         )
 
         partitioned_positive_edges_reference = BigqueryEdgeDataReference(
@@ -585,7 +577,7 @@ class EnumeratorTest(unittest.TestCase):
             src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
             dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
             partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            num_partitions=3,
+            num_partitions=_EDGE_NUM_PARTITIONS,
         )
 
         partitioned_negative_edges_reference = BigqueryEdgeDataReference(
@@ -595,65 +587,17 @@ class EnumeratorTest(unittest.TestCase):
             src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
             dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
             partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            num_partitions=3,
+            num_partitions=_EDGE_NUM_PARTITIONS,
         )
 
-        enumerator = Enumerator()
-        list_enumerator_node_type_metadata_partitioned: list[EnumeratorNodeTypeMetadata]
-        list_enumerator_edge_type_metadata_partitioned: list[EnumeratorEdgeTypeMetadata]
-        (
-            list_enumerator_node_type_metadata_partitioned,
-            list_enumerator_edge_type_metadata_partitioned,
-        ) = enumerator.run(
-            applied_task_identifier=AppliedTaskIdentifier(
-                f"{self.__applied_task_identifier}_partitioned_edges_test"
-            ),
-            node_data_references=self.node_data_references,
+        self._run_partitioned_enumeration_test_and_validate(
+            test_suffix="partitioned_table_enumeration",
+            node_data_references=[partitioned_node_reference],
             edge_data_references=[
                 partitioned_main_edges_reference,
                 partitioned_positive_edges_reference,
                 partitioned_negative_edges_reference,
             ],
-            gcp_project=get_resource_config().project,
-        )
-
-        # Add the created tables to cleanup list
-        for node_metadata in list_enumerator_node_type_metadata_partitioned:
-            self.__bq_tables_to_cleanup_on_teardown.append(
-                node_metadata.enumerated_node_data_reference.reference_uri
-            )
-            self.__bq_tables_to_cleanup_on_teardown.append(
-                node_metadata.bq_unique_node_ids_enumerated_table_name
-            )
-        for edge_metadata in list_enumerator_edge_type_metadata_partitioned:
-            self.__bq_tables_to_cleanup_on_teardown.append(
-                edge_metadata.enumerated_edge_data_reference.reference_uri
-            )
-
-        # Verify that the partitioned reading produces the same enumeration results
-        map_enum_node_type_metadata_partitioned = {
-            node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
-            for node_type_metadata in list_enumerator_node_type_metadata_partitioned
-        }
-        map_enum_edge_type_metadata_partitioned = {
-            (
-                edge_type_metadata.enumerated_edge_data_reference.edge_type,
-                edge_type_metadata.enumerated_edge_data_reference.edge_usage_type,
-            ): edge_type_metadata
-            for edge_type_metadata in list_enumerator_edge_type_metadata_partitioned
-        }
-
-        # Runs a bigquery command to fetch the enumerated node map
-        int_to_orig_node_id_map_partitioned = (
-            self.fetch_enumerated_node_map_and_assert_correctness(
-                map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned
-            )
-        )
-
-        # Asserts that all edge data references are enumerated correctly
-        self.assert_enumerated_edge_features_correctness(
-            int_to_orig_node_id_map=int_to_orig_node_id_map_partitioned,
-            map_enum_edge_type_metadata=map_enum_edge_type_metadata_partitioned,
         )
 
     def tearDown(self) -> None:
