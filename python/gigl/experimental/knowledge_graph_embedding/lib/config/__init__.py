@@ -21,6 +21,10 @@ from gigl.experimental.knowledge_graph_embedding.lib.config.model import ModelCo
 from gigl.experimental.knowledge_graph_embedding.lib.config.run import RunConfig
 from gigl.experimental.knowledge_graph_embedding.lib.config.training import TrainConfig
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
+from gigl.src.data_preprocessor.lib.ingest.bigquery import (
+    BigqueryEdgeDataReference,
+    BigqueryNodeDataReference,
+)
 from snapchat.research.gbml import graph_schema_pb2
 
 logger = Logger()
@@ -78,17 +82,15 @@ class HeterogeneousGraphSparseEmbeddingConfig:
         raw_graph_data = OmegaConf.select(
             config, "dataset.raw_graph_data", default=None
         )
-        raw_node_data = None
-        raw_edge_data = None
+        graph_data: Optional[RawGraphData] = None
         if raw_graph_data:
             raw_node_data = [instantiate(entry) for entry in raw_graph_data.node_data]
             raw_edge_data = [instantiate(entry) for entry in raw_graph_data.edge_data]
+            graph_data = RawGraphData(node_data=raw_node_data, edge_data=raw_edge_data)
 
         enumerated_graph_data = OmegaConf.select(
             config, "dataset.enumerated_graph_data", default=None
         )
-        enumerated_node_data = None
-        enumerated_edge_data = None
         if enumerated_graph_data:
             enumerated_node_data = [
                 instantiate(entry) for entry in enumerated_graph_data.node_data
@@ -96,19 +98,14 @@ class HeterogeneousGraphSparseEmbeddingConfig:
             enumerated_edge_data = [
                 instantiate(entry) for entry in enumerated_graph_data.edge_data
             ]
+            enumerated_graph_data = EnumeratedGraphData(
+                node_data=enumerated_node_data, edge_data=enumerated_edge_data
+            )
 
         graph_config = GraphConfig(
             metadata=graph_metadata,
-            raw_graph_data=RawGraphData(
-                node_data=raw_node_data, edge_data=raw_edge_data
-            )
-            if raw_graph_data
-            else None,
-            enumerated_graph_data=EnumeratedGraphData(
-                node_data=enumerated_node_data, edge_data=enumerated_edge_data
-            )
-            if enumerated_graph_data
-            else None,
+            raw_graph_data=graph_data,
+            enumerated_graph_data=enumerated_graph_data,
         )
 
         # Build the RunConfig
