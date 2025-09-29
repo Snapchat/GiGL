@@ -9,7 +9,9 @@ from parameterized import param, parameterized
 
 from gigl.distributed.utils import (
     get_free_ports_from_master_node,
+    get_free_ports_from_node,
     get_internal_ip_from_master_node,
+    get_internal_ip_from_node,
 )
 from tests.test_assets.distributed.utils import get_process_group_init_method
 
@@ -51,7 +53,7 @@ def _test_fetching_free_ports_in_dist_context(
         dist.destroy_process_group()
 
 
-def _test_fetching_free_ports_from_master_node_with_master_node_rank(
+def _test_fetching_free_ports_from_node(
     rank: int,
     world_size: int,
     init_process_group_init_method: str,
@@ -71,16 +73,16 @@ def _test_fetching_free_ports_from_master_node_with_master_node_rank(
             with patch(
                 "gigl.distributed.utils.networking.get_free_ports", return_value=ports
             ):
-                free_ports: list[int] = get_free_ports_from_master_node(
-                    num_ports=num_ports, master_node_rank=master_node_rank
+                free_ports: list[int] = get_free_ports_from_node(
+                    num_ports=num_ports, node_rank=master_node_rank
                 )
         else:
             with patch(
                 "gigl.distributed.utils.networking.get_free_ports",
                 side_effect=Exception("Should not be called on non-master node"),
             ):
-                free_ports = get_free_ports_from_master_node(
-                    num_ports=num_ports, master_node_rank=master_node_rank
+                free_ports = get_free_ports_from_node(
+                    num_ports=num_ports, node_rank=master_node_rank
                 )
         assert len(free_ports) == num_ports
         # Check that all ranks see the same ports broadcasted from master (rank 0)
@@ -128,7 +130,7 @@ def _test_get_internal_ip_from_master_node_in_dist_context(
         dist.destroy_process_group()
 
 
-def _test_get_internal_ip_from_master_node_in_dist_context_with_master_node_rank(
+def _test_get_internal_ip_from_node(
     rank: int,
     world_size: int,
     init_process_group_init_method: str,
@@ -147,17 +149,13 @@ def _test_get_internal_ip_from_master_node_in_dist_context_with_master_node_rank
     )
     try:
         if rank == master_node_rank:
-            master_ip = get_internal_ip_from_master_node(
-                master_node_rank=master_node_rank
-            )
+            master_ip = get_internal_ip_from_node(node_rank=master_node_rank)
         else:
             with patch(
                 "gigl.distributed.utils.networking.socket.gethostbyname",
                 side_effect=Exception("Should not be called on non-master node"),
             ):
-                master_ip = get_internal_ip_from_master_node(
-                    master_node_rank=master_node_rank
-                )
+                master_ip = get_internal_ip_from_node(node_rank=master_node_rank)
         assert (
             master_ip == expected_ip
         ), f"Expected master IP to be {expected_ip}, but got {master_ip}"
@@ -225,7 +223,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
     ):
         init_process_group_init_method = get_process_group_init_method()
         mp.spawn(
-            fn=_test_fetching_free_ports_from_master_node_with_master_node_rank,
+            fn=_test_fetching_free_ports_from_node,
             args=(
                 world_size,
                 init_process_group_init_method,
@@ -273,7 +271,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
         init_process_group_init_method = get_process_group_init_method()
         expected_host_ip = subprocess.check_output(["hostname", "-i"]).decode().strip()
         mp.spawn(
-            fn=_test_get_internal_ip_from_master_node_in_dist_context_with_master_node_rank,
+            fn=_test_get_internal_ip_from_node,
             args=(
                 world_size,
                 init_process_group_init_method,
