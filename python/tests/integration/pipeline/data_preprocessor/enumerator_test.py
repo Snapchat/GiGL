@@ -495,16 +495,28 @@ class EnumeratorTest(unittest.TestCase):
                 edge_metadata.enumerated_edge_data_reference.reference_uri
             )
 
-        map_enum_node_type_metadata = {
+        map_enum_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata] = {
             node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
             for node_type_metadata in list_enumerator_node_type_metadata
+        }
+
+        map_enum_edge_type_metadata: dict[
+            Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
+        ] = {
+            (
+                edge_type_metadata.enumerated_edge_data_reference.edge_type,
+                edge_type_metadata.enumerated_edge_data_reference.edge_usage_type,
+            ): edge_type_metadata
+            for edge_type_metadata in list_enumerator_edge_type_metadata
         }
 
         # Queries the BigQuery enumerated node ID table to reconstruct the integer-to-original ID mapping.
         # Under the hood executes "SELECT original_node_id, enumerated_node_id FROM bq_unique_node_ids_enumerated_table"
         # to build a dict[int -> str] mapping. Also validates enumeration correctness by checking that
         # integer IDs are sequential (0 to n-1), within bounds, and that row count matches expected node count.
-        int_to_orig_node_id_map = self.fetch_enumerated_node_map_and_assert_correctness(
+        int_to_orig_node_id_map: dict[
+            int, str
+        ] = self.fetch_enumerated_node_map_and_assert_correctness(
             map_enum_node_type_metadata=map_enum_node_type_metadata
         )
 
@@ -519,15 +531,6 @@ class EnumeratorTest(unittest.TestCase):
             int_to_orig_node_id_map=int_to_orig_node_id_map,
             map_enum_node_type_metadata=map_enum_node_type_metadata,
         )
-
-        # Create edge metadata dictionary for validation
-        map_enum_edge_type_metadata = {
-            (
-                edge_type_metadata.enumerated_edge_data_reference.edge_type,
-                edge_type_metadata.enumerated_edge_data_reference.edge_usage_type,
-            ): edge_type_metadata
-            for edge_type_metadata in list_enumerator_edge_type_metadata
-        }
 
         # Validates edge enumeration correctness by comparing original vs enumerated edge data.
         # Under the hood queries each enumerated edge table to fetch all rows, converts integer
