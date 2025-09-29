@@ -507,6 +507,151 @@ class EnumeratorTest(unittest.TestCase):
             map_enum_edge_type_metadata=map_enum_edge_type_metadata,
         )
 
+    def test_partition_based_node_reading(self):
+        """Test that partition-based reading works correctly for node data."""
+        # Create partitioned node data reference
+        partitioned_node_reference = BigqueryNodeDataReference(
+            reference_uri=self.__input_nodes_data_reference.reference_uri,
+            node_type=_PERSON_NODE_TYPE,
+            identifier=_PERSON_NODE_IDENTIFIER_FIELD,
+            partition_key=_PERSON_NODE_IDENTIFIER_FIELD,
+            num_partitions=2,
+        )
+
+        enumerator = Enumerator()
+        list_enumerator_node_type_metadata_partitioned: list[EnumeratorNodeTypeMetadata]
+        list_enumerator_edge_type_metadata_partitioned: list[EnumeratorEdgeTypeMetadata]
+        (
+            list_enumerator_node_type_metadata_partitioned,
+            list_enumerator_edge_type_metadata_partitioned,
+        ) = enumerator.run(
+            applied_task_identifier=AppliedTaskIdentifier(
+                f"{self.__applied_task_identifier}_partitioned_nodes_test"
+            ),
+            node_data_references=[partitioned_node_reference],
+            edge_data_references=self.edge_data_references,
+            gcp_project=get_resource_config().project,
+        )
+
+        # Add the created tables to cleanup list
+        for node_metadata in list_enumerator_node_type_metadata_partitioned:
+            self.__bq_tables_to_cleanup_on_teardown.append(
+                node_metadata.enumerated_node_data_reference.reference_uri
+            )
+            self.__bq_tables_to_cleanup_on_teardown.append(
+                node_metadata.bq_unique_node_ids_enumerated_table_name
+            )
+        for edge_metadata in list_enumerator_edge_type_metadata_partitioned:
+            self.__bq_tables_to_cleanup_on_teardown.append(
+                edge_metadata.enumerated_edge_data_reference.reference_uri
+            )
+
+        # Verify that the partitioned reading produces the same enumeration results
+        map_enum_node_type_metadata_partitioned = {
+            node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
+            for node_type_metadata in list_enumerator_node_type_metadata_partitioned
+        }
+
+        int_to_orig_node_id_map_partitioned = (
+            self.fetch_enumerated_node_map_and_assert_correctness(
+                map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned
+            )
+        )
+
+        self.assert_enumerated_node_features_correctness(
+            int_to_orig_node_id_map=int_to_orig_node_id_map_partitioned,
+            map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned,
+        )
+
+    def test_partition_based_edge_reading(self):
+        """Test that partition-based reading works correctly for edge data."""
+        # Create partitioned edge data references
+        partitioned_main_edges_reference = BigqueryEdgeDataReference(
+            reference_uri=self.__input_main_edges_data_reference.reference_uri,
+            edge_type=_MESSAGES_EDGE_TYPE,
+            edge_usage_type=EdgeUsageType.MAIN,
+            src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
+            dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
+            partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
+            num_partitions=3,
+        )
+
+        partitioned_positive_edges_reference = BigqueryEdgeDataReference(
+            reference_uri=self.__input_positive_edges_data_reference.reference_uri,
+            edge_type=_MESSAGES_EDGE_TYPE,
+            edge_usage_type=EdgeUsageType.POSITIVE,
+            src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
+            dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
+            partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
+            num_partitions=3,
+        )
+
+        partitioned_negative_edges_reference = BigqueryEdgeDataReference(
+            reference_uri=self.__input_negative_edges_data_reference.reference_uri,
+            edge_type=_MESSAGES_EDGE_TYPE,
+            edge_usage_type=EdgeUsageType.NEGATIVE,
+            src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
+            dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
+            partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
+            num_partitions=3,
+        )
+
+        enumerator = Enumerator()
+        list_enumerator_node_type_metadata_partitioned: list[EnumeratorNodeTypeMetadata]
+        list_enumerator_edge_type_metadata_partitioned: list[EnumeratorEdgeTypeMetadata]
+        (
+            list_enumerator_node_type_metadata_partitioned,
+            list_enumerator_edge_type_metadata_partitioned,
+        ) = enumerator.run(
+            applied_task_identifier=AppliedTaskIdentifier(
+                f"{self.__applied_task_identifier}_partitioned_edges_test"
+            ),
+            node_data_references=self.node_data_references,
+            edge_data_references=[
+                partitioned_main_edges_reference,
+                partitioned_positive_edges_reference,
+                partitioned_negative_edges_reference,
+            ],
+            gcp_project=get_resource_config().project,
+        )
+
+        # Add the created tables to cleanup list
+        for node_metadata in list_enumerator_node_type_metadata_partitioned:
+            self.__bq_tables_to_cleanup_on_teardown.append(
+                node_metadata.enumerated_node_data_reference.reference_uri
+            )
+            self.__bq_tables_to_cleanup_on_teardown.append(
+                node_metadata.bq_unique_node_ids_enumerated_table_name
+            )
+        for edge_metadata in list_enumerator_edge_type_metadata_partitioned:
+            self.__bq_tables_to_cleanup_on_teardown.append(
+                edge_metadata.enumerated_edge_data_reference.reference_uri
+            )
+
+        # Verify that the partitioned reading produces the same enumeration results
+        map_enum_node_type_metadata_partitioned = {
+            node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
+            for node_type_metadata in list_enumerator_node_type_metadata_partitioned
+        }
+        map_enum_edge_type_metadata_partitioned = {
+            (
+                edge_type_metadata.enumerated_edge_data_reference.edge_type,
+                edge_type_metadata.enumerated_edge_data_reference.edge_usage_type,
+            ): edge_type_metadata
+            for edge_type_metadata in list_enumerator_edge_type_metadata_partitioned
+        }
+
+        int_to_orig_node_id_map_partitioned = (
+            self.fetch_enumerated_node_map_and_assert_correctness(
+                map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned
+            )
+        )
+
+        self.assert_enumerated_edge_features_correctness(
+            int_to_orig_node_id_map=int_to_orig_node_id_map_partitioned,
+            map_enum_edge_type_metadata=map_enum_edge_type_metadata_partitioned,
+        )
+
     def tearDown(self) -> None:
         for table_name in self.__bq_tables_to_cleanup_on_teardown:
             self.__bq_utils.delete_bq_table_if_exist(bq_table_path=table_name)
