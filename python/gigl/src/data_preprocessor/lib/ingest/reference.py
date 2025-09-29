@@ -45,9 +45,10 @@ class NodeDataReference(DataReference, ABC):
 
     node_type: NodeType
     identifier: Optional[str] = None
+    partition_key: Optional[str] = None
 
     def __repr__(self) -> str:
-        return f"NodeDataReference(node_type={self.node_type}, identifier={self.identifier}, reference_uri={self.reference_uri})"
+        return f"NodeDataReference(node_type={self.node_type}, identifier={self.identifier}, reference_uri={self.reference_uri}, partition_key={self.partition_key})"
 
 
 @dataclass(frozen=True)  # type: ignore
@@ -60,6 +61,7 @@ class EdgeDataReference(DataReference, ABC):
     edge_usage_type: EdgeUsageType = EdgeUsageType.MAIN
     src_identifier: Optional[str] = None
     dst_identifier: Optional[str] = None
+    partition_key: Optional[str] = None
 
     def __repr__(self) -> str:
-        return f"EdgeDataReference(edge_type={self.edge_type}, src_identifier={self.src_identifier}, dst_identifier={self.dst_identifier}, reference_uri={self.reference_uri})"
+        return f"EdgeDataReference(edge_type={self.edge_type}, src_identifier={self.src_identifier}, dst_identifier={self.dst_identifier}, reference_uri={self.reference_uri}, partition_key={self.partition_key})"
