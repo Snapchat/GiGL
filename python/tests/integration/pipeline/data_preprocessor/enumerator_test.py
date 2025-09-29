@@ -552,12 +552,14 @@ class EnumeratorTest(unittest.TestCase):
             for node_type_metadata in list_enumerator_node_type_metadata_partitioned
         }
 
+        # Runs a bigquery command to fetch the enumerated node map
         int_to_orig_node_id_map_partitioned = (
             self.fetch_enumerated_node_map_and_assert_correctness(
                 map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned
             )
         )
 
+        # Asserts that all node data references are enumerated correctly
         self.assert_enumerated_node_features_correctness(
             int_to_orig_node_id_map=int_to_orig_node_id_map_partitioned,
             map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned,
@@ -641,12 +643,14 @@ class EnumeratorTest(unittest.TestCase):
             for edge_type_metadata in list_enumerator_edge_type_metadata_partitioned
         }
 
+        # Runs a bigquery command to fetch the enumerated node map
         int_to_orig_node_id_map_partitioned = (
             self.fetch_enumerated_node_map_and_assert_correctness(
                 map_enum_node_type_metadata=map_enum_node_type_metadata_partitioned
             )
         )
 
+        # Asserts that all edge data references are enumerated correctly
         self.assert_enumerated_edge_features_correctness(
             int_to_orig_node_id_map=int_to_orig_node_id_map_partitioned,
             map_enum_edge_type_metadata=map_enum_edge_type_metadata_partitioned,
