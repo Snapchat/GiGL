@@ -162,7 +162,6 @@ class LightGCN(nn.Module):
         num_layers (int): K LightGCN propagation hops (default 2)
         layer_weights (Optional[List[float]]): weights for [e^(0), e^(1), ..., e^(K)]
             If None, uses uniform 1/(K+1).
-        torchrec_config (Optional[Dict]): reserved for future overrides
     """
 
     def __init__(
@@ -170,9 +169,8 @@ class LightGCN(nn.Module):
         node_type_to_num_nodes: dict[NodeType, int],
         embedding_dim: int = 64,
         num_layers: int = 2,
-        device: torch.device = torch.device("cuda"),
+        device: torch.device = torch.device("cpu"),
         layer_weights: Optional[list[float]] = None,
-        torchrec_config: Optional[dict] = None,
     ):
         super().__init__()
 
@@ -180,7 +178,6 @@ class LightGCN(nn.Module):
         self.embedding_dim = embedding_dim
         self.num_layers = num_layers
         self.device = device
-        self.torchrec_config = torchrec_config or {}
 
         # Construct LightGCN α weights: include e^(0) + K propagated layers ==> K+1 weights
         if layer_weights is None:
