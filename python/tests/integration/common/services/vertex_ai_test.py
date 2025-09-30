@@ -4,9 +4,16 @@ import unittest
 import uuid
 
 import kfp
+from parameterized import param, parameterized
 
 from gigl.common import UriFactory
-from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService, STORAGE_CLUSTER_MASTER_KEY, COMPUTE_CLUSTER_MASTER_KEY
+from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
+from gigl.common.services.vertex_ai import (
+    COMPUTE_CLUSTER_MASTER_KEY,
+    STORAGE_CLUSTER_MASTER_KEY,
+    VertexAiJobConfig,
+    VertexAIService,
+)
 from gigl.env.pipelines_config import get_resource_config
 
 
@@ -74,27 +81,38 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
 
         self.vertex_ai_service.launch_job(job_config)
 
-    def test_launch_graph_store_job(self):
-        command = ["python", "-c", f"import os; import logging; logging.info(f'Graph cluster master: {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']}}, compute cluster master: {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']}}')"]
+    @parameterized.expand(
+        [
+            param("one server, one client", num_servers=1, num_clients=1),
+            param("one server, two clients", num_servers=1, num_clients=2),
+            param("two servers, one client", num_servers=2, num_clients=1),
+            param("two servers, two clients", num_servers=2, num_clients=2),
+        ]
+    )
+    def test_launch_graph_store_job(self, _, num_servers, num_clients):
+        command = [
+            "python",
+            "-c",
+            f"import os; import logging; logging.info(f'Graph cluster master: {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']}}, compute cluster master: {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']}}')",
+        ]
         job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri="condaforge/miniforge3:25.3.0-1",
-            replica_count=2,
-            #machine_type="n1-standard-4",
+            container_uri="condaforge/miniforge3:25.3.0-1",  # different images for storage and compute
+            replica_count=num_servers,
+            machine_type="n1-standard-4",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
             command=command,
         )
         compute_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri="condaforge/miniforge3:25.3.0-1",
-            replica_count=2,
+            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,  # different image for storage and compute
+            replica_count=num_clients,
             command=command,
-            machine_type="n1-standard-32",
-            accelerator_type="NVIDIA_TESLA_T4",
-            accelerator_count=2,
+            machine_type="n2-standard-8",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
         )
-        self.vertex_ai_service.launch_graph_store_job(storage_cluster_config, compute_cluster_config)
-
+        self.vertex_ai_service.launch_graph_store_job(
+            storage_cluster_config, compute_cluster_config
+        )
 
     def _test_run_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:

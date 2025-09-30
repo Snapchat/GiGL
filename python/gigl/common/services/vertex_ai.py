@@ -82,12 +82,8 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[
     str
 ] = "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
 
-STORAGE_CLUSTER_MASTER_KEY: Final[
-    str
-] = "GIGL_STORAGE_CLUSTER_MASTER_KEY"
-COMPUTE_CLUSTER_MASTER_KEY: Final[
-    str
-] = "GIGL_COMPUTE_CLUSTER_MASTER_KEY"
+STORAGE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_STORAGE_CLUSTER_MASTER_KEY"
+COMPUTE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_COMPUTE_CLUSTER_MASTER_KEY"
 
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
@@ -147,7 +143,7 @@ class VertexAIService:
         """The GCP project that is being used for this service."""
         return self._project
 
-    def launch_job(self, job_config: VertexAiJobConfig) -> None:
+    def launch_job(self, job_config: VertexAiJobConfig) -> aiplatform.CustomJob:
         """
         Launch a Vertex AI CustomJob.
         See the docs for more info.
@@ -155,6 +151,9 @@ class VertexAIService:
 
         Args:
             job_config (VertexAiJobConfig): The configuration for the job.
+
+        Returns:
+            The completed CustomJob.
         """
         logger.info(f"Running Vertex AI job: {job_config.job_name}")
 
@@ -240,9 +239,20 @@ class VertexAIService:
             f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
         job.wait_for_completion()
+        return job
 
-    def launch_graph_store_job(self, storage_cluster: VertexAiJobConfig, compute_cluster: VertexAiJobConfig) -> None:
-        """Launch a Vertex AI Graph Store job."""
+    def launch_graph_store_job(
+        self, storage_cluster: VertexAiJobConfig, compute_cluster: VertexAiJobConfig
+    ) -> aiplatform.CustomJob:
+        """Launch a Vertex AI Graph Store job.
+
+        Args:
+            storage_cluster (VertexAiJobConfig): The configuration for the storage cluster.
+            compute_cluster (VertexAiJobConfig): The configuration for the compute cluster.
+
+        Returns:
+            The completed CustomJob.
+        """
         storage_machine_spec = _get_machine_spec(storage_cluster)
         compute_machine_spec = _get_machine_spec(compute_cluster)
         storage_disk_spec = _get_disk_spec(storage_cluster)
@@ -270,7 +280,7 @@ class VertexAIService:
             ),
             env_var.EnvVar(
                 name=COMPUTE_CLUSTER_MASTER_KEY,
-                value=str(storage_cluster.replica_count)
+                value=str(storage_cluster.replica_count),
             ),
         ]
 
@@ -294,6 +304,9 @@ class VertexAIService:
                 replica_count=storage_cluster.replica_count - 1,
             )
             worker_pool_specs.append(worker_spec)
+        else:
+            worker_pool_specs.append({})
+        worker_pool_specs.append({})
         worker_spec = WorkerPoolSpec(
             machine_spec=compute_machine_spec,
             container_spec=compute_container_spec,
@@ -324,6 +337,7 @@ class VertexAIService:
             f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
         job.wait_for_completion()
+        return job
 
     def run_pipeline(
         self,
@@ -435,16 +449,20 @@ class VertexAIService:
                 f"Please check the Vertex AI page to trace down the error."
             )
 
+
 def _get_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
     """Get the machine spec for a job config."""
     machine_spec = MachineSpec(
-            machine_type=job_config.machine_type,
+        machine_type=job_config.machine_type,
         accelerator_type=job_config.accelerator_type,
         accelerator_count=job_config.accelerator_count,
     )
     return machine_spec
 
-def _get_container_spec(job_config: VertexAiJobConfig, env_vars: list[env_var.EnvVar]) -> ContainerSpec:
+
+def _get_container_spec(
+    job_config: VertexAiJobConfig, env_vars: list[env_var.EnvVar]
+) -> ContainerSpec:
     """Get the container spec for a job config."""
     container_spec = ContainerSpec(
         image_uri=job_config.container_uri,
@@ -453,6 +471,7 @@ def _get_container_spec(job_config: VertexAiJobConfig, env_vars: list[env_var.En
         env=env_vars,
     )
     return container_spec
+
 
 def _get_disk_spec(job_config: VertexAiJobConfig) -> DiskSpec:
     """Get the disk spec for a job config."""
