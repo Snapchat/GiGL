@@ -27,11 +27,12 @@ def down_sample_node_ids_from_labels(
         node_ids (torch.Tensor): The node ids to down_sample Should be a 1D tensor of shape (N,).
         id2idx (torch.Tensor): Mapping from node IDs to indices in the feature tensor. Should be a 1D tensor of shape (max_node_id,).
         node_label_feats (torch.Tensor): The node label features. Should be a 2D tensor of shape (N, 1), where N is the number of nodes.
-        label_filter_fn (Callable[[torch.Tensor], torch.Tensor]): A callable that takes a tensor of
-            labels and returns a boolean mask, indicating which labels should be included. By default,
+        label_filter_fn (Callable[[torch.Tensor], torch.Tensor]): A callable that takes a tensor of labels of shape [N, 1]
+            and returns a boolean mask of the same [N, 1] shape, indicating which labels should be included. By default,
             filters out negative values.
     Returns:
-        torch.Tensor: The down_sampled node ids. Only nodes with valid labels are included in the output.
+        torch.Tensor: The down_sampled node ids of shape [M,], where M is the number of down_sampled node ids.
+            Only nodes with valid labels are included in the output.
     """
 
     # Use id2idx to get the feature indices directly
@@ -63,10 +64,11 @@ def down_sample_node_ids_from_dataset_labels(
         node_ids (torch.Tensor): The node ids to down_sample. Should be a 1D tensor of shape (N,).
         node_type (Optional[NodeType]): The node type to down_sample. If the dataset is heterogeneous, this must be provided.
         label_filter_fn (Callable[[torch.Tensor], torch.Tensor]): A callable that takes a tensor of
-            labels and returns a boolean mask, indicating which labels should be included. By default,
-            filters out negative values.
+            labels of shape [N, 1] and returns a boolean mask of the same [N, 1] shape, indicating which labels should be included.
+            By default, filters out negative values.
     Returns:
-        The down_sampled node ids. Only nodes with valid labels are included in the output.
+        torch.Tensor: The down_sampled node ids of shape [M,], where M is the number of down_sampled node ids.
+            Only nodes with valid labels are included in the output.
     """
 
     if isinstance(dataset.node_labels, Mapping):
