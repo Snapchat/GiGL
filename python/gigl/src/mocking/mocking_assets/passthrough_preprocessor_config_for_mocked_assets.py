@@ -1,6 +1,7 @@
 from typing import Any
 
 import gigl.src.mocking.lib.constants as test_tasks_constants
+from gigl.common.beam.partitioned_read import BigQueryPartitionedReadInfo
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.data_preprocessor.lib.data_preprocessor_config import (
@@ -134,6 +135,9 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
                 reference_uri=main_edges_bq_table_name,
                 edge_type=edge_type,
                 edge_usage_type=EdgeUsageType.MAIN,
+                partitioned_read_info=BigQueryPartitionedReadInfo(
+                    partition_key=self.__mocked_dataset.edge_src_column_name,
+                ),
             )
 
             default_edge_feature_fields: list[str] = [
