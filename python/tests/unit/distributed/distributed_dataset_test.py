@@ -19,6 +19,7 @@ from gigl.distributed import (
     build_dataset,
 )
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.utils.partition_book import RangePartitionBook
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -669,6 +670,95 @@ class DistributedDatasetTestCase(unittest.TestCase):
             assert isinstance(dataset.train_node_ids, torch.Tensor)
             assert isinstance(dataset.val_node_ids, torch.Tensor)
             assert isinstance(dataset.test_node_ids, torch.Tensor)
+
+    @parameterized.expand(
+        [
+            param(
+                "Test splitting negative nodes with tensor-based partitioning",
+                partition_output=PartitionOutput(
+                    node_partition_book=torch.zeros(10),
+                    edge_partition_book=None,
+                    partitioned_edge_index=GraphPartitionData(
+                        edge_index=torch.ones(20, 2), edge_ids=None
+                    ),
+                    partitioned_node_features=FeaturePartitionData(
+                        feats=torch.zeros(10, 2), ids=torch.arange(10)
+                    ),
+                    partitioned_edge_features=None,
+                    partitioned_positive_labels=None,
+                    partitioned_negative_labels=None,
+                    partitioned_node_labels=FeaturePartitionData(
+                        feats=torch.tensor(
+                            [2, -1, 1, -2, 0, -5, 3, -1, 1, -3]
+                        ).unsqueeze(1),
+                        ids=torch.arange(10),
+                    ),
+                ),
+            ),
+            param(
+                "Test splitting negative nodes with range-based partitioning",
+                partition_output=PartitionOutput(
+                    node_partition_book=RangePartitionBook(
+                        partition_bounds=[0, 10], partition_idx=0
+                    ),
+                    edge_partition_book=None,
+                    partitioned_edge_index=GraphPartitionData(
+                        edge_index=torch.ones(20, 2), edge_ids=None
+                    ),
+                    partitioned_node_features=FeaturePartitionData(
+                        feats=torch.zeros(10, 2), ids=None
+                    ),
+                    partitioned_edge_features=None,
+                    partitioned_positive_labels=None,
+                    partitioned_negative_labels=None,
+                    partitioned_node_labels=FeaturePartitionData(
+                        feats=torch.tensor(
+                            [2, -1, 1, -2, 0, -5, 3, -1, 1, -3]
+                        ).unsqueeze(1),
+                        ids=None,
+                    ),
+                ),
+            ),
+        ]
+    )
+    def test_nodes_with_negative_labels_excluded_from_splits(
+        self, _, partition_output: PartitionOutput
+    ):
+        """Test that nodes with labels < 0 are not included in train, val, or test splits."""
+
+        assert isinstance(
+            partition_output.partitioned_node_labels, FeaturePartitionData
+        )
+        node_labels_with_negatives = partition_output.partitioned_node_labels.feats
+
+        # Create splitter to perform train/val/test splitting
+        splitter = HashedNodeSplitter(num_val=0.3, num_test=0.3)
+
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output, splitter=splitter)
+
+        # Verify that all splits exist
+        assert isinstance(dataset.train_node_ids, torch.Tensor)
+        assert isinstance(dataset.val_node_ids, torch.Tensor)
+        assert isinstance(dataset.test_node_ids, torch.Tensor)
+
+        # Collect all node IDs that appear in any split
+        all_split_node_ids = torch.cat(
+            [dataset.train_node_ids, dataset.val_node_ids, dataset.test_node_ids]
+        )
+
+        # Get the labels for nodes that appear in splits
+        split_node_indices = all_split_node_ids
+        split_node_labels = node_labels_with_negatives[split_node_indices]
+
+        # Verify that no nodes with labels < 0 appear in any split
+        negative_label_mask = split_node_labels.squeeze() < 0
+        nodes_with_negative_labels_in_splits = all_split_node_ids[negative_label_mask]
+
+        self.assertTrue(
+            nodes_with_negative_labels_in_splits.numel() == 0,
+            f"Found {nodes_with_negative_labels_in_splits.numel()} nodes with labels < 0 in splits: {nodes_with_negative_labels_in_splits.tolist()}",
+        )
 
     # This tests that we can build a dataset when manually specifying a port.
     # TODO (mkolodner-sc): Remove this test once we deprecate the `port` field

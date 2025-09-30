@@ -26,6 +26,7 @@ from gigl.types.graph import (
     PartitionOutput,
 )
 from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeSplitter
+from gigl.utils.down_sampler import NodeLabelDownsampler
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
@@ -737,37 +738,66 @@ class DistDataset(glt.distributed.DistDataset):
         elif isinstance(splitter, NodeSplitter):
             split_start = time.time()
             logger.info("Starting splitting nodes...")
-            node_ids_to_split: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-            if isinstance(partition_output.partitioned_node_labels, Mapping):
-                assert isinstance(node_ids_on_machine, Mapping)
-                node_ids_to_split = {}
-                for (
-                    node_type,
-                    node_labels,
-                ) in partition_output.partitioned_node_labels.items():
-                    labels_to_split_indices = (node_labels.feats != -1).squeeze()
-                    node_ids_to_split[node_type] = node_ids_on_machine[node_type][
-                        labels_to_split_indices
-                    ]
-            elif isinstance(partition_output.partitioned_node_labels, FeaturePartitionData):
-                assert isinstance(node_ids_on_machine, torch.Tensor)
-                labels_to_split_indices = (
-                    partition_output.partitioned_node_labels.feats != -1
-                ).squeeze()
-                node_ids_to_split = node_ids_on_machine[labels_to_split_indices]
-            else:
-                raise ValueError(
-                    f"Partitioned node labels cannot be None if a NodeSplitter is specified"
-                )
-            # Every node is required to have a label, so we split among all ids on the current machine.
-            splits = splitter(node_ids=node_ids_to_split)
 
-            del node_ids_to_split, labels_to_split_indices
-            gc.collect()
-
+            initial_splits = splitter(node_ids=node_ids_on_machine)
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )
+
+            down_sampler = NodeLabelDownsampler()
+
+            node_label_feats: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            node_label_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+
+            if isinstance(partition_output.partitioned_node_labels, Mapping):
+                assert isinstance(node_ids_on_machine, Mapping)
+                node_label_ids = {}
+                node_label_feats = {}
+                for (
+                    node_type,
+                    node_label_data,
+                ) in partition_output.partitioned_node_labels.items():
+                    if node_label_data.ids is None:
+                        node_label_ids[node_type] = node_ids_on_machine[node_type]
+                    else:
+                        node_label_ids[node_type] = node_label_data.ids
+                    node_label_feats[node_type] = node_label_data.feats
+            elif isinstance(
+                partition_output.partitioned_node_labels, FeaturePartitionData
+            ):
+                assert isinstance(node_ids_on_machine, torch.Tensor)
+                if partition_output.partitioned_node_labels.ids is None:
+                    node_label_ids = node_ids_on_machine
+                else:
+                    node_label_ids = partition_output.partitioned_node_labels.ids
+                node_label_feats = partition_output.partitioned_node_labels.feats
+            else:
+                raise ValueError(
+                    f"Unsupported node labels type: {type(partition_output.partitioned_node_labels)}"
+                )
+
+            # Type narrowing for mypy: help it understand which overload to use
+            if isinstance(initial_splits, Mapping):
+                # Heterogeneous case
+                assert isinstance(node_label_ids, Mapping)
+                assert isinstance(node_label_feats, Mapping)
+                splits = down_sampler(
+                    splits=initial_splits,
+                    node_label_ids=node_label_ids,
+                    node_label_feats=node_label_feats,
+                )
+            else:
+                # Homogeneous case
+                assert isinstance(node_label_ids, torch.Tensor)
+                assert isinstance(node_label_feats, torch.Tensor)
+                splits = down_sampler(
+                    splits=initial_splits,
+                    node_label_ids=node_label_ids,
+                    node_label_feats=node_label_feats,
+                )
+
+            del initial_splits, node_label_ids, node_label_feats
+            gc.collect()
 
         # Handle data splitting and compute node IDs
         self._initialize_node_ids(
