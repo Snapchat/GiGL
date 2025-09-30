@@ -5,6 +5,7 @@ import google.cloud.bigquery as bigquery
 import pandas as pd
 
 import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
+from gigl.common.beam.partitioned_read import BigQueryPartitionedReadInfo
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.time import NODASH_DATETIME_FORMAT
@@ -209,6 +210,9 @@ class EnumeratorTest(unittest.TestCase):
             self.__input_positive_edges_data_reference.reference_uri,
             self.__input_negative_edges_data_reference.reference_uri,
         ]
+
+        self._node_num_partitions = _NODE_NUM_PARTITIONS
+        self._edge_num_partitions = _EDGE_NUM_PARTITIONS
 
         self.__upload_records_to_bq(
             data_reference=self.__input_nodes_data_reference,
@@ -457,13 +461,13 @@ class EnumeratorTest(unittest.TestCase):
 
     def _run_enumeration_test_and_validate(
         self,
-        test_suffix: str,
+        applied_task_identifier: str,
         node_data_references: list[BigqueryNodeDataReference],
         edge_data_references: list[BigqueryEdgeDataReference],
     ) -> None:
         """Helper method to run enumeration test and validate results.
         Args:
-            test_suffix (str): Suffix for the applied task identifier
+            applied_task_identifier (str): Applied task identifier for the current test
             node_data_references (list[BigqueryNodeDataReference]): List of node data references
             edge_data_references (list[BigqueryEdgeDataReference]): List of edge data references
         """
@@ -475,7 +479,7 @@ class EnumeratorTest(unittest.TestCase):
             list_enumerator_edge_type_metadata,
         ) = enumerator.run(
             applied_task_identifier=AppliedTaskIdentifier(
-                f"{self.__applied_task_identifier}_{test_suffix}"
+                applied_task_identifier,
             ),
             node_data_references=node_data_references,
             edge_data_references=edge_data_references,
@@ -545,60 +549,50 @@ class EnumeratorTest(unittest.TestCase):
     def test_full_enumeration(self):
         """Test that full table enumeration works correctly for both node and edge data."""
         self._run_enumeration_test_and_validate(
-            test_suffix="full_table_enumeration",
+            applied_task_identifier=f"{self.__applied_task_identifier}_full_table_enumeration",
             node_data_references=self.node_data_references,
             edge_data_references=self.edge_data_references,
         )
 
     def test_partitioned_enumeration(self):
         """Test that partitioned enumeration works correctly for both node and edge data."""
+        partitioned_node_references: list[BigqueryNodeDataReference] = []
+        partitioned_edge_references: list[BigqueryEdgeDataReference] = []
 
-        partitioned_node_reference = BigqueryNodeDataReference(
-            reference_uri=self.__input_nodes_data_reference.reference_uri,
-            node_type=_PERSON_NODE_TYPE,
-            identifier=_PERSON_NODE_IDENTIFIER_FIELD,
-            partition_key=_PERSON_NODE_IDENTIFIER_FIELD,
-            num_partitions=_NODE_NUM_PARTITIONS,
-        )
+        for node_ref in self.node_data_references:
+            assert node_ref.identifier is not None
+            partitioned_node_references.append(
+                BigqueryNodeDataReference(
+                    reference_uri=node_ref.reference_uri,
+                    node_type=node_ref.node_type,
+                    identifier=node_ref.identifier,
+                    partitioned_read_info=BigQueryPartitionedReadInfo(
+                        partition_key=node_ref.identifier,
+                        num_partitions=self._node_num_partitions,
+                    ),
+                )
+            )
 
-        partitioned_main_edges_reference = BigqueryEdgeDataReference(
-            reference_uri=self.__input_main_edges_data_reference.reference_uri,
-            edge_type=_MESSAGES_EDGE_TYPE,
-            edge_usage_type=EdgeUsageType.MAIN,
-            src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
-            partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            num_partitions=_EDGE_NUM_PARTITIONS,
-        )
-
-        partitioned_positive_edges_reference = BigqueryEdgeDataReference(
-            reference_uri=self.__input_positive_edges_data_reference.reference_uri,
-            edge_type=_MESSAGES_EDGE_TYPE,
-            edge_usage_type=EdgeUsageType.POSITIVE,
-            src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
-            partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            num_partitions=_EDGE_NUM_PARTITIONS,
-        )
-
-        partitioned_negative_edges_reference = BigqueryEdgeDataReference(
-            reference_uri=self.__input_negative_edges_data_reference.reference_uri,
-            edge_type=_MESSAGES_EDGE_TYPE,
-            edge_usage_type=EdgeUsageType.NEGATIVE,
-            src_identifier=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            dst_identifier=_MESSAGES_EDGE_DST_IDENTIFIER_FIELD,
-            partition_key=_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD,
-            num_partitions=_EDGE_NUM_PARTITIONS,
-        )
+        for edge_ref in self.edge_data_references:
+            assert edge_ref.src_identifier is not None
+            partitioned_edge_references.append(
+                BigqueryEdgeDataReference(
+                    reference_uri=edge_ref.reference_uri,
+                    edge_type=edge_ref.edge_type,
+                    edge_usage_type=edge_ref.edge_usage_type,
+                    src_identifier=edge_ref.src_identifier,
+                    dst_identifier=edge_ref.dst_identifier,
+                    partitioned_read_info=BigQueryPartitionedReadInfo(
+                        partition_key=edge_ref.src_identifier,
+                        num_partitions=self._edge_num_partitions,
+                    ),
+                )
+            )
 
         self._run_enumeration_test_and_validate(
-            test_suffix="partitioned_table_enumeration",
-            node_data_references=[partitioned_node_reference],
-            edge_data_references=[
-                partitioned_main_edges_reference,
-                partitioned_positive_edges_reference,
-                partitioned_negative_edges_reference,
-            ],
+            applied_task_identifier=f"{self.__applied_task_identifier}_partitioned_table_enumeration",
+            node_data_references=partitioned_node_references,
+            edge_data_references=partitioned_edge_references,
         )
 
     def tearDown(self) -> None:
