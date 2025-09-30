@@ -80,9 +80,7 @@ def down_sample_node_ids_from_dataset_labels(
     else:
         labels = dataset.node_labels
 
-    # We need to lazy init the labels so that its feature and id2index fields are populated. Otherwise, these values
-    # will be None.
-    labels.lazy_init_with_ipc_handle()
+    assert labels.size(0) == node_ids.size(0)
 
     down_sampled_node_ids = down_sample_node_ids_from_labels(
         node_ids=node_ids,
