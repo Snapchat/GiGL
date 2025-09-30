@@ -59,8 +59,8 @@ def get_free_ports_from_master_node(
 
 
 def get_free_ports_from_node(
-    num_ports=1,
-    node_rank: int = 0,
+    num_ports: int,
+    node_rank: int,
     _global_rank_override: Optional[int] = None,
 ) -> list[int]:
     """
@@ -111,7 +111,7 @@ def get_internal_ip_from_master_node(
 
 
 def get_internal_ip_from_node(
-    node_rank: int = 0,
+    node_rank: int,
     _global_rank_override: Optional[int] = None,
 ) -> str:
     """
