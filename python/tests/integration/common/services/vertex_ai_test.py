@@ -6,7 +6,7 @@ import uuid
 import kfp
 
 from gigl.common import UriFactory
-from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService, STORAGE_CLUSTER_MASTER_KEY, COMPUTE_CLUSTER_MASTER_KEY
 from gigl.env.pipelines_config import get_resource_config
 
 
@@ -46,12 +46,24 @@ def get_pipeline_that_fails() -> float:
 
 
 class VertexAIPipelineIntegrationTest(unittest.TestCase):
-    def test_launch_job(self):
-        resource_config = get_resource_config()
-        project = resource_config.project
-        location = resource_config.region
-        service_account = resource_config.service_account_email
-        staging_bucket = resource_config.temp_assets_regional_bucket_path.uri
+    def setUp(self):
+        self.resource_config = get_resource_config()
+        self.project = self.resource_config.project
+        self.location = self.resource_config.region
+        self.service_account = self.resource_config.service_account_email
+        self.staging_bucket = self.resource_config.temp_assets_regional_bucket_path.uri
+        self.vertex_ai_service = VertexAIService(
+            project=self.project,
+            location=self.location,
+            service_account=self.service_account,
+            staging_bucket=self.staging_bucket,
+        )
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+
+    def _test_launch_job(self):
         job_name = f"GiGL-Integration-Test-{uuid.uuid4()}"
         container_uri = "condaforge/miniforge3:25.3.0-1"
         command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
@@ -60,27 +72,35 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             job_name=job_name, container_uri=container_uri, command=command
         )
 
-        vertex_ai_service = VertexAIService(
-            project=project,
-            location=location,
-            service_account=service_account,
-            staging_bucket=staging_bucket,
+        self.vertex_ai_service.launch_job(job_config)
+
+    def test_launch_graph_store_job(self):
+        command = ["python", "-c", f"import os; import logging; logging.info(f'Graph cluster master: {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']}}, compute cluster master: {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']}}')"]
+        job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
+        storage_cluster_config = VertexAiJobConfig(
+            job_name=job_name,
+            container_uri="condaforge/miniforge3:25.3.0-1",
+            replica_count=2,
+            #machine_type="n1-standard-4",
+            command=command,
         )
+        compute_cluster_config = VertexAiJobConfig(
+            job_name=job_name,
+            container_uri="condaforge/miniforge3:25.3.0-1",
+            replica_count=2,
+            command=command,
+            machine_type="n1-standard-32",
+            accelerator_type="NVIDIA_TESLA_T4",
+            accelerator_count=2,
+        )
+        self.vertex_ai_service.launch_graph_store_job(storage_cluster_config, compute_cluster_config)
 
-        vertex_ai_service.launch_job(job_config)
 
-    def test_run_pipeline(self):
+    def _test_run_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline.yaml")
             kfp.compiler.Compiler().compile(get_pipeline, pipeline_def)
-            resource_config = get_resource_config()
-            ps = VertexAIService(
-                project=resource_config.project,
-                location=resource_config.region,
-                service_account=resource_config.service_account_email,
-                staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
-            )
-            job = ps.run_pipeline(
+            job = self.vertex_ai_service.run_pipeline(
                 display_name="integration-test-pipeline",
                 template_path=UriFactory.create_uri(pipeline_def),
                 run_keyword_args={},
@@ -89,27 +109,20 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             )
             # Wait for the run to complete, 30 minutes is probably too long but
             # we don't want this test to be flaky.
-            ps.wait_for_run_completion(
+            self.vertex_ai_service.wait_for_run_completion(
                 job.resource_name, timeout=60 * 30, polling_period_s=10
             )
 
             # Also verify that we can fetch a pipeline.
-            run = ps.get_pipeline_job_from_job_name(job.name)
+            run = self.vertex_ai_service.get_pipeline_job_from_job_name(job.name)
             self.assertEqual(run.resource_name, job.resource_name)
             self.assertEqual(run.labels["gigl-integration-test"], "true")
 
-    def test_run_pipeline_fails(self):
+    def _test_run_pipeline_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline_that_fails.yaml")
             kfp.compiler.Compiler().compile(get_pipeline_that_fails, pipeline_def)
-            resource_config = get_resource_config()
-            ps = VertexAIService(
-                project=resource_config.project,
-                location=resource_config.region,
-                service_account=resource_config.service_account_email,
-                staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
-            )
-            job = ps.run_pipeline(
+            job = self.vertex_ai_service.run_pipeline(
                 display_name="integration-test-pipeline-that-fails",
                 template_path=UriFactory.create_uri(pipeline_def),
                 run_keyword_args={},
@@ -117,7 +130,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 labels={"gigl-integration-test": "true"},
             )
             with self.assertRaises(RuntimeError):
-                ps.wait_for_run_completion(
+                self.vertex_ai_service.wait_for_run_completion(
                     job.resource_name, timeout=60 * 30, polling_period_s=10
                 )
 

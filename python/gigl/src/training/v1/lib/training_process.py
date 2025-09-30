@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import datetime
 import multiprocessing as mp
 import sys
 import tempfile
@@ -354,8 +355,9 @@ class GnnTrainingProcess:
         use_cuda = device.type != "cpu"
         if should_distribute():
             distributed_backend = get_distributed_backend(use_cuda=use_cuda)
-            logger.info(f"Using distributed PyTorch with {distributed_backend}")
-            torch.distributed.init_process_group(backend=distributed_backend)
+            timeout = datetime.timedelta(minutes=45)
+            logger.info(f"Using distributed PyTorch with {distributed_backend} and timeout {timeout}")
+            torch.distributed.init_process_group(backend=distributed_backend, timeout=timeout)
             logger.info("Successfully initiated distributed backend!")
 
     @flushes_metrics(get_metrics_service_instance_fn=get_metrics_service_instance)
