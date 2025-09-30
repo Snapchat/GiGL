@@ -16,7 +16,7 @@ import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
-from gigl.distributed.dist_link_prediction_dataset import DistLinkPredictionDataset
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.sampler import ABLPNodeSamplerInput
@@ -44,7 +44,7 @@ logger = Logger()
 class DistABLPLoader(DistLoader):
     def __init__(
         self,
-        dataset: DistLinkPredictionDataset,
+        dataset: DistDataset,
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[
@@ -110,7 +110,7 @@ class DistABLPLoader(DistLoader):
             - `y_negative`: {0: torch.tensor([2])} # 2 is the only negative label for node 0
 
         Args:
-            dataset (DistLinkPredictionDataset): The dataset to sample from.
+            dataset (DistDataset): The dataset to sample from.
             num_neighbors (list[int] or dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
@@ -297,9 +297,14 @@ class DistABLPLoader(DistLoader):
         ) = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
         self._supervision_edge_type = supervision_edge_type
 
+        curr_process_nodes = shard_nodes_by_process(
+            input_nodes=anchor_node_ids,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
+        )
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset=dataset,
-            node_ids=anchor_node_ids,
+            node_ids=curr_process_nodes,
             positive_label_edge_type=self._positive_label_edge_type,
             negative_label_edge_type=self._negative_label_edge_type,
         )
@@ -314,12 +319,6 @@ class DistABLPLoader(DistLoader):
 
         num_neighbors = patch_fanout_for_sampling(
             dataset.get_edge_types(), num_neighbors
-        )
-
-        curr_process_nodes = shard_nodes_by_process(
-            input_nodes=anchor_node_ids,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
         )
 
         self._node_feature_info = dataset.node_feature_info

@@ -21,8 +21,8 @@ DEFAULT_HOMOGENEOUS_EDGE_TYPE = EdgeType(
     dst_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-_POSITIVE_LABEL_TAG = "gigl_positive"
-_NEGATIVE_LABEL_TAG = "gigl_negative"
+_POSITIVE_LABEL_TAG = "_gigl_positive"
+_NEGATIVE_LABEL_TAG = "_gigl_negative"
 
 # We really should support PyG EdgeType natively but since we type ignore it that's not ideal atm...
 # We can use this TypeVar to try and stem the bleeding (hopefully).
@@ -62,7 +62,7 @@ class PartitionOutput:
     node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
 
     # Edge partition book
-    edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]]
+    edge_partition_book: Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]
 
     # Partitioned edge index on current rank. This field will always be populated after partitioning. However, we may set this
     # field to None during dataset.build() in order to minimize the peak memory usage, and as a result type this as Optional.
@@ -94,11 +94,9 @@ class PartitionOutput:
     # In practice, we require the IDS of the partitioned node labels field to be equal to the ids of the partitioned node features field, if it exists.
     # This is because the partitioned node labels should be partitioned along with the node features so that we don't need to track two separate node ID stores,
     # which saves a lot of memory.
-    # TODO (mkolodner-sc): This field currently defaults to None since it is not set as output of the partitioner, but instead is added after.
-    # Once this field is set inside the partitioner, we can remove this default
     partitioned_node_labels: Optional[
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
-    ] = None
+    ]
 
 
 @dataclass(frozen=True)
@@ -141,6 +139,8 @@ class LoadedGraphTensors:
     node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     # Unpartitioned Node Features
     node_features: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
+    # Unpartitioned Node Labels
+    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
     # Unpartitioned Edge Index
     edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     # Unpartitioned Edge Features
@@ -267,7 +267,7 @@ def message_passing_to_positive_label(
     """
     edge_type = (
         str(message_passing_edge_type[0]),
-        f"{message_passing_edge_type[1]}_{_POSITIVE_LABEL_TAG}",
+        f"{message_passing_edge_type[1]}{_POSITIVE_LABEL_TAG}",
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
@@ -291,7 +291,7 @@ def message_passing_to_negative_label(
     """
     edge_type = (
         str(message_passing_edge_type[0]),
-        f"{message_passing_edge_type[1]}_{_NEGATIVE_LABEL_TAG}",
+        f"{message_passing_edge_type[1]}{_NEGATIVE_LABEL_TAG}",
         str(message_passing_edge_type[2]),
     )
     if isinstance(message_passing_edge_type, EdgeType):
@@ -313,9 +313,30 @@ def is_label_edge_type(
     Returns:
         bool: True if the edge type is a label edge type, False otherwise.
     """
-    return _POSITIVE_LABEL_TAG in str(edge_type[1]) or _NEGATIVE_LABEL_TAG in str(
-        edge_type[1]
+    relation = str(edge_type[1])
+    return relation.endswith(_POSITIVE_LABEL_TAG) or relation.endswith(
+        _NEGATIVE_LABEL_TAG
     )
+
+
+def label_edge_type_to_message_passing_edge_type(
+    label_edge_type: _EdgeType,
+) -> _EdgeType:
+    """Convert a label edge type to a message passing edge type."""
+    if not is_label_edge_type(label_edge_type):
+        raise ValueError(f"Edge type {label_edge_type} is not a label edge type.")
+    relation = str(label_edge_type[1])
+    if relation.endswith(_POSITIVE_LABEL_TAG):
+        relation = relation.removesuffix(_POSITIVE_LABEL_TAG)
+    elif relation.endswith(_NEGATIVE_LABEL_TAG):
+        relation = relation.removesuffix(_NEGATIVE_LABEL_TAG)
+    else:
+        raise ValueError(f"Edge type {label_edge_type} is not a label edge type.")
+
+    if isinstance(label_edge_type, EdgeType):
+        return EdgeType(label_edge_type[0], Relation(relation), label_edge_type[2])
+    else:
+        return (label_edge_type[0], relation, label_edge_type[2])
 
 
 def select_label_edge_types(

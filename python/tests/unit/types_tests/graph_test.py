@@ -10,6 +10,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     LoadedGraphTensors,
     is_label_edge_type,
+    label_edge_type_to_message_passing_edge_type,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
     select_label_edge_types,
@@ -273,7 +274,7 @@ class GraphTypesTyest(unittest.TestCase):
             ),
         ]
     )
-    def test_treat_labels_as_edges_success(
+    def test_treat_supervision_edges_as_graph_edges(
         self,
         _,
         node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -288,6 +289,7 @@ class GraphTypesTyest(unittest.TestCase):
         graph_tensors = LoadedGraphTensors(
             node_ids=node_ids,
             node_features=node_features,
+            node_labels=None,
             edge_index=edge_index,
             edge_features=edge_features,
             positive_label=positive_label,
@@ -375,6 +377,69 @@ class GraphTypesTyest(unittest.TestCase):
             self.assertTrue(is_label_edge_type(edge_type=input_edge_type))
         else:
             self.assertFalse(is_label_edge_type(edge_type=input_edge_type))
+
+    @parameterized.expand(
+        [
+            param(
+                "non_label_edge_type_tuple",
+                input_edge_type=("foo", "regular_relation", "bar"),
+            ),
+            param(
+                "non_label_edge_type_edgetype",
+                input_edge_type=EdgeType(
+                    NodeType("foo"), Relation("regular_relation"), NodeType("bar")
+                ),
+            ),
+        ]
+    )
+    def test_label_edge_type_to_message_passing_edge_type_error_cases(
+        self, _, input_edge_type
+    ):
+        """Test that the function raises ValueError for non-label edge types."""
+        with self.assertRaises(ValueError, msg="is not a label edge type"):
+            label_edge_type_to_message_passing_edge_type(input_edge_type)
+
+    @parameterized.expand(
+        [
+            param(
+                "positive_label_tuple",
+                input_edge_type=("foo", "relation_gigl_positive", "bar"),
+                expected_output=("foo", "relation", "bar"),
+            ),
+            param(
+                "negative_label_tuple",
+                input_edge_type=("foo", "relation_gigl_negative", "bar"),
+                expected_output=("foo", "relation", "bar"),
+            ),
+            param(
+                "positive_label_edgetype",
+                input_edge_type=EdgeType(
+                    NodeType("foo"), Relation("relation_gigl_positive"), NodeType("bar")
+                ),
+                expected_output=EdgeType(
+                    NodeType("foo"), Relation("relation"), NodeType("bar")
+                ),
+            ),
+            param(
+                "negative_label_edgetype",
+                input_edge_type=EdgeType(
+                    NodeType("foo"), Relation("relation_gigl_negative"), NodeType("bar")
+                ),
+                expected_output=EdgeType(
+                    NodeType("foo"), Relation("relation"), NodeType("bar")
+                ),
+            ),
+        ]
+    )
+    def test_label_edge_type_to_message_passing_edge_type_valid_cases(
+        self, _, input_edge_type, expected_output
+    ):
+        """Test that the function correctly converts label edge types to message passing edge types."""
+        result = label_edge_type_to_message_passing_edge_type(input_edge_type)
+        self.assertEqual(result, expected_output)
+
+        # Ensure the result type matches the input type
+        self.assertEqual(type(result), type(expected_output))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Callable, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
 import tensorflow as tf
@@ -11,20 +11,12 @@ from gigl.common import Uri
 
 # TODO (mkolodner-sc): Move these variables to a more general location, as they are used even outside of context of data preprocessor
 
-# Note: we use `typing.Dict` here instead of `dict` as the version of Beam we are on (2.56.0)
-# will see some failures when running with very large data and `dict`.
-# We are not sure what the root cause here is,
-# this may be related to our version of Beam only parsing `typing` annotations [1]
-# and dicts having some special Coder [2].
-# If/when we upgrade beam versions, we could revisit this.
-# [1]: https://github.com/apache/beam/blob/96d2a281cd69698463d5455861335b4d7d09e795/sdks/python/apache_beam/typehints/native_type_compatibility.py#L277-L279
-# [2]: https://github.com/apache/beam/blob/96d2a281cd69698463d5455861335b4d7d09e795/sdks/python/apache_beam/coders/typecoders.py#L96
-InstanceDict = Dict[str, Any]
-TFTensorDict = Dict[str, common_types.TensorType]
-FeatureSpecDict = Dict[str, common_types.FeatureSpecType]
-FeatureIndexDict = Dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
-FeatureSchemaDict = Dict[str, Feature]
-FeatureVocabDict = Dict[str, list[str]]
+InstanceDict = dict[str, Any]
+TFTensorDict = dict[str, common_types.TensorType]
+FeatureSpecDict = dict[str, common_types.FeatureSpecType]
+FeatureIndexDict = dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
+FeatureSchemaDict = dict[str, Feature]
+FeatureVocabDict = dict[str, list[str]]
 
 
 # Only these 3 dtypes are supported in TFTransform
