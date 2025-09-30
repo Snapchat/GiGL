@@ -21,11 +21,11 @@ class TestNodeLabelDownSampler(unittest.TestCase):
         node_label_feats = torch.tensor([1, -1, 2, 4, 1, 6, -1, -2]).unsqueeze(1)
         node_label_ids = torch.tensor([10, 6, 20, 4, 3, 15, 1, 0])
 
-        id2idx_tensor = id2idx(node_label_ids)
+        id2index = id2idx(node_label_ids)
 
         down_sampled_node_ids = down_sample_node_ids_from_labels(
             node_ids=node_ids,
-            id2idx=id2idx_tensor,
+            id2idx=id2index,
             node_label_feats=node_label_feats,
         )
 
@@ -41,13 +41,13 @@ class TestNodeLabelDownSampler(unittest.TestCase):
         node_label_feats = torch.tensor([1, -1, 2, 4, 1, 6, -1, -2]).unsqueeze(1)
         node_label_ids = torch.tensor([10, 6, 20, 4, 3, 15, 1, 0])
 
-        id2idx_tensor = id2idx(node_label_ids)
+        id2index = id2idx(node_label_ids)
 
         # Mock the Feature object
         mock_labels = Mock()
         mock_labels.lazy_init_with_ipc_handle = Mock()
         mock_labels.feature_tensor = node_label_feats
-        mock_labels.id2idx = id2idx_tensor
+        mock_labels.id2index = id2index
 
         # Mock the DistDataset object for homogeneous case
         mock_dataset = Mock()
@@ -73,13 +73,13 @@ class TestNodeLabelDownSampler(unittest.TestCase):
         node_label_feats = torch.tensor([1, -1, 2, 4, 1, 6, -1, -2]).unsqueeze(1)
         node_label_ids = torch.tensor([10, 6, 20, 4, 3, 15, 1, 0])
 
-        id2idx_tensor = id2idx(node_label_ids)
+        id2index = id2idx(node_label_ids)
 
         # Mock the Feature object for the specific node type
         mock_labels = Mock()
         mock_labels.lazy_init_with_ipc_handle = Mock()
         mock_labels.feature_tensor = node_label_feats
-        mock_labels.id2idx = id2idx_tensor
+        mock_labels.id2index = id2index
 
         # Mock the DistDataset object for heterogeneous case
         mock_dataset = Mock()
@@ -107,13 +107,13 @@ class TestNodeLabelDownSampler(unittest.TestCase):
         node_label_feats = torch.tensor([1, 3, 5]).unsqueeze(1)  # 1, 3, 5
         node_label_ids = torch.tensor([1, 2, 3])
 
-        id2idx_tensor = id2idx(node_label_ids)
+        id2index = id2idx(node_label_ids)
 
         # Mock objects
         mock_labels = Mock()
         mock_labels.lazy_init_with_ipc_handle = Mock()
         mock_labels.feature_tensor = node_label_feats
-        mock_labels.id2idx = id2idx_tensor
+        mock_labels.id2index = id2index
 
         mock_dataset = Mock()
         mock_dataset.node_labels = mock_labels

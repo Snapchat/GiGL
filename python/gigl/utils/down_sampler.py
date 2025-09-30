@@ -75,7 +75,7 @@ def down_sample_node_ids_from_dataset_labels(
 
     down_sampled_node_ids = down_sample_node_ids_from_labels(
         node_ids=node_ids,
-        id2idx=labels.id2idx,
+        id2idx=labels.id2index,
         node_label_feats=labels.feature_tensor,
         label_filter_fn=label_filter_fn,
     )
