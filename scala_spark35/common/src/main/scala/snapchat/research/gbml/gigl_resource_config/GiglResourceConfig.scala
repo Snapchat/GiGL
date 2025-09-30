@@ -86,7 +86,7 @@ final case class GiglResourceConfig(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       sharedResource.sharedResourceConfigUri.foreach { __v =>
@@ -275,8 +275,8 @@ object GiglResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.res
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
-  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(13)
-  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(13)
+  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(14)
+  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(14)
   def messageCompanionForFieldNumber(__number: _root_.scala.Int): _root_.scalapb.GeneratedMessageCompanion[_] = {
     var __out: _root_.scalapb.GeneratedMessageCompanion[_] = null
     (__number: @_root_.scala.unchecked) match {
@@ -320,7 +320,7 @@ object GiglResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.res
       override def number: _root_.scala.Int = 0
       override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
     }
-  
+
     @SerialVersionUID(0L)
     final case class SharedResourceConfigUri(value: _root_.scala.Predef.String) extends snapchat.research.gbml.gigl_resource_config.GiglResourceConfig.SharedResource {
       type ValueType = _root_.scala.Predef.String

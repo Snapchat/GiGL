@@ -230,8 +230,9 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     https://github.com/googleapis/python-aiplatform/blob/58fbabdeeefd1ccf1a9d0c22eeb5606aeb9c2266/google/cloud/aiplatform/jobs.py#L2252-L2253
     """
     gcp_region_override: builtins.str
-    """Region override.
+    """Region override
     If provided, then the Vertex AI Job will be launched in the provided region.
+    Otherwise, will launch jobs in the region specified at CommonComputeConfig.region
     ex: "us-west1"
     NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
     """
@@ -298,6 +299,34 @@ class LocalResourceConfig(google.protobuf.message.Message):
 
 global___LocalResourceConfig = LocalResourceConfig
 
+class VertexAiGraphStoreConfig(google.protobuf.message.Message):
+    """Configuration for lauching Vertex AI clusters with both graph store and compute pools
+    Under the hood, this uses Vertex AI Multi-Pool Training
+    See https://cloud.google.com/vertex-ai/docs/training/distributed-training for more info.
+    This cluster setup should be used when you want store your graph on separate machines from the compute machines
+    e.g. you can get lots of big memory machines and separate gpu machines individually,
+    but getting lots of gpu machines with lots of memory is challenging.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    GRAPH_STORE_POOL_FIELD_NUMBER: builtins.int
+    COMPUTE_POOL_FIELD_NUMBER: builtins.int
+    @property
+    def graph_store_pool(self) -> global___VertexAiResourceConfig: ...
+    @property
+    def compute_pool(self) -> global___VertexAiResourceConfig: ...
+    def __init__(
+        self,
+        *,
+        graph_store_pool: global___VertexAiResourceConfig | None = ...,
+        compute_pool: global___VertexAiResourceConfig | None = ...,
+    ) -> None: ...
+    def HasField(self, field_name: typing_extensions.Literal["compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool"]) -> None: ...
+
+global___VertexAiGraphStoreConfig = VertexAiGraphStoreConfig
+
 class DistributedTrainerConfig(google.protobuf.message.Message):
     """(deprecated)
     Configuration for distributed training resources
@@ -335,22 +364,26 @@ class TrainerResourceConfig(google.protobuf.message.Message):
     VERTEX_AI_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
     KFP_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
     LOCAL_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
+    VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
     @property
     def vertex_ai_trainer_config(self) -> global___VertexAiResourceConfig: ...
     @property
     def kfp_trainer_config(self) -> global___KFPResourceConfig: ...
     @property
     def local_trainer_config(self) -> global___LocalResourceConfig: ...
+    @property
+    def vertex_ai_graph_store_trainer_config(self) -> global___VertexAiGraphStoreConfig: ...
     def __init__(
         self,
         *,
         vertex_ai_trainer_config: global___VertexAiResourceConfig | None = ...,
         kfp_trainer_config: global___KFPResourceConfig | None = ...,
         local_trainer_config: global___LocalResourceConfig | None = ...,
+        vertex_ai_graph_store_trainer_config: global___VertexAiGraphStoreConfig | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing_extensions.Literal["kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing_extensions.Literal["kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing_extensions.Literal["trainer_config", b"trainer_config"]) -> typing_extensions.Literal["vertex_ai_trainer_config", "kfp_trainer_config", "local_trainer_config"] | None: ...
+    def HasField(self, field_name: typing_extensions.Literal["kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["trainer_config", b"trainer_config"]) -> typing_extensions.Literal["vertex_ai_trainer_config", "kfp_trainer_config", "local_trainer_config", "vertex_ai_graph_store_trainer_config"] | None: ...
 
 global___TrainerResourceConfig = TrainerResourceConfig
 
@@ -362,22 +395,26 @@ class InferencerResourceConfig(google.protobuf.message.Message):
     VERTEX_AI_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
     DATAFLOW_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
     LOCAL_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
+    VERTEX_AI_GRAPH_STORE_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
     @property
     def vertex_ai_inferencer_config(self) -> global___VertexAiResourceConfig: ...
     @property
     def dataflow_inferencer_config(self) -> global___DataflowResourceConfig: ...
     @property
     def local_inferencer_config(self) -> global___LocalResourceConfig: ...
+    @property
+    def vertex_ai_graph_store_inferencer_config(self) -> global___VertexAiGraphStoreConfig: ...
     def __init__(
         self,
         *,
         vertex_ai_inferencer_config: global___VertexAiResourceConfig | None = ...,
         dataflow_inferencer_config: global___DataflowResourceConfig | None = ...,
         local_inferencer_config: global___LocalResourceConfig | None = ...,
+        vertex_ai_graph_store_inferencer_config: global___VertexAiGraphStoreConfig | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing_extensions.Literal["dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing_extensions.Literal["dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing_extensions.Literal["inferencer_config", b"inferencer_config"]) -> typing_extensions.Literal["vertex_ai_inferencer_config", "dataflow_inferencer_config", "local_inferencer_config"] | None: ...
+    def HasField(self, field_name: typing_extensions.Literal["dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["inferencer_config", b"inferencer_config"]) -> typing_extensions.Literal["vertex_ai_inferencer_config", "dataflow_inferencer_config", "local_inferencer_config", "vertex_ai_graph_store_inferencer_config"] | None: ...
 
 global___InferencerResourceConfig = InferencerResourceConfig
 
