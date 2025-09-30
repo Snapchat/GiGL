@@ -174,22 +174,22 @@ class LightGCN(nn.Module):
     ):
         super().__init__()
 
-        self.node_type_to_num_nodes = node_type_to_num_nodes
-        self.embedding_dim = embedding_dim
-        self.num_layers = num_layers
-        self.device = device
+        self._node_type_to_num_nodes = node_type_to_num_nodes
+        self._embedding_dim = embedding_dim
+        self._num_layers = num_layers
+        self._device = device
 
         # Construct LightGCN α weights: include e^(0) + K propagated layers ==> K+1 weights
         if layer_weights is None:
-            self.layer_weights = [1.0 / (num_layers + 1)] * (num_layers + 1)
+            self._layer_weights = [1.0 / (num_layers + 1)] * (num_layers + 1)
         else:
             if len(layer_weights) != (num_layers + 1):
                 raise ValueError(
                     f"layer_weights must have length K+1={num_layers+1}, got {len(layer_weights)}"
                 )
-            self.layer_weights = layer_weights
+            self._layer_weights = layer_weights
         self.register_buffer(
-            "layer_weights_tensor", torch.tensor(self.layer_weights, dtype=torch.float32, device=device)
+            "_layer_weights_tensor", torch.tensor(self._layer_weights, dtype=torch.float32, device=device)
         )
 
         # Build TorchRec EBC (one table per node type)
@@ -206,10 +206,10 @@ class LightGCN(nn.Module):
                 )
             )
 
-        self.ebc = EmbeddingBagCollection(tables=tables, device=self.device)
+        self._ebc = EmbeddingBagCollection(tables=tables, device=self._device)
 
         # Construct LightGCN propagation layers (LGConv = Ā X)
-        self.convs = nn.ModuleList([LGConv() for _ in range(self.num_layers)])
+        self._convs = nn.ModuleList([LGConv() for _ in range(self._num_layers)])
 
         self._is_sharded = False
 
@@ -258,7 +258,7 @@ class LightGCN(nn.Module):
         # K LightGCN propagation steps with LGConv
         xs = [x0]  # e^(0)
         x = x0
-        for conv in self.convs:
+        for conv in self._convs:
             x = conv(x, edge_index)
             xs.append(x)
 
@@ -293,7 +293,7 @@ class LightGCN(nn.Module):
         print(node_type_to_xs)
         print(node_type_to_x)
 
-        for _layer in range(self.num_layers):
+        for _layer in range(self._num_layers):
             accum = {nt: torch.zeros_like(node_type_to_x[nt]) for nt in node_type_to_x.keys()}
             degs = {nt: 0 for nt in node_type_to_x.keys()}
 
@@ -312,7 +312,7 @@ class LightGCN(nn.Module):
         final_embeddings: dict[str, torch.Tensor] = {}
         for nt in output_node_types:
             if nt not in node_type_to_xs:
-                final_embeddings[nt] = torch.empty(0, self.embedding_dim, device=device)
+                final_embeddings[nt] = torch.empty(0, self._embedding_dim, device=device)
                 continue
             final_embeddings[nt] = self._weighted_layer_sum(node_type_to_xs[nt])
 
@@ -353,19 +353,19 @@ class LightGCN(nn.Module):
             lengths=lengths,               # B lengths per key, concatenated key-major
         )
 
-        out = self.ebc(kjt)
+        out = self._ebc(kjt)
         return out[key]                   # [B, D] for the requested key
 
     def _weighted_layer_sum(self, xs: list[torch.Tensor]) -> torch.Tensor:
         """
         xs must be [e^(0), e^(1), ..., e^(K)]
         """
-        if len(xs) != len(self.layer_weights_tensor):
+        if len(xs) != len(self._layer_weights_tensor):
             raise ValueError(
-                f"Got {len(xs)} layer tensors but {len(self.layer_weights_tensor)} weights."
+                f"Got {len(xs)} layer tensors but {len(self._layer_weights_tensor)} weights."
             )
         out = torch.zeros_like(xs[0])
-        for w, h in zip(self.layer_weights_tensor, xs):
+        for w, h in zip(self._layer_weights_tensor, xs):
             out = out + w * h
         return out
 
