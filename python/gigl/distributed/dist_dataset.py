@@ -737,7 +737,7 @@ class DistDataset(glt.distributed.DistDataset):
         elif isinstance(splitter, NodeSplitter):
             split_start = time.time()
             logger.info("Starting splitting nodes...")
-
+            # Every node is required to have a label, so we split among all ids on the current machine.
             splits = splitter(node_ids=node_ids_on_machine)
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
