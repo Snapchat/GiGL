@@ -17,7 +17,9 @@ def down_sample_node_ids_from_labels(
     node_label_feats: torch.Tensor,
     label_filter_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x >= 0,
 ) -> torch.Tensor:
-    """Down_sample the provided node ids based on the provided node labels. By default, this will filter out negative label values from the node ids.
+    """
+    Down_sample the provided node ids based on the provided node labels.
+    By default, this will filter out negative label values from the node ids.
 
     Args:
         node_ids (torch.Tensor): The node ids to down_sample.
@@ -48,7 +50,8 @@ def down_sample_node_ids_from_dataset_labels(
     node_type: Optional[NodeType] = None,
     label_filter_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x >= 0,
 ) -> torch.Tensor:
-    """Down_sample the provided dataset based on the provided node ids and the dataset's node labels.
+    """
+    Down sample node ids using the provided dataset's labels.
     By default, this will filter out negative label values from the node ids.
 
     Args:
