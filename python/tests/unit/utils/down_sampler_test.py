@@ -1,17 +1,18 @@
 import unittest
 from typing import Callable, Optional
-from unittest.mock import Mock
 
 import torch
+from graphlearn_torch.data import Feature
 from graphlearn_torch.utils import id2idx
 from parameterized import param, parameterized
-from torch.testing import assert_close
 
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.src.common.types.graph_data import NodeType
 from gigl.utils.down_sampler import (
     down_sample_node_ids_from_dataset_labels,
     down_sample_node_ids_from_labels,
 )
+from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
 class TestNodeLabelDownSampler(unittest.TestCase):
@@ -34,7 +35,7 @@ class TestNodeLabelDownSampler(unittest.TestCase):
         # 0 has a negative label values and should be excluded. The remaining node ids have positive label values (20 -> 2, 10 -> 1, 3 -> 1) and should be included
         expected_down_sampled_node_ids = torch.tensor([20, 10, 3])
 
-        assert_close(down_sampled_node_ids, expected_down_sampled_node_ids)
+        assert_tensor_equality(down_sampled_node_ids, expected_down_sampled_node_ids)
 
     @parameterized.expand(
         [
@@ -90,35 +91,37 @@ class TestNodeLabelDownSampler(unittest.TestCase):
         node_label_feats = node_label_feats.unsqueeze(1)
         id2index = id2idx(node_label_ids)
 
-        # Mock the Feature object
-        mock_labels = Mock()
-        mock_labels.lazy_init_with_ipc_handle = Mock()
-        mock_labels.feature_tensor = node_label_feats
-        mock_labels.id2index = id2index
+        # Create the Feature object
+        mock_labels = Feature(
+            feature_tensor=node_label_feats, id2index=id2index, with_gpu=False
+        )
 
-        # Mock the DistDataset object
-        mock_dataset = Mock()
+        # Create the DistDataset object
         if node_type is not None:
-            mock_dataset.node_labels = {node_type: mock_labels}
+            node_labels = {node_type: mock_labels}
         else:
-            mock_dataset.node_labels = mock_labels
+            node_labels = mock_labels
+
+        dataset = DistDataset(
+            rank=0, world_size=1, edge_dir="out", node_labels=node_labels
+        )
 
         if label_filter_fn is None:
             # Use the default label filter function, which filters out node ids with negative label values
             down_sampled_node_ids = down_sample_node_ids_from_dataset_labels(
-                dataset=mock_dataset,
+                dataset=dataset,
                 node_ids=node_ids,
                 node_type=node_type,
             )
         else:
             down_sampled_node_ids = down_sample_node_ids_from_dataset_labels(
-                dataset=mock_dataset,
+                dataset=dataset,
                 node_ids=node_ids,
                 node_type=node_type,
                 label_filter_fn=label_filter_fn,
             )
 
-        assert_close(down_sampled_node_ids, expected_result)
+        assert_tensor_equality(down_sampled_node_ids, expected_result)
 
 
 if __name__ == "__main__":

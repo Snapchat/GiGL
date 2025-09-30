@@ -1,5 +1,5 @@
-from collections.abc import Callable
-from typing import Mapping, Optional
+from collections.abc import Callable, Mapping
+from typing import Optional
 
 import torch
 from graphlearn_torch.data import Feature
@@ -18,18 +18,20 @@ def down_sample_node_ids_from_labels(
     label_filter_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x >= 0,
 ) -> torch.Tensor:
     """
-    Down_sample the provided node ids based on the provided node labels.
+    Downsample the provided node ids based on the provided node labels. Downsampling means that
+    we will sample a subset of the node ids to use for any downstream purpose. The node label values will be used to
+    determine what gets downsampled, and can be customized with the `label_filter_fn` argument.
     By default, this will filter out negative label values from the node ids.
 
     Args:
-        node_ids (torch.Tensor): The node ids to down_sample.
-        id2idx (torch.Tensor): Mapping from node IDs to indices in the feature tensor.
-        node_label_feats (torch.Tensor): The node label features.
+        node_ids (torch.Tensor): The node ids to down_sample Should be a 1D tensor of shape (N,).
+        id2idx (torch.Tensor): Mapping from node IDs to indices in the feature tensor. Should be a 1D tensor of shape (max_node_id,).
+        node_label_feats (torch.Tensor): The node label features. Should be a 2D tensor of shape (N, 1), where N is the number of nodes.
         label_filter_fn (Callable[[torch.Tensor], torch.Tensor]): A callable that takes a tensor of
             labels and returns a boolean mask, indicating which labels should be included. By default,
             filters out negative values.
     Returns:
-        The down_sampled node ids. Only nodes with valid labels are included in the output.
+        torch.Tensor: The down_sampled node ids. Only nodes with valid labels are included in the output.
     """
 
     # Use id2idx to get the feature indices directly
@@ -51,12 +53,14 @@ def down_sample_node_ids_from_dataset_labels(
     label_filter_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x >= 0,
 ) -> torch.Tensor:
     """
-    Down sample node ids using the provided dataset's labels.
+    Down sample node ids using the provided dataset's labels. Downsampling means that
+    we will sample a subset of the node ids to use for any downstream purpose. The node label values will be used to
+    determine what gets downsampled, and can be customized with the `label_filter_fn` argument.
     By default, this will filter out negative label values from the node ids.
 
     Args:
         dataset (DistDataset): The dataset to down_sample.
-        node_ids (torch.Tensor): The node ids to down_sample.
+        node_ids (torch.Tensor): The node ids to down_sample. Should be a 1D tensor of shape (N,).
         node_type (Optional[NodeType]): The node type to down_sample. If the dataset is heterogeneous, this must be provided.
         label_filter_fn (Callable[[torch.Tensor], torch.Tensor]): A callable that takes a tensor of
             labels and returns a boolean mask, indicating which labels should be included. By default,
@@ -74,6 +78,8 @@ def down_sample_node_ids_from_dataset_labels(
     else:
         labels = dataset.node_labels
 
+    # We need to lazy init the labels so that its feature and id2index fields are populated. Otherwise, these values
+    # will be None.
     labels.lazy_init_with_ipc_handle()
 
     down_sampled_node_ids = down_sample_node_ids_from_labels(
