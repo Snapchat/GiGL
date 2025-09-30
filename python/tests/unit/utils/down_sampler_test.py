@@ -8,35 +8,11 @@ from parameterized import param, parameterized
 
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.src.common.types.graph_data import NodeType
-from gigl.utils.down_sampler import (
-    down_sample_node_ids_from_dataset_labels,
-    down_sample_node_ids_from_labels,
-)
+from gigl.utils.down_sampler import down_sample_node_ids_from_dataset_labels
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
 class TestNodeLabelDownSampler(unittest.TestCase):
-    def test_basic_down_sampling(self):
-        """Test basic homogeneous down_sampling with default >= 0 filter."""
-
-        node_ids = torch.tensor([0, 20, 10, 3])
-
-        node_label_feats = torch.tensor([1, -1, 2, 4, 1, 6, -1, -2]).unsqueeze(1)
-        node_label_ids = torch.tensor([10, 6, 20, 4, 3, 15, 1, 0])
-
-        id2index = id2idx(node_label_ids)
-
-        down_sampled_node_ids = down_sample_node_ids_from_labels(
-            node_ids=node_ids,
-            id2idx=id2index,
-            node_label_feats=node_label_feats,
-        )
-
-        # 0 has a negative label values and should be excluded. The remaining node ids have positive label values (20 -> 2, 10 -> 1, 3 -> 1) and should be included
-        expected_down_sampled_node_ids = torch.tensor([20, 10, 3])
-
-        assert_tensor_equality(down_sampled_node_ids, expected_down_sampled_node_ids)
-
     @parameterized.expand(
         [
             param(
