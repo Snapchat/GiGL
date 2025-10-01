@@ -83,10 +83,10 @@ def maybe_save_checkpoint(
         return None
 
     save_to_checkpoint_path = UriFactory.create_uri(checkpointing_config.save_to_path)
-    checkpoint_id = Uri.join(save_to_checkpoint_path, checkpoint_id)
+    checkpoint_id_uri = Uri.join(save_to_checkpoint_path, checkpoint_id)
     app_state = AppState(model=model, optimizer=optimizer)
     return save_checkpoint_to_uri(
         state_dict=app_state.to_state_dict(),
-        checkpoint_id=checkpoint_id,
+        checkpoint_id=checkpoint_id_uri,
         should_save_asynchronously=should_save_checkpoint_async,
     )
