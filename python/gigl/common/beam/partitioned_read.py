@@ -33,6 +33,20 @@ class BigQueryPartitionedReadInfo:
                 datasetId=get_resource_config().temp_assets_bq_dataset_name,
             )
 
+    def __hash__(self) -> int:
+        temp_dataset_hash = (
+            hash(
+                (
+                    self.temp_dataset_reference.projectId,
+                    self.temp_dataset_reference.datasetId,
+                )
+            )
+            if self.temp_dataset_reference is not None
+            else None
+        )
+
+        return hash((self.partition_key, self.num_partitions, temp_dataset_hash))
+
 
 class PartitionedExportRead(beam.PTransform):
     def __init__(
