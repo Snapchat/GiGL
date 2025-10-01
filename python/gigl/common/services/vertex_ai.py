@@ -246,6 +246,23 @@ class VertexAIService:
     ) -> aiplatform.CustomJob:
         """Launch a Vertex AI Graph Store job.
 
+        This launches one Vertex AI CustomJob with two worker pools, see
+        https://cloud.google.com/vertex-ai/docs/training/distributed-training
+        for more details.
+
+        These jobs will have the follow env variables set
+            - GIGL_STORAGE_CLUSTER_MASTER_KEY
+            - GIGL_COMPUTE_CLUSTER_MASTER_KEY
+        Whose values are the cluster ranks of the leaders for the storage and compute clusters respectively.
+        For example, if if there are 2 nodes in the storage cluster, and 3 nodes in the compute cluster,
+        Then,
+            - GIGL_STORAGE_CLUSTER_MASTER_KEY = 0
+            - GIGL_COMPUTE_CLUSTER_MASTER_KEY = 2 # e.g. the "first" worker in the computer cluster pool is the leader.
+
+        NOTE:
+            We use the job_name, timeout, and enable_web_access from the storage cluster.
+            These fields, if set on the compute cluster, will be ignored.
+
         Args:
             storage_cluster (VertexAiJobConfig): The configuration for the storage cluster.
             compute_cluster (VertexAiJobConfig): The configuration for the compute cluster.
@@ -306,6 +323,9 @@ class VertexAIService:
             worker_pool_specs.append(worker_spec)
         else:
             worker_pool_specs.append({})
+        # For whatever reason, VAI errors out (indescriptly) if we put the computer cluster as anything other
+        # than the fourth worker pool.
+        # So we need to pad.
         worker_pool_specs.append({})
         worker_spec = WorkerPoolSpec(
             machine_spec=compute_machine_spec,
