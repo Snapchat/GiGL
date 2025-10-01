@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
 
 import apache_beam as beam
 from apache_beam.io.gcp.bigquery import BigQueryQueryPriority
@@ -12,7 +11,18 @@ from gigl.env.pipelines_config import get_resource_config
 logger = Logger()
 
 
-@dataclass
+def _default_temp_dataset_reference() -> DatasetReference:
+    """
+    Default factory for temp_dataset_reference, which falls backs to use the
+    resource config derived from environment variables to extract the project and temp dataset name.
+    """
+    return DatasetReference(
+        projectId=get_resource_config().project,
+        datasetId=get_resource_config().temp_assets_bq_dataset_name,
+    )
+
+
+@dataclass(frozen=True)
 class BigQueryPartitionedReadInfo:
     # The key in the table that we will use to split the data into partitions. This should be used if we are operating on
     # very large tables, in which case we want to only read smaller slices of the table at a time to avoid oversized status update
@@ -24,28 +34,9 @@ class BigQueryPartitionedReadInfo:
     num_partitions: int = 20
     # The temporary dataset reference to use when running the query for partitioned reads. If not provided, will default
     # to use the temp assets dataset and project specified in the resource config environment variables.
-    temp_dataset_reference: Optional[DatasetReference] = None
-
-    def __post_init__(self):
-        if self.temp_dataset_reference is None:
-            self.temp_dataset_reference = DatasetReference(
-                projectId=get_resource_config().project,
-                datasetId=get_resource_config().temp_assets_bq_dataset_name,
-            )
-
-    def __hash__(self) -> int:
-        temp_dataset_hash = (
-            hash(
-                (
-                    self.temp_dataset_reference.projectId,
-                    self.temp_dataset_reference.datasetId,
-                )
-            )
-            if self.temp_dataset_reference is not None
-            else None
-        )
-
-        return hash((self.partition_key, self.num_partitions, temp_dataset_hash))
+    temp_dataset_reference: DatasetReference = field(
+        default_factory=_default_temp_dataset_reference
+    )
 
 
 class PartitionedExportRead(beam.PTransform):
@@ -59,9 +50,6 @@ class PartitionedExportRead(beam.PTransform):
         self._table_name: str = table_name
         self._num_partitions: int = partitioned_read_info.num_partitions
         self._partition_key: str = partitioned_read_info.partition_key
-        assert isinstance(
-            partitioned_read_info.temp_dataset_reference, DatasetReference
-        )
         self._temp_dataset_reference: DatasetReference = (
             partitioned_read_info.temp_dataset_reference
         )
