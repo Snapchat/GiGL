@@ -83,17 +83,100 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
 
     @parameterized.expand(
         [
-            param("one server, one client", num_servers=1, num_clients=1),
-            param("one server, two clients", num_servers=1, num_clients=2),
-            param("two servers, one client", num_servers=2, num_clients=1),
-            param("two servers, two clients", num_servers=2, num_clients=2),
+            param(
+                "one server, one client",
+                num_servers=1,
+                num_clients=1,
+                expected_worker_pool_specs=[
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {},
+                    {},
+                    {
+                        "machine_type": "n2-standard-8",
+                        "num_replicas": 1,
+                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+                    },
+                ],
+            ),
+            param(
+                "one server, two clients",
+                num_servers=1,
+                num_clients=2,
+                expected_worker_pool_specs=[
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {},
+                    {},
+                    {
+                        "machine_type": "n2-standard-8",
+                        "num_replicas": 2,
+                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+                    },
+                ],
+            ),
+            param(
+                "two servers, one client",
+                num_servers=2,
+                num_clients=1,
+                expected_worker_pool_specs=[
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {},
+                    {
+                        "machine_type": "n2-standard-8",
+                        "num_replicas": 1,
+                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+                    },
+                ],
+            ),
+            param(
+                "two servers, two clients",
+                num_servers=2,
+                num_clients=2,
+                expected_worker_pool_specs=[
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {},
+                    {
+                        "machine_type": "n2-standard-8",
+                        "num_replicas": 2,
+                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+                    },
+                ],
+            ),
         ]
     )
-    def test_launch_graph_store_job(self, _, num_servers, num_clients):
+    def test_launch_graph_store_job(
+        self, _, num_servers, num_clients, expected_worker_pool_specs
+    ):
+        env_checks = f"logging.info(f'Graph cluster master: {{os.environ[\"{STORAGE_CLUSTER_MASTER_KEY}\"]}}, compute cluster master: {{os.environ[\"{COMPUTE_CLUSTER_MASTER_KEY}\"]}}')"
         command = [
             "python",
             "-c",
-            f"import os; import logging; logging.info(f'Graph cluster master: {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']}}, compute cluster master: {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']}}')",
+            f"import os; import logging; {env_checks}",
         ]
         job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
         storage_cluster_config = VertexAiJobConfig(
@@ -110,9 +193,29 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             command=command,
             machine_type="n2-standard-8",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
         )
-        self.vertex_ai_service.launch_graph_store_job(
+
+        job = self.vertex_ai_service.launch_graph_store_job(
             storage_cluster_config, compute_cluster_config
         )
+
+        self.assertEqual(
+            len(job.job_spec.worker_pool_specs), len(expected_worker_pool_specs)
+        )
+        for i, worker_pool_spec in enumerate(job.job_spec.worker_pool_specs):
+            expected_worker_pool_spec = expected_worker_pool_specs[i]
+            if expected_worker_pool_spec:
+                self.assertEqual(
+                    worker_pool_spec.machine_spec.machine_type,
+                    expected_worker_pool_spec["machine_type"],
+                )
+                self.assertEqual(
+                    worker_pool_spec.replica_count,
+                    expected_worker_pool_spec["num_replicas"],
+                )
+                self.assertEqual(
+                    worker_pool_spec.container_spec.image_uri,
+                    expected_worker_pool_spec["image_uri"],
+                )
 
     def _test_run_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
