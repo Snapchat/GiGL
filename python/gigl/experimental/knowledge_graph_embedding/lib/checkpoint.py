@@ -82,12 +82,8 @@ def maybe_save_checkpoint(
         logger.info(f"No checkpoint specified to save to. Skipping saving checkpoint.")
         return None
 
-    save_to_checkpoint_path: Uri = UriFactory.create_uri(
-        checkpointing_config.save_to_path
-    )
-    checkpoint_id = type(save_to_checkpoint_path).join(
-        save_to_checkpoint_path, checkpoint_id
-    )
+    save_to_checkpoint_path = UriFactory.create_uri(checkpointing_config.save_to_path)
+    checkpoint_id = Uri.join(save_to_checkpoint_path, checkpoint_id)
     app_state = AppState(model=model, optimizer=optimizer)
     return save_checkpoint_to_uri(
         state_dict=app_state.to_state_dict(),
