@@ -137,6 +137,7 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
                 edge_usage_type=EdgeUsageType.MAIN,
                 partitioned_read_info=BigQueryPartitionedReadInfo(
                     partition_key=self.__mocked_dataset.edge_src_column_name,
+                    num_partitions=5,
                 ),
             )
 

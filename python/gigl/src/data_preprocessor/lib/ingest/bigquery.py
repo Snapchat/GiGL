@@ -23,8 +23,8 @@ def _get_bigquery_ptransform(
     *args,
     **kwargs,
 ) -> InstanceDictPTransform:
-    table_name = table_name.replace(".", ":", 1)  # sanitize table name
     if partitioned_read_info is not None:
+        # For partitioned reads, use the table name as-is (with dots) for SQL queries
         return cast(
             InstanceDictPTransform,
             PartitionedExportRead(
@@ -34,6 +34,8 @@ def _get_bigquery_ptransform(
             ),
         )
     else:
+        # For regular reads, sanitize table name (convert first dot to colon)
+        table_name = table_name.replace(".", ":", 1)  # sanitize table name
         return cast(
             InstanceDictPTransform,
             beam.io.ReadFromBigQuery(
