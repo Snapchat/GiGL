@@ -253,7 +253,7 @@ class LightGCN(nn.Module):
         edge_index = data.edge_index.to(device)
 
         # Lookup: e^(0) for this batch of node IDs
-        x0 = self._torchrec_lookup_single_key(key, node_ids)
+        x0 = self._lookup_single_key(key, node_ids)
 
         # K LightGCN propagation steps with LGConv
         xs = [x0]  # e^(0)
@@ -272,6 +272,8 @@ class LightGCN(nn.Module):
         device: torch.device,
         output_node_types: list[NodeType],
     ) -> dict[NodeType, torch.Tensor]:
+
+        raise NotImplementedError("Heterogeneous forward pass is not implemented")
         node_type_to_ids: dict[str, torch.Tensor] = {}
         for nt in data.node_types:
             if hasattr(data[nt], "node_id"):
@@ -283,7 +285,7 @@ class LightGCN(nn.Module):
 
         node_type_to_x0: dict[str, torch.Tensor] = {}
         for nt, ids in node_type_to_ids.items():
-            node_type_to_x0[nt] = self._torchrec_lookup_single_key(f"{nt}_id", ids)
+            node_type_to_x0[nt] = self._lookup_single_key(f"{nt}_id", ids)
 
         print(node_type_to_x0)
 
@@ -318,7 +320,7 @@ class LightGCN(nn.Module):
 
         return final_embeddings
 
-    def _torchrec_lookup_single_key(self, key: str, ids: torch.Tensor) -> torch.Tensor:
+    def _lookup_single_key(self, key: str, ids: torch.Tensor) -> torch.Tensor:
         """
         Fetch per-id embeddings for a single feature key using EBC and KJT.
 
@@ -337,7 +339,7 @@ class LightGCN(nn.Module):
         # Build lengths in key-major order: for each key, we give B lengths.
         # - requested key: ones (each example has 1 id)
         # - other keys: zeros (each example has 0 ids)
-        lengths_per_key = []
+        lengths_per_key: list[torch.Tensor] = []
         for k in self._feature_keys:
             if k == key:
                 lengths_per_key.append(torch.ones(B, dtype=torch.long, device=device))
@@ -347,7 +349,7 @@ class LightGCN(nn.Module):
         lengths = torch.cat(lengths_per_key, dim=0)
 
         # Values only contain the requested key's ids (sum of other lengths is 0)
-        kjt = KeyedJaggedTensor.from_lengths_sync(
+        kjt = KeyedJaggedTensor(
             keys=self._feature_keys,       # include ALL keys known by EBC
             values=ids.long(),             # only B values for the requested key
             lengths=lengths,               # B lengths per key, concatenated key-major
@@ -358,58 +360,18 @@ class LightGCN(nn.Module):
 
     def _weighted_layer_sum(self, xs: list[torch.Tensor]) -> torch.Tensor:
         """
-        xs must be [e^(0), e^(1), ..., e^(K)]
+        xs: [e^(0), e^(1), ..., e^(K)]  each of shape [N, D]
+        returns: [N, D]
         """
-        if len(xs) != len(self._layer_weights_tensor):
+        if len(xs) != int(self._layer_weights_tensor.numel()):
             raise ValueError(
-                f"Got {len(xs)} layer tensors but {len(self._layer_weights_tensor)} weights."
+                f"Got {len(xs)} layer tensors but {self._layer_weights_tensor.numel()} weights."
             )
-        out = torch.zeros_like(xs[0])
-        for w, h in zip(self._layer_weights_tensor, xs):
-            out = out + w * h
+
+        # Ensure weights match device/dtype of embeddings
+        w = self._layer_weights_tensor.to(device=xs[0].device, dtype=xs[0].dtype)      # [K+1]
+        stacked = torch.stack(xs, dim=0)                                              # [K+1, N, D]
+        out = (stacked * w.view(-1, 1, 1)).sum(dim=0)                                  # [N, D]
+        print(out)
+        print(type(out))
         return out
-
-def setup_torchrec_sharding(
-    model: LightGCN,
-    world_size: int,
-    local_world_size: int,
-    use_cuda: bool = True,
-    compute_kernel: EmbeddingComputeKernel = EmbeddingComputeKernel.FUSED,
-) -> DMP:
-    """
-    Wrap the model with TorchRec DistributedModelParallel (DMP) and apply a sharding plan
-    to the EmbeddingBagCollection (EBC). After this, calls to model.ebc(...) are transparently
-    sharded, and sparse updates are fused during backward.
-
-    Returns:
-        The DMP-wrapped model. (Replaces the original module in-place typical usage.)
-    """
-    if not dist.is_initialized():
-        raise RuntimeError("torch.distributed process group is not initialized.")
-
-    device_type = "cuda" if use_cuda else "cpu"
-    topology = Topology(
-        world_size=world_size,
-        local_world_size=local_world_size,
-        compute_device=device_type,
-    )
-
-    # Planner proposes a sharding plan (row-wise for huge tables by default).
-    planner = EmbeddingShardingPlanner(topology=topology)
-
-    # Sharder tells DMP how to shard EBC modules.
-    sharders = [EmbeddingBagCollectionSharder(compute_kernel=compute_kernel)]
-
-    plan = planner.collective_plan(model, sharders=sharders, pg=dist.group.WORLD)
-
-    sharded_model = DMP(
-        module=model,
-        plan=plan,
-        sharders=sharders,
-        init_data_parallel=False,  # we only want model-parallel sharding for embeddings
-    )
-
-    # for downstream logic
-    sharded_model.module._is_sharded = True
-
-    return sharded_model
