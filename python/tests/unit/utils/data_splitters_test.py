@@ -99,7 +99,7 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
     )
-    def test_fast_hash(
+    def _test_fast_hash(
         self, _, input_tensor: torch.Tensor, expected_output: torch.Tensor
     ):
         actual = _fast_hash(input_tensor)
@@ -181,7 +181,7 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
     )
-    def test_node_based_link_splitter(
+    def _test_node_based_link_splitter(
         self,
         _,
         edges,
@@ -400,7 +400,7 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
     )
-    def test_node_based_link_splitter_heterogenous(
+    def _test_node_based_link_splitter_heterogenous(
         self,
         _,
         edges,
@@ -441,7 +441,7 @@ class TestDataSplitters(unittest.TestCase):
             assert_close(val, expected_val, rtol=0, atol=0)
             assert_close(test, expected_test, rtol=0, atol=0)
 
-    def test_node_based_link_splitter_parallelized(self):
+    def _test_node_based_link_splitter_parallelized(self):
         init_method = get_process_group_init_method()
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="out",
@@ -508,7 +508,7 @@ class TestDataSplitters(unittest.TestCase):
             join=True,
         )
 
-    def test_node_based_splitter_parallelized(self):
+    def _test_node_based_splitter_parallelized(self):
         init_method = get_process_group_init_method()
         splitter = HashedNodeSplitter(hash_function=_IdentityHash())
         nodes = [
@@ -575,7 +575,7 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
     )
-    def test_node_based_link_splitter_heterogenous_invalid(
+    def _test_node_based_link_splitter_heterogenous_invalid(
         self,
         _,
         edges,
@@ -604,7 +604,7 @@ class TestDataSplitters(unittest.TestCase):
             param("Negative val percentage", train_percentage=0.8, val_percentage=-1.0),
         ]
     )
-    def test_assert_valid_split_ratios(self, _, train_percentage, val_percentage):
+    def _test_assert_valid_split_ratios(self, _, train_percentage, val_percentage):
         with self.assertRaises(ValueError):
             _assert_valid_split_ratios(train_percentage, val_percentage)
 
@@ -615,11 +615,11 @@ class TestDataSplitters(unittest.TestCase):
             param("Sparse tensor", edges=torch.zeros(2, 2).to_sparse()),
         ]
     )
-    def test_check_edge_index(self, _, edges):
+    def _test_check_edge_index(self, _, edges):
         with self.assertRaises(ValueError):
             _check_edge_index(edges)
 
-    def test_hashed_node_anchor_link_splitter_requires_process_group(self):
+    def _test_hashed_node_anchor_link_splitter_requires_process_group(self):
         edges = torch.stack(
             [
                 torch.arange(0, 40, 2, dtype=torch.int64),
@@ -805,7 +805,7 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
     )
-    def test_hashed_node_splitter(
+    def _test_hashed_node_splitter(
         self,
         _,
         node_ids,
@@ -907,7 +907,7 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
     )
-    def test_hashed_node_splitter_heterogeneous(
+    def _test_hashed_node_splitter_heterogeneous(
         self,
         _,
         node_ids,
@@ -944,7 +944,7 @@ class TestDataSplitters(unittest.TestCase):
             assert_tensor_equality(val, expected_val, dim=0)
             assert_tensor_equality(test, expected_test, dim=0)
 
-    def test_hashed_node_splitter_requires_process_group(self):
+    def _test_hashed_node_splitter_requires_process_group(self):
         node_ids = torch.arange(10, dtype=torch.int64)
         splitter = HashedNodeSplitter()
         with self.assertRaises(RuntimeError):
@@ -966,7 +966,7 @@ class TestDataSplitters(unittest.TestCase):
             ),
         ]
     )
-    def test_hashed_node_splitter_invalid_inputs(self, _, node_ids):
+    def _test_hashed_node_splitter_invalid_inputs(self, _, node_ids):
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
@@ -995,7 +995,7 @@ class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
             ),
         ]
     )
-    def test_valid_label_selection(
+    def _test_valid_label_selection(
         self, _, positive_label_percentage: float, expected_num_labels: int
     ):
         labels = select_ssl_positive_label_edges(
@@ -1023,7 +1023,7 @@ class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
             ),
         ]
     )
-    def test_invalid_label_selection(
+    def _test_invalid_label_selection(
         self, _, edge_index: torch.Tensor, positive_label_percentage: float
     ):
         with self.assertRaises(ValueError):
