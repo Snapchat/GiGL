@@ -52,6 +52,12 @@ from gigl.src.training.v1.lib.base_trainer import BaseTrainer
 
 logger = Logger()
 
+# Without longer timeout, we can see the cluster failing as Vertex AI
+# will start the jobs in a scattered manner, so we may timeout waiting
+# for all machines to come online.
+# TODO(kmonte): We should parameterize this timeout.
+_PROCESS_GROUP_TIMEOUT = datetime.timedelta(minutes=45)
+
 
 @profileit(
     metric_name=TIMER_TRAINER_EXPORT_INFERENCE_ASSETS_S,
@@ -355,12 +361,11 @@ class GnnTrainingProcess:
         use_cuda = device.type != "cpu"
         if should_distribute():
             distributed_backend = get_distributed_backend(use_cuda=use_cuda)
-            timeout = datetime.timedelta(minutes=45)
             logger.info(
-                f"Using distributed PyTorch with {distributed_backend} and timeout {timeout}"
+                f"Using distributed PyTorch with {distributed_backend}, timeout {_PROCESS_GROUP_TIMEOUT}"
             )
             torch.distributed.init_process_group(
-                backend=distributed_backend, timeout=timeout
+                backend=distributed_backend, timeout=_PROCESS_GROUP_TIMEOUT
             )
             logger.info("Successfully initiated distributed backend!")
 
