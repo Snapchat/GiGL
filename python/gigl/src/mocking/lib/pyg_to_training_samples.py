@@ -342,6 +342,14 @@ def build_node_anchor_link_prediction_samples_from_pyg_heterodata(
         else None
     )
 
+    edge_label_index = hetero_data[
+        (
+            str(sample_edge_type.src_node_type),
+            str(sample_edge_type.relation),
+            str(sample_edge_type.dst_node_type),
+        )
+    ].edge_label_index
+
     if user_defined_pos_edges is not None:
         pos_node_map = sample_hydrate_user_def_edge(
             mocked_dataset_info=mocked_dataset_info,
@@ -350,13 +358,6 @@ def build_node_anchor_link_prediction_samples_from_pyg_heterodata(
     else:
         pos_node_map = defaultdict(list)
         # Create map to track each node's candidate neighbors.
-        edge_label_index = hetero_data[
-            (
-                str(sample_edge_type.src_node_type),
-                str(sample_edge_type.relation),
-                str(sample_edge_type.dst_node_type),
-            )
-        ].edge_label_index
         for src, dst in zip(edge_label_index[0].tolist(), edge_label_index[1].tolist()):
             pos_node_map[src].append(dst)
 

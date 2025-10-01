@@ -67,4 +67,6 @@ class LinkPredictionDecoder(nn.Module):
         elif self.decoder_type.value == "hadamard_MLP":
             hadamard_scores = query_embeddings.unsqueeze(dim=1) * candidate_embeddings
             scores = self.mlp_decoder(hadamard_scores).sum(dim=-1)
+        else:
+            raise ValueError(f"Unsupported decoder type: {self.decoder_type.value}")
         return scores

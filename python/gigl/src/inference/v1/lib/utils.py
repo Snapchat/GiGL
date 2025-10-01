@@ -181,6 +181,8 @@ def get_inferencer_pipeline_component_for_single_node_type(
                 )
             )
         )
+        predictions = None
+        embeddings = None
         if temp_predictions_gcs_path is not None:
             predictions = (
                 outputs[PREDICTION_TAGGED_OUTPUT_KEY],
@@ -201,7 +203,7 @@ def get_inferencer_pipeline_component_for_single_node_type(
         )
         predictions = outputs[PREDICTION_TAGGED_OUTPUT_KEY]
         embeddings = outputs[EMBEDDING_TAGGED_OUTPUT_KEY]
-    if temp_predictions_gcs_path is not None:
+    if temp_predictions_gcs_path is not None and predictions is not None:
         logger.info(
             f"Writing node type {node_type} temp predictions to gcs path {temp_predictions_gcs_path.uri}"
         )
@@ -213,7 +215,7 @@ def get_inferencer_pipeline_component_for_single_node_type(
                 file_name_suffix=".json",
             )
         )
-    if temp_embeddings_gcs_path is not None:
+    if temp_embeddings_gcs_path is not None and embeddings is not None:
         logger.info(
             f"Writing node type {node_type} temp embeddings to gcs path {temp_embeddings_gcs_path.uri}"
         )

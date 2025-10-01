@@ -350,9 +350,12 @@ class HashedNodeAnchorLinkSplitter:
             # Set device explicitly here so we don't default to CPU.
             # TODO(kmonte): We should add tests for this - but we need to enable accelerators on our CI/CD first.
             # Also, maybe swap setting device until later?
-            node_id_count = torch.zeros(
-                max_node_id, dtype=torch.uint8, device=anchor_nodes.device
+            device = (
+                collected_anchor_nodes[0].device
+                if collected_anchor_nodes
+                else torch.device("cpu")
             )
+            node_id_count = torch.zeros(max_node_id, dtype=torch.uint8, device=device)
             for anchor_nodes in collected_anchor_nodes:
                 # Clamp here to avoid overflow to 0
                 # If we don't clamp, and the counts add up to X mod 255,

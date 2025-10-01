@@ -109,6 +109,7 @@ class BqUtils:
         SELECT count(1) AS ct FROM `{bq_table}`
         """
         result = self.run_query(query=ROW_COUNTING_QUERY, labels=labels)
+        n_rows = 0
         for row in result:
             n_rows = row["ct"]
         return n_rows
