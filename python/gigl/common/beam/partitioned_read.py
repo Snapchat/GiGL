@@ -11,17 +11,6 @@ from gigl.env.pipelines_config import get_resource_config
 logger = Logger()
 
 
-def _default_temp_dataset_reference() -> DatasetReference:
-    """
-    Default factory for temp_dataset_reference, which falls backs to use the
-    resource config derived from environment variables to extract the project and temp dataset name.
-    """
-    return DatasetReference(
-        projectId=get_resource_config().project,
-        datasetId=get_resource_config().temp_assets_bq_dataset_name,
-    )
-
-
 @dataclass(frozen=True)
 class BigQueryPartitionedReadInfo:
     # The key in the table that we will use to split the data into partitions. This should be used if we are operating on
@@ -32,10 +21,13 @@ class BigQueryPartitionedReadInfo:
     # value of 20 partitions.
     # TODO (mkolodner-sc): Instead of using this default, infer this value based on number of rows in table
     num_partitions: int = 20
-    # The temporary dataset reference to use when running the query for partitioned reads. If not provided, will default
-    # to use the temp assets dataset and project specified in the resource config environment variables.
-    temp_dataset_reference: DatasetReference = field(
-        default_factory=_default_temp_dataset_reference
+    # The project ID to use for temporary datasets when running partitioned reads. If not provided, will default
+    # to use the project specified in the resource config environment variables.
+    project_id: str = field(default_factory=lambda: get_resource_config().project)
+    # The temporary bigquery dataset name to use when running partitioned reads. If not provided, will default
+    # to use the temp assets dataset name specified in the resource config environment variables.
+    temp_dataset_name: str = field(
+        default_factory=lambda: get_resource_config().temp_assets_bq_dataset_name
     )
 
 
@@ -50,8 +42,9 @@ class PartitionedExportRead(beam.PTransform):
         self._table_name: str = table_name
         self._num_partitions: int = partitioned_read_info.num_partitions
         self._partition_key: str = partitioned_read_info.partition_key
-        self._temp_dataset_reference: DatasetReference = (
-            partitioned_read_info.temp_dataset_reference
+        self._temp_dataset_reference: DatasetReference = DatasetReference(
+            projectId=partitioned_read_info.project_id,
+            datasetId=partitioned_read_info.temp_dataset_name,
         )
         self._kwargs = kwargs
 
