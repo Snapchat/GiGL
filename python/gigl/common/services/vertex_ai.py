@@ -62,7 +62,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Final, Optional
+from typing import Final, Optional, Union
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -304,7 +304,7 @@ class VertexAIService:
         storage_container_spec = _get_container_spec(storage_cluster, env_vars)
         compute_container_spec = _get_container_spec(compute_cluster, env_vars)
 
-        worker_pool_specs: list[WorkerPoolSpec] = []
+        worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
 
         leader_worker_spec = WorkerPoolSpec(
             machine_spec=storage_machine_spec,
