@@ -72,23 +72,23 @@ class EvaluationMetricsAccumulator:
             evaluation_config: Configuration containing hit rate k values and other evaluation parameters
             device: Device to place tensors on
         """
-        self.evaluation_config = evaluation_config
-        self.edge_type_to_idx = {et: i for i, et in enumerate(unique_edge_types)}
+        self._evaluation_config = evaluation_config
+        self._edge_type_to_idx = {et: i for i, et in enumerate(unique_edge_types)}
 
         num_edge_types = len(unique_edge_types)
         num_k_values = len(evaluation_config.hit_rates_at_k)
 
-        self.total_loss = torch.tensor(0.0, device=device)
-        self.total_batches = torch.tensor(0, dtype=torch.long, device=device)
-        self.sample_counts = torch.zeros(
+        self._total_loss = torch.tensor(0.0, device=device)
+        self._total_batches = torch.tensor(0, dtype=torch.long, device=device)
+        self._sample_counts = torch.zeros(
             num_edge_types, dtype=torch.long, device=device
         )
-        self.pos_scores = torch.zeros(num_edge_types, device=device)
-        self.neg_scores = torch.zeros(num_edge_types, device=device)
-        self.mrrs = torch.zeros(num_edge_types, device=device)
-        self.hit_rates = torch.zeros(num_edge_types, num_k_values, device=device)
+        self._pos_scores = torch.zeros(num_edge_types, device=device)
+        self._neg_scores = torch.zeros(num_edge_types, device=device)
+        self._mrrs = torch.zeros(num_edge_types, device=device)
+        self._hit_rates = torch.zeros(num_edge_types, num_k_values, device=device)
 
-    def accumulate(
+    def accumulate_batch(
         self,
         batch_loss: torch.Tensor,
         logits: torch.Tensor,
@@ -104,11 +104,11 @@ class EvaluationMetricsAccumulator:
             condensed_edge_types: Edge type indices for each sample in the batch
         """
         # Accumulate batch-level metrics
-        self.total_loss += batch_loss
-        self.total_batches += 1
+        self._total_loss += batch_loss
+        self._total_batches += 1
 
         # Process each edge type
-        for edge_type, idx in self.edge_type_to_idx.items():
+        for edge_type, idx in self._edge_type_to_idx.items():
             edge_type_mask = condensed_edge_types == edge_type
             if not edge_type_mask.any():
                 continue
@@ -123,26 +123,26 @@ class EvaluationMetricsAccumulator:
             hr_at_k = hit_rate_at_k(
                 scores=logits[edge_type_mask],
                 labels=labels[edge_type_mask],
-                ks=self.evaluation_config.hit_rates_at_k,
+                ks=self._evaluation_config.hit_rates_at_k,
             )
 
             # Accumulate weighted totals for this edge type
             edge_type_sample_count_in_batch = edge_type_mask.sum()
-            self.sample_counts[idx] += edge_type_sample_count_in_batch
-            self.pos_scores[idx] += avg_pos_score * edge_type_sample_count_in_batch
-            self.neg_scores[idx] += avg_neg_score * edge_type_sample_count_in_batch
-            self.mrrs[idx] += mrr * edge_type_sample_count_in_batch
-            self.hit_rates[idx] += hr_at_k * edge_type_sample_count_in_batch
+            self._sample_counts[idx] += edge_type_sample_count_in_batch
+            self._pos_scores[idx] += avg_pos_score * edge_type_sample_count_in_batch
+            self._neg_scores[idx] += avg_neg_score * edge_type_sample_count_in_batch
+            self._mrrs[idx] += mrr * edge_type_sample_count_in_batch
+            self._hit_rates[idx] += hr_at_k * edge_type_sample_count_in_batch
 
-    def reduce_all(self) -> None:
+    def sum_metrics_over_ranks(self) -> None:
         """Perform distributed reduction (sum) on all metric tensors."""
-        dist.all_reduce(self.total_loss, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.total_batches, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.sample_counts, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.pos_scores, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.neg_scores, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.mrrs, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self.hit_rates, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._total_loss, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._total_batches, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._sample_counts, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._pos_scores, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._neg_scores, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._mrrs, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._hit_rates, op=dist.ReduceOp.SUM)
 
     def compute_final_metrics(
         self,
@@ -157,35 +157,35 @@ class EvaluationMetricsAccumulator:
             Tuple of (average_loss, metrics_by_edge_type)
         """
         # Compute average loss
-        avg_loss = self.total_loss / self.total_batches
+        avg_loss = self._total_loss / self._total_batches
 
         # Create mask for valid edge types (those with samples)
-        mask = self.sample_counts > 0
+        mask = self._sample_counts > 0
 
         # Initialize metric tensors with NaN for missing edge types
-        avg_pos_scores = torch.full_like(self.pos_scores, float("nan"))
-        avg_neg_scores = torch.full_like(self.neg_scores, float("nan"))
-        avg_mrrs = torch.full_like(self.mrrs, float("nan"))
-        avg_hit_rates = torch.full_like(self.hit_rates, float("nan"))
+        avg_pos_scores = torch.full_like(self._pos_scores, float("nan"))
+        avg_neg_scores = torch.full_like(self._neg_scores, float("nan"))
+        avg_mrrs = torch.full_like(self._mrrs, float("nan"))
+        avg_hit_rates = torch.full_like(self._hit_rates, float("nan"))
 
         # Compute averages for edge types with samples
         if mask.any():
             avg_pos_scores[mask] = (
-                self.pos_scores[mask] / self.sample_counts[mask].float()
+                self._pos_scores[mask] / self._sample_counts[mask].float()
             )
             avg_neg_scores[mask] = (
-                self.neg_scores[mask] / self.sample_counts[mask].float()
+                self._neg_scores[mask] / self._sample_counts[mask].float()
             )
-            avg_mrrs[mask] = self.mrrs[mask] / self.sample_counts[mask].float()
+            avg_mrrs[mask] = self._mrrs[mask] / self._sample_counts[mask].float()
             # Broadcast sample counts for hit rates division
-            avg_hit_rates[mask] = self.hit_rates[mask] / self.sample_counts[
+            avg_hit_rates[mask] = self._hit_rates[mask] / self._sample_counts[
                 mask
             ].float().unsqueeze(-1)
 
         # Format into expected return structure
         metrics_by_edge_type = {}
         for edge_type in unique_edge_types:
-            idx = self.edge_type_to_idx[edge_type]
+            idx = self._edge_type_to_idx[edge_type]
             metrics_by_edge_type[edge_type] = EdgeTypeMetrics(
                 avg_pos_score=avg_pos_scores[idx],
                 avg_neg_score=avg_neg_scores[idx],
@@ -197,7 +197,7 @@ class EvaluationMetricsAccumulator:
         missing_edge_types = [
             et
             for et in unique_edge_types
-            if self.sample_counts[self.edge_type_to_idx[et]] == 0
+            if self._sample_counts[self._edge_type_to_idx[et]] == 0
         ]
         if missing_edge_types:
             logger.warning(
@@ -265,7 +265,7 @@ def evaluate(
             batch_loss, logits, labels, edge_types = pipeline.progress(val_iter)
 
             # Accumulate metrics for all edge types in this batch
-            accumulator.accumulate(
+            accumulator.accumulate_batch(
                 batch_loss=batch_loss,
                 logits=logits,
                 labels=labels,
@@ -279,10 +279,10 @@ def evaluate(
     logger.info(f"Completed {phase} evaluation over {step_count} steps.")
 
     # Perform distributed reduction on all metric tensors
-    accumulator.reduce_all()
+    accumulator.sum_metrics_over_ranks()
 
     # Compute final averaged metrics and format results
-    result = accumulator.compute_final_metrics(unique_edge_types)
+    result = accumulator.compute_final_metrics(unique_edge_types=unique_edge_types)
 
     # Restore original model state
     pipeline._model.module.set_phase(original_phase)
