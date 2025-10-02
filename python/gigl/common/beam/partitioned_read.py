@@ -41,6 +41,10 @@ class PartitionedExportRead(beam.PTransform):
         super().__init__()
         self._table_name: str = table_name
         self._num_partitions: int = partitioned_read_info.num_partitions
+        if self._num_partitions <= 0:
+            raise ValueError(
+                f"Number of partitions specified must be greater than 0, got {self._num_partitions}"
+            )
         self._partition_key: str = partitioned_read_info.partition_key
         self._temp_dataset_reference: DatasetReference = DatasetReference(
             projectId=partitioned_read_info.project_id,
@@ -55,7 +59,7 @@ class PartitionedExportRead(beam.PTransform):
             # on keys of any type (i.e. strings, integers, etc.)
             query = (
                 f"SELECT * FROM `{self._table_name}` "
-                f"WHERE MOD(ABS(FARM_FINGERPRINT(CAST({self._partition_key} AS STRING))), {self._num_partitions}) = {i}"
+                f"WHERE ABS(MOD(FARM_FINGERPRINT(CAST({self._partition_key} AS STRING)), {self._num_partitions}) = {i})"
             )
 
             pcollection_list.append(
