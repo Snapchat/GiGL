@@ -1,4 +1,5 @@
 import asyncio
+import gc
 from collections import defaultdict
 from typing import Optional, Union
 
@@ -53,24 +54,38 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         ] = defaultdict(list)
         input_seeds_builder[input_type].append(input_seeds)
         for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
-            input_seeds_builder[edge_type[label_edge_index]].append(
-                label_tensor[label_tensor != PADDING_NODE].to(self.device)
+            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
+                self.device
             )
+            input_seeds_builder[edge_type[label_edge_index]].append(
+                filtered_label_tensor
+            )
+            # Update the metadata per positive label edge type.
+            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
             metadata[
                 f"{POSITIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
             ] = label_tensor
         for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
-            input_seeds_builder[edge_type[label_edge_index]].append(
-                label_tensor[label_tensor != PADDING_NODE].to(self.device)
+            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
+                self.device
             )
+            input_seeds_builder[edge_type[label_edge_index]].append(
+                filtered_label_tensor
+            )
+            # Update the metadata per negative label edge type.
+            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
             metadata[
                 f"{NEGATIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
             ] = label_tensor
-
         input_nodes: dict[Union[str, NodeType], torch.Tensor] = {
             node_type: torch.cat(seeds, dim=0).to(self.device)
             for node_type, seeds in input_seeds_builder.items()
         }
+        for value in input_seeds_builder.values():
+            value.clear()
+        input_seeds_builder.clear()
+        del input_seeds_builder
+        gc.collect()
 
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()

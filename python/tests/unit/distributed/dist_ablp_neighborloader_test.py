@@ -355,19 +355,21 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
     assert set(datum.y_positive.keys()) == set(
         expected_positive_labels.keys()
     ), f"{datum.y_positive.keys()} != {expected_positive_labels.keys()}"
+    src_index = 0
+    dst_index = 2
     for edge_type in datum.y_positive.keys():
         _assert_labels(
-            datum[edge_type[0]].node,
-            datum[edge_type[2]].node,
-            datum.y_positive[edge_type],
-            expected_positive_labels[edge_type],
+            src_node=datum[edge_type[src_index]].node,
+            dst_node=datum[edge_type[dst_index]].node,
+            y=datum.y_positive[edge_type],
+            expected=expected_positive_labels[edge_type],
         )
     if expected_negative_labels is not None:
         _assert_labels(
-            datum[edge_type[0]].node,
-            datum[edge_type[2]].node,
-            datum.y_negative[edge_type],
-            expected_negative_labels[edge_type],
+            src_node=datum[edge_type[src_index]].node,
+            dst_node=datum[edge_type[dst_index]].node,
+            y=datum.y_negative[edge_type],
+            expected=expected_negative_labels[edge_type],
         )
     else:
         assert not hasattr(datum, "y_negative")
@@ -934,12 +936,12 @@ class DistABLPLoaderTest(unittest.TestCase):
                     node_partition_book={},
                 ),
                 num_neighbors=[2, 2],
-                input_nodes=(NodeType("a"), torch.tensor([10])),
+                input_nodes=torch.tensor([10]),
                 supervision_edge_type=[_A_TO_B, _A_TO_C],
             ),
         ]
     )
-    def test_ablp_dataloder_invalid_inputs(
+    def test_ablp_dataloader_invalid_inputs(
         self,
         _: str,
         expected_error: type[BaseException],

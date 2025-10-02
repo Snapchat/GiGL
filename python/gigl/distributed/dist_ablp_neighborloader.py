@@ -185,7 +185,9 @@ class DistABLPLoader(DistLoader):
         should_cleanup_distributed_context: bool = False
 
         if supervision_edge_type is None:
-            self._supervision_edge_types: list[EdgeType] = []
+            self._supervision_edge_types: list[EdgeType] = [
+                DEFAULT_HOMOGENEOUS_EDGE_TYPE
+            ]
         elif isinstance(supervision_edge_type, list):
             if not supervision_edge_type:
                 raise ValueError(
@@ -263,7 +265,7 @@ class DistABLPLoader(DistLoader):
             )
         self._is_input_heterogeneous: bool = False
         if isinstance(input_nodes, tuple):
-            if len(self._supervision_edge_types) == 0:
+            if self._supervision_edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 raise ValueError(
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
@@ -282,13 +284,12 @@ class DistABLPLoader(DistLoader):
                     for supervision_edge_type in self._supervision_edge_types
                 ]
         elif isinstance(input_nodes, torch.Tensor):
-            if len(self._supervision_edge_types) > 0:
+            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 raise ValueError(
                     f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
                 )
             anchor_node_ids = input_nodes
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            self._supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
         elif input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -298,14 +299,13 @@ class DistABLPLoader(DistLoader):
                 raise ValueError(
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
-            if len(self._supervision_edge_types) > 0:
+            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 raise ValueError(
                     f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
                 )
 
             anchor_node_ids = dataset.node_ids
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            self._supervision_edge_types = [DEFAULT_HOMOGENEOUS_EDGE_TYPE]
 
         missing_edge_types = set(self._supervision_edge_types) - set(
             dataset.graph.keys()
@@ -328,8 +328,8 @@ class DistABLPLoader(DistLoader):
 
         self._positive_label_edge_types: list[EdgeType] = []
         self._negative_label_edge_types: list[EdgeType] = []
-        all_positive_labels: dict[EdgeType, torch.Tensor] = {}
-        all_negative_labels: dict[EdgeType, torch.Tensor] = {}
+        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
+        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         for supervision_edge_type in self._supervision_edge_types:
             (
                 positive_label_edge_type,
@@ -345,15 +345,19 @@ class DistABLPLoader(DistLoader):
                 positive_label_edge_type=positive_label_edge_type,
                 negative_label_edge_type=negative_label_edge_type,
             )
-            all_positive_labels[positive_label_edge_type] = positive_labels
+            positive_labels_by_label_edge_type[
+                positive_label_edge_type
+            ] = positive_labels
             if negative_label_edge_type is not None and negative_labels is not None:
-                all_negative_labels[negative_label_edge_type] = negative_labels
+                negative_labels_by_label_edge_type[
+                    negative_label_edge_type
+                ] = negative_labels
 
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
             input_type=anchor_node_type,
-            positive_label_by_edge_types=all_positive_labels,
-            negative_label_by_edge_types=all_negative_labels,
+            positive_label_by_edge_types=positive_labels_by_label_edge_type,
+            negative_label_by_edge_types=negative_labels_by_label_edge_type,
         )
 
         self.to_device = (
@@ -531,7 +535,7 @@ class DistABLPLoader(DistLoader):
         dict[EdgeType, torch.Tensor],
     ]:
         # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
-        """
+        f"""
         Gets the labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
         `to_hetero_data` function strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
         building the HeteroData object.
@@ -540,12 +544,21 @@ class DistABLPLoader(DistLoader):
             msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
         Returns:
             SampleMessage: Updated sample messsage with the label fields removed
-            dict[EdgeType, torch.Tensor]: Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
-            Optional[dict[EdgeType, torch.Tensor]]: Negative label ID tensor, where the ith row corresponds to the ith anchor node ID.
+            dict[EdgeType, torch.Tensor]: Dict[positive label edge type, label ID tensor],
+                where the ith row  of the tensor.corresponds to the ith anchor node ID.
+            dict[EdgeType, torch.Tensor]: Dict[negative label edge type, label ID tensor],
+                where the ith row  of the tensor.corresponds to the ith anchor node ID.
+                May be mepty if no negative labels are present.
         """
         metadata: dict[str, torch.Tensor] = {}
         positive_labels: dict[EdgeType, torch.Tensor] = {}
         negative_labels: dict[EdgeType, torch.Tensor] = {}
+        # We update metadata with sepcial POSITIVE_LABEL_METADATA_KEY and NEGATIVE_LABEL_METADATA_KEY keys
+        # in python/gigl/distributed/dist_neighbor_sampler.py.
+        # We need to encode the tuples as strings because GLT requires the keys to be strings.
+        # As such, we decode the strings back into tuples,
+        # And then pop those keys out of the metadata as they are not needed otherwise.
+        # NOTE: GLT *prepends* the keys with "#META."
         for k in list(msg.keys()):
             if k.startswith(f"#META.{POSITIVE_LABEL_METADATA_KEY}."):
                 edge_type_str = k[len(f"#META.{POSITIVE_LABEL_METADATA_KEY}.") :]
@@ -575,8 +588,10 @@ class DistABLPLoader(DistLoader):
         exposed in the final HeteroData/Data object.
         Args:
             data (Union[Data, HeteroData]): Graph to provide labels for
-            positive_labels (dict[EdgeType, torch.Tensor]): Positive label ID tensor, where the ith row corresponds to the ith anchor node ID
-            negative_labels (dict[EdgeType, torch.Tensor]): Negative label ID tensor, where the ith row corresponds to the ith anchor node ID.
+            positive_labels (dict[EdgeType, torch.Tensor]): Dict[positive label edge type, label ID tensor],
+                where the ith row  of the tensor.corresponds to the ith anchor node ID.
+            negative_labels (dict[EdgeType, torch.Tensor]): Dict[negative label edge type, label ID tensor],
+                where the ith row  of the tensor.corresponds to the ith anchor node ID.
         Returns:
             Union[Data, HeteroData]: torch_geometric HeteroData/Data object with the filtered edge fields and labels set as properties of the instance
         """
@@ -617,24 +632,25 @@ class DistABLPLoader(DistLoader):
                 )
                 # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the positive labels for the current anchor node
 
-        if negative_labels is not None:
-            for edge_type, label_tensor in negative_labels.items():
-                for local_anchor_node_id in range(label_tensor.size(0)):
-                    negative_mask = (
-                        node_type_to_local_node_to_global_node[
-                            edge_type[edge_index]
-                        ].unsqueeze(1)
-                        == label_tensor[local_anchor_node_id]
-                    )  # shape [N, M], where N is the number of nodes and M is the number of negative labels for the current anchor node
+        for edge_type, label_tensor in negative_labels.items():
+            for local_anchor_node_id in range(label_tensor.size(0)):
+                negative_mask = (
+                    node_type_to_local_node_to_global_node[
+                        edge_type[edge_index]
+                    ].unsqueeze(1)
+                    == label_tensor[local_anchor_node_id]
+                )  # shape [N, M], where N is the number of nodes and M is the number of negative labels for the current anchor node
 
-                    # Gets the indexes of the items in local_node_to_global_node which match any of the negative labels for the current anchor node
-                    output_negative_labels[
-                        label_edge_type_to_message_passing_edge_type(edge_type)
-                    ][local_anchor_node_id] = torch.nonzero(negative_mask)[:, 0].to(
-                        self.to_device
-                    )
-                    # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
-        if len(output_positive_labels) == 1:
+                # Gets the indexes of the items in local_node_to_global_node which match any of the negative labels for the current anchor node
+                output_negative_labels[
+                    label_edge_type_to_message_passing_edge_type(edge_type)
+                ][local_anchor_node_id] = torch.nonzero(negative_mask)[:, 0].to(
+                    self.to_device
+                )
+                # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
+        if not output_positive_labels:
+            raise ValueError("No positive labels were found in the data!")
+        elif len(output_positive_labels) == 1:
             data.y_positive = next(iter(output_positive_labels.values()))
         else:
             data.y_positive = output_positive_labels
