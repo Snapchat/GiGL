@@ -56,7 +56,9 @@ class PartitionedExportRead(beam.PTransform):
         pcollection_list = []
         for i in range(self._num_partitions):
             # We use farm_fingerprint as a determinstic hashing function which will allow us to partition
-            # on keys of any type (i.e. strings, integers, etc.)
+            # on keys of any type (i.e. strings, integers, etc.) We take the MOD on the returned INT64 value first
+            # with the number of partitions and then take the ABS value to ensure it is in range [0, num_partitions-1].
+            # We do it in this order since ABS can error on the largest negative INT64 number, which has no positive equivalent.
             query = (
                 f"SELECT * FROM `{self._table_name}` "
                 f"WHERE ABS(MOD(FARM_FINGERPRINT(CAST({self._partition_key} AS STRING)), {self._num_partitions}) = {i})"
