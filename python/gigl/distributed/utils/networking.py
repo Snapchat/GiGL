@@ -44,21 +44,39 @@ def get_free_ports(num_ports: int) -> list[int]:
 
 
 def get_free_ports_from_master_node(
-    num_ports=1, _global_rank_override: Optional[int] = None
+    num_ports: int, _global_rank_override: Optional[int] = None
 ) -> list[int]:
     """
     Get free ports from master node, that can be used for communication between workers.
     Args:
         num_ports (int): Number of free ports to find.
         _global_rank_override (Optional[int]): Override for the global rank,
+        useful for testing or if global rank is not accurately available.
+    """
+    return get_free_ports_from_node(
+        num_ports, node_rank=0, _global_rank_override=_global_rank_override
+    )
+
+
+def get_free_ports_from_node(
+    num_ports: int,
+    node_rank: int,
+    _global_rank_override: Optional[int] = None,
+) -> list[int]:
+    """
+    Get free ports from a node, that can be used for communication between workers.
+    Args:
+        num_ports (int): Number of free ports to find.
+        node_rank (int): Rank of the node, default is 0.
+        _global_rank_override (Optional[int]): Override for the global rank,
             useful for testing or if global rank is not accurately available.
     Returns:
-        list[int]: A list of free port numbers on the master node.
+        list[int]: A list of free port numbers on the node.
     """
     # Ensure that the distributed environment is initialized
     assert (
         torch.distributed.is_initialized()
-    ), "Distributed environment must be initialized to communicate free ports on master"
+    ), "Distributed environment must be initialized to communicate free ports on a node"
     assert num_ports >= 1, "num_ports must be >= 1"
 
     rank = (
@@ -67,17 +85,16 @@ def get_free_ports_from_master_node(
         else _global_rank_override
     )
     logger.info(
-        f"Rank {rank} is requesting {num_ports} free ports from rank 0 (master)"
+        f"Rank {rank} is requesting {num_ports} free ports from rank {node_rank} (node)"
     )
-    ports: list[int]
-    if rank == 0:
+    if rank == node_rank:
         ports = get_free_ports(num_ports)
         logger.info(f"Rank {rank} found free ports: {ports}")
     else:
         ports = [0] * num_ports
 
     # Broadcast from master from rank 0 to all other ranks
-    torch.distributed.broadcast_object_list(ports, src=0)
+    torch.distributed.broadcast_object_list(ports, src=node_rank)
     logger.info(f"Rank {rank} received ports: {ports}")
     return ports
 
@@ -87,12 +104,24 @@ def get_internal_ip_from_master_node(
 ) -> str:
     """
     Get the internal IP address of the master node in a distributed setup.
+    """
+    return get_internal_ip_from_node(
+        node_rank=0, _global_rank_override=_global_rank_override
+    )
+
+
+def get_internal_ip_from_node(
+    node_rank: int,
+    _global_rank_override: Optional[int] = None,
+) -> str:
+    """
+    Get the internal IP address of the node in a distributed setup.
     This is useful for setting up RPC communication between workers where the default torch.distributed env:// setup is not enough.
 
     i.e. when using :py:obj:`gigl.distributed.dataset_factory`
 
     Returns:
-        str: The internal IP address of the master node.
+        str: The internal IP address of the node.
     """
     assert (
         torch.distributed.is_initialized()
@@ -104,23 +133,23 @@ def get_internal_ip_from_master_node(
         else _global_rank_override
     )
     logger.info(
-        f"Rank {rank} is requesting internal ip address of master node from rank 0 (master)"
+        f"Rank {rank} is requesting internal ip address of node from rank {node_rank}"
     )
 
-    master_ip_list: list[Optional[str]] = []
-    if rank == 0:
+    ip_list: list[Optional[str]] = []
+    if rank == node_rank:
         # Master node, return its own internal IP
-        master_ip_list = [socket.gethostbyname(socket.gethostname())]
+        ip_list = [socket.gethostbyname(socket.gethostname())]
     else:
         # Other nodes will receive the master's IP via broadcast
-        master_ip_list = [None]
+        ip_list = [None]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    torch.distributed.broadcast_object_list(master_ip_list, src=0, device=device)
-    master_ip = master_ip_list[0]
-    logger.info(f"Rank {rank} received master internal IP: {master_ip}")
-    assert master_ip is not None, "Could not retrieve master node's internal IP"
-    return master_ip
+    torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
+    node_ip = ip_list[0]
+    logger.info(f"Rank {rank} received master internal IP: {node_ip}")
+    assert node_ip is not None, "Could not retrieve master node's internal IP"
+    return node_ip
 
 
 def get_internal_ip_from_all_ranks() -> list[str]:
