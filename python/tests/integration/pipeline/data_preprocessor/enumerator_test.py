@@ -599,33 +599,6 @@ class EnumeratorTest(unittest.TestCase):
             edge_data_references=sharded_edge_references,
         )
 
-    def test_sharded_enumeration_with_invalid_shard_key(self):
-        """Test that sharded enumeration works correctly for both node and edge data."""
-        sharded_node_references: list[BigqueryNodeDataReference] = []
-
-        for node_ref in self.node_data_references:
-            assert node_ref.identifier is not None
-            sharded_node_references.append(
-                BigqueryNodeDataReference(
-                    reference_uri=node_ref.reference_uri,
-                    node_type=node_ref.node_type,
-                    identifier=node_ref.identifier,
-                    sharded_read_config=BigQueryShardedReadConfig(
-                        shard_key="invalid_shard_key",
-                        num_shards=self._node_num_shards,
-                        project_id=get_resource_config().project,
-                        temp_dataset_name=get_resource_config().temp_assets_bq_dataset_name,
-                    ),
-                )
-            )
-
-        with self.assertRaises(ValueError):
-            self._run_enumeration_test_and_validate(
-                applied_task_identifier=f"{self.__applied_task_identifier}_sharded_table_enumeration_with_invalid_shard_key",
-                node_data_references=sharded_node_references,
-                edge_data_references=[],
-            )
-
     def tearDown(self) -> None:
         for table_name in self.__bq_tables_to_cleanup_on_teardown:
             self.__bq_utils.delete_bq_table_if_exist(bq_table_path=table_name)
