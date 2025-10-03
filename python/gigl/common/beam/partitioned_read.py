@@ -61,7 +61,7 @@ class PartitionedExportRead(beam.PTransform):
             # We do it in this order since ABS can error on the largest negative INT64 number, which has no positive equivalent.
             query = (
                 f"SELECT * FROM `{self._table_name}` "
-                f"WHERE ABS(MOD(FARM_FINGERPRINT(CAST({self._partition_key} AS STRING)), {self._num_partitions}) = {i})"
+                f"WHERE ABS(MOD(FARM_FINGERPRINT(CAST({self._partition_key} AS STRING)), {self._num_partitions})) = {i}"
             )
 
             pcollection_list.append(
