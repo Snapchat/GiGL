@@ -235,7 +235,7 @@ class Enumerator:
                 reference_uri=bq_destination_enumerated_node_features_table_name,
                 node_type=node_data_ref.node_type,
                 identifier=node_data_ref.identifier,
-                partitioned_read_info=node_data_ref.partitioned_read_info,
+                sharded_read_config=node_data_ref.sharded_read_config,
             ),
             bq_unique_node_ids_enumerated_table_name=bq_unique_node_ids_enumerated_table_name,
             num_nodes=num_enumerated_nodes,
@@ -432,7 +432,7 @@ class Enumerator:
                 edge_usage_type=edge_data_ref.edge_usage_type,
                 src_identifier=edge_data_ref.src_identifier,
                 dst_identifier=edge_data_ref.dst_identifier,
-                partitioned_read_info=edge_data_ref.partitioned_read_info,
+                sharded_read_config=edge_data_ref.sharded_read_config,
             ),
             num_edges=num_enumerated_edges,
         )

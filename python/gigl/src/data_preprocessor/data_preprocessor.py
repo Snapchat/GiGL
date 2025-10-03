@@ -791,7 +791,7 @@ class DataPreprocessor:
                 reference_uri=node_data_reference.reference_uri,
                 node_type=node_data_reference.node_type,
                 identifier=node_data_preprocessing_spec.identifier_output,
-                partitioned_read_info=node_data_reference.partitioned_read_info,
+                sharded_read_config=node_data_reference.sharded_read_config,
             )
             node_refs_to_specs[
                 node_data_ref_with_identifier
@@ -811,7 +811,7 @@ class DataPreprocessor:
                 edge_usage_type=edge_data_reference.edge_usage_type,
                 src_identifier=edge_data_preprocessing_spec.identifier_output.src_node,
                 dst_identifier=edge_data_preprocessing_spec.identifier_output.dst_node,
-                partitioned_read_info=edge_data_reference.partitioned_read_info,
+                sharded_read_config=edge_data_reference.sharded_read_config,
             )
             edge_refs_to_specs[
                 edge_data_ref_with_identifier

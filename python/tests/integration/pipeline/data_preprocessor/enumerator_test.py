@@ -5,7 +5,7 @@ import google.cloud.bigquery as bigquery
 import pandas as pd
 
 import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
-from gigl.common.beam.partitioned_read import BigQueryPartitionedReadInfo
+from gigl.common.beam.sharded_read import BigQueryShardedReadConfig
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.time import NODASH_DATETIME_FORMAT
@@ -89,8 +89,8 @@ _NEGATIVE_EDGE_FEATURE_RECORDS = [
     for (src, dst) in _NEGATIVE_EDGES
 ]
 
-_NODE_NUM_PARTITIONS = 2
-_EDGE_NUM_PARTITIONS = 3
+_NODE_NUM_SHARDS = 2
+_EDGE_NUM_SHARDS = 3
 
 
 # TODO: (svij-sc) Cleanup this test
@@ -211,8 +211,8 @@ class EnumeratorTest(unittest.TestCase):
             self.__input_negative_edges_data_reference.reference_uri,
         ]
 
-        self._node_num_partitions = _NODE_NUM_PARTITIONS
-        self._edge_num_partitions = _EDGE_NUM_PARTITIONS
+        self._node_num_shards = _NODE_NUM_SHARDS
+        self._edge_num_shards = _EDGE_NUM_SHARDS
 
         self.__upload_records_to_bq(
             data_reference=self.__input_nodes_data_reference,
@@ -554,46 +554,77 @@ class EnumeratorTest(unittest.TestCase):
             edge_data_references=self.edge_data_references,
         )
 
-    def test_partitioned_enumeration(self):
-        """Test that partitioned enumeration works correctly for both node and edge data."""
-        partitioned_node_references: list[BigqueryNodeDataReference] = []
-        partitioned_edge_references: list[BigqueryEdgeDataReference] = []
+    def test_sharded_enumeration(self):
+        """Test that sharded enumeration works correctly for both node and edge data."""
+        sharded_node_references: list[BigqueryNodeDataReference] = []
+        sharded_edge_references: list[BigqueryEdgeDataReference] = []
 
         for node_ref in self.node_data_references:
             assert node_ref.identifier is not None
-            partitioned_node_references.append(
+            sharded_node_references.append(
                 BigqueryNodeDataReference(
                     reference_uri=node_ref.reference_uri,
                     node_type=node_ref.node_type,
                     identifier=node_ref.identifier,
-                    partitioned_read_info=BigQueryPartitionedReadInfo(
-                        partition_key=node_ref.identifier,
-                        num_partitions=self._node_num_partitions,
+                    sharded_read_config=BigQueryShardedReadConfig(
+                        shard_key=node_ref.identifier,
+                        num_shards=self._node_num_shards,
+                        project_id=get_resource_config().project,
+                        temp_dataset_name=get_resource_config().temp_assets_bq_dataset_name,
                     ),
                 )
             )
 
         for edge_ref in self.edge_data_references:
             assert edge_ref.src_identifier is not None
-            partitioned_edge_references.append(
+            sharded_edge_references.append(
                 BigqueryEdgeDataReference(
                     reference_uri=edge_ref.reference_uri,
                     edge_type=edge_ref.edge_type,
                     edge_usage_type=edge_ref.edge_usage_type,
                     src_identifier=edge_ref.src_identifier,
                     dst_identifier=edge_ref.dst_identifier,
-                    partitioned_read_info=BigQueryPartitionedReadInfo(
-                        partition_key=edge_ref.src_identifier,
-                        num_partitions=self._edge_num_partitions,
+                    sharded_read_config=BigQueryShardedReadConfig(
+                        shard_key=edge_ref.src_identifier,
+                        num_shards=self._edge_num_shards,
+                        project_id=get_resource_config().project,
+                        temp_dataset_name=get_resource_config().temp_assets_bq_dataset_name,
                     ),
                 )
             )
 
         self._run_enumeration_test_and_validate(
-            applied_task_identifier=f"{self.__applied_task_identifier}_partitioned_table_enumeration",
-            node_data_references=partitioned_node_references,
-            edge_data_references=partitioned_edge_references,
+            applied_task_identifier=f"{self.__applied_task_identifier}_sharded_table_enumeration",
+            node_data_references=sharded_node_references,
+            edge_data_references=sharded_edge_references,
         )
+
+    def test_sharded_enumeration_with_invalid_shard_key(self):
+        """Test that sharded enumeration works correctly for both node and edge data."""
+        sharded_node_references: list[BigqueryNodeDataReference] = []
+
+        for node_ref in self.node_data_references:
+            assert node_ref.identifier is not None
+            sharded_node_references.append(
+                BigqueryNodeDataReference(
+                    reference_uri=node_ref.reference_uri,
+                    node_type=node_ref.node_type,
+                    identifier=node_ref.identifier,
+                    sharded_read_config=BigQueryShardedReadConfig(
+                        shard_key="invalid_shard_key",
+                        num_shards=self._node_num_shards,
+                        project_id=get_resource_config().project,
+                        temp_dataset_name=get_resource_config().temp_assets_bq_dataset_name,
+                    ),
+                )
+            )
+
+        with self.assertRaises(ValueError):
+            self._run_enumeration_test_and_validate(
+                applied_task_identifier=f"{self.__applied_task_identifier}_sharded_table_enumeration_with_invalid_shard_key",
+                node_data_references=sharded_node_references,
+                edge_data_references=[],
+            )
 
     def tearDown(self) -> None:
         for table_name in self.__bq_tables_to_cleanup_on_teardown:
