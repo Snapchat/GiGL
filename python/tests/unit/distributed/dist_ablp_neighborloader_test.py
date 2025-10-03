@@ -1,9 +1,11 @@
 import unittest
-from typing import Optional, Union
+from collections import defaultdict
+from typing import Literal, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
+from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
@@ -47,6 +49,17 @@ _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
+_A = NodeType("a")
+_B = NodeType("b")
+_C = NodeType("c")
+_TO = Relation("to")
+_LINK = Relation("link")
+_A_TO_B = EdgeType(_A, _TO, _B)
+_A_TO_C = EdgeType(_A, _TO, _C)
+_A_LINK_B = EdgeType(_A, _LINK, _B)
+_B_TO_A = EdgeType(_B, _TO, _A)
+_C_TO_A = EdgeType(_C, _TO, _A)
+
 # TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
 
 # GLT requires subclasses of DistNeighborLoader to be run in a separate process. Otherwise, we may run into segmentation fault
@@ -58,7 +71,10 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
 
 def _assert_labels(
-    node: torch.Tensor, y: dict[int, torch.Tensor], expected: dict[int, torch.Tensor]
+    anchor_nodes: torch.Tensor,
+    supervision_nodes: torch.Tensor,
+    y: dict[int, torch.Tensor],
+    expected: dict[int, torch.Tensor],
 ):
     """
     Asserts that the given labels (y) match the expected labels (expected).
@@ -75,9 +91,10 @@ def _assert_labels(
     _assert_labels(node, y, expected)
 
     Args:
-        node (torch.Tensor): The node tensor, N, where N is the number of nodes in the batch,
-        where the local IDs are the index of a node in the tensor,
-        and the global IDs are the values of the tensor.
+        anchor_nodes (torch.Tensor): Tensor of nodes in the graph with the same type as the anchor node,
+            shape [N] where N is the number of nodes in the batch with this node type
+        supervision_nodes (torch.Tensor): Tensor of nodes in the graph with the same type as the supervision node,
+            shape [M] where M is the number of nodes in the batch with this node type
         y (dict[int, torch.Tensor]): The labels in the local node space.
             The tensors are of shape [X], where X is the number of labels for the current anchor node.
         expected (dict[int, torch.Tensor]): The labels in the global node space.
@@ -86,13 +103,13 @@ def _assert_labels(
     - The keys in `y` do not match the keys in `expected`
     - The values in `y` do not match the values in `expected`
     """
-    supplied_global_nodes = node[list(y.keys())]
+    supplied_global_nodes = anchor_nodes[list(y.keys())]
     assert set(supplied_global_nodes.tolist()) == set(
         expected.keys()
-    ), f"Expected keys {expected.keys()} != {y.keys()}"
+    ), f"Expected keys {expected.keys()} != {supplied_global_nodes.tolist()}"
     for local_anchor in y:
-        global_id = int(node[local_anchor].item())
-        global_nodes = node[y[local_anchor]]
+        global_id = int(anchor_nodes[local_anchor].item())
+        global_nodes = supervision_nodes[y[local_anchor]]
         expected_nodes = expected[global_id]
         assert_tensor_equality(global_nodes, expected_nodes, dim=0)
 
@@ -132,9 +149,13 @@ def _run_distributed_ablp_neighbor_loader(
         expected_node,
         dim=0,
     )
-    _assert_labels(datum.node, datum.y_positive, expected_positive_labels)
+    _assert_labels(datum.node, datum.node, datum.y_positive, expected_positive_labels)
     if expected_negative_labels is not None:
-        _assert_labels(datum.node, datum.y_negative, expected_negative_labels)
+        # Pass is `datum.node` twice as this a homogenous object
+        # and the anchor and supervision nodes are the same type.
+        _assert_labels(
+            datum.node, datum.node, datum.y_negative, expected_negative_labels
+        )
     else:
         assert not hasattr(datum, "y_negative")
     dsts, srcs, *_ = datum.coo()
@@ -293,6 +314,116 @@ def _run_toy_heterogeneous_ablp(
         torch.tensor(global_anchor_nodes), datum[anchor_node_type].batch, dim=0
     )
 
+    shutdown_rpc()
+
+
+def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
+    _,
+    input_nodes: tuple[NodeType, torch.Tensor],
+    dataset: DistDataset,
+    supervision_edge_types: list[EdgeType],
+    expected_node: dict[NodeType, torch.Tensor],
+    expected_batch: dict[NodeType, torch.Tensor],
+    expected_edges: dict[EdgeType, tuple[torch.Tensor, torch.Tensor]],
+    expected_positive_labels: dict[EdgeType, dict[int, torch.Tensor]],
+    expected_negative_labels: Optional[dict[EdgeType, dict[int, torch.Tensor]]],
+):
+    batch_size = 1
+
+    torch.distributed.init_process_group(
+        rank=0, world_size=1, init_method=get_process_group_init_method()
+    )
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=batch_size,
+        pin_memory_device=torch.device("cpu"),
+        supervision_edge_type=supervision_edge_types,
+    )
+
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
+
+    assert count == 1
+    assert set(datum.node_types) == set(expected_node.keys())
+    for node_type in datum.node_types:
+        assert_tensor_equality(
+            datum[node_type].node,
+            expected_node[node_type],
+            dim=0,
+        )
+    assert hasattr(datum, "y_positive")
+    assert set(datum.y_positive.keys()) == set(
+        expected_positive_labels.keys()
+    ), f"{datum.y_positive.keys()} != {expected_positive_labels.keys()}"
+    anchor_index = 0
+    supervision_index = 2
+    for edge_type in datum.y_positive.keys():
+        _assert_labels(
+            anchor_nodes=datum[edge_type[anchor_index]].node,
+            supervision_nodes=datum[edge_type[supervision_index]].node,
+            y=datum.y_positive[edge_type],
+            expected=expected_positive_labels[edge_type],
+        )
+    if expected_negative_labels is not None:
+        _assert_labels(
+            anchor_nodes=datum[edge_type[anchor_index]].node,
+            supervision_nodes=datum[edge_type[supervision_index]].node,
+            y=datum.y_negative[edge_type],
+            expected=expected_negative_labels[edge_type],
+        )
+    else:
+        assert not hasattr(datum, "y_negative")
+
+    # Reverse as the dataset edge dir is "out" so GLT reverses under the hood.
+    if dataset.edge_dir == "out":
+        expected_edges = {
+            reverse_edge_type(edge_type): edges
+            for edge_type, edges in expected_edges.items()
+        }
+    dsts, srcs, *_ = datum.coo()
+    assert set(expected_edges.keys()) == set(
+        dsts.keys()
+    ), f"{expected_edges.keys()} != {dsts.keys()}"
+    assert set(expected_edges.keys()) == set(
+        srcs.keys()
+    ), f"{expected_edges.keys()} != {srcs.keys()}"
+    for edge_type in expected_edges.keys():
+        assert_tensor_equality(
+            datum[edge_type[0]].node[dsts[edge_type]],
+            expected_edges[edge_type][1],
+            dim=0,
+        )
+        assert_tensor_equality(
+            datum[edge_type[2]].node[srcs[edge_type]],
+            expected_edges[edge_type][0],
+            dim=0,
+        )
+
+    # Check that the batch and batch_size attributes of the class are correct
+    assert set(datum.node_types) == set(expected_node.keys())
+    for node_type in datum.node_types:
+        assert_tensor_equality(
+            datum[node_type].node,
+            expected_node[node_type],
+            dim=0,
+        )
+    assert set(datum.node_types) == set(expected_batch.keys())
+    for node_type in datum.node_types:
+        if expected_batch[node_type] is not None:
+            assert_tensor_equality(
+                datum[node_type].batch,
+                expected_batch[node_type],
+                dim=0,
+            )
+        else:
+            assert not hasattr(datum[node_type], "batch")
+
+    # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
+    # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
     shutdown_rpc()
 
 
@@ -573,6 +704,314 @@ class DistABLPLoaderTest(unittest.TestCase):
             fn=_run_toy_heterogeneous_ablp,
             args=(dataset, self._context, supervision_edge_types, fanout),
         )
+
+    @parameterized.expand(
+        [
+            # https://is.gd/zG8xIn
+            param(
+                "positive edges",
+                edge_dir="out",
+                edge_index={
+                    _A_TO_B: torch.tensor([[10, 10], [11, 12]]),
+                    message_passing_to_positive_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [13, 14]]
+                    ),
+                    _A_TO_C: torch.tensor([[10, 10], [20, 21]]),
+                    message_passing_to_positive_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [22, 23]]
+                    ),
+                    # Add an edge that isn't a supervision edge type
+                    _A_LINK_B: torch.tensor([[10, 10], [20, 21]]),
+                },
+                supervision_edge_types=[_A_TO_B, _A_TO_C],
+                expected_node={
+                    _A: torch.tensor([10]),
+                    _B: torch.tensor(
+                        [
+                            11,
+                            12,
+                            13,
+                            14,
+                            20,
+                            21,
+                        ]
+                    ),
+                    _C: torch.tensor(
+                        [
+                            20,
+                            21,
+                            22,
+                            23,
+                        ]
+                    ),
+                },
+                expected_batch={
+                    _A: torch.tensor([10]),
+                    _B: None,
+                    _C: None,
+                },
+                expected_edges={
+                    _A_TO_B: (torch.tensor([10, 10]), torch.tensor([11, 12])),
+                    _A_TO_C: (torch.tensor([10, 10]), torch.tensor([20, 21])),
+                    _A_LINK_B: (torch.tensor([10, 10]), torch.tensor([20, 21])),
+                },
+                expected_positive_labels={
+                    _A_TO_B: {10: torch.tensor([13, 14])},
+                    _A_TO_C: {10: torch.tensor([22, 23])},
+                },
+                expected_negative_labels=None,
+            ),
+            # https://is.gd/nTVBll
+            param(
+                "positive and negative edges",
+                edge_dir="out",
+                edge_index={
+                    _A_TO_B: torch.tensor([[10, 10], [11, 12]]),
+                    message_passing_to_positive_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [13, 14]]
+                    ),
+                    message_passing_to_negative_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [15, 16]]
+                    ),
+                    _A_TO_C: torch.tensor([[10, 10], [20, 21]]),
+                    message_passing_to_positive_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [22, 23]]
+                    ),
+                    message_passing_to_negative_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [24, 25]]
+                    ),
+                },
+                supervision_edge_types=[_A_TO_B, _A_TO_C],
+                expected_node={
+                    _A: torch.tensor([10]),
+                    _B: torch.tensor([11, 12, 13, 14, 15, 16]),
+                    _C: torch.tensor([20, 21, 22, 23, 24, 25]),
+                },
+                expected_batch={
+                    _A: torch.tensor([10]),
+                    _B: None,
+                    _C: None,
+                },
+                expected_edges={
+                    _A_TO_B: (torch.tensor([10, 10]), torch.tensor([11, 12])),
+                    _A_TO_C: (torch.tensor([10, 10]), torch.tensor([20, 21])),
+                },
+                expected_positive_labels={
+                    _A_TO_B: {10: torch.tensor([13, 14])},
+                    _A_TO_C: {10: torch.tensor([22, 23])},
+                },
+                expected_negative_labels={
+                    _A_TO_B: {10: torch.tensor([15, 16])},
+                    _A_TO_C: {10: torch.tensor([24, 25])},
+                },
+            ),
+            # https://is.gd/mO5cpW
+            param(
+                "same nodes, different relation",
+                edge_dir="out",
+                edge_index={
+                    _A_TO_B: torch.tensor([[10, 10], [11, 12]]),
+                    message_passing_to_positive_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [13, 14]]
+                    ),
+                    _A_LINK_B: torch.tensor([[10, 10], [20, 21]]),
+                    message_passing_to_positive_label(_A_LINK_B): torch.tensor(
+                        [[10, 10], [22, 23]]
+                    ),
+                },
+                supervision_edge_types=[_A_TO_B, _A_LINK_B],
+                expected_node={
+                    _A: torch.tensor([10]),
+                    _B: torch.tensor([11, 12, 13, 14, 20, 21, 22, 23]),
+                },
+                expected_batch={
+                    _A: torch.tensor([10]),
+                    _B: None,
+                },
+                expected_edges={
+                    _A_TO_B: (torch.tensor([10, 10]), torch.tensor([11, 12])),
+                    _A_LINK_B: (torch.tensor([10, 10]), torch.tensor([20, 21])),
+                },
+                expected_positive_labels={
+                    _A_TO_B: {10: torch.tensor([13, 14])},
+                    _A_LINK_B: {10: torch.tensor([22, 23])},
+                },
+                expected_negative_labels=None,
+            ),
+            # https://is.gd/oxDB6C
+            param(
+                "positive edges, edge_dir=in",
+                edge_dir="in",
+                edge_index={
+                    _B_TO_A: torch.tensor([[11, 12], [10, 10]]),
+                    message_passing_to_positive_label(_B_TO_A): torch.tensor(
+                        [[13, 14], [10, 10]]
+                    ),
+                    _C_TO_A: torch.tensor([[20, 21], [10, 10]]),
+                    message_passing_to_positive_label(_C_TO_A): torch.tensor(
+                        [[22, 23], [10, 10]]
+                    ),
+                },
+                supervision_edge_types=[_A_TO_B, _A_TO_C],
+                expected_node={
+                    _A: torch.tensor([10]),
+                    _B: torch.tensor(
+                        [
+                            11,
+                            12,
+                            13,
+                            14,
+                        ]
+                    ),
+                    _C: torch.tensor(
+                        [
+                            20,
+                            21,
+                            22,
+                            23,
+                        ]
+                    ),
+                },
+                expected_batch={
+                    _A: torch.tensor([10]),
+                    _B: None,
+                    _C: None,
+                },
+                expected_edges={
+                    _B_TO_A: (torch.tensor([10, 10]), torch.tensor([11, 12])),
+                    _C_TO_A: (torch.tensor([10, 10]), torch.tensor([20, 21])),
+                },
+                expected_positive_labels={
+                    _A_TO_B: {10: torch.tensor([13, 14])},
+                    _A_TO_C: {10: torch.tensor([22, 23])},
+                },
+                expected_negative_labels=None,
+            ),
+        ]
+    )
+    def test_ablp_dataloder_multiple_supervision_edge_types(
+        self,
+        _,
+        edge_dir: Literal["in", "out"],
+        edge_index: dict[EdgeType, torch.Tensor],
+        supervision_edge_types: list[EdgeType],
+        expected_node: dict[NodeType, torch.Tensor],
+        expected_batch: dict[NodeType, Optional[torch.Tensor]],
+        expected_edges: dict[EdgeType, tuple[torch.Tensor, torch.Tensor]],
+        expected_positive_labels: dict[EdgeType, dict[int, torch.Tensor]],
+        expected_negative_labels: Optional[dict[EdgeType, dict[int, torch.Tensor]]],
+    ):
+        nodes: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
+        for edge_type, edge_idx in edge_index.items():
+            nodes[edge_type[0]].append(edge_idx[0])
+            nodes[edge_type[2]].append(edge_idx[1])
+        partition_output = PartitionOutput(
+            node_partition_book={
+                node_type: torch.zeros(int(torch.cat(node_ids).max().item() + 1))
+                for node_type, node_ids in nodes.items()
+            },
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir=edge_dir)
+        dataset.build(partition_output=partition_output)
+        mp.spawn(
+            fn=_run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types,
+            args=(
+                (NodeType("a"), torch.tensor([10])),  # input_nodes
+                dataset,  # dataset
+                supervision_edge_types,  # supervision_edge_types
+                expected_node,  # expected_node
+                expected_batch,  # expected_batch
+                expected_edges,  # expected_edges
+                expected_positive_labels,  # expected_positive_labels
+                expected_negative_labels,  # expected_negative_labels
+            ),
+        ),
+
+    @parameterized.expand(
+        [
+            param(
+                "Empty list of supervision edge types",
+                expected_error=ValueError,
+                expected_error_message="supervision_edge_type must be a non-empty list when providing multiple supervision edge types.",
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10])),
+                supervision_edge_type=[],
+            ),
+            param(
+                "Homogenous dataset",
+                expected_error=ValueError,
+                expected_error_message="The dataset must be heterogeneous for ABLP",
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10])),
+                supervision_edge_type=[_A_TO_B],
+            ),
+            param(
+                "No supervision edge type, heterogenous sampling",
+                expected_error=ValueError,
+                expected_error_message="When using heterogeneous ABLP, you must provide supervision_edge_types",
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10])),
+                supervision_edge_type=None,
+            ),
+            param(
+                "Mutiple supervision edge types, homogeneous sampling",
+                expected_error=ValueError,
+                expected_error_message="Expected supervision edge type to be None for homogeneous input nodes",
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=torch.tensor([10]),
+                supervision_edge_type=[_A_TO_B, _A_TO_C],
+            ),
+        ]
+    )
+    def test_ablp_dataloader_invalid_inputs(
+        self,
+        _: str,
+        expected_error: type[BaseException],
+        expected_error_message: str,
+        **kwargs,
+    ):
+        torch.distributed.init_process_group(
+            rank=0, world_size=1, init_method=get_process_group_init_method()
+        )
+        with self.assertRaises(expected_error, msg=expected_error_message):
+            DistABLPLoader(**kwargs)
 
 
 if __name__ == "__main__":
