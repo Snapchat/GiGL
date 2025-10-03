@@ -77,6 +77,9 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             metadata[
                 f"{NEGATIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
             ] = label_tensor
+        # As a perf optimization, we *could* have `input_nodes` be only the unique nodes,
+        # but since torch.unique() calls a sort, we should investigate if it's worth it.
+        # TODO(kmonte, mkolodner-sc): Investigate if this is worth it.
         input_nodes: dict[Union[str, NodeType], torch.Tensor] = {
             node_type: torch.cat(seeds, dim=0).to(self.device)
             for node_type, seeds in input_seeds_builder.items()
