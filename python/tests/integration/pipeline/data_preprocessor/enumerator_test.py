@@ -5,6 +5,7 @@ import google.cloud.bigquery as bigquery
 import pandas as pd
 
 import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
+from gigl.common.beam.sharded_read import BigQueryShardedReadConfig
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.time import NODASH_DATETIME_FORMAT
@@ -87,6 +88,9 @@ _NEGATIVE_EDGE_FEATURE_RECORDS = [
     }
     for (src, dst) in _NEGATIVE_EDGES
 ]
+
+_NODE_NUM_SHARDS = 2
+_EDGE_NUM_SHARDS = 3
 
 
 # TODO: (svij-sc) Cleanup this test
@@ -206,6 +210,9 @@ class EnumeratorTest(unittest.TestCase):
             self.__input_positive_edges_data_reference.reference_uri,
             self.__input_negative_edges_data_reference.reference_uri,
         ]
+
+        self._node_num_shards = _NODE_NUM_SHARDS
+        self._edge_num_shards = _EDGE_NUM_SHARDS
 
         self.__upload_records_to_bq(
             data_reference=self.__input_nodes_data_reference,
@@ -452,7 +459,18 @@ class EnumeratorTest(unittest.TestCase):
             original_edge_feature_records=_NEGATIVE_EDGE_FEATURE_RECORDS,
         )
 
-    def test_for_correctness(self):
+    def _run_enumeration_test_and_validate(
+        self,
+        applied_task_identifier: str,
+        node_data_references: list[BigqueryNodeDataReference],
+        edge_data_references: list[BigqueryEdgeDataReference],
+    ) -> None:
+        """Helper method to run enumeration test and validate results.
+        Args:
+            applied_task_identifier (str): Applied task identifier for the current test
+            node_data_references (list[BigqueryNodeDataReference]): List of node data references
+            edge_data_references (list[BigqueryEdgeDataReference]): List of edge data references
+        """
         enumerator = Enumerator()
         list_enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata]
         list_enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata]
@@ -461,13 +479,14 @@ class EnumeratorTest(unittest.TestCase):
             list_enumerator_edge_type_metadata,
         ) = enumerator.run(
             applied_task_identifier=AppliedTaskIdentifier(
-                self.__applied_task_identifier
+                applied_task_identifier,
             ),
-            node_data_references=self.node_data_references,
-            edge_data_references=self.edge_data_references,
+            node_data_references=node_data_references,
+            edge_data_references=edge_data_references,
             gcp_project=get_resource_config().project,
         )
 
+        # Add the created tables to cleanup list
         for node_metadata in list_enumerator_node_type_metadata:
             self.__bq_tables_to_cleanup_on_teardown.append(
                 node_metadata.enumerated_node_data_reference.reference_uri
@@ -484,6 +503,7 @@ class EnumeratorTest(unittest.TestCase):
             node_type_metadata.enumerated_node_data_reference.node_type: node_type_metadata
             for node_type_metadata in list_enumerator_node_type_metadata
         }
+
         map_enum_edge_type_metadata: dict[
             Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
         ] = {
@@ -493,18 +513,90 @@ class EnumeratorTest(unittest.TestCase):
             ): edge_type_metadata
             for edge_type_metadata in list_enumerator_edge_type_metadata
         }
+
+        # Queries the BigQuery enumerated node ID table to reconstruct the integer-to-original ID mapping.
+        # Under the hood executes "SELECT original_node_id, enumerated_node_id FROM bq_unique_node_ids_enumerated_table"
+        # to build a dict[int -> str] mapping. Also validates enumeration correctness by checking that
+        # integer IDs are sequential (0 to n-1), within bounds, and that row count matches expected node count.
         int_to_orig_node_id_map: dict[
             int, str
         ] = self.fetch_enumerated_node_map_and_assert_correctness(
             map_enum_node_type_metadata=map_enum_node_type_metadata
         )
+
+        # Validates that node features are preserved during enumeration by:
+        # 1. Querying the enumerated node feature table in BigQuery to retrieve all node records
+        # 2. Converting enumerated integer node IDs back to original string IDs using int_to_orig_node_id_map
+        # 3. Creating hash sets of (original_node_id, feature_values) tuples for both:
+        #    - Original test data: _PERSON_NODE_FEATURE_RECORDS (Alice, Bob, Charlie with height/age/weight)
+        #    - Enumerated data: Retrieved from BigQuery after reverse-mapping integer IDs to original IDs
+        # 4. Asserting that both hash sets are identical.
         self.assert_enumerated_node_features_correctness(
             int_to_orig_node_id_map=int_to_orig_node_id_map,
             map_enum_node_type_metadata=map_enum_node_type_metadata,
         )
+
+        # Validates edge enumeration correctness by comparing original vs enumerated edge data.
+        # Under the hood queries each enumerated edge table to fetch all rows, converts integer
+        # node IDs back to original string IDs using the mapping, then creates hash sets of both
+        # original and enumerated edge records to verify exact data preservation. Checks main,
+        # positive, and negative edge types separately.
         self.assert_enumerated_edge_features_correctness(
             int_to_orig_node_id_map=int_to_orig_node_id_map,
             map_enum_edge_type_metadata=map_enum_edge_type_metadata,
+        )
+
+    def test_full_enumeration(self):
+        """Test that full table enumeration works correctly for both node and edge data."""
+        self._run_enumeration_test_and_validate(
+            applied_task_identifier=f"{self.__applied_task_identifier}_full_table_enumeration",
+            node_data_references=self.node_data_references,
+            edge_data_references=self.edge_data_references,
+        )
+
+    def test_sharded_enumeration(self):
+        """Test that sharded enumeration works correctly for both node and edge data."""
+        sharded_node_references: list[BigqueryNodeDataReference] = []
+        sharded_edge_references: list[BigqueryEdgeDataReference] = []
+
+        for node_ref in self.node_data_references:
+            assert node_ref.identifier is not None
+            sharded_node_references.append(
+                BigqueryNodeDataReference(
+                    reference_uri=node_ref.reference_uri,
+                    node_type=node_ref.node_type,
+                    identifier=node_ref.identifier,
+                    sharded_read_config=BigQueryShardedReadConfig(
+                        shard_key=node_ref.identifier,
+                        num_shards=self._node_num_shards,
+                        project_id=get_resource_config().project,
+                        temp_dataset_name=get_resource_config().temp_assets_bq_dataset_name,
+                    ),
+                )
+            )
+
+        for edge_ref in self.edge_data_references:
+            assert edge_ref.src_identifier is not None
+            sharded_edge_references.append(
+                BigqueryEdgeDataReference(
+                    reference_uri=edge_ref.reference_uri,
+                    edge_type=edge_ref.edge_type,
+                    edge_usage_type=edge_ref.edge_usage_type,
+                    src_identifier=edge_ref.src_identifier,
+                    dst_identifier=edge_ref.dst_identifier,
+                    sharded_read_config=BigQueryShardedReadConfig(
+                        shard_key=edge_ref.src_identifier,
+                        num_shards=self._edge_num_shards,
+                        project_id=get_resource_config().project,
+                        temp_dataset_name=get_resource_config().temp_assets_bq_dataset_name,
+                    ),
+                )
+            )
+
+        self._run_enumeration_test_and_validate(
+            applied_task_identifier=f"{self.__applied_task_identifier}_sharded_table_enumeration",
+            node_data_references=sharded_node_references,
+            edge_data_references=sharded_edge_references,
         )
 
     def tearDown(self) -> None:

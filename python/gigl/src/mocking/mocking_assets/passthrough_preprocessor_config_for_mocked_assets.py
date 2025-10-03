@@ -1,7 +1,9 @@
 from typing import Any
 
 import gigl.src.mocking.lib.constants as test_tasks_constants
+from gigl.common.beam.sharded_read import BigQueryShardedReadConfig
 from gigl.common.logger import Logger
+from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.data_preprocessor.lib.data_preprocessor_config import (
     DataPreprocessorConfig,
@@ -134,6 +136,12 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
                 reference_uri=main_edges_bq_table_name,
                 edge_type=edge_type,
                 edge_usage_type=EdgeUsageType.MAIN,
+                sharded_read_config=BigQueryShardedReadConfig(
+                    shard_key=self.__mocked_dataset.edge_src_column_name,
+                    num_shards=5,
+                    project_id=get_resource_config().project,
+                    temp_dataset_name=get_resource_config().temp_assets_bq_dataset_name,
+                ),
             )
 
             default_edge_feature_fields: list[str] = [
