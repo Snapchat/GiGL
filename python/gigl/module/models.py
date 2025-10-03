@@ -10,6 +10,7 @@ from torch_geometric.nn.conv import LGConv
 from torch_geometric import utils
 from typing_extensions import Self
 import torch.distributed as dist
+from torch_sparse import SparseTensor
 
 from torchrec.modules.embedding_configs import (
     EmbeddingBagConfig,
@@ -218,6 +219,7 @@ class LightGCN(nn.Module):
         data: Union[Data, HeteroData],
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
+        anchor_node_ids: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
         """
         Forward pass of the LightGCN model.
@@ -234,9 +236,9 @@ class LightGCN(nn.Module):
             output_node_types = output_node_types or list(data.node_types)
             return self._forward_heterogeneous(data, device, output_node_types)
         else:
-            return self._forward_homogeneous(data, device)
+            return self._forward_homogeneous(data, device, anchor_node_ids)
 
-    def _forward_homogeneous(self, data: Data, device: torch.device) -> torch.Tensor:
+    def _forward_homogeneous(self, data: Data, device: torch.device, anchor_node_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         # Check if model is setup to be homogeneous
         if len(self._feature_keys) != 1:
             raise ValueError(
@@ -244,27 +246,30 @@ class LightGCN(nn.Module):
                 f"{len(self._feature_keys)} types: {self._feature_keys}"
             )
         key = self._feature_keys[0]
-
-        node_ids = (
-            data.node_id.to(device)
-            if hasattr(data, "node_id")
-            else torch.arange(data.num_nodes, device=device, dtype=torch.long)
-        )
         edge_index = data.edge_index.to(device)
 
-        # Lookup: e^(0) for this batch of node IDs
-        x0 = self._lookup_single_key(key, node_ids)
+        if not hasattr(data, "node_id"):
+            raise ValueError(
+                "Subgraph Data must include .node_id (global node ids) to fetch rows from the global embedding table."
+            )
+        global_ids = data.node_id.to(device).long()  # shape [N_sub], maps local 0..N_sub-1 → global ids
 
-        # K LightGCN propagation steps with LGConv
-        xs = [x0]  # e^(0)
-        x = x0
+        x0_sub = self._lookup_single_key(key, global_ids)   # [N_sub, D]
+
+        xs: list[torch.Tensor] = [x0_sub]
+        x = x0_sub
+
         for conv in self._convs:
-            x = conv(x, edge_index)
+            x = conv(x, edge_index)     # normalized neighbor averaging over *subgraph* edges
             xs.append(x)
 
-        # Weighted sum over layers 0..K
-        out = self._weighted_layer_sum(xs)
-        return out
+        z_sub = self._weighted_layer_sum(xs)  # [N_sub, D]
+
+        if anchor_node_ids is not None:
+            anchors_local = anchor_node_ids.to(device).long()
+            return z_sub[anchors_local]      # [num_anchors, D]
+
+        return z_sub                         # [N_sub, D]
 
     def _forward_heterogeneous(
         self,
@@ -372,6 +377,5 @@ class LightGCN(nn.Module):
         w = self._layer_weights_tensor.to(device=xs[0].device, dtype=xs[0].dtype)      # [K+1]
         stacked = torch.stack(xs, dim=0)                                              # [K+1, N, D]
         out = (stacked * w.view(-1, 1, 1)).sum(dim=0)                                  # [N, D]
-        print(out)
-        print(type(out))
+
         return out
