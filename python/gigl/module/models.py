@@ -190,7 +190,7 @@ class LightGCN(nn.Module):
                 )
             self._layer_weights = layer_weights
         self.register_buffer(
-            "_layer_weights_tensor", torch.tensor(self._layer_weights, dtype=torch.float32, device=device)
+            "_layer_weights_tensor", torch.tensor(self._layer_weights, dtype=torch.float32, device=device)  # shape [K+1], where K is num_layers
         )
 
         # Build TorchRec EBC (one table per node type)
@@ -210,7 +210,7 @@ class LightGCN(nn.Module):
         self._ebc = EmbeddingBagCollection(tables=tables, device=self._device)
 
         # Construct LightGCN propagation layers (LGConv = Ā X)
-        self._convs = nn.ModuleList([LGConv() for _ in range(self._num_layers)])
+        self._convs = nn.ModuleList([LGConv() for _ in range(self._num_layers)])  # K layers
 
         self._is_sharded = False
 
@@ -246,30 +246,31 @@ class LightGCN(nn.Module):
                 f"{len(self._feature_keys)} types: {self._feature_keys}"
             )
         key = self._feature_keys[0]
-        edge_index = data.edge_index.to(device)
+        edge_index = data.edge_index.to(device)  # shape [2, E], where E is the number of edges
 
-        if not hasattr(data, "node_id"):
-            raise ValueError(
-                "Subgraph Data must include .node_id (global node ids) to fetch rows from the global embedding table."
-            )
-        global_ids = data.node_id.to(device).long()  # shape [N_sub], maps local 0..N_sub-1 → global ids
+        if hasattr(data, "n_id"):
+            global_ids = data.n_id.to(device).long() # shape [N_sub], maps local 0..N_sub-1 → global ids
+        elif hasattr(data, "node_id"):
+            global_ids = data.node_id.to(device).long() # shape [N_sub], maps local 0..N_sub-1 → global ids
+        else:
+            raise ValueError("Subgraph must include .n_id (or .node_id) to map local→global IDs.")
 
-        x0_sub = self._lookup_single_key(key, global_ids)   # [N_sub, D]
+        x0_sub = self._lookup_single_key(key, global_ids)   # shape [N_sub, D], where N_sub is number of nodes in subgraph and D is embedding_dim
 
         xs: list[torch.Tensor] = [x0_sub]
         x = x0_sub
 
         for conv in self._convs:
-            x = conv(x, edge_index)     # normalized neighbor averaging over *subgraph* edges
+            x = conv(x, edge_index)     # shape [N_sub, D], normalized neighbor averaging over *subgraph* edges
             xs.append(x)
 
-        z_sub = self._weighted_layer_sum(xs)  # [N_sub, D]
+        z_sub = self._weighted_layer_sum(xs)  # shape [N_sub, D], weighted sum of all layer embeddings
 
         if anchor_node_ids is not None:
-            anchors_local = anchor_node_ids.to(device).long()
-            return z_sub[anchors_local]      # [num_anchors, D]
+            anchors_local = anchor_node_ids.to(device).long()  # shape [num_anchors]
+            return z_sub[anchors_local]      # shape [num_anchors, D], embeddings for anchor nodes only
 
-        return z_sub                         # [N_sub, D]
+        return z_sub                         # shape [N_sub, D], embeddings for all nodes in subgraph
 
     def _forward_heterogeneous(
         self,
@@ -338,7 +339,7 @@ class LightGCN(nn.Module):
             raise KeyError(f"Unknown feature key '{key}'. Valid keys: {self._feature_keys}")
 
         # Number of examples (one ID per "bag")
-        B = int(ids.numel())
+        B = int(ids.numel())  # B is the number of node IDs to lookup
         device = ids.device
 
         # Build lengths in key-major order: for each key, we give B lengths.
@@ -347,21 +348,21 @@ class LightGCN(nn.Module):
         lengths_per_key: list[torch.Tensor] = []
         for k in self._feature_keys:
             if k == key:
-                lengths_per_key.append(torch.ones(B, dtype=torch.long, device=device))
+                lengths_per_key.append(torch.ones(B, dtype=torch.long, device=device))  # shape [B], all ones for requested key
             else:
-                lengths_per_key.append(torch.zeros(B, dtype=torch.long, device=device))
+                lengths_per_key.append(torch.zeros(B, dtype=torch.long, device=device))  # shape [B], all zeros for other keys
 
-        lengths = torch.cat(lengths_per_key, dim=0)
+        lengths = torch.cat(lengths_per_key, dim=0)  # shape [B * num_keys], concatenated lengths for all keys
 
         # Values only contain the requested key's ids (sum of other lengths is 0)
         kjt = KeyedJaggedTensor(
             keys=self._feature_keys,       # include ALL keys known by EBC
-            values=ids.long(),             # only B values for the requested key
-            lengths=lengths,               # B lengths per key, concatenated key-major
+            values=ids.long(),             # shape [B], only B values for the requested key
+            lengths=lengths,               # shape [B * num_keys], B lengths per key, concatenated key-major
         )
 
-        out = self._ebc(kjt)
-        return out[key]                   # [B, D] for the requested key
+        out = self._ebc(kjt)              # KeyedTensor (dict-like): out[key] -> [B, D]
+        return out[key]                   # shape [B, D], embeddings for the requested key
 
     def _weighted_layer_sum(self, xs: list[torch.Tensor]) -> torch.Tensor:
         """
@@ -374,8 +375,8 @@ class LightGCN(nn.Module):
             )
 
         # Ensure weights match device/dtype of embeddings
-        w = self._layer_weights_tensor.to(device=xs[0].device, dtype=xs[0].dtype)      # [K+1]
-        stacked = torch.stack(xs, dim=0)                                              # [K+1, N, D]
-        out = (stacked * w.view(-1, 1, 1)).sum(dim=0)                                  # [N, D]
+        w = self._layer_weights_tensor.to(device=xs[0].device, dtype=xs[0].dtype)      # shape [K+1], layer weights
+        stacked = torch.stack(xs, dim=0)                                              # shape [K+1, N, D], stack all layer embeddings
+        out = (stacked * w.view(-1, 1, 1)).sum(dim=0)                                  # shape [N, D], weighted sum across layers
 
         return out
