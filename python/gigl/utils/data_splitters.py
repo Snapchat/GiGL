@@ -26,10 +26,17 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     reverse_edge_type,
 )
+import psutil
+import os
 
 logger = Logger()
 
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
+
+def _debug_memory_usage(prefix: str):
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    logger.info(f"{prefix} Memory usage: {memory_info.rss / 1024 / 1024:.2f} MB (out of {psutil.virtual_memory().total / 1024 / 1024:.2f} MB)")
 
 
 class NodeAnchorLinkSplitter(Protocol):
@@ -648,6 +655,8 @@ def _get_padded_labels(
     # and indices is the COL_INDEX of a CSR matrix.
     # See https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
+    _debug_memory_usage("Before indptr and indices")
+
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
     extra_nodes_to_pad = 0
@@ -657,20 +666,42 @@ def _get_padded_labels(
         anchor_node_ids = anchor_node_ids[valid_ids]
     starts = indptr[anchor_node_ids]  # [N]
     ends = indptr[anchor_node_ids + 1]  # [N]
+    _debug_memory_usage("After starts and ends")
 
     max_range = int(torch.max(ends - starts).item())
+    logger.info(f"max range {max_range}")
+    mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
+    max_end_value = ends.max().item()
+    _debug_memory_usage("After max_end_value")
+    del ends
+    gc.collect()
+    _debug_memory_usage("After ends gc")
 
+
+    logger.info(f"Local Rank {torch.distributed.get_rank() % torch.distributed.get_world_size()}, "
+                f"Node Rank {torch.distributed.get_rank() // torch.distributed.get_world_size()}: "
+                f"Get padded labels")
     # Sample all labels based on the CSR start/stop indices.
     # Creates "indices" for us to us, e.g [[0, 1], [2, 3]]
     ranges = starts.unsqueeze(1) + torch.arange(max_range)  # [N, max_range]
+    _debug_memory_usage("After ranges")
+    del starts
+    gc.collect()
+    _debug_memory_usage("After starts gc")
+
     # Clamp the ranges to be valid indices into `indices`.
     ranges.clamp_(min=0, max=ends.max().item() - 1)
+    _debug_memory_usage("After clamp")
     # Mask out the parts of "ranges" that are not applicable to the current label
     # filling out the rest with `PADDING_NODE`.
-    mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
+    # mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
     labels = torch.where(
         mask, torch.full_like(ranges, PADDING_NODE.item()), indices[ranges]
     )
+    _debug_memory_usage("After labels")
+    del ranges
+    gc.collect()
+    _debug_memory_usage("After ranges gc")
     labels = torch.cat(
         [
             labels,
@@ -678,6 +709,7 @@ def _get_padded_labels(
         ],
         dim=0,
     )
+    _debug_memory_usage("After cat")
     return labels
 
 

@@ -280,6 +280,8 @@ class DistABLPLoader(DistLoader):
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
             supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
             supervision_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        logger.info(f"local rank: {local_rank}, node rank: {node_rank}, anchor node type: {anchor_node_type}, "
+                    f"supervision edge type: {supervision_edge_type}, supervision node type: {supervision_node_type}")
 
         missing_edge_types = set([supervision_edge_type]) - set(dataset.graph.keys())
         if missing_edge_types:
@@ -296,6 +298,7 @@ class DistABLPLoader(DistLoader):
             self._negative_label_edge_type,
         ) = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
         self._supervision_edge_type = supervision_edge_type
+        logger.info(f"Local rank: {local_rank}, node rank: {node_rank}, supervision edge type: {supervision_edge_type}")
 
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             dataset=dataset,
@@ -303,6 +306,7 @@ class DistABLPLoader(DistLoader):
             positive_label_edge_type=self._positive_label_edge_type,
             negative_label_edge_type=self._negative_label_edge_type,
         )
+        logger.info(f"Local rank: {local_rank}, node rank: {node_rank}, Got labels for anchor nodes")
 
         self.to_device = (
             pin_memory_device
@@ -315,12 +319,14 @@ class DistABLPLoader(DistLoader):
         num_neighbors = patch_fanout_for_sampling(
             dataset.get_edge_types(), num_neighbors
         )
+        logger.info(f"Local rank: {local_rank}, node rank: {node_rank}, Number of neighbors: {num_neighbors}")
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=anchor_node_ids,
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
         )
+        logger.info(f"local rank: {local_rank}, node rank: {node_rank}, current process nodes: {curr_process_nodes}`")
 
         self._node_feature_info = dataset.node_feature_info
         self._edge_feature_info = dataset.edge_feature_info
