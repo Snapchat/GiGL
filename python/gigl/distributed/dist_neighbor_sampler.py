@@ -84,6 +84,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             node_type: torch.cat(seeds, dim=0).to(self.device)
             for node_type, seeds in input_seeds_builder.items()
         }
+        del filtered_label_tensor, label_tensor
         for value in input_seeds_builder.values():
             value.clear()
         input_seeds_builder.clear()

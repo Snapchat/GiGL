@@ -10,6 +10,7 @@ from graphlearn_torch.distributed import (
     get_context,
 )
 from graphlearn_torch.sampler import SamplingConfig, SamplingType
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -545,10 +546,10 @@ class DistABLPLoader(DistLoader):
         Returns:
             SampleMessage: Updated sample messsage with the label fields removed
             dict[EdgeType, torch.Tensor]: Dict[positive label edge type, label ID tensor],
-                where the ith row  of the tensor.corresponds to the ith anchor node ID.
+                where the ith row  of the tensor corresponds to the ith anchor node ID.
             dict[EdgeType, torch.Tensor]: Dict[negative label edge type, label ID tensor],
-                where the ith row  of the tensor.corresponds to the ith anchor node ID.
-                May be mepty if no negative labels are present.
+                where the ith row  of the tensor corresponds to the ith anchor node ID.
+                May be empty if no negative labels are present.
         """
         metadata: dict[str, torch.Tensor] = {}
         positive_labels: dict[EdgeType, torch.Tensor] = {}
@@ -558,16 +559,21 @@ class DistABLPLoader(DistLoader):
         # We need to encode the tuples as strings because GLT requires the keys to be strings.
         # As such, we decode the strings back into tuples,
         # And then pop those keys out of the metadata as they are not needed otherwise.
+        # If edge_dir is "in", we need to reverse the edge type because GLT swaps src/dst for edge_dir = "out".
         # NOTE: GLT *prepends* the keys with "#META."
         for k in list(msg.keys()):
             if k.startswith(f"#META.{POSITIVE_LABEL_METADATA_KEY}."):
                 edge_type_str = k[len(f"#META.{POSITIVE_LABEL_METADATA_KEY}.") :]
                 edge_type = ast.literal_eval(edge_type_str)
+                if self.edge_dir == "in":
+                    edge_type = reverse_edge_type(edge_type)
                 positive_labels[edge_type] = msg[k].to(self.to_device)
                 del msg[k]
             elif k.startswith(f"#META.{NEGATIVE_LABEL_METADATA_KEY}."):
                 edge_type_str = k[len(f"#META.{NEGATIVE_LABEL_METADATA_KEY}.") :]
                 edge_type = ast.literal_eval(edge_type_str)
+                if self.edge_dir == "in":
+                    edge_type = reverse_edge_type(edge_type)
                 negative_labels[edge_type] = msg[k].to(self.to_device)
                 del msg[k]
             elif k.startswith("#META."):
@@ -579,8 +585,8 @@ class DistABLPLoader(DistLoader):
     def _set_labels(
         self,
         data: Union[Data, HeteroData],
-        positive_labels: dict[EdgeType, torch.Tensor],
-        negative_labels: dict[EdgeType, torch.Tensor],
+        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor],
+        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor],
     ) -> Union[Data, HeteroData]:
         """
         Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
@@ -588,10 +594,10 @@ class DistABLPLoader(DistLoader):
         exposed in the final HeteroData/Data object.
         Args:
             data (Union[Data, HeteroData]): Graph to provide labels for
-            positive_labels (dict[EdgeType, torch.Tensor]): Dict[positive label edge type, label ID tensor],
-                where the ith row  of the tensor.corresponds to the ith anchor node ID.
-            negative_labels (dict[EdgeType, torch.Tensor]): Dict[negative label edge type, label ID tensor],
-                where the ith row  of the tensor.corresponds to the ith anchor node ID.
+            positive_labels_by_label_edge_type (dict[EdgeType, torch.Tensor]): Dict[positive label edge type, label ID tensor],
+                where the ith row  of the tensor corresponds to the ith anchor node ID.
+            negative_labels_by_label_edge_type (dict[EdgeType, torch.Tensor]): Dict[negative label edge type, label ID tensor],
+                where the ith row  of the tensor corresponds to the ith anchor node ID.
         Returns:
             Union[Data, HeteroData]: torch_geometric HeteroData/Data object with the filtered edge fields and labels set as properties of the instance
         """
@@ -614,8 +620,9 @@ class DistABLPLoader(DistLoader):
         # Since GLT swaps src/dst for edge_dir = "out",
         # and GiGL assumes that supervision edge types are always (anchor_node_type, to, supervision_node_type),
         # we need to index into supervision edge types accordingly.
-        edge_index = 0 if self.edge_dir == "in" else 2
-        for edge_type, label_tensor in positive_labels.items():
+        # edge_index = 0 if self.edge_dir == "in" else 2
+        edge_index = 2
+        for edge_type, label_tensor in positive_labels_by_label_edge_type.items():
             for local_anchor_node_id in range(label_tensor.size(0)):
                 positive_mask = (
                     node_type_to_local_node_to_global_node[
@@ -632,7 +639,7 @@ class DistABLPLoader(DistLoader):
                 )
                 # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the positive labels for the current anchor node
 
-        for edge_type, label_tensor in negative_labels.items():
+        for edge_type, label_tensor in negative_labels_by_label_edge_type.items():
             for local_anchor_node_id in range(label_tensor.size(0)):
                 negative_mask = (
                     node_type_to_local_node_to_global_node[
