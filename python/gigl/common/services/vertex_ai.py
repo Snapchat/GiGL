@@ -157,7 +157,7 @@ class VertexAIService:
         """
         logger.info(f"Running Vertex AI job: {job_config.job_name}")
 
-        machine_spec = _get_machine_spec(job_config)
+        machine_spec = _create_machine_spec(job_config)
 
         # This file is used to store the leader worker's internal IP address.
         # Whenever `connect_worker_pool()` is called, the leader worker will
@@ -177,9 +177,9 @@ class VertexAIService:
             )
         ]
 
-        container_spec = _get_container_spec(job_config, env_vars)
+        container_spec = _create_container_spec(job_config, env_vars)
 
-        disk_spec = _get_disk_spec(job_config)
+        disk_spec = _create_disk_spec(job_config)
 
         assert (
             job_config.replica_count >= 1
@@ -270,27 +270,12 @@ class VertexAIService:
         Returns:
             The completed CustomJob.
         """
-        storage_machine_spec = _get_machine_spec(storage_cluster)
-        compute_machine_spec = _get_machine_spec(compute_cluster)
-        storage_disk_spec = _get_disk_spec(storage_cluster)
-        compute_disk_spec = _get_disk_spec(compute_cluster)
+        storage_machine_spec = _create_machine_spec(storage_cluster)
+        compute_machine_spec = _create_machine_spec(compute_cluster)
+        storage_disk_spec = _create_disk_spec(storage_cluster)
+        compute_disk_spec = _create_disk_spec(compute_cluster)
 
-        # This file is used to store the leader worker's internal IP address.
-        # Whenever `connect_worker_pool()` is called, the leader worker will
-        # write its internal IP address to this file. The other workers will
-        # read this file to get the leader worker's internal IP address.
-        # See connect_worker_pool() implementation for more details.
-        leader_worker_internal_ip_file_path = GcsUri.join(
-            self._staging_bucket,
-            storage_cluster.job_name,
-            datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
-            "leader_worker_internal_ip.txt",
-        )
         env_vars: list[env_var.EnvVar] = [
-            env_var.EnvVar(
-                name=LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY,
-                value=leader_worker_internal_ip_file_path.uri,
-            ),
             env_var.EnvVar(
                 name=STORAGE_CLUSTER_MASTER_KEY,
                 value="0",
@@ -301,8 +286,8 @@ class VertexAIService:
             ),
         ]
 
-        storage_container_spec = _get_container_spec(storage_cluster, env_vars)
-        compute_container_spec = _get_container_spec(compute_cluster, env_vars)
+        storage_container_spec = _create_container_spec(storage_cluster, env_vars)
+        compute_container_spec = _create_container_spec(compute_cluster, env_vars)
 
         worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
 
@@ -470,7 +455,7 @@ class VertexAIService:
             )
 
 
-def _get_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
+def _create_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
     """Get the machine spec for a job config."""
     machine_spec = MachineSpec(
         machine_type=job_config.machine_type,
@@ -480,7 +465,7 @@ def _get_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
     return machine_spec
 
 
-def _get_container_spec(
+def _create_container_spec(
     job_config: VertexAiJobConfig, env_vars: list[env_var.EnvVar]
 ) -> ContainerSpec:
     """Get the container spec for a job config."""
@@ -493,7 +478,7 @@ def _get_container_spec(
     return container_spec
 
 
-def _get_disk_spec(job_config: VertexAiJobConfig) -> DiskSpec:
+def _create_disk_spec(job_config: VertexAiJobConfig) -> DiskSpec:
     """Get the disk spec for a job config."""
     disk_spec = DiskSpec(
         boot_disk_type=job_config.boot_disk_type,
