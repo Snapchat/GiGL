@@ -25,6 +25,7 @@ from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
+    metadata_key_with_prefix,
 )
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
@@ -552,8 +553,8 @@ class DistABLPLoader(DistLoader):
                 May be empty if no negative labels are present.
         """
         metadata: dict[str, torch.Tensor] = {}
-        positive_labels: dict[EdgeType, torch.Tensor] = {}
-        negative_labels: dict[EdgeType, torch.Tensor] = {}
+        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
+        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         # We update metadata with sepcial POSITIVE_LABEL_METADATA_KEY and NEGATIVE_LABEL_METADATA_KEY keys
         # in python/gigl/distributed/dist_neighbor_sampler.py.
         # We need to encode the tuples as strings because GLT requires the keys to be strings.
@@ -561,26 +562,40 @@ class DistABLPLoader(DistLoader):
         # And then pop those keys out of the metadata as they are not needed otherwise.
         # If edge_dir is "in", we need to reverse the edge type because GLT swaps src/dst for edge_dir = "out".
         # NOTE: GLT *prepends* the keys with "#META."
+        positive_label_metadata_key_prefix = metadata_key_with_prefix(
+            POSITIVE_LABEL_METADATA_KEY
+        )
+        negative_label_metadata_key_prefix = metadata_key_with_prefix(
+            NEGATIVE_LABEL_METADATA_KEY
+        )
         for k in list(msg.keys()):
-            if k.startswith(f"#META.{POSITIVE_LABEL_METADATA_KEY}."):
-                edge_type_str = k[len(f"#META.{POSITIVE_LABEL_METADATA_KEY}.") :]
+            if k.startswith(positive_label_metadata_key_prefix):
+                edge_type_str = k[len(positive_label_metadata_key_prefix) :]
                 edge_type = ast.literal_eval(edge_type_str)
                 if self.edge_dir == "in":
                     edge_type = reverse_edge_type(edge_type)
-                positive_labels[edge_type] = msg[k].to(self.to_device)
+                positive_labels_by_label_edge_type[edge_type] = msg[k].to(
+                    self.to_device
+                )
                 del msg[k]
-            elif k.startswith(f"#META.{NEGATIVE_LABEL_METADATA_KEY}."):
-                edge_type_str = k[len(f"#META.{NEGATIVE_LABEL_METADATA_KEY}.") :]
+            elif k.startswith(negative_label_metadata_key_prefix):
+                edge_type_str = k[len(negative_label_metadata_key_prefix) :]
                 edge_type = ast.literal_eval(edge_type_str)
                 if self.edge_dir == "in":
                     edge_type = reverse_edge_type(edge_type)
-                negative_labels[edge_type] = msg[k].to(self.to_device)
+                negative_labels_by_label_edge_type[edge_type] = msg[k].to(
+                    self.to_device
+                )
                 del msg[k]
             elif k.startswith("#META."):
                 meta_key = str(k[len("#META.") :])
                 metadata[meta_key] = msg[k].to(self.to_device)
                 del msg[k]
-        return (msg, positive_labels, negative_labels)
+        return (
+            msg,
+            positive_labels_by_label_edge_type,
+            negative_labels_by_label_edge_type,
+        )
 
     def _set_labels(
         self,
@@ -617,10 +632,8 @@ class DistABLPLoader(DistLoader):
         output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
-        # Since GLT swaps src/dst for edge_dir = "out",
-        # and GiGL assumes that supervision edge types are always (anchor_node_type, to, supervision_node_type),
-        # we need to index into supervision edge types accordingly.
-        # edge_index = 0 if self.edge_dir == "in" else 2
+        # We always have supervision edge types of the form (anchor_node_type, to, supervision_node_type)
+        # So we can index into the edge type accordingly.
         edge_index = 2
         for edge_type, label_tensor in positive_labels_by_label_edge_type.items():
             for local_anchor_node_id in range(label_tensor.size(0)):

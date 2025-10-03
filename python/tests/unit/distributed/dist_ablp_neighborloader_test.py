@@ -91,8 +91,10 @@ def _assert_labels(
     _assert_labels(node, y, expected)
 
     Args:
-        anchor_nodes (torch.Tensor): The source (anchor) node tensor, [N], where N is the number of supervision nodes in the batch,
-        supervision_nodes (torch.Tensor): The destination (supervision) node tensor, [M], where M is the number of supervision nodes in the batch,
+        anchor_nodes (torch.Tensor): Tensor of nodes in the graph with the same type as the anchor node,
+            shape [N] where N is the number of nodes in the batch with this node type
+        supervision_nodes (torch.Tensor): Tensor of nodes in the graph with the same type as the supervision node,
+            shape [M] where M is the number of nodes in the batch with this node type
         y (dict[int, torch.Tensor]): The labels in the local node space.
             The tensors are of shape [X], where X is the number of labels for the current anchor node.
         expected (dict[int, torch.Tensor]): The labels in the global node space.

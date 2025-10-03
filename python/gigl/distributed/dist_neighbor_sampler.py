@@ -63,7 +63,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             # Update the metadata per positive label edge type.
             # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
             metadata[
-                f"{POSITIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
+                f"{POSITIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
             ] = label_tensor
         for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
             filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
@@ -75,7 +75,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
             # Update the metadata per negative label edge type.
             # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
             metadata[
-                f"{NEGATIVE_LABEL_METADATA_KEY}.{str(tuple(edge_type))}"
+                f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
             ] = label_tensor
         # As a perf optimization, we *could* have `input_nodes` be only the unique nodes,
         # but since torch.unique() calls a sort, we should investigate if it's worth it.
