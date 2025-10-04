@@ -62,7 +62,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Final, Optional
+from typing import Final, Optional, Union
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -81,6 +81,9 @@ logger = Logger()
 LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[
     str
 ] = "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
+
+STORAGE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_STORAGE_CLUSTER_MASTER_KEY"
+COMPUTE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_COMPUTE_CLUSTER_MASTER_KEY"
 
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
@@ -140,7 +143,7 @@ class VertexAIService:
         """The GCP project that is being used for this service."""
         return self._project
 
-    def launch_job(self, job_config: VertexAiJobConfig) -> None:
+    def launch_job(self, job_config: VertexAiJobConfig) -> aiplatform.CustomJob:
         """
         Launch a Vertex AI CustomJob.
         See the docs for more info.
@@ -148,14 +151,13 @@ class VertexAIService:
 
         Args:
             job_config (VertexAiJobConfig): The configuration for the job.
+
+        Returns:
+            The completed CustomJob.
         """
         logger.info(f"Running Vertex AI job: {job_config.job_name}")
 
-        machine_spec = MachineSpec(
-            machine_type=job_config.machine_type,
-            accelerator_type=job_config.accelerator_type,
-            accelerator_count=job_config.accelerator_count,
-        )
+        machine_spec = _create_machine_spec(job_config)
 
         # This file is used to store the leader worker's internal IP address.
         # Whenever `connect_worker_pool()` is called, the leader worker will
@@ -175,17 +177,9 @@ class VertexAIService:
             )
         ]
 
-        container_spec = ContainerSpec(
-            image_uri=job_config.container_uri,
-            command=job_config.command,
-            args=job_config.args,
-            env=env_vars,
-        )
+        container_spec = _create_container_spec(job_config, env_vars)
 
-        disk_spec = DiskSpec(
-            boot_disk_type=job_config.boot_disk_type,
-            boot_disk_size_gb=job_config.boot_disk_size_gb,
-        )
+        disk_spec = _create_disk_spec(job_config)
 
         assert (
             job_config.replica_count >= 1
@@ -245,6 +239,110 @@ class VertexAIService:
             f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
         job.wait_for_completion()
+        return job
+
+    def launch_graph_store_job(
+        self, storage_cluster: VertexAiJobConfig, compute_cluster: VertexAiJobConfig
+    ) -> aiplatform.CustomJob:
+        """Launch a Vertex AI Graph Store job.
+
+        This launches one Vertex AI CustomJob with two worker pools, see
+        https://cloud.google.com/vertex-ai/docs/training/distributed-training
+        for more details.
+
+        These jobs will have the follow env variables set
+            - GIGL_STORAGE_CLUSTER_MASTER_KEY
+            - GIGL_COMPUTE_CLUSTER_MASTER_KEY
+        Whose values are the cluster ranks of the leaders for the storage and compute clusters respectively.
+        For example, if if there are 2 nodes in the storage cluster, and 3 nodes in the compute cluster,
+        Then,
+            - GIGL_STORAGE_CLUSTER_MASTER_KEY = 0
+            - GIGL_COMPUTE_CLUSTER_MASTER_KEY = 2 # e.g. the "first" worker in the computer cluster pool is the leader.
+
+        NOTE:
+            We use the job_name, timeout, and enable_web_access from the storage cluster.
+            These fields, if set on the compute cluster, will be ignored.
+
+        Args:
+            storage_cluster (VertexAiJobConfig): The configuration for the storage cluster.
+            compute_cluster (VertexAiJobConfig): The configuration for the compute cluster.
+
+        Returns:
+            The completed CustomJob.
+        """
+        storage_machine_spec = _create_machine_spec(storage_cluster)
+        compute_machine_spec = _create_machine_spec(compute_cluster)
+        storage_disk_spec = _create_disk_spec(storage_cluster)
+        compute_disk_spec = _create_disk_spec(compute_cluster)
+
+        env_vars: list[env_var.EnvVar] = [
+            env_var.EnvVar(
+                name=STORAGE_CLUSTER_MASTER_KEY,
+                value="0",
+            ),
+            env_var.EnvVar(
+                name=COMPUTE_CLUSTER_MASTER_KEY,
+                value=str(storage_cluster.replica_count),
+            ),
+        ]
+
+        storage_container_spec = _create_container_spec(storage_cluster, env_vars)
+        compute_container_spec = _create_container_spec(compute_cluster, env_vars)
+
+        worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
+
+        leader_worker_spec = WorkerPoolSpec(
+            machine_spec=storage_machine_spec,
+            container_spec=storage_container_spec,
+            disk_spec=storage_disk_spec,
+            replica_count=1,
+        )
+        worker_pool_specs.append(leader_worker_spec)
+        if storage_cluster.replica_count > 1:
+            worker_spec = WorkerPoolSpec(
+                machine_spec=storage_machine_spec,
+                container_spec=storage_container_spec,
+                disk_spec=storage_disk_spec,
+                replica_count=storage_cluster.replica_count - 1,
+            )
+            worker_pool_specs.append(worker_spec)
+        else:
+            worker_pool_specs.append({})
+        # For whatever reason, VAI errors out (indescriptly) if we put the computer cluster as anything other
+        # than the fourth worker pool.
+        # So we need to pad.
+        worker_pool_specs.append({})
+        worker_spec = WorkerPoolSpec(
+            machine_spec=compute_machine_spec,
+            container_spec=compute_container_spec,
+            disk_spec=compute_disk_spec,
+            replica_count=compute_cluster.replica_count,
+        )
+        worker_pool_specs.append(worker_spec)
+
+        job = aiplatform.CustomJob(
+            display_name=storage_cluster.job_name,
+            worker_pool_specs=worker_pool_specs,
+            project=self._project,
+            location=self._location,
+            labels=storage_cluster.labels,
+            staging_bucket=self._staging_bucket,
+        )
+        job.submit(
+            service_account=self._service_account,
+            timeout=storage_cluster.timeout_s,
+            enable_web_access=storage_cluster.enable_web_access,
+        )
+        job.wait_for_resource_creation()
+        logger.info(f"Created job: {job.resource_name}")
+        # Copying https://github.com/googleapis/python-aiplatform/blob/v1.48.0/google/cloud/aiplatform/jobs.py#L207-L215
+        # Since for some reason upgrading from VertexAI v1.27.1 to v1.48.0
+        # caused the logs to occasionally not be printed.
+        logger.info(
+            f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
+        )
+        job.wait_for_completion()
+        return job
 
     def run_pipeline(
         self,
@@ -355,3 +453,35 @@ class VertexAIService:
                 f"Vertex AI run stopped with status: {run.state}. "
                 f"Please check the Vertex AI page to trace down the error."
             )
+
+
+def _create_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
+    """Get the machine spec for a job config."""
+    machine_spec = MachineSpec(
+        machine_type=job_config.machine_type,
+        accelerator_type=job_config.accelerator_type,
+        accelerator_count=job_config.accelerator_count,
+    )
+    return machine_spec
+
+
+def _create_container_spec(
+    job_config: VertexAiJobConfig, env_vars: list[env_var.EnvVar]
+) -> ContainerSpec:
+    """Get the container spec for a job config."""
+    container_spec = ContainerSpec(
+        image_uri=job_config.container_uri,
+        command=job_config.command,
+        args=job_config.args,
+        env=env_vars,
+    )
+    return container_spec
+
+
+def _create_disk_spec(job_config: VertexAiJobConfig) -> DiskSpec:
+    """Get the disk spec for a job config."""
+    disk_spec = DiskSpec(
+        boot_disk_type=job_config.boot_disk_type,
+        boot_disk_size_gb=job_config.boot_disk_size_gb,
+    )
+    return disk_spec
