@@ -113,7 +113,8 @@ pip install "gigl[torch25-cuda-121,transform]==0.0.9" \
   --extra-index-url=https://pypi.org/simple
 ```
 
-Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install script to setup GLT dependency:
+Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
+script to setup GLT dependency:
 
 ```bash
 gigl-post-install
@@ -127,7 +128,8 @@ pip install "gigl[torch25-cpu,transform]==0.0.9" \
   --extra-index-url=https://pypi.org/simple
 ```
 
-Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install script to setup GLT dependency:
+Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
+script to setup GLT dependency:
 
 ```bash
 gigl-post-install
