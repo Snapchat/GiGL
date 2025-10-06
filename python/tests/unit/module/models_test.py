@@ -4,8 +4,9 @@ from typing import Optional, Union
 import torch
 import torch.nn as nn
 from torch_geometric.data import Data, HeteroData
+from torch_geometric.nn.models import LightGCN as PyGLightGCN
 
-from gigl.module.models import LinkPredictionGNN
+from gigl.module.models import LinkPredictionGNN, LightGCN
 from gigl.src.common.types.graph_data import NodeType
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
@@ -134,6 +135,225 @@ class TestLinkPredictionGNN(unittest.TestCase):
         unwrapped = ddp_model.unwrap_from_ddp()
         self.assertIs(unwrapped.encoder, encoder)
         self.assertIs(unwrapped.decoder, decoder)
+
+class TestLightGCN(unittest.TestCase):
+    def setUp(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        torch.manual_seed(42)  # For reproducible tests
+
+        # Test parameters
+        self.num_nodes = 4
+        self.embedding_dim = 4
+        self.num_layers = 2
+
+        # Create test edge index (undirected graph)
+        self.edge_index = torch.tensor([
+            [0, 0, 1, 2, 3, 3],
+            [2, 3, 3, 0, 0, 1],
+        ], dtype=torch.long)
+
+        # Create test data
+        self.data = Data(edge_index=self.edge_index, num_nodes=self.num_nodes)
+        self.data.node_id = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+
+        # Fixed embedding weights for reproducible testing
+        self.test_embeddings = torch.tensor([
+            [0.2, 0.5, 0.1, 0.4],  # Node 0
+            [0.6, 0.1, 0.2, 0.5],  # Node 1
+            [0.9, 0.4, 0.1, 0.4],  # Node 2
+            [0.3, 0.8, 0.3, 0.6],  # Node 3
+        ], dtype=torch.float32)
+
+    def _create_lightgcn_model(self, node_type_to_num_nodes: dict[NodeType, int]) -> LightGCN:
+        """Create a LightGCN model with the specified configuration."""
+        return LightGCN(
+            node_type_to_num_nodes=node_type_to_num_nodes,
+            embedding_dim=self.embedding_dim,
+            num_layers=self.num_layers,
+            device=self.device
+        )
+
+    def _set_embeddings(self, model: LightGCN, node_type: str):
+        """Set the embedding weights for the model to match test data."""
+        with torch.no_grad():
+            table = model._ebc.embedding_bags[f"node_embedding_{node_type}"]
+            table.weight[:] = self.test_embeddings
+
+    def _create_pyg_reference(self) -> PyGLightGCN:
+        ref = PyGLightGCN(
+            num_nodes=self.num_nodes,
+            embedding_dim=self.embedding_dim,
+            num_layers=self.num_layers,
+        ).to(self.device)  # <<< move model to device
+
+        with torch.no_grad():
+            ref.embedding.weight[:] = self.test_embeddings.to(self.device)  # <<< set on device
+        return ref
+
+    def test_initialization_homogeneous(self):
+        """Test LightGCN initialization with homogeneous graph."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        # Check basic properties
+        self.assertEqual(model._embedding_dim, self.embedding_dim)
+        self.assertEqual(model._num_layers, self.num_layers)
+        self.assertEqual(len(model._feature_keys), 1)
+        self.assertEqual(model._feature_keys[0], "user_id")
+
+        # Check that we have the right number of convolution layers
+        self.assertEqual(len(model._convs), self.num_layers)
+
+        # Check layer weights
+        expected_weights = [1.0 / (self.num_layers + 1)] * (self.num_layers + 1)
+        self.assertTrue(torch.allclose(
+            model._layer_weights_tensor,
+            torch.tensor(expected_weights, dtype=torch.float32, device=self.device)
+        ))
+
+    def test_initialization_custom_layer_weights(self):
+        """Test LightGCN initialization with custom layer weights."""
+        custom_weights = [0.5, 0.3, 0.2]
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+
+        model = LightGCN(
+            node_type_to_num_nodes=node_type_to_num_nodes,
+            embedding_dim=self.embedding_dim,
+            num_layers=2,
+            device=self.device,
+            layer_weights=custom_weights
+        )
+
+        self.assertTrue(torch.allclose(
+            model._layer_weights_tensor,
+            torch.tensor(custom_weights, dtype=torch.float32, device=self.device)
+        ))
+
+    def test_initialization_invalid_layer_weights(self):
+        """Test that invalid layer weights raise ValueError."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+
+        with self.assertRaises(ValueError):
+            LightGCN(
+                node_type_to_num_nodes=node_type_to_num_nodes,
+                embedding_dim=self.embedding_dim,
+                num_layers=2,
+                device=self.device,
+                layer_weights=[0.5, 0.5]  # Wrong length
+            )
+
+    def test_forward_homogeneous(self):
+        """Test forward pass with homogeneous graph."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+        self._set_embeddings(model, "user")
+
+        # Forward pass
+        output = model(self.data, self.device)
+
+        # Check output shape
+        self.assertEqual(output.shape, (self.num_nodes, self.embedding_dim))
+
+    def test_forward_homogeneous_wrong_node_types(self):
+        """Test that homogeneous forward with multiple node types raises ValueError."""
+        # Create model with multiple node types
+        node_type_to_num_nodes = {
+            NodeType("user"): 2,
+            NodeType("item"): 2
+        }
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        with self.assertRaises(ValueError):
+            model(self.data, self.device)
+
+    def test_compare_with_pyg_reference(self):
+        """Test that our implementation matches PyG LightGCN output."""
+        # Create our model
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        our_model = self._create_lightgcn_model(node_type_to_num_nodes)
+        self._set_embeddings(our_model, "user")
+
+        # Create PyG reference model
+        pyg_model = self._create_pyg_reference()
+        with torch.no_grad():
+            our_output = our_model(self.data, self.device)
+            pyg_output = pyg_model.get_embedding(self.edge_index.to(self.device))  # <<< edge_index on device
+        assert_tensor_equality(our_output, pyg_output)
+
+    def test_lookup_single_key(self):
+        """Test the internal TorchRec lookup functionality."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+        self._set_embeddings(model, "user")
+
+        # Test lookup for specific node IDs
+        node_ids = torch.tensor([0, 2], dtype=torch.long, device=self.device)
+        embeddings = model._lookup_single_key("user_id", node_ids)
+
+        # Check shape
+        self.assertEqual(embeddings.shape, (2, self.embedding_dim))
+
+        # Check that we got the expected embeddings
+        expected = self.test_embeddings.to(embeddings.device)[[0, 2]]
+        assert_tensor_equality(embeddings, expected)
+
+    def test_lookup_invalid_key(self):
+        """Test that invalid feature key raises KeyError."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        node_ids = torch.tensor([0, 1], dtype=torch.long, device=self.device)
+
+        with self.assertRaises(KeyError):
+            model._lookup_single_key("invalid_key", node_ids)
+
+    def test_weighted_layer_sum(self):
+        """Test the weighted layer sum functionality."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        # Create test layer outputs
+        layer_outputs = [
+            torch.randn(self.num_nodes, self.embedding_dim, device=self.device),
+            torch.randn(self.num_nodes, self.embedding_dim, device=self.device),
+            torch.randn(self.num_nodes, self.embedding_dim, device=self.device),
+        ]
+
+        # Test weighted sum
+        result = model._weighted_layer_sum(layer_outputs)
+
+        # Check shape
+        self.assertEqual(result.shape, (self.num_nodes, self.embedding_dim))
+
+        # Check that result is weighted combination
+        expected = sum(w * layer for w, layer in zip(model._layer_weights_tensor, layer_outputs))
+        assert_tensor_equality(result, expected)
+
+    def test_weighted_layer_sum_wrong_length(self):
+        """Test that wrong number of layers raises ValueError."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        # Wrong number of layers
+        layer_outputs = [torch.randn(self.num_nodes, self.embedding_dim, device=self.device)]
+
+        with self.assertRaises(ValueError):
+            model._weighted_layer_sum(layer_outputs)
+
+    def test_gradient_flow(self):
+        """Test that gradients flow properly through the model."""
+        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        model.train()
+        output = model(self.data, self.device)
+        loss = output.sum()
+        loss.backward()
+
+        # Check that gradients exist for embedding parameters
+        embedding_table = model._ebc.embedding_bags["node_embedding_user"]
+        self.assertIsNotNone(embedding_table.weight.grad)
+        self.assertTrue(torch.any(embedding_table.weight.grad != 0))
 
 
 if __name__ == "__main__":
