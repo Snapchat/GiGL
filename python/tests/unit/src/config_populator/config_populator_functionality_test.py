@@ -1,5 +1,7 @@
 import unittest
 
+from parameterized import param, parameterized
+
 from gigl.common.logger import Logger
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.dataset_metadata import DatasetMetadataPbWrapper
@@ -126,11 +128,26 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
                     "",
                 )
 
-    def test_glt_config_population_is_accurate(self):
+    @parameterized.expand(
+        [
+            param(
+                should_populate_embeddings_path=True,
+            ),
+            param(
+                should_populate_embeddings_path=False,
+            ),
+        ]
+    )
+    def test_glt_config_population_is_accurate(
+        self, should_populate_embeddings_path: bool
+    ):
         config_populator = ConfigPopulator()
         frozen_gbml_config_pb = config_populator._populate_frozen_gbml_config_pb(
             applied_task_identifier=self.applied_task_identifier,
             template_gbml_config_pb=_TEMPLATE_CONFIG_FOR_GLT,
+        )
+        frozen_gbml_config_pb.feature_flags["should_populate_embeddings_path"] = str(
+            should_populate_embeddings_path
         )
         gbml_config_pb_wrapper = GbmlConfigPbWrapper(
             gbml_config_pb=frozen_gbml_config_pb
@@ -150,6 +167,10 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
 
         # GBML Config Pb Wrapper Checks
         self.assertTrue(gbml_config_pb_wrapper.should_use_glt_backend)
+        self.assertEqual(
+            gbml_config_pb_wrapper.should_populate_embeddings_path,
+            should_populate_embeddings_path,
+        )
         with self.assertRaises(ValueError):
             # We should expect to throw an error when accessing the flattened graph metadata pb wrapper when it is not set
             gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper
@@ -178,12 +199,20 @@ class ConfigPopulatorUnitTest(unittest.TestCase):
             isinstance(inference_metadata_pb, inference_metadata_pb2.InferenceMetadata)
         )
         for node_type in inference_metadata_pb.node_type_to_inferencer_output_info_map:
-            self.assertNotEqual(
-                inference_metadata_pb.node_type_to_inferencer_output_info_map[
-                    node_type
-                ].embeddings_path,
-                "",
-            )
+            if should_populate_embeddings_path:
+                self.assertNotEqual(
+                    inference_metadata_pb.node_type_to_inferencer_output_info_map[
+                        node_type
+                    ].embeddings_path,
+                    "",
+                )
+            else:
+                self.assertEqual(
+                    inference_metadata_pb.node_type_to_inferencer_output_info_map[
+                        node_type
+                    ].embeddings_path,
+                    "",
+                )
             if (
                 gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_type
                 == TaskMetadataType.NODE_BASED_TASK
