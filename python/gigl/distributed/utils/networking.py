@@ -8,7 +8,9 @@ import torch
 from gigl.common.logger import Logger
 from gigl.src.common.constants.distributed import (
     COMPUTE_CLUSTER_MASTER_KEY,
+    COMPUTE_CLUSTER_NUM_NODES_KEY,
     STORAGE_CLUSTER_MASTER_KEY,
+    STORAGE_CLUSTER_NUM_NODES_KEY,
 )
 
 logger = Logger()
@@ -235,20 +237,37 @@ def get_graph_store_info() -> GraphStoreInfo:
         raise ValueError(
             f"{COMPUTE_CLUSTER_MASTER_KEY} must be set as an environment variable"
         )
+    if not STORAGE_CLUSTER_NUM_NODES_KEY in os.environ:
+        raise ValueError(
+            f"{STORAGE_CLUSTER_NUM_NODES_KEY} must be set as an environment variable"
+        )
+    if not COMPUTE_CLUSTER_NUM_NODES_KEY in os.environ:
+        raise ValueError(
+            f"{COMPUTE_CLUSTER_NUM_NODES_KEY} must be set as an environment variable"
+        )
 
-    num_storage_nodes = int(os.environ[STORAGE_CLUSTER_MASTER_KEY])
-    num_compute_nodes = int(os.environ[COMPUTE_CLUSTER_MASTER_KEY])
+    storage_cluster_master_rank = int(os.environ[STORAGE_CLUSTER_MASTER_KEY])
+    compute_cluster_master_rank = int(os.environ[COMPUTE_CLUSTER_MASTER_KEY])
 
     cluster_master_ip = get_internal_ip_from_master_node()
     # We assume that the storage cluster nodes come first.
-    storage_cluster_master_ip = get_internal_ip_from_node(node_rank=0)
-    compute_cluster_master_ip = get_internal_ip_from_node(node_rank=num_storage_nodes)
+    storage_cluster_master_ip = get_internal_ip_from_node(
+        node_rank=storage_cluster_master_rank
+    )
+    compute_cluster_master_ip = get_internal_ip_from_node(
+        node_rank=compute_cluster_master_rank
+    )
 
     cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
-    storage_cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
-    compute_cluster_master_port = get_free_ports_from_node(
-        num_ports=1, node_rank=num_storage_nodes
+    storage_cluster_master_port = get_free_ports_from_node(
+        num_ports=1, node_rank=storage_cluster_master_rank
     )[0]
+    compute_cluster_master_port = get_free_ports_from_node(
+        num_ports=1, node_rank=compute_cluster_master_rank
+    )[0]
+
+    num_storage_nodes = int(os.environ[STORAGE_CLUSTER_NUM_NODES_KEY])
+    num_compute_nodes = int(os.environ[COMPUTE_CLUSTER_NUM_NODES_KEY])
 
     return GraphStoreInfo(
         num_cluster_nodes=num_storage_nodes + num_compute_nodes,

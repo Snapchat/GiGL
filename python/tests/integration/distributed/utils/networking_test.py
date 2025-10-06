@@ -1,0 +1,76 @@
+import unittest
+import uuid
+
+from parameterized import param, parameterized
+
+from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
+from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.env.pipelines_config import get_resource_config
+
+
+class NetworkingUtlsIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        self._resource_config = get_resource_config()
+        self._project = self._resource_config.project
+        self._location = self._resource_config.region
+        self._service_account = self._resource_config.service_account_email
+        self._staging_bucket = (
+            self._resource_config.temp_assets_regional_bucket_path.uri
+        )
+        self._vertex_ai_service = VertexAIService(
+            project=self._project,
+            location=self._location,
+            service_account=self._service_account,
+            staging_bucket=self._staging_bucket,
+        )
+        super().setUp()
+
+    @parameterized.expand(
+        [
+            param(
+                "Test with 1 storage node and 1 compute node",
+                storage_nodes=1,
+                compute_nodes=1,
+            ),
+            param(
+                "Test with 2 storage nodes and 1 compute nodes",
+                storage_nodes=2,
+                compute_nodes=1,
+            ),
+            param(
+                "Test with 1 storage nodes and 2 compute nodes",
+                storage_nodes=1,
+                compute_nodes=2,
+            ),
+            param(
+                "Test with 2 storage nodes and 2 compute nodes",
+                storage_nodes=2,
+                compute_nodes=2,
+            ),
+        ]
+    )
+    def test_get_graph_store_info(self, _, storage_nodes, compute_nodes):
+        job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
+        command = [
+            "python",
+            "-c",
+            "from gigl.distributed.utils import get_graph_store_info; get_graph_store_info()",
+        ]
+        storage_cluster_config = VertexAiJobConfig(
+            job_name=job_name,
+            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+            replica_count=storage_nodes,
+            machine_type="n1-standard-4",
+            command=command,
+        )
+        compute_cluster_config = VertexAiJobConfig(
+            job_name=job_name,
+            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,  # different image for storage and compute
+            replica_count=compute_nodes,
+            command=command,
+            machine_type="n2-standard-8",
+        )
+
+        self._vertex_ai_service.launch_graph_store_job(
+            storage_cluster_config, compute_cluster_config
+        )

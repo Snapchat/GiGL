@@ -12,7 +12,9 @@ from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.distributed import (
     COMPUTE_CLUSTER_MASTER_KEY,
+    COMPUTE_CLUSTER_NUM_NODES_KEY,
     STORAGE_CLUSTER_MASTER_KEY,
+    STORAGE_CLUSTER_NUM_NODES_KEY,
 )
 
 
@@ -92,6 +94,8 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                     "import os",
                     f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
                     f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '1'",
+                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
+                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
                 ],
                 expected_worker_pool_specs=[
                     {
@@ -116,6 +120,8 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                     "import os",
                     f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
                     f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '1'",
+                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
+                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
                 ],
                 expected_worker_pool_specs=[
                     {
@@ -140,6 +146,8 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                     "import os",
                     f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
                     f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '2'",
+                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
+                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
                 ],
                 expected_worker_pool_specs=[
                     {
@@ -168,6 +176,8 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                     "import os",
                     f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
                     f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '2'",
+                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
+                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
                 ],
                 expected_worker_pool_specs=[
                     {

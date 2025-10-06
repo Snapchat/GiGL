@@ -77,7 +77,9 @@ from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
 from gigl.src.common.constants.distributed import (
     COMPUTE_CLUSTER_MASTER_KEY,
+    COMPUTE_CLUSTER_NUM_NODES_KEY,
     STORAGE_CLUSTER_MASTER_KEY,
+    STORAGE_CLUSTER_NUM_NODES_KEY,
 )
 
 logger = Logger()
@@ -284,6 +286,14 @@ class VertexAIService:
             env_var.EnvVar(
                 name=COMPUTE_CLUSTER_MASTER_KEY,
                 value=str(storage_cluster.replica_count),
+            ),
+            env_var.EnvVar(
+                name=STORAGE_CLUSTER_NUM_NODES_KEY,
+                value=str(storage_cluster.replica_count),
+            ),
+            env_var.EnvVar(
+                name=COMPUTE_CLUSTER_NUM_NODES_KEY,
+                value=str(compute_cluster.replica_count),
             ),
         ]
 
