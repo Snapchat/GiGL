@@ -336,18 +336,21 @@ class ConfigPopulator:
             gbml_config_pb=self.template_gbml_config
         )
         for node_type in inferencer_node_types:
-            embeddings_path = bq_constants.get_embeddings_table(
-                applied_task_identifier=self.applied_task_identifier,
-                node_type=node_type,
-            )
+            embeddings_path: Optional[str] = None
             predictions_path: Optional[str] = None
+
+            if template_gbml_config_pb_wrapper.should_populate_embeddings_path:
+                embeddings_path = bq_constants.get_embeddings_table(
+                    applied_task_identifier=self.applied_task_identifier,
+                    node_type=node_type,
+                )
 
             if (
                 self.task_metadata_pb_wrapper.task_metadata_type
                 == TaskMetadataType.NODE_BASED_TASK
                 or template_gbml_config_pb_wrapper.should_populate_predictions_path
             ):
-                # TODO: currently, we are overloading the predictions path to store extra embeddings.
+                # TODO: currently, we are overloading the predictions path to store extra embeddings for link prediction.
                 # consider extending InferenceOutput's definition for this purpose.
                 predictions_path = bq_constants.get_predictions_table(
                     applied_task_identifier=self.applied_task_identifier,
