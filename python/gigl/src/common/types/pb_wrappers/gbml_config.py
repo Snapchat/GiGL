@@ -469,6 +469,9 @@ class GbmlConfigPbWrapper:
         """
         Allows access to should_populate_predictions_path under GbmlConfig
 
+        This flag defaults to False, but can be set to True to populate the predictions path in the InferenceOutput for each entity type.
+        We default this to False since config populator currently does not populate the predictions path for link prediction tasks.
+
         This flag is a temporary workaround to populate the extra embeddings for the same entity type
 
         Returns:
@@ -478,6 +481,26 @@ class GbmlConfigPbWrapper:
             strtobool(
                 dict(self.gbml_config_pb.feature_flags).get(
                     "should_populate_predictions_path", "False"
+                )
+            )
+        )
+
+    @property
+    def should_populate_embeddings_path(self) -> bool:
+        """
+        Allows access to should_populate_embeddings_path under GbmlConfig
+
+        This flag defaults to True, but can be set to False to skip populating embedding paths in InferenceOutput.
+        We default this to True since config populator currently always by default populates the embeddings path
+        for both link prediction and node classification tasks.
+
+        Returns:
+            bool: Whether to populate embeddings path in the InferenceOutput for each entity type
+        """
+        return bool(
+            strtobool(
+                dict(self.gbml_config_pb.feature_flags).get(
+                    "should_populate_embeddings_path", "True"
                 )
             )
         )
