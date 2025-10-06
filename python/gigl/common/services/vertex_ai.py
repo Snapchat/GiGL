@@ -82,9 +82,6 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[
     str
 ] = "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
 
-STORAGE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_STORAGE_CLUSTER_MASTER_KEY"
-COMPUTE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_COMPUTE_CLUSTER_MASTER_KEY"
-
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
@@ -249,15 +246,6 @@ class VertexAIService:
         This launches one Vertex AI CustomJob with two worker pools, see
         https://cloud.google.com/vertex-ai/docs/training/distributed-training
         for more details.
-
-        These jobs will have the follow env variables set
-            - GIGL_STORAGE_CLUSTER_MASTER_KEY
-            - GIGL_COMPUTE_CLUSTER_MASTER_KEY
-        Whose values are the cluster ranks of the leaders for the storage and compute clusters respectively.
-        For example, if if there are 2 nodes in the storage cluster, and 3 nodes in the compute cluster,
-        Then,
-            - GIGL_STORAGE_CLUSTER_MASTER_KEY = 0
-            - GIGL_COMPUTE_CLUSTER_MASTER_KEY = 2 # e.g. the "first" worker in the computer cluster pool is the leader.
 
         NOTE:
             We use the job_name, timeout, and enable_web_access from the storage cluster.
