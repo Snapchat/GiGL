@@ -673,7 +673,7 @@ def _get_padded_labels(
     mask = torch.arange(max_range) >= (ends - starts).unsqueeze(1)
     max_end_value = ends.max().item()
     _debug_memory_usage("After max_end_value")
-    del ends
+    # del ends
     gc.collect()
     _debug_memory_usage("After ends gc")
 
