@@ -21,5 +21,5 @@ def run(pattern: str = "*_test.py") -> bool:
 
 
 if __name__ == "__main__":
-    was_successful: bool = run(pattern="enumerator_test.py")
+    was_successful: bool = run(pattern=parse_args().test_file_pattern)
     sys.exit(not was_successful)
