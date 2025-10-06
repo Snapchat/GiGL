@@ -275,19 +275,8 @@ class VertexAIService:
         storage_disk_spec = _create_disk_spec(storage_cluster)
         compute_disk_spec = _create_disk_spec(compute_cluster)
 
-        env_vars: list[env_var.EnvVar] = [
-            env_var.EnvVar(
-                name=STORAGE_CLUSTER_MASTER_KEY,
-                value="0",
-            ),
-            env_var.EnvVar(
-                name=COMPUTE_CLUSTER_MASTER_KEY,
-                value=str(storage_cluster.replica_count),
-            ),
-        ]
-
-        storage_container_spec = _create_container_spec(storage_cluster, env_vars)
-        compute_container_spec = _create_container_spec(compute_cluster, env_vars)
+        storage_container_spec = _create_container_spec(storage_cluster, [])
+        compute_container_spec = _create_container_spec(compute_cluster, [])
 
         worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
 
