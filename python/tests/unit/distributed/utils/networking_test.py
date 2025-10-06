@@ -17,10 +17,6 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_internal_ip_from_node,
 )
-from gigl.src.common.constants.distributed import (
-    COMPUTE_CLUSTER_MASTER_KEY,
-    STORAGE_CLUSTER_MASTER_KEY,
-)
 from tests.test_assets.distributed.utils import get_process_group_init_method
 
 

@@ -6,12 +6,8 @@ from typing import Optional
 import torch
 
 from gigl.common.logger import Logger
-from gigl.src.common.constants.distributed import (
-    COMPUTE_CLUSTER_MASTER_KEY,
-    COMPUTE_CLUSTER_NUM_NODES_KEY,
-    STORAGE_CLUSTER_MASTER_KEY,
-    STORAGE_CLUSTER_NUM_NODES_KEY,
-)
+from gigl.env.distributed import GraphStoreInfo
+from gigl.common.utils.vertex_ai_context import is_currently_running_in_vertex_ai_job, get_num_storage_and_compute_nodes
 
 logger = Logger()
 
@@ -189,31 +185,6 @@ def get_internal_ip_from_all_ranks() -> list[str]:
     return ip_list
 
 
-@dataclass(frozen=True)
-class GraphStoreInfo:
-    """Information about a graph store cluster."""
-
-    # Number of nodes in the whole cluster
-    num_cluster_nodes: int
-    # Number of nodes in the storage cluster
-    num_storage_nodes: int
-    # Number of nodes in the compute cluster
-    num_compute_nodes: int
-
-    # IP address of the master node for the whole cluster
-    cluster_master_ip: str
-    # IP address of the master node for the storage cluster
-    storage_cluster_master_ip: str
-    # IP address of the master node for the compute cluster
-    compute_cluster_master_ip: str
-
-    # Port of the master node for the whole cluster
-    cluster_master_port: int
-    # Port of the master node for the storage cluster
-    storage_cluster_master_port: int
-    # Port of the master node for the compute cluster
-    compute_cluster_master_port: int
-
 
 def get_graph_store_info() -> GraphStoreInfo:
     """
@@ -224,50 +195,32 @@ def get_graph_store_info() -> GraphStoreInfo:
 
     Raises:
         ValueError: If a torch distributed environment is not initialized.
-        ValueError: If the storage cluster master key or the compute cluster master key is not set as an environment variable.
+        ValueError: If not running running in a supported environment.
     """
     if not torch.distributed.is_initialized():
         raise ValueError("Distributed environment must be initialized")
-
-    if not STORAGE_CLUSTER_MASTER_KEY in os.environ:
-        raise ValueError(
-            f"{STORAGE_CLUSTER_MASTER_KEY} must be set as an environment variable"
-        )
-    if not COMPUTE_CLUSTER_MASTER_KEY in os.environ:
-        raise ValueError(
-            f"{COMPUTE_CLUSTER_MASTER_KEY} must be set as an environment variable"
-        )
-    if not STORAGE_CLUSTER_NUM_NODES_KEY in os.environ:
-        raise ValueError(
-            f"{STORAGE_CLUSTER_NUM_NODES_KEY} must be set as an environment variable"
-        )
-    if not COMPUTE_CLUSTER_NUM_NODES_KEY in os.environ:
-        raise ValueError(
-            f"{COMPUTE_CLUSTER_NUM_NODES_KEY} must be set as an environment variable"
-        )
-
-    storage_cluster_master_rank = int(os.environ[STORAGE_CLUSTER_MASTER_KEY])
-    compute_cluster_master_rank = int(os.environ[COMPUTE_CLUSTER_MASTER_KEY])
+    if is_currently_running_in_vertex_ai_job():
+        num_storage_nodes, num_compute_nodes = get_num_storage_and_compute_nodes()
+    else:
+        raise ValueError("Must be running on a vertex AI job to get graph store cluster info!")
 
     cluster_master_ip = get_internal_ip_from_master_node()
     # We assume that the storage cluster nodes come first.
     storage_cluster_master_ip = get_internal_ip_from_node(
-        node_rank=storage_cluster_master_rank
+        node_rank=0
     )
     compute_cluster_master_ip = get_internal_ip_from_node(
-        node_rank=compute_cluster_master_rank
+        node_rank=num_storage_nodes
     )
 
     cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
     storage_cluster_master_port = get_free_ports_from_node(
-        num_ports=1, node_rank=storage_cluster_master_rank
+        num_ports=1, node_rank=0
     )[0]
     compute_cluster_master_port = get_free_ports_from_node(
-        num_ports=1, node_rank=compute_cluster_master_rank
+        num_ports=1, node_rank=num_storage_nodes
     )[0]
 
-    num_storage_nodes = int(os.environ[STORAGE_CLUSTER_NUM_NODES_KEY])
-    num_compute_nodes = int(os.environ[COMPUTE_CLUSTER_NUM_NODES_KEY])
 
     return GraphStoreInfo(
         num_cluster_nodes=num_storage_nodes + num_compute_nodes,

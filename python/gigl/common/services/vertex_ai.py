@@ -75,12 +75,6 @@ from google.cloud.aiplatform_v1.types import (
 
 from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
-from gigl.src.common.constants.distributed import (
-    COMPUTE_CLUSTER_MASTER_KEY,
-    COMPUTE_CLUSTER_NUM_NODES_KEY,
-    STORAGE_CLUSTER_MASTER_KEY,
-    STORAGE_CLUSTER_NUM_NODES_KEY,
-)
 
 logger = Logger()
 
@@ -253,14 +247,6 @@ class VertexAIService:
         https://cloud.google.com/vertex-ai/docs/training/distributed-training
         for more details.
 
-        These jobs will have the follow env variables set
-            - GIGL_STORAGE_CLUSTER_MASTER_KEY
-            - GIGL_COMPUTE_CLUSTER_MASTER_KEY
-        Whose values are the cluster ranks of the leaders for the storage and compute clusters respectively.
-        For example, if if there are 2 nodes in the storage cluster, and 3 nodes in the compute cluster,
-        Then,
-            - GIGL_STORAGE_CLUSTER_MASTER_KEY = 0
-            - GIGL_COMPUTE_CLUSTER_MASTER_KEY = 2 # e.g. the "first" worker in the computer cluster pool is the leader.
 
         NOTE:
             We use the job_name, timeout, and enable_web_access from the storage cluster.
@@ -278,27 +264,8 @@ class VertexAIService:
         storage_disk_spec = _create_disk_spec(storage_cluster)
         compute_disk_spec = _create_disk_spec(compute_cluster)
 
-        env_vars: list[env_var.EnvVar] = [
-            env_var.EnvVar(
-                name=STORAGE_CLUSTER_MASTER_KEY,
-                value="0",
-            ),
-            env_var.EnvVar(
-                name=COMPUTE_CLUSTER_MASTER_KEY,
-                value=str(storage_cluster.replica_count),
-            ),
-            env_var.EnvVar(
-                name=STORAGE_CLUSTER_NUM_NODES_KEY,
-                value=str(storage_cluster.replica_count),
-            ),
-            env_var.EnvVar(
-                name=COMPUTE_CLUSTER_NUM_NODES_KEY,
-                value=str(compute_cluster.replica_count),
-            ),
-        ]
-
-        storage_container_spec = _create_container_spec(storage_cluster, env_vars)
-        compute_container_spec = _create_container_spec(compute_cluster, env_vars)
+        storage_container_spec = _create_container_spec(storage_cluster, [])
+        compute_container_spec = _create_container_spec(compute_cluster, [])
 
         worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
 

@@ -10,13 +10,6 @@ from gigl.common import UriFactory
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.constants.distributed import (
-    COMPUTE_CLUSTER_MASTER_KEY,
-    COMPUTE_CLUSTER_NUM_NODES_KEY,
-    STORAGE_CLUSTER_MASTER_KEY,
-    STORAGE_CLUSTER_NUM_NODES_KEY,
-)
-
 
 @kfp.dsl.component
 def source() -> int:
@@ -90,13 +83,6 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 "one server, one client",
                 num_servers=1,
                 num_clients=1,
-                env_var_checks=[
-                    "import os",
-                    f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '1'",
-                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
-                ],
                 expected_worker_pool_specs=[
                     {
                         "machine_type": "n1-standard-4",
@@ -116,13 +102,6 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 "one server, two clients",
                 num_servers=1,
                 num_clients=2,
-                env_var_checks=[
-                    "import os",
-                    f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '1'",
-                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
-                ],
                 expected_worker_pool_specs=[
                     {
                         "machine_type": "n1-standard-4",
@@ -142,13 +121,6 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 "two servers, one client",
                 num_servers=2,
                 num_clients=1,
-                env_var_checks=[
-                    "import os",
-                    f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '2'",
-                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '1', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '1'",
-                ],
                 expected_worker_pool_specs=[
                     {
                         "machine_type": "n1-standard-4",
@@ -172,13 +144,6 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 "two servers, two clients",
                 num_servers=2,
                 num_clients=2,
-                env_var_checks=[
-                    "import os",
-                    f"assert os.environ['{STORAGE_CLUSTER_MASTER_KEY}'] == '0', Expected {{os.environ['{STORAGE_CLUSTER_MASTER_KEY}']=}} to be '0'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_MASTER_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_MASTER_KEY}']=}} to be '2'",
-                    f"assert os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{STORAGE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
-                    f"assert os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}'] == '2', Expected {{os.environ['{COMPUTE_CLUSTER_NUM_NODES_KEY}']=}} to be '2'",
-                ],
                 expected_worker_pool_specs=[
                     {
                         "machine_type": "n1-standard-4",
@@ -205,17 +170,15 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         _,
         num_servers,
         num_clients,
-        env_var_checks,
         expected_worker_pool_specs,
     ):
         # Tests that the env variables are set correctly.
         # If they are not populated, then the job will fail.
-        env_checks = f'logging.info(f\'Graph cluster master: {{os.environ["{STORAGE_CLUSTER_MASTER_KEY}"]}}, compute cluster master: {{os.environ["{COMPUTE_CLUSTER_MASTER_KEY}"]}}\')'
         command = [
             "python",
             "-c",
-            f"import os; import logging; {env_checks}",
-        ] + env_var_checks
+            f"import os; import logging; logging.info('Hello, World!')",
+        ]
         job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,

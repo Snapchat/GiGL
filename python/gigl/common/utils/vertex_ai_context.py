@@ -1,14 +1,20 @@
 """Utility functions to be used by machines running on Vertex AI."""
 
+import json
 import os
 import subprocess
 import time
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+from google.cloud.aiplatform_v1.types import CustomJobSpec
 
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed import DistributedContext
+from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
 
@@ -155,6 +161,94 @@ def connect_worker_pool() -> DistributedContext:
         global_world_size=global_world_size,
     )
 
+def get_num_storage_and_compute_nodes() -> tuple[int, int]:
+    """
+    Returns the number of storage and compute nodes for a Vertex AI job.
+
+    Raises:
+        ValueError: If not running in a Vertex AI job.
+    """
+    if not is_currently_running_in_vertex_ai_job():
+        raise ValueError("Not running in a Vertex AI job.")
+
+    cluster_spec = _parse_cluster_spec()
+    if len(cluster_spec.cluster) != 4:
+        raise ValueError(f"Cluster specification must have 4 worker pools to fetch the number of storage and compute nodes. Found {len(cluster_spec.cluster)} worker pools.")
+    num_storage_nodes = len(cluster_spec.cluster["workerpool0"]) + len(cluster_spec.cluster["workerpool1"])
+    num_compute_nodes = len(cluster_spec.cluster["workerpool3"])
+
+    return num_storage_nodes, num_compute_nodes
+
+@dataclass
+class TaskInfo:
+    """Information about the current task running on this node."""
+    type: str  # The type of worker pool this task is running in (e.g., "workerpool0")
+    index: int  # The zero-based index of the task
+    trial: Optional[str] = None  # Hyperparameter tuning trial identifier (if applicable)
+
+
+@dataclass
+class ClusterSpec:
+    """Represents the cluster specification for a Vertex AI custom job."""
+    cluster: dict[str, list[str]]  # Worker pool names mapped to their replica lists
+    environment: str  # The environment string (e.g., "cloud")
+    task: TaskInfo  # Information about the current task
+    job: Optional[CustomJobSpec] = None  # The CustomJobSpec for the current job
+
+
+def _parse_cluster_spec() -> ClusterSpec:
+    """
+    Parse the cluster specification from the CLUSTER_SPEC environment variable.
+
+    Returns:
+        ClusterSpec: Parsed cluster specification data.
+
+    Raises:
+        ValueError: If not running in a Vertex AI job or CLUSTER_SPEC is not found.
+        json.JSONDecodeError: If CLUSTER_SPEC contains invalid JSON.
+    """
+    if not is_currently_running_in_vertex_ai_job():
+        raise ValueError("Not running in a Vertex AI job.")
+
+    cluster_spec_json = os.environ.get("CLUSTER_SPEC")
+    if not cluster_spec_json:
+        raise ValueError("CLUSTER_SPEC not found in environment variables.")
+
+    try:
+        cluster_spec_data = json.loads(cluster_spec_json)
+    except json.JSONDecodeError as e:
+        raise json.JSONDecodeError(f"Failed to parse CLUSTER_SPEC JSON: {e.msg}", e.doc, e.pos)
+
+    # Parse the task information
+    task_data = cluster_spec_data.get("task", {})
+    task_info = TaskInfo(
+        type=task_data.get("type", ""),
+        index=task_data.get("index", 0),
+        trial=task_data.get("trial")
+    )
+
+    # Parse the cluster specification
+    cluster_data = cluster_spec_data.get("cluster", {})
+
+    # Parse the environment
+    environment = cluster_spec_data.get("environment", "cloud")
+
+
+    # Parse the job specification (optional)
+    job_data = cluster_spec_data.get("job")
+    job_spec = None
+    if job_data:
+        # Convert the dictionary to CustomJobSpec
+        # Note: This assumes the job_data is already in the correct format
+        # You may need to adjust this based on the actual structure
+        job_spec = CustomJobSpec(**job_data)
+
+    return ClusterSpec(
+        cluster=cluster_data,
+        environment=environment,
+        task=task_info,
+        job=job_spec
+    )
 
 def _get_leader_worker_internal_ip_file_path() -> str:
     """
