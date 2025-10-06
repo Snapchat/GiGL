@@ -2,6 +2,7 @@ import os
 import subprocess
 import unittest
 from typing import Optional
+import json
 from unittest.mock import patch
 
 import torch
@@ -412,6 +413,18 @@ def _test_get_graph_store_info_in_dist_context(
     finally:
         dist.destroy_process_group()
 
+def _get_cluster_spec_for_test(worker_pool_sizes: list[int]):
+    cluster_spec: dict = {
+        "environment": "cloud",
+        "task": {
+            "type": "workerpool0",
+            "index": 0,
+        },
+        "cluster": {},
+    }
+    for i,worker_pool_size in enumerate(worker_pool_sizes):
+        cluster_spec["cluster"][f"workerpool{worker_pool_size}"] = [f"workerpool{i}-{j}:2222" for j in range(worker_pool_size)]
+    return cluster_spec
 
 class TestGetGraphStoreInfo(unittest.TestCase):
     """Test suite for get_graph_store_info function."""
@@ -423,74 +436,28 @@ class TestGetGraphStoreInfo(unittest.TestCase):
 
     def test_get_graph_store_info_fails_when_distributed_not_initialized(self):
         """Test that get_graph_store_info fails when distributed environment is not initialized."""
-        with patch.dict(
-            os.environ,
-            {STORAGE_CLUSTER_MASTER_KEY: "2", COMPUTE_CLUSTER_MASTER_KEY: "3"},
-        ):
-            with self.assertRaises(ValueError) as context:
-                get_graph_store_info()
+        with self.assertRaises(ValueError) as context:
+            get_graph_store_info()
 
-            self.assertIn(
-                "Distributed environment must be initialized", str(context.exception)
-            )
+        self.assertIn(
+            "Distributed environment must be initialized", str(context.exception)
+        )
 
-    def test_get_graph_store_info_fails_when_storage_cluster_key_missing(self):
-        """Test that get_graph_store_info fails when STORAGE_CLUSTER_MASTER_KEY is not set."""
-        with patch.dict(os.environ, {COMPUTE_CLUSTER_MASTER_KEY: "3"}, clear=False):
-            init_process_group_init_method = get_process_group_init_method()
-            dist.init_process_group(
-                backend="gloo",
-                init_method=init_process_group_init_method,
-                world_size=1,
-                rank=0,
-            )
+    def test_get_graph_store_info_fails_when_not_running_in_vertex_ai_job(self):
+        """Test that get_graph_store_info fails when not running in a Vertex AI job."""
+        init_process_group_init_method = get_process_group_init_method()
+        torch.distributed.init_process_group(
+            backend="gloo",
+            init_method=init_process_group_init_method,
+            world_size=1,
+            rank=0,
+        )
+        with self.assertRaises(ValueError) as context:
+            get_graph_store_info()
 
-            with self.assertRaises(ValueError) as context:
-                get_graph_store_info()
-
-            self.assertIn(
-                f"{STORAGE_CLUSTER_MASTER_KEY} must be set as an environment variable",
-                str(context.exception),
-            )
-
-    def test_get_graph_store_info_fails_when_compute_cluster_key_missing(self):
-        """Test that get_graph_store_info fails when COMPUTE_CLUSTER_MASTER_KEY is not set."""
-        with patch.dict(os.environ, {STORAGE_CLUSTER_MASTER_KEY: "2"}, clear=False):
-            init_process_group_init_method = get_process_group_init_method()
-            dist.init_process_group(
-                backend="gloo",
-                init_method=init_process_group_init_method,
-                world_size=1,
-                rank=0,
-            )
-
-            with self.assertRaises(ValueError) as context:
-                get_graph_store_info()
-
-            self.assertIn(
-                f"{COMPUTE_CLUSTER_MASTER_KEY} must be set as an environment variable",
-                str(context.exception),
-            )
-
-    def test_get_graph_store_info_fails_when_both_cluster_keys_missing(self):
-        """Test that get_graph_store_info fails when both cluster keys are not set."""
-        with patch.dict(os.environ, {}, clear=True):
-            init_process_group_init_method = get_process_group_init_method()
-            dist.init_process_group(
-                backend="gloo",
-                init_method=init_process_group_init_method,
-                world_size=1,
-                rank=0,
-            )
-
-            with self.assertRaises(ValueError) as context:
-                get_graph_store_info()
-
-            # Should fail on the first missing key (storage cluster key)
-            self.assertIn(
-                f"{STORAGE_CLUSTER_MASTER_KEY} must be set as an environment variable",
-                str(context.exception),
-            )
+        self.assertIn(
+            "Must be running on a vertex AI job to get graph store cluster info!", str(context.exception)
+        )
 
     @parameterized.expand(
         [
@@ -520,8 +487,7 @@ class TestGetGraphStoreInfo(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                STORAGE_CLUSTER_MASTER_KEY: str(storage_nodes),
-                COMPUTE_CLUSTER_MASTER_KEY: str(compute_nodes),
+                "CLUSTER_SPEC": json.dumps(_get_cluster_spec_for_test([min(1, storage_nodes - 1), min(0, storage_nodes - 1), 0, compute_nodes])),
             },
             clear=False,
         ):

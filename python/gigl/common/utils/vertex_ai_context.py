@@ -199,6 +199,8 @@ class ClusterSpec:
 def _parse_cluster_spec() -> ClusterSpec:
     """
     Parse the cluster specification from the CLUSTER_SPEC environment variable.
+    Based on the spec given at:
+    https://cloud.google.com/vertex-ai/docs/training/distributed-training#cluster-variables
 
     Returns:
         ClusterSpec: Parsed cluster specification data.
