@@ -1,5 +1,7 @@
+import os
 import subprocess
 import unittest
+from typing import Optional
 from unittest.mock import patch
 
 import torch
@@ -8,10 +10,16 @@ import torch.multiprocessing as mp
 from parameterized import param, parameterized
 
 from gigl.distributed.utils import (
+    GraphStoreInfo,
     get_free_ports_from_master_node,
     get_free_ports_from_node,
+    get_graph_store_info,
     get_internal_ip_from_master_node,
     get_internal_ip_from_node,
+)
+from gigl.src.common.constants.distributed import (
+    COMPUTE_CLUSTER_MASTER_KEY,
+    STORAGE_CLUSTER_MASTER_KEY,
 )
 from tests.test_assets.distributed.utils import get_process_group_init_method
 
@@ -289,3 +297,245 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             msg="An error should be raised since the `dist.init_process_group` is not initialized",
         ):
             get_internal_ip_from_master_node()
+
+
+def _test_get_graph_store_info_in_dist_context(
+    rank: int,
+    world_size: int,
+    init_process_group_init_method: str,
+    storage_nodes: int,
+    compute_nodes: int,
+):
+    """Test get_graph_store_info in a real distributed context."""
+    # Initialize distributed process group
+    dist.init_process_group(
+        backend="gloo",
+        init_method=init_process_group_init_method,
+        world_size=world_size,
+        rank=rank,
+    )
+    try:
+        # Call get_graph_store_info
+        graph_store_info = get_graph_store_info()
+
+        # Verify the result is a GraphStoreInfo instance
+        assert isinstance(
+            graph_store_info, GraphStoreInfo
+        ), "Result should be a GraphStoreInfo instance"
+
+        # Verify cluster sizes
+        assert (
+            graph_store_info.num_storage_nodes == storage_nodes
+        ), f"Expected {storage_nodes} storage nodes"
+        assert (
+            graph_store_info.num_compute_nodes == compute_nodes
+        ), f"Expected {compute_nodes} compute nodes"
+        assert (
+            graph_store_info.num_cluster_nodes == storage_nodes + compute_nodes
+        ), "Total nodes should be sum of storage and compute nodes"
+
+        # Verify IP addresses are strings and not empty
+        assert isinstance(
+            graph_store_info.cluster_master_ip, str
+        ), "Cluster master IP should be a string"
+        assert (
+            len(graph_store_info.cluster_master_ip) > 0
+        ), "Cluster master IP should not be empty"
+        assert isinstance(
+            graph_store_info.storage_cluster_master_ip, str
+        ), "Storage cluster master IP should be a string"
+        assert (
+            len(graph_store_info.storage_cluster_master_ip) > 0
+        ), "Storage cluster master IP should not be empty"
+        assert isinstance(
+            graph_store_info.compute_cluster_master_ip, str
+        ), "Compute cluster master IP should be a string"
+        assert (
+            len(graph_store_info.compute_cluster_master_ip) > 0
+        ), "Compute cluster master IP should not be empty"
+
+        # Verify ports are positive integers
+        assert isinstance(
+            graph_store_info.cluster_master_port, int
+        ), "Cluster master port should be an integer"
+        assert (
+            graph_store_info.cluster_master_port > 0
+        ), "Cluster master port should be positive"
+        assert isinstance(
+            graph_store_info.storage_cluster_master_port, int
+        ), "Storage cluster master port should be an integer"
+        assert (
+            graph_store_info.storage_cluster_master_port > 0
+        ), "Storage cluster master port should be positive"
+        assert isinstance(
+            graph_store_info.compute_cluster_master_port, int
+        ), "Compute cluster master port should be an integer"
+        assert (
+            graph_store_info.compute_cluster_master_port > 0
+        ), "Compute cluster master port should be positive"
+
+        # Verify all ranks get the same result (since they should all get the same broadcasted values)
+        gathered_info: list[Optional[GraphStoreInfo]] = [None] * world_size
+        dist.all_gather_object(gathered_info, graph_store_info)
+
+        # All ranks should have the same GraphStoreInfo
+        for i, info in enumerate(gathered_info):
+            assert info is not None
+            assert (
+                info.num_cluster_nodes == graph_store_info.num_cluster_nodes
+            ), f"Rank {i} should have same cluster nodes"
+            assert (
+                info.num_storage_nodes == graph_store_info.num_storage_nodes
+            ), f"Rank {i} should have same storage nodes"
+            assert (
+                info.num_compute_nodes == graph_store_info.num_compute_nodes
+            ), f"Rank {i} should have same compute nodes"
+            assert (
+                info.cluster_master_ip == graph_store_info.cluster_master_ip
+            ), f"Rank {i} should have same cluster master IP"
+            assert (
+                info.storage_cluster_master_ip
+                == graph_store_info.storage_cluster_master_ip
+            ), f"Rank {i} should have same storage master IP"
+            assert (
+                info.compute_cluster_master_ip
+                == graph_store_info.compute_cluster_master_ip
+            ), f"Rank {i} should have same compute master IP"
+            assert (
+                info.cluster_master_port == graph_store_info.cluster_master_port
+            ), f"Rank {i} should have same cluster master port"
+            assert (
+                info.storage_cluster_master_port
+                == graph_store_info.storage_cluster_master_port
+            ), f"Rank {i} should have same storage master port"
+            assert (
+                info.compute_cluster_master_port
+                == graph_store_info.compute_cluster_master_port
+            ), f"Rank {i} should have same compute master port"
+
+    finally:
+        dist.destroy_process_group()
+
+
+class TestGetGraphStoreInfo(unittest.TestCase):
+    """Test suite for get_graph_store_info function."""
+
+    def tearDown(self):
+        """Clean up after each test."""
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+    def test_get_graph_store_info_fails_when_distributed_not_initialized(self):
+        """Test that get_graph_store_info fails when distributed environment is not initialized."""
+        with patch.dict(
+            os.environ,
+            {STORAGE_CLUSTER_MASTER_KEY: "2", COMPUTE_CLUSTER_MASTER_KEY: "3"},
+        ):
+            with self.assertRaises(ValueError) as context:
+                get_graph_store_info()
+
+            self.assertIn(
+                "Distributed environment must be initialized", str(context.exception)
+            )
+
+    def test_get_graph_store_info_fails_when_storage_cluster_key_missing(self):
+        """Test that get_graph_store_info fails when STORAGE_CLUSTER_MASTER_KEY is not set."""
+        with patch.dict(os.environ, {COMPUTE_CLUSTER_MASTER_KEY: "3"}, clear=False):
+            init_process_group_init_method = get_process_group_init_method()
+            dist.init_process_group(
+                backend="gloo",
+                init_method=init_process_group_init_method,
+                world_size=1,
+                rank=0,
+            )
+
+            with self.assertRaises(ValueError) as context:
+                get_graph_store_info()
+
+            self.assertIn(
+                f"{STORAGE_CLUSTER_MASTER_KEY} must be set as an environment variable",
+                str(context.exception),
+            )
+
+    def test_get_graph_store_info_fails_when_compute_cluster_key_missing(self):
+        """Test that get_graph_store_info fails when COMPUTE_CLUSTER_MASTER_KEY is not set."""
+        with patch.dict(os.environ, {STORAGE_CLUSTER_MASTER_KEY: "2"}, clear=False):
+            init_process_group_init_method = get_process_group_init_method()
+            dist.init_process_group(
+                backend="gloo",
+                init_method=init_process_group_init_method,
+                world_size=1,
+                rank=0,
+            )
+
+            with self.assertRaises(ValueError) as context:
+                get_graph_store_info()
+
+            self.assertIn(
+                f"{COMPUTE_CLUSTER_MASTER_KEY} must be set as an environment variable",
+                str(context.exception),
+            )
+
+    def test_get_graph_store_info_fails_when_both_cluster_keys_missing(self):
+        """Test that get_graph_store_info fails when both cluster keys are not set."""
+        with patch.dict(os.environ, {}, clear=True):
+            init_process_group_init_method = get_process_group_init_method()
+            dist.init_process_group(
+                backend="gloo",
+                init_method=init_process_group_init_method,
+                world_size=1,
+                rank=0,
+            )
+
+            with self.assertRaises(ValueError) as context:
+                get_graph_store_info()
+
+            # Should fail on the first missing key (storage cluster key)
+            self.assertIn(
+                f"{STORAGE_CLUSTER_MASTER_KEY} must be set as an environment variable",
+                str(context.exception),
+            )
+
+    @parameterized.expand(
+        [
+            param(
+                "Test with 1 storage node and 1 compute node",
+                storage_nodes=1,
+                compute_nodes=1,
+            ),
+            param(
+                "Test with 2 storage nodes and 3 compute nodes",
+                storage_nodes=2,
+                compute_nodes=3,
+            ),
+            param(
+                "Test with 3 storage nodes and 2 compute nodes",
+                storage_nodes=3,
+                compute_nodes=2,
+            ),
+        ]
+    )
+    def test_get_graph_store_info_success_in_distributed_context(
+        self, _name, storage_nodes, compute_nodes
+    ):
+        """Test successful execution of get_graph_store_info in a real distributed context."""
+        init_process_group_init_method = get_process_group_init_method()
+        world_size = storage_nodes + compute_nodes
+        with patch.dict(
+            os.environ,
+            {
+                STORAGE_CLUSTER_MASTER_KEY: str(storage_nodes),
+                COMPUTE_CLUSTER_MASTER_KEY: str(compute_nodes),
+            },
+            clear=False,
+        ):
+            mp.spawn(
+                fn=_test_get_graph_store_info_in_dist_context,
+                args=(
+                    world_size,
+                    init_process_group_init_method,
+                    storage_nodes,
+                    compute_nodes,
+                ),
+                nprocs=world_size,
+            )

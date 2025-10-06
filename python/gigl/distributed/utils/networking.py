@@ -1,9 +1,15 @@
+import os
 import socket
+from dataclasses import dataclass
 from typing import Optional
 
 import torch
 
 from gigl.common.logger import Logger
+from gigl.src.common.constants.distributed import (
+    COMPUTE_CLUSTER_MASTER_KEY,
+    STORAGE_CLUSTER_MASTER_KEY,
+)
 
 logger = Logger()
 
@@ -179,3 +185,79 @@ def get_internal_ip_from_all_ranks() -> list[str]:
     assert all(ip for ip in ip_list), "Could not retrieve all ranks' internal IPs"
 
     return ip_list
+
+
+@dataclass(frozen=True)
+class GraphStoreInfo:
+    """Information about a graph store cluster."""
+
+    # Number of nodes in the whole cluster
+    num_cluster_nodes: int
+    # Number of nodes in the storage cluster
+    num_storage_nodes: int
+    # Number of nodes in the compute cluster
+    num_compute_nodes: int
+
+    # IP address of the master node for the whole cluster
+    cluster_master_ip: str
+    # IP address of the master node for the storage cluster
+    storage_cluster_master_ip: str
+    # IP address of the master node for the compute cluster
+    compute_cluster_master_ip: str
+
+    # Port of the master node for the whole cluster
+    cluster_master_port: int
+    # Port of the master node for the storage cluster
+    storage_cluster_master_port: int
+    # Port of the master node for the compute cluster
+    compute_cluster_master_port: int
+
+
+def get_graph_store_info() -> GraphStoreInfo:
+    """
+    Get the information about the graph store cluster.
+
+    Returns:
+        GraphStoreInfo: The information about the graph store cluster.
+
+    Raises:
+        ValueError: If a torch distributed environment is not initialized.
+        ValueError: If the storage cluster master key or the compute cluster master key is not set as an environment variable.
+    """
+    if not torch.distributed.is_initialized():
+        raise ValueError("Distributed environment must be initialized")
+
+    if not STORAGE_CLUSTER_MASTER_KEY in os.environ:
+        raise ValueError(
+            f"{STORAGE_CLUSTER_MASTER_KEY} must be set as an environment variable"
+        )
+    if not COMPUTE_CLUSTER_MASTER_KEY in os.environ:
+        raise ValueError(
+            f"{COMPUTE_CLUSTER_MASTER_KEY} must be set as an environment variable"
+        )
+
+    num_storage_nodes = int(os.environ[STORAGE_CLUSTER_MASTER_KEY])
+    num_compute_nodes = int(os.environ[COMPUTE_CLUSTER_MASTER_KEY])
+
+    cluster_master_ip = get_internal_ip_from_master_node()
+    # We assume that the storage cluster nodes come first.
+    storage_cluster_master_ip = get_internal_ip_from_node(node_rank=0)
+    compute_cluster_master_ip = get_internal_ip_from_node(node_rank=num_storage_nodes)
+
+    cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
+    storage_cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
+    compute_cluster_master_port = get_free_ports_from_node(
+        num_ports=1, node_rank=num_storage_nodes
+    )[0]
+
+    return GraphStoreInfo(
+        num_cluster_nodes=num_storage_nodes + num_compute_nodes,
+        num_storage_nodes=num_storage_nodes,
+        num_compute_nodes=num_compute_nodes,
+        cluster_master_ip=cluster_master_ip,
+        storage_cluster_master_ip=storage_cluster_master_ip,
+        compute_cluster_master_ip=compute_cluster_master_ip,
+        cluster_master_port=cluster_master_port,
+        storage_cluster_master_port=storage_cluster_master_port,
+        compute_cluster_master_port=compute_cluster_master_port,
+    )

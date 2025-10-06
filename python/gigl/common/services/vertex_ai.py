@@ -75,15 +75,16 @@ from google.cloud.aiplatform_v1.types import (
 
 from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
+from gigl.src.common.constants.distributed import (
+    COMPUTE_CLUSTER_MASTER_KEY,
+    STORAGE_CLUSTER_MASTER_KEY,
+)
 
 logger = Logger()
 
 LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[
     str
 ] = "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
-
-STORAGE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_STORAGE_CLUSTER_MASTER_KEY"
-COMPUTE_CLUSTER_MASTER_KEY: Final[str] = "GIGL_COMPUTE_CLUSTER_MASTER_KEY"
 
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours

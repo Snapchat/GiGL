@@ -8,13 +8,12 @@ from parameterized import param, parameterized
 
 from gigl.common import UriFactory
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
-from gigl.common.services.vertex_ai import (
+from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.constants.distributed import (
     COMPUTE_CLUSTER_MASTER_KEY,
     STORAGE_CLUSTER_MASTER_KEY,
-    VertexAiJobConfig,
-    VertexAIService,
 )
-from gigl.env.pipelines_config import get_resource_config
 
 
 @kfp.dsl.component
