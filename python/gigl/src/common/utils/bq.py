@@ -142,6 +142,15 @@ class BqUtils:
             logger.exception(f"Could not run query: {e}")
             raise e
 
+    def run_if_exists(
+        self, query: str, output_table: str, labels: dict[str, str], **job_config_args
+    ) -> Optional[RowIterator]:
+        if self.does_bq_table_exist(output_table):
+            logger.info(f"Table {output_table} already exists. Skipping query.")
+            return None
+        else:
+            return self.run_query(query=query, labels=labels, **job_config_args)
+
     @staticmethod
     def format_bq_path(bq_path: str, format_for_table_reference: bool = False) -> str:
         """Formats BQ paths.
