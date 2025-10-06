@@ -108,24 +108,29 @@ conda activate gigl
 #### Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
 
 ```bash
-pip install "gigl[torch25-cuda-121,transform]==0.0.2" \
+pip install "gigl[torch25-cuda-121,transform]==0.0.9" \
   --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
   --extra-index-url=https://pypi.org/simple
+```
+
+Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install script to setup GLT dependency:
+
+```bash
 gigl-post-install
 ```
 
 #### Install GiGL + necessary tooling for Torch 2.5 + CPU
 
 ```bash
-pip install "gigl[torch25-cpu,transform]==0.0.2" \
+pip install "gigl[torch25-cpu,transform]==0.0.9" \
   --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
   --extra-index-url=https://pypi.org/simple
-gigl-post-install
 ```
 
-```{note}
-`gigl-post-install` is needed to install GLT from source.
-Currently, building/using wheels for GLT is errorprone, thus we opt to install from source every time.
+Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install script to setup GLT dependency:
+
+```bash
+gigl-post-install
 ```
 
 ### Install from source
