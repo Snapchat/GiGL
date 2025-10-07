@@ -6,16 +6,15 @@ from unittest.mock import call, patch
 from gigl.common import GcsUri
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.vertex_ai_context import (
-    _parse_cluster_spec,
     connect_worker_pool,
     get_host_name,
     get_leader_hostname,
     get_leader_port,
-    get_num_storage_and_compute_nodes,
     get_rank,
     get_vertex_ai_job_id,
     get_world_size,
     is_currently_running_in_vertex_ai_job,
+    parse_cluster_spec,
 )
 
 
@@ -114,54 +113,6 @@ class TestVertexAIContext(unittest.TestCase):
             ]
         )
 
-    def test_get_num_storage_and_compute_nodes_success(self):
-        """Test successful retrieval of storage and compute node counts."""
-        cluster_spec_json = json.dumps(
-            {
-                "cluster": {
-                    "workerpool0": ["replica-0", "replica-1"],
-                    "workerpool1": ["replica-0"],
-                    "workerpool2": ["replica-0"],
-                    "workerpool3": ["replica-0", "replica-1", "replica-2"],
-                },
-                "task": {"type": "workerpool0", "index": 0},
-                "environment": "cloud",
-            }
-        )
-
-        with patch.dict(
-            os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": cluster_spec_json}
-        ):
-            num_storage, num_compute = get_num_storage_and_compute_nodes()
-            self.assertEqual(num_storage, 3)  # workerpool0 (2) + workerpool1 (1)
-            self.assertEqual(num_compute, 3)  # workerpool3 (3)
-
-    def test_get_num_storage_and_compute_nodes_not_on_vai(self):
-        """Test that function raises ValueError when not running in Vertex AI."""
-        with self.assertRaises(ValueError) as context:
-            get_num_storage_and_compute_nodes()
-        self.assertIn("Not running in a Vertex AI job", str(context.exception))
-
-    def test_get_num_storage_and_compute_nodes_invalid_worker_pools(self):
-        """Test that function raises ValueError when cluster doesn't have 4 worker pools."""
-        cluster_spec_json = json.dumps(
-            {
-                "cluster": {"workerpool0": ["replica-0"], "workerpool1": ["replica-0"]},
-                "task": {"type": "workerpool0", "index": 0},
-                "environment": "cloud",
-            }
-        )
-
-        with patch.dict(
-            os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": cluster_spec_json}
-        ):
-            with self.assertRaises(ValueError) as context:
-                get_num_storage_and_compute_nodes()
-            self.assertIn(
-                "Cluster specification must have 4 worker pools", str(context.exception)
-            )
-            self.assertIn("Found 2 worker pools", str(context.exception))
-
     def test_parse_cluster_spec_success(self):
         """Test successful parsing of cluster specification."""
         cluster_spec_json = json.dumps(
@@ -185,7 +136,7 @@ class TestVertexAIContext(unittest.TestCase):
         with patch.dict(
             os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": cluster_spec_json}
         ):
-            cluster_spec = _parse_cluster_spec()
+            cluster_spec = parse_cluster_spec()
 
             # Test cluster data
             self.assertEqual(len(cluster_spec.cluster), 4)
@@ -223,7 +174,7 @@ class TestVertexAIContext(unittest.TestCase):
         with patch.dict(
             os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": cluster_spec_json}
         ):
-            cluster_spec = _parse_cluster_spec()
+            cluster_spec = parse_cluster_spec()
 
             # Test cluster data
             self.assertEqual(len(cluster_spec.cluster), 4)
@@ -242,14 +193,14 @@ class TestVertexAIContext(unittest.TestCase):
     def test_parse_cluster_spec_not_on_vai(self):
         """Test that function raises ValueError when not running in Vertex AI."""
         with self.assertRaises(ValueError) as context:
-            _parse_cluster_spec()
+            parse_cluster_spec()
         self.assertIn("Not running in a Vertex AI job", str(context.exception))
 
     def test_parse_cluster_spec_missing_cluster_spec(self):
         """Test that function raises ValueError when CLUSTER_SPEC is missing."""
         with patch.dict(os.environ, self.VAI_JOB_ENV):
             with self.assertRaises(ValueError) as context:
-                _parse_cluster_spec()
+                parse_cluster_spec()
             self.assertIn(
                 "CLUSTER_SPEC not found in environment variables",
                 str(context.exception),
@@ -261,7 +212,7 @@ class TestVertexAIContext(unittest.TestCase):
             os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": "invalid json"}
         ):
             with self.assertRaises(json.JSONDecodeError) as context:
-                _parse_cluster_spec()
+                parse_cluster_spec()
             self.assertIn("Failed to parse CLUSTER_SPEC JSON", str(context.exception))
 
 

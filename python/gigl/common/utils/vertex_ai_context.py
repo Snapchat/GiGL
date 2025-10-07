@@ -161,29 +161,6 @@ def connect_worker_pool() -> DistributedContext:
     )
 
 
-def get_num_storage_and_compute_nodes() -> tuple[int, int]:
-    """
-    Returns the number of storage and compute nodes for a Vertex AI job.
-
-    Raises:
-        ValueError: If not running in a Vertex AI job.
-    """
-    if not is_currently_running_in_vertex_ai_job():
-        raise ValueError("Not running in a Vertex AI job.")
-
-    cluster_spec = _parse_cluster_spec()
-    if len(cluster_spec.cluster) != 4:
-        raise ValueError(
-            f"Cluster specification must have 4 worker pools to fetch the number of storage and compute nodes. Found {len(cluster_spec.cluster)} worker pools."
-        )
-    num_storage_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
-        cluster_spec.cluster["workerpool1"]
-    )
-    num_compute_nodes = len(cluster_spec.cluster["workerpool3"])
-
-    return num_storage_nodes, num_compute_nodes
-
-
 @dataclass
 class TaskInfo:
     """Information about the current task running on this node."""
@@ -197,15 +174,21 @@ class TaskInfo:
 
 @dataclass
 class ClusterSpec:
-    """Represents the cluster specification for a Vertex AI custom job."""
+    """Represents the cluster specification for a Vertex AI custom job.
+    See the docs for more info:
+    https://cloud.google.com/vertex-ai/docs/training/distributed-training#cluster-variables
+    """
 
     cluster: dict[str, list[str]]  # Worker pool names mapped to their replica lists
     environment: str  # The environment string (e.g., "cloud")
     task: TaskInfo  # Information about the current task
-    job: Optional[CustomJobSpec] = None  # The CustomJobSpec for the current job
+    # The CustomJobSpec for the current job
+    # See the docs for more info:
+    # https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
+    job: Optional[CustomJobSpec] = None
 
 
-def _parse_cluster_spec() -> ClusterSpec:
+def parse_cluster_spec() -> ClusterSpec:
     """
     Parse the cluster specification from the CLUSTER_SPEC environment variable.
     Based on the spec given at:
@@ -250,9 +233,6 @@ def _parse_cluster_spec() -> ClusterSpec:
     job_data = cluster_spec_data.get("job")
     job_spec = None
     if job_data:
-        # Convert the dictionary to CustomJobSpec
-        # Note: This assumes the job_data is already in the correct format
-        # You may need to adjust this based on the actual structure
         job_spec = CustomJobSpec(**job_data)
 
     return ClusterSpec(
