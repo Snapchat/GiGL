@@ -11,6 +11,7 @@ from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
 
+
 @kfp.dsl.component
 def source() -> int:
     return 42

@@ -1,13 +1,14 @@
-import os
 import socket
-from dataclasses import dataclass
 from typing import Optional
 
 import torch
 
 from gigl.common.logger import Logger
+from gigl.common.utils.vertex_ai_context import (
+    get_num_storage_and_compute_nodes,
+    is_currently_running_in_vertex_ai_job,
+)
 from gigl.env.distributed import GraphStoreInfo
-from gigl.common.utils.vertex_ai_context import is_currently_running_in_vertex_ai_job, get_num_storage_and_compute_nodes
 
 logger = Logger()
 
@@ -185,7 +186,6 @@ def get_internal_ip_from_all_ranks() -> list[str]:
     return ip_list
 
 
-
 def get_graph_store_info() -> GraphStoreInfo:
     """
     Get the information about the graph store cluster.
@@ -202,25 +202,20 @@ def get_graph_store_info() -> GraphStoreInfo:
     if is_currently_running_in_vertex_ai_job():
         num_storage_nodes, num_compute_nodes = get_num_storage_and_compute_nodes()
     else:
-        raise ValueError("Must be running on a vertex AI job to get graph store cluster info!")
+        raise ValueError(
+            "Must be running on a vertex AI job to get graph store cluster info!"
+        )
 
     cluster_master_ip = get_internal_ip_from_master_node()
     # We assume that the storage cluster nodes come first.
-    storage_cluster_master_ip = get_internal_ip_from_node(
-        node_rank=0
-    )
-    compute_cluster_master_ip = get_internal_ip_from_node(
-        node_rank=num_storage_nodes
-    )
+    storage_cluster_master_ip = get_internal_ip_from_node(node_rank=0)
+    compute_cluster_master_ip = get_internal_ip_from_node(node_rank=num_storage_nodes)
 
     cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
-    storage_cluster_master_port = get_free_ports_from_node(
-        num_ports=1, node_rank=0
-    )[0]
+    storage_cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
     compute_cluster_master_port = get_free_ports_from_node(
         num_ports=1, node_rank=num_storage_nodes
     )[0]
-
 
     return GraphStoreInfo(
         num_cluster_nodes=num_storage_nodes + num_compute_nodes,

@@ -1,5 +1,6 @@
 import unittest
 import uuid
+from textwrap import dedent
 
 from parameterized import param, parameterized
 
@@ -54,7 +55,21 @@ class NetworkingUtlsIntegrationTest(unittest.TestCase):
         command = [
             "python",
             "-c",
-            "from gigl.distributed.utils import get_graph_store_info; get_graph_store_info()",
+            dedent(
+                f"""
+                from gigl.distributed.utils import get_graph_store_info
+                info = get_graph_store_info()
+                assert info.num_storage_nodes == {storage_nodes}
+                assert info.num_compute_nodes == {compute_nodes}
+                assert info.num_cluster_nodes == {storage_nodes + compute_nodes}
+                assert info.cluster_master_ip is not None
+                assert info.storage_cluster_master_ip is not None
+                assert info.compute_cluster_master_ip is not None
+                assert info.cluster_master_port is not None
+                assert info.storage_cluster_master_port is not None
+                assert info.compute_cluster_master_port is not None
+                """
+            ),
         ]
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
