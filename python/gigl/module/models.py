@@ -28,6 +28,7 @@ from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
 from torchrec.distributed.embedding_types import EmbeddingComputeKernel
 
 from gigl.src.common.types.graph_data import NodeType
+from gigl.types.graph import to_homogeneous
 
 
 class LinkPredictionGNN(nn.Module):
@@ -148,6 +149,7 @@ class LinkPredictionGNN(nn.Module):
 
         return LinkPredictionGNN(encoder=encoder, decoder=decoder)
 
+# TODO(swong3): Split into different files
 class LightGCN(nn.Module):
     """
     LightGCN model with TorchRec integration for distributed ID embeddings.
@@ -167,13 +169,16 @@ class LightGCN(nn.Module):
 
     def __init__(
         self,
-        node_type_to_num_nodes: dict[NodeType, int],
+        node_type_to_num_nodes: Union[int, dict[NodeType, int]],
         embedding_dim: int = 64,
         num_layers: int = 2,
         device: torch.device = torch.device("cpu"),
         layer_weights: Optional[list[float]] = None,
     ):
         super().__init__()
+
+        if isinstance(node_type_to_num_nodes, int):
+            node_type_to_num_nodes = {NodeType("default_node_type"): node_type_to_num_nodes}
 
         self._node_type_to_num_nodes = node_type_to_num_nodes
         self._embedding_dim = embedding_dim
@@ -207,7 +212,7 @@ class LightGCN(nn.Module):
                 )
             )
 
-        self._ebc = EmbeddingBagCollection(tables=tables, device=self._device)
+        self._embedding_bag_collection = EmbeddingBagCollection(tables=tables, device=self._device)
 
         # Construct LightGCN propagation layers (LGConv = Ā X)
         self._convs = nn.ModuleList([LGConv() for _ in range(self._num_layers)])  # K layers
@@ -228,6 +233,7 @@ class LightGCN(nn.Module):
             data: Graph data (homogeneous or heterogeneous)
             device: Device to run the computation on
             output_node_types: List of node types to return embeddings for (for heterogeneous graphs)
+            anchor_node_ids: Node IDs to return embeddings for (for homogeneous graphs)
 
         Returns:
             Node embeddings for the specified node types
@@ -361,7 +367,7 @@ class LightGCN(nn.Module):
             lengths=lengths,               # shape [B * num_keys], B lengths per key, concatenated key-major
         )
 
-        out = self._ebc(kjt)              # KeyedTensor (dict-like): out[key] -> [B, D]
+        out = self._embedding_bag_collection(kjt)              # KeyedTensor (dict-like): out[key] -> [B, D]
         return out[key]                   # shape [B, D], embeddings for the requested key
 
     def _weighted_layer_sum(self, xs: list[torch.Tensor]) -> torch.Tensor:

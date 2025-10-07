@@ -176,7 +176,7 @@ class TestLightGCN(unittest.TestCase):
     def _set_embeddings(self, model: LightGCN, node_type: str):
         """Set the embedding weights for the model to match test data."""
         with torch.no_grad():
-            table = model._ebc.embedding_bags[f"node_embedding_{node_type}"]
+            table = model._embedding_bag_collection.embedding_bags[f"node_embedding_{node_type}"]
             table.weight[:] = self.test_embeddings
 
     def _create_pyg_reference(self) -> PyGLightGCN:
@@ -351,7 +351,7 @@ class TestLightGCN(unittest.TestCase):
         loss.backward()
 
         # Check that gradients exist for embedding parameters
-        embedding_table = model._ebc.embedding_bags["node_embedding_user"]
+        embedding_table = model._embedding_bag_collection.embedding_bags["node_embedding_user"]
         self.assertIsNotNone(embedding_table.weight.grad)
         self.assertTrue(torch.any(embedding_table.weight.grad != 0))
 
