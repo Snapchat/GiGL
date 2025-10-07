@@ -118,10 +118,10 @@ class TestVertexAIContext(unittest.TestCase):
         cluster_spec_json = json.dumps(
             {
                 "cluster": {
-                    "workerpool0": ["replica-0", "replica-1"],
-                    "workerpool1": ["replica-0"],
-                    "workerpool2": ["replica-0"],
-                    "workerpool3": ["replica-0", "replica-1"],
+                    "workerpool0": ["replica0-0", "replica0-1"],
+                    "workerpool1": ["replica1-0"],
+                    "workerpool2": ["replica2-0"],
+                    "workerpool3": ["replica3-0", "replica3-1"],
                 },
                 "task": {"type": "workerpool0", "index": 1, "trial": "trial-123"},
                 "environment": "cloud",
@@ -141,9 +141,13 @@ class TestVertexAIContext(unittest.TestCase):
             # Test cluster data
             self.assertEqual(len(cluster_spec.cluster), 4)
             self.assertEqual(
-                cluster_spec.cluster["workerpool0"], ["replica-0", "replica-1"]
+                cluster_spec.cluster["workerpool0"], ["replica0-0", "replica0-1"]
             )
-            self.assertEqual(cluster_spec.cluster["workerpool1"], ["replica-0"])
+            self.assertEqual(cluster_spec.cluster["workerpool1"], ["replica1-0"])
+            self.assertEqual(cluster_spec.cluster["workerpool2"], ["replica2-0"])
+            self.assertEqual(
+                cluster_spec.cluster["workerpool3"], ["replica3-0", "replica3-1"]
+            )
 
             # Test task info
             self.assertEqual(cluster_spec.task.type, "workerpool0")
@@ -161,10 +165,10 @@ class TestVertexAIContext(unittest.TestCase):
         cluster_spec_json = json.dumps(
             {
                 "cluster": {
-                    "workerpool0": ["replica-0"],
-                    "workerpool1": ["replica-0"],
-                    "workerpool2": ["replica-0"],
-                    "workerpool3": ["replica-0"],
+                    "workerpool0": ["replica0-0"],
+                    "workerpool1": ["replica1-0"],
+                    "workerpool2": ["replica2-0"],
+                    "workerpool3": ["replica3-0"],
                 },
                 "task": {"type": "workerpool0", "index": 0},
                 "environment": "cloud",
