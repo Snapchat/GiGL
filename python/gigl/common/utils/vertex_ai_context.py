@@ -13,7 +13,7 @@ from gigl.common import GcsUri
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed.dist_context import DistributedContext
+from gigl.env.distributed import DistributedContext
 
 logger = Logger()
 
