@@ -163,6 +163,7 @@ class LightGCN(nn.Module):
         node_type_to_num_nodes (Dict[NodeType, int]): map node types to counts
         embedding_dim (int): Dimension of node embeddings D (default 64)
         num_layers (int): K LightGCN propagation hops (default 2)
+        device (torch.device): Device to run the computation on (default CPU)
         layer_weights (Optional[List[float]]): weights for [e^(0), e^(1), ..., e^(K)]
             If None, uses uniform 1/(K+1).
     """
@@ -194,9 +195,6 @@ class LightGCN(nn.Module):
                     f"layer_weights must have length K+1={num_layers+1}, got {len(layer_weights)}"
                 )
             self._layer_weights = layer_weights
-        self.register_buffer(
-            "_layer_weights_tensor", torch.tensor(self._layer_weights, dtype=torch.float32, device=device)  # shape [K+1], where K is num_layers
-        )
 
         # Build TorchRec EBC (one table per node type)
         # feature key naming convention: f"{node_type}_id"
@@ -239,6 +237,7 @@ class LightGCN(nn.Module):
             Node embeddings for the specified node types
         """
         if isinstance(data, HeteroData):
+            raise NotImplementedError("HeteroData is not yet supported for LightGCN")
             output_node_types = output_node_types or list(data.node_types)
             return self._forward_heterogeneous(data, device, output_node_types)
         else:
@@ -319,13 +318,14 @@ class LightGCN(nn.Module):
         xs: [e^(0), e^(1), ..., e^(K)]  each of shape [N, D]
         returns: [N, D]
         """
-        if len(xs) != int(self._layer_weights_tensor.numel()):
+        if len(xs) != len(self._layer_weights):
             raise ValueError(
-                f"Got {len(xs)} layer tensors but {self._layer_weights_tensor.numel()} weights."
+                f"Got {len(xs)} layer tensors but {len(self._layer_weights)} weights."
             )
 
+        w = torch.as_tensor(self._layer_weights, device=xs[0].device, dtype=xs[0].dtype)     # shape [K+1], layer weights
+
         # Ensure weights match device/dtype of embeddings
-        w = self._layer_weights_tensor.to(device=xs[0].device, dtype=xs[0].dtype)      # shape [K+1], layer weights
         stacked = torch.stack(xs, dim=0)                                              # shape [K+1, N, D], stack all layer embeddings
         out = (stacked * w.view(-1, 1, 1)).sum(dim=0)                                  # shape [N, D], weighted sum across layers
 
