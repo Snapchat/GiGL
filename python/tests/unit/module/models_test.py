@@ -154,7 +154,7 @@ class TestLightGCN(unittest.TestCase):
 
         # Create test data
         self.data = Data(edge_index=self.edge_index, num_nodes=self.num_nodes)
-        self.data.node_id = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+        self.data.node = torch.tensor([0, 1, 2, 3], dtype=torch.long)
 
         # Fixed embedding weights for reproducible testing
         self.test_embeddings = torch.tensor([

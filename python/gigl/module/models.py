@@ -254,12 +254,10 @@ class LightGCN(nn.Module):
         key = self._feature_keys[0]
         edge_index = data.edge_index.to(device)  # shape [2, E], where E is the number of edges
 
-        if hasattr(data, "n_id"):
-            global_ids = data.n_id.to(device).long() # shape [N_sub], maps local 0..N_sub-1 → global ids
-        elif hasattr(data, "node_id"):
-            global_ids = data.node_id.to(device).long() # shape [N_sub], maps local 0..N_sub-1 → global ids
+        if hasattr(data, "node"):
+            global_ids = data.node.to(device).long() # shape [N_sub], maps local 0..N_sub-1 → global ids
         else:
-            raise ValueError("Subgraph must include .n_id (or .node_id) to map local→global IDs.")
+            raise ValueError("Subgraph must include .node to map local→global IDs.")
 
         x0_sub = self._lookup_single_key(key, global_ids)   # shape [N_sub, D], where N_sub is number of nodes in subgraph and D is embedding_dim
 
@@ -277,60 +275,6 @@ class LightGCN(nn.Module):
             return z_sub[anchors_local]      # shape [num_anchors, D], embeddings for anchor nodes only
 
         return z_sub                         # shape [N_sub, D], embeddings for all nodes in subgraph
-
-    def _forward_heterogeneous(
-        self,
-        data: HeteroData,
-        device: torch.device,
-        output_node_types: list[NodeType],
-    ) -> dict[NodeType, torch.Tensor]:
-
-        raise NotImplementedError("Heterogeneous forward pass is not implemented")
-        node_type_to_ids: dict[str, torch.Tensor] = {}
-        for nt in data.node_types:
-            if hasattr(data[nt], "node_id"):
-                node_type_to_ids[nt] = data[nt].node_id.to(device)
-            else:
-                node_type_to_ids[nt] = torch.arange(
-                    data[nt].num_nodes, device=device, dtype=torch.long
-                )
-
-        node_type_to_x0: dict[str, torch.Tensor] = {}
-        for nt, ids in node_type_to_ids.items():
-            node_type_to_x0[nt] = self._lookup_single_key(f"{nt}_id", ids)
-
-        print(node_type_to_x0)
-
-        node_type_to_xs: dict[str, list[torch.Tensor]] = {nt: [x0] for nt, x0 in node_type_to_x0.items()}
-        node_type_to_x = {nt: x0 for nt, x0 in node_type_to_x0.items()}
-
-        print(node_type_to_xs)
-        print(node_type_to_x)
-
-        for _layer in range(self._num_layers):
-            accum = {nt: torch.zeros_like(node_type_to_x[nt]) for nt in node_type_to_x.keys()}
-            degs = {nt: 0 for nt in node_type_to_x.keys()}
-
-            for (src_nt, _rel, dst_nt), eidx in data.edge_index_dict.items():
-                conv = LGConv()
-                accum[dst_nt] = accum[dst_nt] + conv(node_type_to_x[src_nt], eidx.to(device))
-                degs[dst_nt] += 1
-                accum[src_nt] = accum[src_nt] + conv(node_type_to_x[dst_nt], eidx.flip(0).to(device))
-                degs[src_nt] += 1
-
-            for nt in accum.keys():
-                if degs[nt] > 0:
-                    node_type_to_x[nt] = accum[nt] / float(degs[nt])
-                node_type_to_xs[nt].append(node_type_to_x[nt])
-
-        final_embeddings: dict[str, torch.Tensor] = {}
-        for nt in output_node_types:
-            if nt not in node_type_to_xs:
-                final_embeddings[nt] = torch.empty(0, self._embedding_dim, device=device)
-                continue
-            final_embeddings[nt] = self._weighted_layer_sum(node_type_to_xs[nt])
-
-        return final_embeddings
 
     def _lookup_single_key(self, key: str, ids: torch.Tensor) -> torch.Tensor:
         """
