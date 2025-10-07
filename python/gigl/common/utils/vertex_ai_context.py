@@ -188,7 +188,7 @@ class ClusterSpec:
     job: Optional[CustomJobSpec] = None
 
 
-def parse_cluster_spec() -> ClusterSpec:
+def get_cluster_spec() -> ClusterSpec:
     """
     Parse the cluster specification from the CLUSTER_SPEC environment variable.
     Based on the spec given at:

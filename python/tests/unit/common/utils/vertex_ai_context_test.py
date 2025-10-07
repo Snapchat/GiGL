@@ -14,7 +14,7 @@ from gigl.common.utils.vertex_ai_context import (
     get_vertex_ai_job_id,
     get_world_size,
     is_currently_running_in_vertex_ai_job,
-    parse_cluster_spec,
+    get_cluster_spec,
 )
 
 
@@ -136,7 +136,7 @@ class TestVertexAIContext(unittest.TestCase):
         with patch.dict(
             os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": cluster_spec_json}
         ):
-            cluster_spec = parse_cluster_spec()
+            cluster_spec = get_cluster_spec()
 
             # Test cluster data
             self.assertEqual(len(cluster_spec.cluster), 4)
@@ -174,7 +174,7 @@ class TestVertexAIContext(unittest.TestCase):
         with patch.dict(
             os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": cluster_spec_json}
         ):
-            cluster_spec = parse_cluster_spec()
+            cluster_spec = get_cluster_spec()
 
             # Test cluster data
             self.assertEqual(len(cluster_spec.cluster), 4)
@@ -193,14 +193,14 @@ class TestVertexAIContext(unittest.TestCase):
     def test_parse_cluster_spec_not_on_vai(self):
         """Test that function raises ValueError when not running in Vertex AI."""
         with self.assertRaises(ValueError) as context:
-            parse_cluster_spec()
+            get_cluster_spec()
         self.assertIn("Not running in a Vertex AI job", str(context.exception))
 
     def test_parse_cluster_spec_missing_cluster_spec(self):
         """Test that function raises ValueError when CLUSTER_SPEC is missing."""
         with patch.dict(os.environ, self.VAI_JOB_ENV):
             with self.assertRaises(ValueError) as context:
-                parse_cluster_spec()
+                get_cluster_spec()
             self.assertIn(
                 "CLUSTER_SPEC not found in environment variables",
                 str(context.exception),
@@ -212,7 +212,7 @@ class TestVertexAIContext(unittest.TestCase):
             os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": "invalid json"}
         ):
             with self.assertRaises(json.JSONDecodeError) as context:
-                parse_cluster_spec()
+                get_cluster_spec()
             self.assertIn("Failed to parse CLUSTER_SPEC JSON", str(context.exception))
 
 
