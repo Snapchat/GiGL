@@ -7,6 +7,7 @@ from gigl.common import GcsUri
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.vertex_ai_context import (
     connect_worker_pool,
+    get_cluster_spec,
     get_host_name,
     get_leader_hostname,
     get_leader_port,
@@ -14,7 +15,6 @@ from gigl.common.utils.vertex_ai_context import (
     get_vertex_ai_job_id,
     get_world_size,
     is_currently_running_in_vertex_ai_job,
-    get_cluster_spec,
 )
 
 

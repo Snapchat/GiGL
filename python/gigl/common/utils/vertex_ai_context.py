@@ -161,7 +161,7 @@ def connect_worker_pool() -> DistributedContext:
     )
 
 
-@dataclass
+@dataclass(frozen=True)
 class TaskInfo:
     """Information about the current task running on this node."""
 
@@ -172,7 +172,7 @@ class TaskInfo:
     ] = None  # Hyperparameter tuning trial identifier (if applicable)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ClusterSpec:
     """Represents the cluster specification for a Vertex AI custom job.
     See the docs for more info:
