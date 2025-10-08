@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import datetime
 import multiprocessing as mp
 import sys
 import tempfile
@@ -50,6 +51,12 @@ from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.training.v1.lib.base_trainer import BaseTrainer
 
 logger = Logger()
+
+# Without longer timeout, we can see the cluster failing as Vertex AI
+# will start the jobs in a scattered manner, so we may timeout waiting
+# for all machines to come online.
+# TODO(kmonte): We should parameterize this timeout.
+_PROCESS_GROUP_TIMEOUT = datetime.timedelta(minutes=45)
 
 
 @profileit(
@@ -354,8 +361,12 @@ class GnnTrainingProcess:
         use_cuda = device.type != "cpu"
         if should_distribute():
             distributed_backend = get_distributed_backend(use_cuda=use_cuda)
-            logger.info(f"Using distributed PyTorch with {distributed_backend}")
-            torch.distributed.init_process_group(backend=distributed_backend)
+            logger.info(
+                f"Using distributed PyTorch with {distributed_backend}, timeout {_PROCESS_GROUP_TIMEOUT}"
+            )
+            torch.distributed.init_process_group(
+                backend=distributed_backend, timeout=_PROCESS_GROUP_TIMEOUT
+            )
             logger.info("Successfully initiated distributed backend!")
 
     @flushes_metrics(get_metrics_service_instance_fn=get_metrics_service_instance)

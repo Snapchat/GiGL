@@ -41,17 +41,19 @@ Thinking about integrating Graph Neural Networks into your applications? Here's 
 
 ## Tutorial Schedule
 
-| Time (EDT) | Topic                                  | Presenter        | Materials |
-| ---------- | -------------------------------------- | ---------------- | --------- |
-| 1:00 PM    | Introduction                           | Neil Shah        | Slides    |
-| 1:10 PM    | GNNs and their Scale Challenges        | Neil Shah        | Slides    |
-| 1:25 PM    | Overview of GiGL                       | Yozen Liu        | Slides    |
-| 1:40 PM    | Hands-on with GiGL - Show case & Setup | Yozen Liu        | -         |
-| 1:50 PM    | Hands-on with GiGL - Tabularization    | Shubham Vij      | Notebook  |
-| 2:20 PM    | Hands-on with GiGL - In-memory         | Kyle Montemayor  | Notebook  |
-| 3:00 PM    | Coffee break (30m)                     | -                | -         |
-| 3:30 PM    | Hands-on with GiGL - Customization     | Matthew Kolodner | Slides    |
-| 3:55 PM    | Conclusion                             | Yozen Liu        | Slides    |
+| Time (EDT) | Topic                                  | Presenter        | Materials                                                          |
+| ---------- | -------------------------------------- | ---------------- | ------------------------------------------------------------------ |
+| 1:00 PM    | Introduction                           | Neil Shah        | Slides                                                             |
+| 1:10 PM    | GNNs and their Scale Challenges        | Neil Shah        | Slides                                                             |
+| 1:25 PM    | Overview of GiGL                       | Yozen Liu        | Slides                                                             |
+| 1:40 PM    | Hands-on with GiGL - Show case & Setup | Yozen Liu        | -                                                                  |
+| 1:50 PM    | Hands-on with GiGL - Tabularization    | Shubham Vij      | [Notebook](../../toy_visual_example/toy_example_walkthrough.ipynb) |
+| 2:20 PM    | Hands-on with GiGL - In-memory         | Kyle Montemayor  | [Notebook](heterogeneous_walkthrough.ipynb)                        |
+| 3:00 PM    | Coffee break (30m)                     | -                | -                                                                  |
+| 3:30 PM    | Hands-on with GiGL - Customization     | Matthew Kolodner | Slides                                                             |
+| 3:55 PM    | Conclusion                             | Yozen Liu        | Slides                                                             |
+
+\*Tutorial slides [PDF](slides_tutorial_KDD_25.pdf)
 
 ### GNNs and their Scale Challenges
 

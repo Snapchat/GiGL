@@ -54,7 +54,7 @@ message VertexAiTrainerConfig {
   // Num workers for training job
   uint32 num_replicas = 4;
  }
- 
+
  // (deprecated)
  // Configuration for KFP training resources
  message KFPTrainerConfig {
@@ -86,11 +86,17 @@ message VertexAiResourceConfig {
   uint32 gpu_limit = 3;
   // Num workers for job
   uint32 num_replicas = 4;
-  // Timeout in seconds for the job. If unset or zero, will use the default @ google.cloud.aiplatform.CustomJob, which is 7 days: 
+  // Timeout in seconds for the job. If unset or zero, will use the default @ google.cloud.aiplatform.CustomJob, which is 7 days:
   // https://github.com/googleapis/python-aiplatform/blob/58fbabdeeefd1ccf1a9d0c22eeb5606aeb9c2266/google/cloud/aiplatform/jobs.py#L2252-L2253
   uint32 timeout = 5;
+  // Region override
+  // If provided, then the Vertex AI Job will be launched in the provided region.
+  // Otherwise, will launch jobs in the region specified at CommonComputeConfig.region
+  // ex: "us-west1"
+  // NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
+  string gcp_region_override = 6;
  }
- 
+
  // Configuration for KFP job resources
  message KFPResourceConfig {
   // Num CPU requested for job (str) which can be a number or a number followed by "m", which means 1/1000
@@ -110,6 +116,16 @@ message VertexAiResourceConfig {
     uint32 num_workers = 1;
  }
 
+ // Configuration for lauching Vertex AI clusters with both graph store and compute pools
+ // Under the hood, this uses Vertex AI Multi-Pool Training
+ // See https://cloud.google.com/vertex-ai/docs/training/distributed-training for more info.
+ // This cluster setup should be used when you want store your graph on separate machines from the compute machines
+ // e.g. you can get lots of big memory machines and separate gpu machines individually,
+ // but getting lots of gpu machines with lots of memory is challenging.
+ message VertexAiGraphStoreConfig {
+  VertexAiResourceConfig graph_store_pool = 1;
+  VertexAiResourceConfig compute_pool = 2;
+ }
 // (deprecated)
 // Configuration for distributed training resources
 message DistributedTrainerConfig {
@@ -126,6 +142,7 @@ message TrainerResourceConfig {
    VertexAiResourceConfig vertex_ai_trainer_config = 1;
    KFPResourceConfig kfp_trainer_config = 2;
    LocalResourceConfig local_trainer_config = 3;
+   VertexAiGraphStoreConfig vertex_ai_graph_store_trainer_config = 4;
  }
 }
 
@@ -135,6 +152,7 @@ message InferencerResourceConfig {
    VertexAiResourceConfig vertex_ai_inferencer_config = 1;
    DataflowResourceConfig dataflow_inferencer_config = 2;
    LocalResourceConfig local_inferencer_config = 3;
+   VertexAiGraphStoreConfig vertex_ai_graph_store_inferencer_config = 4;
  }
 }
 
@@ -187,7 +205,7 @@ message GiglResourceConfig {
  // (deprecated)
  // Configuration for inferencer
  DataflowResourceConfig inferencer_config = 16 [deprecated=true];
- 
+
  // Configuration for distributed trainer
  TrainerResourceConfig trainer_resource_config = 17;
  // Configuration for distributed inferencer

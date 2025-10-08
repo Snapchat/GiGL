@@ -83,8 +83,14 @@ fi
 echo "Installing from ${req_file}"
 pip install -r $req_file $PIP_ARGS
 
-python python/gigl/scripts/post_install.py
 
+# Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
+# We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
+
+# TODO: (svij) Check if gperftools is still needed
+# https://github.com/Snapchat/GiGL/issues/296
 conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
 
 if [[ $DEV -eq 1 ]]

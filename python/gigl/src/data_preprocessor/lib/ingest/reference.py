@@ -44,6 +44,8 @@ class NodeDataReference(DataReference, ABC):
     """
 
     node_type: NodeType
+    # TODO (mkolodner-sc): Currently this field is always overridden by the identifier from the corresponding node data preprocessing spec.
+    # Investigate whether we can remove this field from the user API.
     identifier: Optional[str] = None
 
     def __repr__(self) -> str:
@@ -58,6 +60,8 @@ class EdgeDataReference(DataReference, ABC):
 
     edge_type: EdgeType
     edge_usage_type: EdgeUsageType = EdgeUsageType.MAIN
+    # TODO (mkolodner-sc): Currently these fields are always overridden by the src and dst identifiers from the corresponding edge data preprocessing spec.
+    # Investigate whether we can remove these fields from the user API.
     src_identifier: Optional[str] = None
     dst_identifier: Optional[str] = None
 

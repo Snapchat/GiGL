@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union
 
@@ -68,7 +69,6 @@ class KfpOrchestrator:
             :data:`~gigl.constants.DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH`.
             additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
             tag (Optional[str]): Optional tag to include in the pipeline description.
-
         Returns:
             Uri: The URI of the compiled pipeline.
         """
@@ -116,6 +116,8 @@ class KfpOrchestrator:
         start_at: str = DEFAULT_START_AT_COMPONENT,
         stop_after: Optional[str] = None,
         compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
+        labels: Optional[dict[str, str]] = None,
+        notification_emails: Optional[list[str]] = None,
     ) -> aiplatform.PipelineJob:
         """
         Runs the GiGL Kubeflow pipeline.
@@ -127,11 +129,14 @@ class KfpOrchestrator:
             start_at (str): Component to start the pipeline at. Defaults to 'config_populator'.
             stop_after (Optional[str]): Component to stop the pipeline after. Defaults to None i.e. run entire pipeline.
             compiled_pipeline_path (Uri): Path to the compiled pipeline YAML file.
-
+            labels (Optional[dict[str, str]]): Labels to associate with the run.
+            notification_emails (Optional[list[str]]): Emails to send notification to.
+                See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
         Returns:
             aiplatform.PipelineJob: The created pipeline job.
         """
         check_if_kfp_pipeline_job_name_valid(str(applied_task_identifier))
+
         file_loader = FileLoader()
         assert file_loader.does_uri_exist(
             compiled_pipeline_path
@@ -144,6 +149,18 @@ class KfpOrchestrator:
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
         }
+        # We need to provide *some* notification emails, other wise the cleanup component will fail.
+        # Ideally, we'd be able to provide None and have it handle it, but for whatever reason
+        # that's not supported atm. Passing in None gives the below error:
+        # Notification email "recipients" parameter must specify at least one recipient.
+        if notification_emails:
+            run_keyword_args["notification_emails"] = notification_emails
+        else:
+            run_keyword_args["notification_emails"] = [
+                get_resource_config(
+                    resource_config_uri=resource_config_uri
+                ).service_account_email
+            ]
         if stop_after is not None:
             run_keyword_args["stop_after"] = stop_after
 
@@ -160,10 +177,19 @@ class KfpOrchestrator:
             template_path=compiled_pipeline_path,
             run_keyword_args=run_keyword_args,
             job_id=str(applied_task_identifier).replace("_", "-"),
+            labels=labels,
         )
         return run
 
-    def wait_for_completion(self, run: Union[aiplatform.PipelineJob, str]):
+    def wait_for_completion(
+        self,
+        run: Union[
+            str,
+            aiplatform.PipelineJob,
+            list[str],
+            list[aiplatform.PipelineJob],
+        ],
+    ):
         """
         Waits for the completion of a pipeline run.
 
@@ -173,6 +199,32 @@ class KfpOrchestrator:
         Returns:
             None
         """
-        resource_name = run if isinstance(run, str) else run.resource_name
-        VertexAIService.wait_for_run_completion(resource_name)
-        logger.info(f"Pipeline run {resource_name} completed successfully.")
+        resource_names: list[str] = []
+        if isinstance(run, str):
+            resource_names = [run]
+        elif isinstance(run, aiplatform.PipelineJob):
+            resource_names = [run.resource_name]
+        else:
+            resource_names = [
+                r.resource_name if isinstance(r, aiplatform.PipelineJob) else r
+                for r in run
+            ]
+
+        logger.info(
+            f"Waiting for {len(resource_names)} pipeline runs to complete: {resource_names}"
+        )
+
+        def __wait(resource_name: str) -> str:
+            VertexAIService.wait_for_run_completion(resource_name=resource_name)
+            return resource_name  # Convenience to return the run name for logging
+
+        with ThreadPoolExecutor(max_workers=len(resource_names)) as executor:
+            futures = [
+                executor.submit(__wait, resource_name=resource_name)
+                for resource_name in resource_names
+            ]
+            for future in as_completed(futures):
+                resource_name = future.result()
+                logger.info(f"Pipeline run {resource_name} completed successfully.")
+
+        logger.info(f"All {len(resource_names)} pipeline runs completed successfully.")

@@ -15,10 +15,10 @@ from gigl.src.common.utils.bq import BqUtils
 logger = Logger()
 
 
-class EmbeddingExportIntergrationTest(unittest.TestCase):
+class EmbeddingExportIntegrationTest(unittest.TestCase):
     def setUp(self):
         resource_config = get_resource_config()
-        test_unique_name = f"GiGL-Intergration-Exporter-{uuid.uuid4().hex}"
+        test_unique_name = f"GiGL-Integration-Exporter-{uuid.uuid4().hex}"
         self.embedding_output_dir = GcsUri.join(
             resource_config.temp_assets_regional_bucket_path,
             test_unique_name,

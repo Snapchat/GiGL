@@ -15,22 +15,24 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 ````{dropdown} (Recommended) Developing/experimenting on a GCP cloud instance.
 :color: primary
 
+  1. Create dev instance
   We will need to create a GCP instance and setup needed pre-requisites to install and use GiGL.
 
   You can use our `create_dev_instance.py` script to automatically create an instance for you:
   ```bash
     python <(curl -s https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/scripts/create_dev_instance.py)
   ```
-  Next, ssh into your instance. It will most likely ask you to install gpu drivers, follow instructions and do so.
-  Once you install the drivers, make sure to restart the instance once you do so to ensure the the ops agent for monitoring is also working. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click
-  the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
+  Next, ssh into your instance. It might ask you to install gpu drivers, follow instructions and do so.
 
-  Once done, ensure you can run multiarch docker builds by running following command:
+  2. Install some pre-reqs on your instance. The script below tries to automate installation of the following pre-reqs:
+  `make, unzip, qemu-user-static, docker, docker-buildx, mamba/conda`
+  ```bash
+    bash -c "$(curl -s https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/scripts/scripts/startup_dev_instance.sh)"
   ```
-  docker buildx create --driver=docker-container --use
-  sudo apt-get install qemu-user-static
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
+
+  3. Once you are done, make sure to restart the instance. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
+
+  Next, Follow instructions to [install GiGL](#install-gigl)
 
 ````
 
@@ -92,6 +94,47 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 ## Install GiGL
 
+### Install Wheel
+
+1. Create a python environment
+
+```bash
+conda create -y --override-channels --channel conda-forge --name gigl python=3.9
+conda activate gigl
+```
+
+2. Install GiGL
+
+#### Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
+
+```bash
+pip install "gigl[torch25-cuda-121,transform]==0.0.9" \
+  --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
+  --extra-index-url=https://pypi.org/simple
+```
+
+Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
+script to setup GLT dependency:
+
+```bash
+gigl-post-install
+```
+
+#### Install GiGL + necessary tooling for Torch 2.5 + CPU
+
+```bash
+pip install "gigl[torch25-cpu,transform]==0.0.9" \
+  --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
+  --extra-index-url=https://pypi.org/simple
+```
+
+Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
+script to setup GLT dependency:
+
+```bash
+gigl-post-install
+```
+
 ### Install from source
 
 There are various ways to use GiGL. Firstly, clone the repo locally.
@@ -120,51 +163,4 @@ tooling useful for contributions:
 
 ```bash
 make install_dev_deps
-```
-
-### Install Wheel (In Development)
-
-```{caution}
-The instructions below are in development and are not recommended. We are working on making our whls publicly accessible, for the time being you will need to [install from source](#install-from-source).
-```
-
-1. Create a python environment
-
-```bash
-conda create -y --override-channels --channel conda-forge --name gigl python=3.9
-conda activate gigl
-```
-
-2. Install GiGL
-
-**Placeholder - `external-snap-ci-github-gigl/gigl/` registry is not made public yet**
-
-We host GiGL on GCP Artifact Registry, thus we need to install Google Artifact Registry Keyring, which will allow you
-interact with Python repositories stored in Artifact Registry.
-
-```bash
-pip install keyrings.google-artifactregistry-auth
-```
-
-Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
-
-```bash
-pip install "gigl[torch25-cuda-121,transform]==0.0.2" \
-  --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
-  --extra-index-url=https://pypi.org/simple
-gigl-post-install
-```
-
-Install GiGL + necessary tooling for Torch 2.5 + CPU
-
-```bash
-pip install "gigl[torch25-cpu,transform]==0.0.2" \
-  --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
-  --extra-index-url=https://pypi.org/simple
-gigl-post-install
-```
-
-```{note}
-`gigl-post-install` is needed to install GLT from source.
-Currently, building/using wheels for GLT is errorprone, thus we opt to install from source every time.
 ```
