@@ -1,5 +1,7 @@
 import asyncio
-from typing import Optional
+import gc
+from collections import defaultdict
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -13,11 +15,14 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
-from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.sampler import (
+    NEGATIVE_LABEL_METADATA_KEY,
+    POSITIVE_LABEL_METADATA_KEY,
+    ABLPNodeSamplerInput,
+)
 from gigl.utils.data_splitters import PADDING_NODE
 
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
-# TODO (mkolodner-sc): Add tests for this class
 
 
 class DistABLPNeighborSampler(DistNeighborSampler):
@@ -35,48 +40,60 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         assert isinstance(inputs, ABLPNodeSamplerInput)
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
-        supervision_node_type = inputs.supervision_node_type
-        positive_labels = inputs.positive_labels.to(self.device)
-        negative_labels = (
-            inputs.negative_labels.to(self.device)
-            if inputs.negative_labels is not None
-            else None
-        )
 
-        positive_seeds = positive_labels[positive_labels != PADDING_NODE]
-        negative_seeds: Optional[torch.Tensor]
-        if negative_labels is not None:
-            negative_seeds = negative_labels[negative_labels != PADDING_NODE]
-        else:
-            negative_seeds = None
+        # Since GLT swaps src/dst for edge_dir = "out",
+        # and GiGL assumes that supervision edge types are always (anchor_node_type, to, supervision_node_type),
+        # we need to index into supervision edge types accordingly.
+        label_edge_index = 0 if self.edge_dir == "in" else 2
+
+        # Go through the positive and negative labels and add them to the metadata and input seeds builder.
+        # We need to sample from the supervision nodes as well, and ensure that we are sampling from the correct node type.
+        metadata: dict[str, torch.Tensor] = {}
+        input_seeds_builder: dict[
+            Union[str, NodeType], list[torch.Tensor]
+        ] = defaultdict(list)
+        input_seeds_builder[input_type].append(input_seeds)
+        for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
+            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
+                self.device
+            )
+            input_seeds_builder[edge_type[label_edge_index]].append(
+                filtered_label_tensor
+            )
+            # Update the metadata per positive label edge type.
+            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
+            metadata[
+                f"{POSITIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
+            ] = label_tensor
+        for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
+            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
+                self.device
+            )
+            input_seeds_builder[edge_type[label_edge_index]].append(
+                filtered_label_tensor
+            )
+            # Update the metadata per negative label edge type.
+            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
+            metadata[
+                f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
+            ] = label_tensor
+        # As a perf optimization, we *could* have `input_nodes` be only the unique nodes,
+        # but since torch.unique() calls a sort, we should investigate if it's worth it.
+        # TODO(kmonte, mkolodner-sc): Investigate if this is worth it.
+        input_nodes: dict[Union[str, NodeType], torch.Tensor] = {
+            node_type: torch.cat(seeds, dim=0).to(self.device)
+            for node_type, seeds in input_seeds_builder.items()
+        }
+        del filtered_label_tensor, label_tensor
+        for value in input_seeds_builder.values():
+            value.clear()
+        input_seeds_builder.clear()
+        del input_seeds_builder
+        gc.collect()
+
         self.max_input_size: int = max(self.max_input_size, input_seeds.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
-        metadata: dict[str, torch.Tensor] = {"positive_labels": positive_labels}
-        if negative_labels is not None:
-            metadata["negative_labels"] = negative_labels
-        # If the input type and supervision node type are the same, we should concatenate the input and supervision nodes together for fanning out.
-        if input_type == supervision_node_type:
-            combined_seeds: tuple[torch.Tensor, ...]
-            if negative_seeds is not None:
-                combined_seeds = (input_seeds, positive_seeds, negative_seeds)
-            else:
-                combined_seeds = (input_seeds, positive_seeds)
-            input_nodes = {input_type: torch.cat(combined_seeds, dim=0)}
-        # Otherwise, they need to be passed as two separate node types to the inducer.init_node() function.
-        else:
-            if negative_seeds is None:
-                input_nodes = {
-                    input_type: input_seeds,
-                    supervision_node_type: positive_seeds,
-                }
-            else:
-                input_nodes = {
-                    input_type: input_seeds,
-                    supervision_node_type: torch.cat(
-                        (positive_seeds, negative_seeds), dim=0
-                    ),
-                }
         output: NeighborOutput
         if is_hetero:
             assert input_type is not None
@@ -149,7 +166,12 @@ class DistABLPNeighborSampler(DistNeighborSampler):
                 metadata=metadata,
             )
         else:
-            assert input_type == supervision_node_type
+            assert (
+                len(input_nodes) == 1
+            ), f"Expected 1 input node type, got {len(input_nodes)}"
+            assert (
+                input_type == list(input_nodes.keys())[0]
+            ), f"Expected input type {input_type}, got {list(input_nodes.keys())[0]}"
             srcs = inducer.init_node(input_nodes[input_type])
             batch = input_seeds
             out_nodes: list[torch.Tensor] = []
@@ -185,5 +207,4 @@ class DistABLPNeighborSampler(DistNeighborSampler):
 
         # Reclaim inducer into pool.
         self.inducer_pool.put(inducer)
-
         return sample_output
