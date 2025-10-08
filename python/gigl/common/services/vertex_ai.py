@@ -239,7 +239,9 @@ class VertexAIService:
         return job
 
     def launch_graph_store_job(
-        self, storage_cluster: VertexAiJobConfig, compute_cluster: VertexAiJobConfig
+        self,
+        compute_pool_job_config: VertexAiJobConfig,
+        storage_pool_job_config: VertexAiJobConfig,
     ) -> aiplatform.CustomJob:
         """Launch a Vertex AI Graph Store job.
 
@@ -247,69 +249,65 @@ class VertexAIService:
         https://cloud.google.com/vertex-ai/docs/training/distributed-training
         for more details.
 
-
         NOTE:
-            We use the job_name, timeout, and enable_web_access from the storage cluster.
-            These fields, if set on the compute cluster, will be ignored.
+            We use the job_name, timeout, and enable_web_access from the compute pool job config.
+            These fields, if set on the storage pool job config, will be ignored.
 
         Args:
-            storage_cluster (VertexAiJobConfig): The configuration for the storage cluster.
-            compute_cluster (VertexAiJobConfig): The configuration for the compute cluster.
+            compute_pool_job_config (VertexAiJobConfig): The configuration for the compute pool job.
+            storage_pool_job_config (VertexAiJobConfig): The configuration for the storage pool job.
 
         Returns:
             The completed CustomJob.
         """
-        storage_machine_spec = _create_machine_spec(storage_cluster)
-        compute_machine_spec = _create_machine_spec(compute_cluster)
-        storage_disk_spec = _create_disk_spec(storage_cluster)
-        compute_disk_spec = _create_disk_spec(compute_cluster)
+        storage_machine_spec = _create_machine_spec(storage_pool_job_config)
+        compute_machine_spec = _create_machine_spec(compute_pool_job_config)
+        storage_disk_spec = _create_disk_spec(storage_pool_job_config)
+        compute_disk_spec = _create_disk_spec(compute_pool_job_config)
 
-        storage_container_spec = _create_container_spec(storage_cluster, [])
-        compute_container_spec = _create_container_spec(compute_cluster, [])
+        storage_container_spec = _create_container_spec(storage_pool_job_config)
+        compute_container_spec = _create_container_spec(compute_pool_job_config)
 
         worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
 
         leader_worker_spec = WorkerPoolSpec(
-            machine_spec=storage_machine_spec,
-            container_spec=storage_container_spec,
-            disk_spec=storage_disk_spec,
+            machine_spec=compute_machine_spec,
+            container_spec=compute_container_spec,
+            disk_spec=compute_disk_spec,
             replica_count=1,
         )
         worker_pool_specs.append(leader_worker_spec)
-        if storage_cluster.replica_count > 1:
+        if compute_pool_job_config.replica_count > 1:
             worker_spec = WorkerPoolSpec(
-                machine_spec=storage_machine_spec,
-                container_spec=storage_container_spec,
-                disk_spec=storage_disk_spec,
-                replica_count=storage_cluster.replica_count - 1,
+                machine_spec=compute_machine_spec,
+                container_spec=compute_container_spec,
+                disk_spec=compute_disk_spec,
+                replica_count=compute_pool_job_config.replica_count - 1,
             )
             worker_pool_specs.append(worker_spec)
         else:
             worker_pool_specs.append({})
-        # For whatever reason, VAI errors out (indescriptly) if we put the computer cluster as anything other
-        # than the fourth worker pool.
-        # So we need to pad.
-        worker_pool_specs.append({})
+
         worker_spec = WorkerPoolSpec(
-            machine_spec=compute_machine_spec,
-            container_spec=compute_container_spec,
-            disk_spec=compute_disk_spec,
-            replica_count=compute_cluster.replica_count,
+            machine_spec=storage_machine_spec,
+            container_spec=storage_container_spec,
+            disk_spec=storage_disk_spec,
+            replica_count=compute_pool_job_config.replica_count,
         )
         worker_pool_specs.append(worker_spec)
 
         job = aiplatform.CustomJob(
-            display_name=storage_cluster.job_name,
+            display_name=compute_pool_job_config.job_name,
             worker_pool_specs=worker_pool_specs,
             project=self._project,
             location=self._location,
-            labels=storage_cluster.labels,
+            labels=compute_pool_job_config.labels,
             staging_bucket=self._staging_bucket,
         )
         job.submit(
             service_account=self._service_account,
-            timeout=storage_cluster.timeout_s,
-            enable_web_access=storage_cluster.enable_web_access,
+            timeout=compute_pool_job_config.timeout_s,
+            enable_web_access=compute_pool_job_config.enable_web_access,
         )
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")
@@ -444,7 +442,7 @@ def _create_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
 
 
 def _create_container_spec(
-    job_config: VertexAiJobConfig, env_vars: list[env_var.EnvVar]
+    job_config: VertexAiJobConfig, env_vars: Optional[list[env_var.EnvVar]] = None
 ) -> ContainerSpec:
     """Get the container spec for a job config."""
     container_spec = ContainerSpec(
