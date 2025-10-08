@@ -81,53 +81,10 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "one server, one client",
-                num_servers=1,
-                num_clients=1,
+                "one compute, one storage",
+                num_compute=1,
+                num_storage=1,
                 expected_worker_pool_specs=[
-                    {
-                        "machine_type": "n1-standard-4",
-                        "num_replicas": 1,
-                        "image_uri": "condaforge/miniforge3:25.3.0-1",
-                    },
-                    {},
-                    {},
-                    {
-                        "machine_type": "n2-standard-8",
-                        "num_replicas": 1,
-                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-                    },
-                ],
-            ),
-            param(
-                "one server, two clients",
-                num_servers=1,
-                num_clients=2,
-                expected_worker_pool_specs=[
-                    {
-                        "machine_type": "n1-standard-4",
-                        "num_replicas": 1,
-                        "image_uri": "condaforge/miniforge3:25.3.0-1",
-                    },
-                    {},
-                    {},
-                    {
-                        "machine_type": "n2-standard-8",
-                        "num_replicas": 2,
-                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-                    },
-                ],
-            ),
-            param(
-                "two servers, one client",
-                num_servers=2,
-                num_clients=1,
-                expected_worker_pool_specs=[
-                    {
-                        "machine_type": "n1-standard-4",
-                        "num_replicas": 1,
-                        "image_uri": "condaforge/miniforge3:25.3.0-1",
-                    },
                     {
                         "machine_type": "n1-standard-4",
                         "num_replicas": 1,
@@ -142,9 +99,9 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 ],
             ),
             param(
-                "two servers, two clients",
-                num_servers=2,
-                num_clients=2,
+                "two compute, two storage",
+                num_compute=2,
+                num_storage=2,
                 expected_worker_pool_specs=[
                     {
                         "machine_type": "n1-standard-4",
@@ -156,7 +113,6 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                         "num_replicas": 1,
                         "image_uri": "condaforge/miniforge3:25.3.0-1",
                     },
-                    {},
                     {
                         "machine_type": "n2-standard-8",
                         "num_replicas": 2,
@@ -169,8 +125,8 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
     def test_launch_graph_store_job(
         self,
         _,
-        num_servers,
-        num_clients,
+        num_compute,
+        num_storage,
         expected_worker_pool_specs,
     ):
         # Tests that the env variables are set correctly.
@@ -181,23 +137,23 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             f"import os; import logging; logging.info('Hello, World!')",
         ]
         job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
-        storage_cluster_config = VertexAiJobConfig(
+        compute_cluster_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri="condaforge/miniforge3:25.3.0-1",  # different images for storage and compute
-            replica_count=num_servers,
+            replica_count=num_compute,
             machine_type="n1-standard-4",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
             command=command,
         )
-        compute_cluster_config = VertexAiJobConfig(
+        storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,  # different image for storage and compute
-            replica_count=num_clients,
+            replica_count=num_storage,
             command=command,
             machine_type="n2-standard-8",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
         )
 
         job = self._vertex_ai_service.launch_graph_store_job(
-            storage_cluster_config, compute_cluster_config
+            compute_cluster_config, storage_cluster_config
         )
 
         self.assertEqual(
