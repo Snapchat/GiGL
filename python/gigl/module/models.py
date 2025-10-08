@@ -229,7 +229,7 @@ class LightGCN(nn.Module):
             data: Graph data (homogeneous or heterogeneous)
             device: Device to run the computation on
             output_node_types: List of node types to return embeddings for (for heterogeneous graphs)
-            anchor_node_ids: Node IDs to return embeddings for (for homogeneous graphs)
+            anchor_node_ids: Node IDs to return embeddings for, if not provided, return embeddings for all nodes in the subgraph
 
         Returns:
             Node embeddings for the specified node types
@@ -267,10 +267,12 @@ class LightGCN(nn.Module):
 
         z_sub = self._weighted_layer_sum(xs)  # shape [N_sub, D], weighted sum of all layer embeddings
 
+        # If anchor node ids are provided, return the embeddings for the anchor nodes only
         if anchor_node_ids is not None:
             anchors_local = anchor_node_ids.to(device).long()  # shape [num_anchors]
             return z_sub[anchors_local]      # shape [num_anchors, D], embeddings for anchor nodes only
 
+        # Otherwise, return the embeddings for all nodes in the subgraph
         return z_sub                         # shape [N_sub, D], embeddings for all nodes in subgraph
 
     def _lookup_single_key(self, key: str, ids: torch.Tensor) -> torch.Tensor:

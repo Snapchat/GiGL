@@ -165,6 +165,13 @@ class TestLightGCN(unittest.TestCase):
             [0.3, 0.8, 0.3, 0.6],  # Node 3
         ], dtype=torch.float32)
 
+        self.expected_output = torch.tensor([
+            [0.4495, 0.5311, 0.1555, 0.4865], # Node 0
+            [0.3943, 0.2975, 0.1825, 0.4386], # Node 1
+            [0.5325, 0.4121, 0.1089, 0.3650], # Node 2
+            [0.4558, 0.6207, 0.2506, 0.5817], # Node 3
+        ], dtype=torch.float32)
+
     def _create_lightgcn_model(self, node_type_to_num_nodes: Union[int, dict[NodeType, int]]) -> LightGCN:
         """Create a LightGCN model with the specified configuration."""
         return LightGCN(
@@ -203,6 +210,17 @@ class TestLightGCN(unittest.TestCase):
         # Check output shape
         self.assertEqual(output.shape, (self.num_nodes, self.embedding_dim))
 
+    def test_forward_homogeneous_with_anchor_node_ids(self):
+        """Test forward pass with homogeneous graph and anchor node ids."""
+        node_type_to_num_nodes = self.num_nodes
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+        self._set_embeddings(model, "default_homogeneous_node_type")
+        anchor_node_ids = torch.tensor([0, 1], dtype=torch.long)
+
+        output = model(self.data, self.device, anchor_node_ids=anchor_node_ids)
+
+        self.assertEqual(output.shape, (2, self.embedding_dim))
+
     def test_forward_homogeneous_wrong_node_types(self):
         """Test that homogeneous forward with multiple node types raises ValueError."""
         # Create model with multiple node types
@@ -218,9 +236,9 @@ class TestLightGCN(unittest.TestCase):
     def test_compare_with_pyg_reference(self):
         """Test that our implementation matches PyG LightGCN output."""
         # Create our model
-        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        node_type_to_num_nodes = self.num_nodes
         our_model = self._create_lightgcn_model(node_type_to_num_nodes)
-        self._set_embeddings(our_model, "user")
+        self._set_embeddings(our_model, "default_homogeneous_node_type")
 
         # Create PyG reference model
         pyg_model = self._create_pyg_reference()
@@ -229,9 +247,18 @@ class TestLightGCN(unittest.TestCase):
             pyg_output = pyg_model.get_embedding(self.edge_index.to(self.device))  # <<< edge_index on device
         assert_tensor_equality(our_output, pyg_output)
 
+    def test_compare_with_math(self):
+        """Test that our implementation matches the mathematical formulation of LightGCN."""
+        node_type_to_num_nodes = self.num_nodes
+        our_model = self._create_lightgcn_model(node_type_to_num_nodes)
+        self._set_embeddings(our_model, "default_homogeneous_node_type")
+        output = our_model(self.data, self.device)
+
+        self.assertTrue(torch.allclose(output, self.expected_output, atol=1e-4, rtol=1e-4))
+
     def test_gradient_flow(self):
         """Test that gradients flow properly through the model."""
-        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        node_type_to_num_nodes = self.num_nodes
         model = self._create_lightgcn_model(node_type_to_num_nodes)
 
         model.train()
@@ -240,10 +267,9 @@ class TestLightGCN(unittest.TestCase):
         loss.backward()
 
         # Check that gradients exist for embedding parameters
-        embedding_table = model._embedding_bag_collection.embedding_bags["node_embedding_user"]
+        embedding_table = model._embedding_bag_collection.embedding_bags["node_embedding_default_homogeneous_node_type"]
         self.assertIsNotNone(embedding_table.weight.grad)
         self.assertTrue(torch.any(embedding_table.weight.grad != 0))
-
 
 if __name__ == "__main__":
     unittest.main()
