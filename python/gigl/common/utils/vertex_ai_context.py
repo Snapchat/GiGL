@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+import omegaconf
 from google.cloud.aiplatform_v1.types import CustomJobSpec
 
 from gigl.common import GcsUri
@@ -187,6 +188,25 @@ class ClusterSpec:
     # https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
     job: Optional[CustomJobSpec] = None
 
+    # We use a custom method for parsing, because we need to handle the DictConfig -> Proto conversion
+    @classmethod
+    def from_json(cls, json_str: str) -> "ClusterSpec":
+        """Instantiates ClusterSpec from an OmegaConf DictConfig."""
+        cluster_spec_json = json.loads(json_str)
+        if "job" in cluster_spec_json and cluster_spec_json["job"] is not None:
+            job_spec = CustomJobSpec(**cluster_spec_json.pop("job"))
+        else:
+            job_spec = None
+        conf = omegaconf.OmegaConf.create(cluster_spec_json)
+        if isinstance(conf, omegaconf.ListConfig):
+            raise ValueError("ListConfig is not supported")
+        return cls(
+            cluster=conf.cluster,
+            environment=conf.environment,
+            task=conf.task,
+            job=job_spec,
+        )
+
 
 def get_cluster_spec() -> ClusterSpec:
     """
@@ -204,40 +224,12 @@ def get_cluster_spec() -> ClusterSpec:
     if not is_currently_running_in_vertex_ai_job():
         raise ValueError("Not running in a Vertex AI job.")
 
-    cluster_spec_json = os.environ.get("CLUSTER_SPEC")
-    if not cluster_spec_json:
+    cluster_spec_str = os.environ.get("CLUSTER_SPEC")
+    if not cluster_spec_str:
         raise ValueError("CLUSTER_SPEC not found in environment variables.")
 
-    try:
-        cluster_spec_data = json.loads(cluster_spec_json)
-    except json.JSONDecodeError as e:
-        raise json.JSONDecodeError(
-            f"Failed to parse CLUSTER_SPEC JSON: {e.msg}", e.doc, e.pos
-        )
-
-    # Parse the task information
-    task_data = cluster_spec_data.get("task", {})
-    task_info = TaskInfo(
-        type=task_data.get("type", ""),
-        index=task_data.get("index", 0),
-        trial=task_data.get("trial"),
-    )
-
-    # Parse the cluster specification
-    cluster_data = cluster_spec_data.get("cluster", {})
-
-    # Parse the environment
-    environment = cluster_spec_data.get("environment", "cloud")
-
-    # Parse the job specification (optional)
-    job_data = cluster_spec_data.get("job")
-    job_spec = None
-    if job_data:
-        job_spec = CustomJobSpec(**job_data)
-
-    return ClusterSpec(
-        cluster=cluster_data, environment=environment, task=task_info, job=job_spec
-    )
+    cluster_spec = ClusterSpec.from_json(cluster_spec_str)
+    return cluster_spec
 
 
 def _get_leader_worker_internal_ip_file_path() -> str:
