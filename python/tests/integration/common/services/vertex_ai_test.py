@@ -4,8 +4,10 @@ import unittest
 import uuid
 
 import kfp
+from parameterized import param, parameterized
 
 from gigl.common import UriFactory
+from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
 
@@ -46,12 +48,26 @@ def get_pipeline_that_fails() -> float:
 
 
 class VertexAIPipelineIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        self._resource_config = get_resource_config()
+        self._project = self._resource_config.project
+        self._location = self._resource_config.region
+        self._service_account = self._resource_config.service_account_email
+        self._staging_bucket = (
+            self._resource_config.temp_assets_regional_bucket_path.uri
+        )
+        self._vertex_ai_service = VertexAIService(
+            project=self._project,
+            location=self._location,
+            service_account=self._service_account,
+            staging_bucket=self._staging_bucket,
+        )
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+
     def test_launch_job(self):
-        resource_config = get_resource_config()
-        project = resource_config.project
-        location = resource_config.region
-        service_account = resource_config.service_account_email
-        staging_bucket = resource_config.temp_assets_regional_bucket_path.uri
         job_name = f"GiGL-Integration-Test-{uuid.uuid4()}"
         container_uri = "condaforge/miniforge3:25.3.0-1"
         command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
@@ -60,27 +76,110 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             job_name=job_name, container_uri=container_uri, command=command
         )
 
-        vertex_ai_service = VertexAIService(
-            project=project,
-            location=location,
-            service_account=service_account,
-            staging_bucket=staging_bucket,
+        self._vertex_ai_service.launch_job(job_config)
+
+    @parameterized.expand(
+        [
+            param(
+                "one compute, one storage",
+                num_compute=1,
+                num_storage=1,
+                expected_worker_pool_specs=[
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {},
+                    {
+                        "machine_type": "n2-standard-8",
+                        "num_replicas": 1,
+                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+                    },
+                ],
+            ),
+            param(
+                "two compute, two storage",
+                num_compute=2,
+                num_storage=2,
+                expected_worker_pool_specs=[
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {
+                        "machine_type": "n1-standard-4",
+                        "num_replicas": 1,
+                        "image_uri": "condaforge/miniforge3:25.3.0-1",
+                    },
+                    {
+                        "machine_type": "n2-standard-8",
+                        "num_replicas": 2,
+                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+                    },
+                ],
+            ),
+        ]
+    )
+    def test_launch_graph_store_job(
+        self,
+        _,
+        num_compute,
+        num_storage,
+        expected_worker_pool_specs,
+    ):
+        # Tests that the env variables are set correctly.
+        # If they are not populated, then the job will fail.
+        command = [
+            "python",
+            "-c",
+            f"import os; import logging; logging.info('Hello, World!')",
+        ]
+        job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
+        compute_cluster_config = VertexAiJobConfig(
+            job_name=job_name,
+            container_uri="condaforge/miniforge3:25.3.0-1",  # different images for storage and compute
+            replica_count=num_compute,
+            machine_type="n1-standard-4",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
+            command=command,
+        )
+        storage_cluster_config = VertexAiJobConfig(
+            job_name=job_name,
+            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,  # different image for storage and compute
+            replica_count=num_storage,
+            command=command,
+            machine_type="n2-standard-8",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
         )
 
-        vertex_ai_service.launch_job(job_config)
+        job = self._vertex_ai_service.launch_graph_store_job(
+            compute_cluster_config, storage_cluster_config
+        )
+
+        self.assertEqual(
+            len(job.job_spec.worker_pool_specs), len(expected_worker_pool_specs)
+        )
+        for i, worker_pool_spec in enumerate(job.job_spec.worker_pool_specs):
+            expected_worker_pool_spec = expected_worker_pool_specs[i]
+            if expected_worker_pool_spec:
+                self.assertEqual(
+                    worker_pool_spec.machine_spec.machine_type,
+                    expected_worker_pool_spec["machine_type"],
+                )
+                self.assertEqual(
+                    worker_pool_spec.replica_count,
+                    expected_worker_pool_spec["num_replicas"],
+                )
+                self.assertEqual(
+                    worker_pool_spec.container_spec.image_uri,
+                    expected_worker_pool_spec["image_uri"],
+                )
 
     def test_run_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline.yaml")
             kfp.compiler.Compiler().compile(get_pipeline, pipeline_def)
-            resource_config = get_resource_config()
-            ps = VertexAIService(
-                project=resource_config.project,
-                location=resource_config.region,
-                service_account=resource_config.service_account_email,
-                staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
-            )
-            job = ps.run_pipeline(
+            job = self._vertex_ai_service.run_pipeline(
                 display_name="integration-test-pipeline",
                 template_path=UriFactory.create_uri(pipeline_def),
                 run_keyword_args={},
@@ -89,12 +188,12 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             )
             # Wait for the run to complete, 30 minutes is probably too long but
             # we don't want this test to be flaky.
-            ps.wait_for_run_completion(
+            self._vertex_ai_service.wait_for_run_completion(
                 job.resource_name, timeout=60 * 30, polling_period_s=10
             )
 
             # Also verify that we can fetch a pipeline.
-            run = ps.get_pipeline_job_from_job_name(job.name)
+            run = self._vertex_ai_service.get_pipeline_job_from_job_name(job.name)
             self.assertEqual(run.resource_name, job.resource_name)
             self.assertEqual(run.labels["gigl-integration-test"], "true")
 
@@ -102,14 +201,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline_that_fails.yaml")
             kfp.compiler.Compiler().compile(get_pipeline_that_fails, pipeline_def)
-            resource_config = get_resource_config()
-            ps = VertexAIService(
-                project=resource_config.project,
-                location=resource_config.region,
-                service_account=resource_config.service_account_email,
-                staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
-            )
-            job = ps.run_pipeline(
+            job = self._vertex_ai_service.run_pipeline(
                 display_name="integration-test-pipeline-that-fails",
                 template_path=UriFactory.create_uri(pipeline_def),
                 run_keyword_args={},
@@ -117,7 +209,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                 labels={"gigl-integration-test": "true"},
             )
             with self.assertRaises(RuntimeError):
-                ps.wait_for_run_completion(
+                self._vertex_ai_service.wait_for_run_completion(
                     job.resource_name, timeout=60 * 30, polling_period_s=10
                 )
 
