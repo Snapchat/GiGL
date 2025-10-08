@@ -188,10 +188,10 @@ class ClusterSpec:
     # https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
     job: Optional[CustomJobSpec] = None
 
-    # We use a custom method for parsing, because we need to handle the DictConfig -> Proto conversion
+    # We use a custom method for parsing, because CustomJobSpec is a protobuf message.
     @classmethod
     def from_json(cls, json_str: str) -> "ClusterSpec":
-        """Instantiates ClusterSpec from an OmegaConf DictConfig."""
+        """Instantiates ClusterSpec from a JSON string."""
         cluster_spec_json = json.loads(json_str)
         if "job" in cluster_spec_json and cluster_spec_json["job"] is not None:
             job_spec = CustomJobSpec(**cluster_spec_json.pop("job"))
