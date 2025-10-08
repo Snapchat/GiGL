@@ -29,6 +29,7 @@ from torchrec.distributed.embedding_types import EmbeddingComputeKernel
 
 from gigl.src.common.types.graph_data import NodeType
 from gigl.types.graph import to_homogeneous
+from gigl.types.graph import to_heterogeneous_node
 
 
 class LinkPredictionGNN(nn.Module):
@@ -178,10 +179,7 @@ class LightGCN(nn.Module):
     ):
         super().__init__()
 
-        if isinstance(node_type_to_num_nodes, int):
-            node_type_to_num_nodes = {NodeType("default_node_type"): node_type_to_num_nodes}
-
-        self._node_type_to_num_nodes = node_type_to_num_nodes
+        self._node_type_to_num_nodes = to_heterogeneous_node(node_type_to_num_nodes)
         self._embedding_dim = embedding_dim
         self._num_layers = num_layers
         self._device = device
@@ -198,9 +196,9 @@ class LightGCN(nn.Module):
 
         # Build TorchRec EBC (one table per node type)
         # feature key naming convention: f"{node_type}_id"
-        self._feature_keys: list[str] = [f"{nt}_id" for nt in node_type_to_num_nodes.keys()]
+        self._feature_keys: list[str] = [f"{nt}_id" for nt in self._node_type_to_num_nodes.keys()]
         tables: list[EmbeddingBagConfig] = []
-        for nt, n in node_type_to_num_nodes.items():
+        for nt, n in self._node_type_to_num_nodes.items():
             tables.append(
                 EmbeddingBagConfig(
                     name=f"node_embedding_{nt}",

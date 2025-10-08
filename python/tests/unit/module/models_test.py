@@ -165,7 +165,7 @@ class TestLightGCN(unittest.TestCase):
             [0.3, 0.8, 0.3, 0.6],  # Node 3
         ], dtype=torch.float32)
 
-    def _create_lightgcn_model(self, node_type_to_num_nodes: dict[NodeType, int]) -> LightGCN:
+    def _create_lightgcn_model(self, node_type_to_num_nodes: Union[int, dict[NodeType, int]]) -> LightGCN:
         """Create a LightGCN model with the specified configuration."""
         return LightGCN(
             node_type_to_num_nodes=node_type_to_num_nodes,
@@ -193,9 +193,9 @@ class TestLightGCN(unittest.TestCase):
 
     def test_forward_homogeneous(self):
         """Test forward pass with homogeneous graph."""
-        node_type_to_num_nodes = {NodeType("user"): self.num_nodes}
+        node_type_to_num_nodes = self.num_nodes
         model = self._create_lightgcn_model(node_type_to_num_nodes)
-        self._set_embeddings(model, "user")
+        self._set_embeddings(model, "default_homogeneous_node_type")
 
         # Forward pass
         output = model(self.data, self.device)
