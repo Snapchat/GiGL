@@ -1,14 +1,20 @@
 """Utility functions to be used by machines running on Vertex AI."""
 
+import json
 import os
 import subprocess
 import time
+from dataclasses import dataclass
+from typing import Optional
+
+import omegaconf
+from google.cloud.aiplatform_v1.types import CustomJobSpec
 
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed import DistributedContext
+from gigl.env.distributed import DistributedContext
 
 logger = Logger()
 
@@ -154,6 +160,76 @@ def connect_worker_pool() -> DistributedContext:
         global_rank=global_rank,
         global_world_size=global_world_size,
     )
+
+
+@dataclass(frozen=True)
+class TaskInfo:
+    """Information about the current task running on this node."""
+
+    type: str  # The type of worker pool this task is running in (e.g., "workerpool0")
+    index: int  # The zero-based index of the task
+    trial: Optional[
+        str
+    ] = None  # Hyperparameter tuning trial identifier (if applicable)
+
+
+@dataclass(frozen=True)
+class ClusterSpec:
+    """Represents the cluster specification for a Vertex AI custom job.
+    See the docs for more info:
+    https://cloud.google.com/vertex-ai/docs/training/distributed-training#cluster-variables
+    """
+
+    cluster: dict[str, list[str]]  # Worker pool names mapped to their replica lists
+    environment: str  # The environment string (e.g., "cloud")
+    task: TaskInfo  # Information about the current task
+    # The CustomJobSpec for the current job
+    # See the docs for more info:
+    # https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
+    job: Optional[CustomJobSpec] = None
+
+    # We use a custom method for parsing, because CustomJobSpec is a protobuf message.
+    @classmethod
+    def from_json(cls, json_str: str) -> "ClusterSpec":
+        """Instantiates ClusterSpec from a JSON string."""
+        cluster_spec_json = json.loads(json_str)
+        if "job" in cluster_spec_json and cluster_spec_json["job"] is not None:
+            job_spec = CustomJobSpec(**cluster_spec_json.pop("job"))
+        else:
+            job_spec = None
+        conf = omegaconf.OmegaConf.create(cluster_spec_json)
+        if isinstance(conf, omegaconf.ListConfig):
+            raise ValueError("ListConfig is not supported")
+        return cls(
+            cluster=conf.cluster,
+            environment=conf.environment,
+            task=conf.task,
+            job=job_spec,
+        )
+
+
+def get_cluster_spec() -> ClusterSpec:
+    """
+    Parse the cluster specification from the CLUSTER_SPEC environment variable.
+    Based on the spec given at:
+    https://cloud.google.com/vertex-ai/docs/training/distributed-training#cluster-variables
+
+    Returns:
+        ClusterSpec: Parsed cluster specification data.
+
+    Raises:
+        ValueError: If not running in a Vertex AI job or CLUSTER_SPEC is not found.
+        json.JSONDecodeError: If CLUSTER_SPEC contains invalid JSON.
+    """
+    if not is_currently_running_in_vertex_ai_job():
+        raise ValueError("Not running in a Vertex AI job.")
+
+    cluster_spec_str = os.environ.get("CLUSTER_SPEC")
+    if not cluster_spec_str:
+        raise ValueError("CLUSTER_SPEC not found in environment variables.")
+
+    cluster_spec = ClusterSpec.from_json(cluster_spec_str)
+    return cluster_spec
 
 
 def _get_leader_worker_internal_ip_file_path() -> str:
