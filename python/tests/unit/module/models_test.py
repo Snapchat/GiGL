@@ -136,6 +136,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
         self.assertIs(unwrapped.encoder, encoder)
         self.assertIs(unwrapped.decoder, decoder)
 
+# TODO(swong3): Move create model and graph data in individual tests, rather than using a method to do so
 class TestLightGCN(unittest.TestCase):
     def setUp(self):
         self.device = torch.device("cpu")
@@ -146,6 +147,7 @@ class TestLightGCN(unittest.TestCase):
         self.num_layers = 2
 
         # Create test edge index (undirected graph)
+        # Graph diagram: https://is.gd/1QuU4J
         self.edge_index = torch.tensor([
             [0, 0, 1, 2, 3, 3],
             [2, 3, 3, 0, 0, 1],

@@ -149,7 +149,7 @@ class LinkPredictionGNN(nn.Module):
 
         return LinkPredictionGNN(encoder=encoder, decoder=decoder)
 
-# TODO(swong3): Split into different files
+# TODO(swong3): Move each model to it's own file.
 class LightGCN(nn.Module):
     """
     LightGCN model with TorchRec integration for distributed ID embeddings.
@@ -239,7 +239,7 @@ class LightGCN(nn.Module):
         if isinstance(data, HeteroData):
             raise NotImplementedError("HeteroData is not yet supported for LightGCN")
             output_node_types = output_node_types or list(data.node_types)
-            return self._forward_heterogeneous(data, device, output_node_types)
+            return self._forward_heterogeneous(data, device, output_node_types, anchor_node_ids)
         else:
             return self._forward_homogeneous(data, device, anchor_node_ids)
 
@@ -288,7 +288,7 @@ class LightGCN(nn.Module):
             raise KeyError(f"Unknown feature key '{key}'. Valid keys: {self._feature_keys}")
 
         # Number of examples (one ID per "bag")
-        B = int(ids.numel())  # B is the number of node IDs to lookup
+        batch_size = int(ids.numel()) # B is the number of node IDs to lookup
         device = ids.device
 
         # Build lengths in key-major order: for each key, we give B lengths.
@@ -297,21 +297,21 @@ class LightGCN(nn.Module):
         lengths_per_key: list[torch.Tensor] = []
         for k in self._feature_keys:
             if k == key:
-                lengths_per_key.append(torch.ones(B, dtype=torch.long, device=device))  # shape [B], all ones for requested key
+                lengths_per_key.append(torch.ones(batch_size, dtype=torch.long, device=device))  # shape [B], all ones for requested key
             else:
-                lengths_per_key.append(torch.zeros(B, dtype=torch.long, device=device))  # shape [B], all zeros for other keys
+                lengths_per_key.append(torch.zeros(batch_size, dtype=torch.long, device=device))  # shape [B], all zeros for other keys
 
-        lengths = torch.cat(lengths_per_key, dim=0)  # shape [B * num_keys], concatenated lengths for all keys
+        lengths = torch.cat(lengths_per_key, dim=0)  # shape [batch_size * num_keys], concatenated lengths for all keys
 
         # Values only contain the requested key's ids (sum of other lengths is 0)
         kjt = KeyedJaggedTensor(
             keys=self._feature_keys,       # include ALL keys known by EBC
-            values=ids.long(),             # shape [B], only B values for the requested key
-            lengths=lengths,               # shape [B * num_keys], B lengths per key, concatenated key-major
+            values=ids.long(),             # shape [batch_size], only batch_size values for the requested key
+            lengths=lengths,               # shape [batch_size * num_keys], batch_size lengths per key, concatenated key-major
         )
 
-        out = self._embedding_bag_collection(kjt)              # KeyedTensor (dict-like): out[key] -> [B, D]
-        return out[key]                   # shape [B, D], embeddings for the requested key
+        out = self._embedding_bag_collection(kjt)              # KeyedTensor (dict-like): out[key] -> [batch_size, D]
+        return out[key]                   # shape [batch_size, D], embeddings for the requested key
 
     def _weighted_layer_sum(self, xs: list[torch.Tensor]) -> torch.Tensor:
         """
