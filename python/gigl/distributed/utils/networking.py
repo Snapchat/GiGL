@@ -5,7 +5,7 @@ import torch
 
 from gigl.common.logger import Logger
 from gigl.common.utils.vertex_ai_context import (
-    get_num_storage_and_compute_nodes,
+    get_cluster_spec,
     is_currently_running_in_vertex_ai_job,
 )
 from gigl.env.distributed import GraphStoreInfo
@@ -200,21 +200,26 @@ def get_graph_store_info() -> GraphStoreInfo:
     if not torch.distributed.is_initialized():
         raise ValueError("Distributed environment must be initialized")
     if is_currently_running_in_vertex_ai_job():
-        num_storage_nodes, num_compute_nodes = get_num_storage_and_compute_nodes()
+        cluster_spec = get_cluster_spec()
+        # We setup the VAI cluster such that the compute nodes come first, followed by the storage nodes.
+        num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
+            cluster_spec.cluster["workerpool1"]
+        )
+        num_storage_nodes = len(cluster_spec.cluster["workerpool2"])
     else:
         raise ValueError(
             "Must be running on a vertex AI job to get graph store cluster info!"
         )
 
     cluster_master_ip = get_internal_ip_from_master_node()
-    # We assume that the storage cluster nodes come first.
-    storage_cluster_master_ip = get_internal_ip_from_node(node_rank=0)
-    compute_cluster_master_ip = get_internal_ip_from_node(node_rank=num_storage_nodes)
+    # We assume that the compute cluster nodes come first, followed by the storage nodes.
+    compute_cluster_master_ip = get_internal_ip_from_node(node_rank=0)
+    storage_cluster_master_ip = get_internal_ip_from_node(node_rank=num_compute_nodes)
 
     cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
-    storage_cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
-    compute_cluster_master_port = get_free_ports_from_node(
-        num_ports=1, node_rank=num_storage_nodes
+    compute_cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
+    storage_cluster_master_port = get_free_ports_from_node(
+        num_ports=1, node_rank=num_compute_nodes
     )[0]
 
     return GraphStoreInfo(

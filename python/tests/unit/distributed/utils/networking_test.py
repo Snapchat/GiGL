@@ -319,7 +319,6 @@ def _test_get_graph_store_info_in_dist_context(
         assert isinstance(
             graph_store_info, GraphStoreInfo
         ), "Result should be a GraphStoreInfo instance"
-
         # Verify cluster sizes
         assert (
             graph_store_info.num_storage_nodes == storage_nodes
@@ -472,9 +471,9 @@ class TestGetGraphStoreInfo(unittest.TestCase):
                 compute_nodes=1,
             ),
             param(
-                "Test with 2 storage nodes and 3 compute nodes",
+                "Test with 2 storage nodes and 1 compute nodes",
                 storage_nodes=2,
-                compute_nodes=3,
+                compute_nodes=1,
             ),
             param(
                 "Test with 3 storage nodes and 2 compute nodes",
@@ -489,10 +488,10 @@ class TestGetGraphStoreInfo(unittest.TestCase):
         """Test successful execution of get_graph_store_info in a real distributed context."""
         init_process_group_init_method = get_process_group_init_method()
         world_size = storage_nodes + compute_nodes
-        if storage_nodes == 1:
-            worker_pool_sizes = [1, 0, 0, compute_nodes]
+        if compute_nodes == 1:
+            worker_pool_sizes = [1, 0, storage_nodes]
         else:
-            worker_pool_sizes = [1, storage_nodes - 1, 0, compute_nodes]
+            worker_pool_sizes = [1, compute_nodes - 1, storage_nodes]
         with patch.dict(
             os.environ,
             {
