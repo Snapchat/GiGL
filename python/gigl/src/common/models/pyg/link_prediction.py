@@ -32,7 +32,7 @@ class LinkPredictionGNN(nn.Module):
 
         logger.warning(
             "gigl.src.common.models.layers.nn.link_prediction.LinkPredictionGNN is deprecated and will be removed in a future release. "
-            "Please use the `gigl.module.models.LinkPredictionGNN` class instead."
+            "Please use the `gigl.nn.models.LinkPredictionGNN` class instead."
         )
         self.__encoder = encoder
         self.__decoder = decoder

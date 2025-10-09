@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch_geometric.data import Data, HeteroData
 
-from gigl.module.models import LinkPredictionGNN
+from gigl.nn.models import LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
