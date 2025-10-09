@@ -16,7 +16,7 @@ permissions:
   issues: 'write'
 
 jobs:
-  ci-unit-test:
+  ci-python-unit-test:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
@@ -32,14 +32,33 @@ jobs:
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run Unit Tests
+    - name: Run Python Unit Tests
       # We use cloud run here instead of using github hosted runners because of limitation of tests
       # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
       # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
       # https://github.com/tensorflow/tensorflow/issues/57104
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
-        cmd: "make unit_test"
+        cmd: "make unit_test_py"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
+
+  ci-scala-unit-test:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup development environment
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run Scala Unit Tests
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      with:
+        cmd: "make unit_test_scala"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
