@@ -74,7 +74,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Unit Test"
+        descriptive_workflow_name: "Python Unit Test"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
@@ -98,7 +98,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Unit Test"
+        descriptive_workflow_name: "Scala Unit Test"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
