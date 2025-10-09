@@ -57,7 +57,9 @@ class NetworkingUtlsIntegrationTest(unittest.TestCase):
             "-c",
             dedent(
                 f"""
+                import torch
                 from gigl.distributed.utils import get_graph_store_info
+                torch.distributed.init_process_group(backend="gloo")
                 info = get_graph_store_info()
                 assert info.num_storage_nodes == {storage_nodes}
                 assert info.num_compute_nodes == {compute_nodes}
