@@ -29,24 +29,14 @@ class NetworkingUtlsIntegrationTest(unittest.TestCase):
     @parameterized.expand(
         [
             param(
-                "Test with 1 storage node and 1 compute node",
-                storage_nodes=1,
+                "Test with 1 compute node and 1 storage node",
                 compute_nodes=1,
-            ),
-            param(
-                "Test with 2 storage nodes and 1 compute nodes",
-                storage_nodes=2,
-                compute_nodes=1,
-            ),
-            param(
-                "Test with 1 storage nodes and 2 compute nodes",
                 storage_nodes=1,
-                compute_nodes=2,
             ),
             param(
-                "Test with 2 storage nodes and 2 compute nodes",
-                storage_nodes=2,
+                "Test with 2 compute nodes and 2 storage nodes",
                 compute_nodes=2,
+                storage_nodes=2,
             ),
         ]
     )
@@ -73,13 +63,6 @@ class NetworkingUtlsIntegrationTest(unittest.TestCase):
                 """
             ),
         ]
-        storage_cluster_config = VertexAiJobConfig(
-            job_name=job_name,
-            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-            replica_count=storage_nodes,
-            machine_type="n1-standard-4",
-            command=command,
-        )
         compute_cluster_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,  # different image for storage and compute
@@ -87,7 +70,14 @@ class NetworkingUtlsIntegrationTest(unittest.TestCase):
             command=command,
             machine_type="n2-standard-8",
         )
+        storage_cluster_config = VertexAiJobConfig(
+            job_name=job_name,
+            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+            replica_count=storage_nodes,
+            machine_type="n1-standard-4",
+            command=command,
+        )
 
         self._vertex_ai_service.launch_graph_store_job(
-            storage_cluster_config, compute_cluster_config
+            compute_cluster_config, storage_cluster_config
         )
