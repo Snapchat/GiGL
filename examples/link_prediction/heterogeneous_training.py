@@ -50,8 +50,8 @@ from gigl.distributed import (
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_available_device
-from gigl.module.loss import RetrievalLoss
-from gigl.module.models import LinkPredictionGNN
+from gigl.nn.loss import RetrievalLoss
+from gigl.nn.models import LinkPredictionGNN
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
