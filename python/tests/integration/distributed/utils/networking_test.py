@@ -4,9 +4,9 @@ from textwrap import dedent
 
 from parameterized import param, parameterized
 
+from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
-from gigl.common.constants import GIGL_RELEASE_SRC_IMAGE_CPU
 
 
 class NetworkingUtlsIntegrationTest(unittest.TestCase):
@@ -65,14 +65,14 @@ class NetworkingUtlsIntegrationTest(unittest.TestCase):
         ]
         compute_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri=GIGL_RELEASE_SRC_IMAGE_CPU,
+            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
             replica_count=compute_nodes,
             command=command,
             machine_type="n2-standard-8",
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri=GIGL_RELEASE_SRC_IMAGE_CPU,
+            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
             replica_count=storage_nodes,
             machine_type="n1-standard-4",
             command=command,
