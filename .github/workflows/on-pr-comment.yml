@@ -40,7 +40,7 @@ jobs:
         message: ${{ steps.parse_commands.outputs.help_message }}
 
   unit-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test_all') }}
+    if: ${{ github.event.issue.pull_request && endsWith(github.event.comment.body, '/unit_test') }}
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
