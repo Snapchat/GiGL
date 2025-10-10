@@ -4,6 +4,11 @@ from typing import Optional
 import torch
 
 from gigl.common.logger import Logger
+from gigl.common.utils.vertex_ai_context import (
+    get_cluster_spec,
+    is_currently_running_in_vertex_ai_job,
+)
+from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
 
@@ -179,3 +184,55 @@ def get_internal_ip_from_all_ranks() -> list[str]:
     assert all(ip for ip in ip_list), "Could not retrieve all ranks' internal IPs"
 
     return ip_list
+
+
+def get_graph_store_info() -> GraphStoreInfo:
+    """
+    Get the information about the graph store cluster.
+
+    Returns:
+        GraphStoreInfo: The information about the graph store cluster.
+
+    Raises:
+        ValueError: If a torch distributed environment is not initialized.
+        ValueError: If not running running in a supported environment.
+    """
+    if not torch.distributed.is_initialized():
+        raise ValueError("Distributed environment must be initialized")
+    if is_currently_running_in_vertex_ai_job():
+        cluster_spec = get_cluster_spec()
+        # We setup the VAI cluster such that the compute nodes come first, followed by the storage nodes.
+        if "workerpool1" in cluster_spec.cluster:
+            num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
+                cluster_spec.cluster["workerpool1"]
+            )
+        else:
+            num_compute_nodes = len(cluster_spec.cluster["workerpool0"])
+        num_storage_nodes = len(cluster_spec.cluster["workerpool2"])
+    else:
+        raise ValueError(
+            "Must be running on a vertex AI job to get graph store cluster info!"
+        )
+
+    cluster_master_ip = get_internal_ip_from_master_node()
+    # We assume that the compute cluster nodes come first, followed by the storage nodes.
+    compute_cluster_master_ip = get_internal_ip_from_node(node_rank=0)
+    storage_cluster_master_ip = get_internal_ip_from_node(node_rank=num_compute_nodes)
+
+    cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
+    compute_cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
+    storage_cluster_master_port = get_free_ports_from_node(
+        num_ports=1, node_rank=num_compute_nodes
+    )[0]
+
+    return GraphStoreInfo(
+        num_cluster_nodes=num_storage_nodes + num_compute_nodes,
+        num_storage_nodes=num_storage_nodes,
+        num_compute_nodes=num_compute_nodes,
+        cluster_master_ip=cluster_master_ip,
+        storage_cluster_master_ip=storage_cluster_master_ip,
+        compute_cluster_master_ip=compute_cluster_master_ip,
+        cluster_master_port=cluster_master_port,
+        storage_cluster_master_port=storage_cluster_master_port,
+        compute_cluster_master_port=compute_cluster_master_port,
+    )

@@ -3,8 +3,6 @@ import os
 import unittest
 from unittest.mock import call, patch
 
-from google.cloud.aiplatform_v1.types import CustomJobSpec
-
 from gigl.common import GcsUri
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.vertex_ai_context import (
@@ -129,11 +127,7 @@ class TestVertexAIContext(unittest.TestCase):
                 },
                 "task": {"type": "workerpool0", "index": 1, "trial": "trial-123"},
                 "environment": "cloud",
-                "job": {
-                    "worker_pool_specs": [
-                        {"machine_spec": {"machine_type": "n1-standard-4"}}
-                    ]
-                },
+                "job": '{ "worker_pool_specs": [ {"machine_spec": {"machine_type": "n1-standard-4"}}]}',
             }
         )
 
@@ -150,11 +144,11 @@ class TestVertexAIContext(unittest.TestCase):
                 },
                 environment="cloud",
                 task=TaskInfo(type="workerpool0", index=1, trial="trial-123"),
-                job=CustomJobSpec(
-                    worker_pool_specs=[
+                job={
+                    "worker_pool_specs": [
                         {"machine_spec": {"machine_type": "n1-standard-4"}}
                     ]
-                ),
+                },
             )
             self.assertEqual(cluster_spec, expected_cluster_spec)
 
