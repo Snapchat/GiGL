@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import omegaconf
-from google.cloud.aiplatform_v1.types import CustomJobSpec
 
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
@@ -183,29 +182,35 @@ class ClusterSpec:
     cluster: dict[str, list[str]]  # Worker pool names mapped to their replica lists
     environment: str  # The environment string (e.g., "cloud")
     task: TaskInfo  # Information about the current task
-    # The CustomJobSpec for the current job
-    # See the docs for more info:
-    # https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
-    job: Optional[CustomJobSpec] = None
 
-    # We use a custom method for parsing, because CustomJobSpec is a protobuf message.
+    # DESPITE what the docs say, this is *not* a CustomJobSpec.
+    # It's *sort of* like a PythonPackageSpec, but it's not.
+    # It has `jobArgs` instead of `args`.
+    # See an example:
+    #  {"python_module":"","package_uris":[],"job_args":[]}
+    job: Optional[dict] = None
+
+    # We use a custom method for parsing, the "job" is actually a serialized json string.
     @classmethod
     def from_json(cls, json_str: str) -> "ClusterSpec":
         """Instantiates ClusterSpec from a JSON string."""
         cluster_spec_json = json.loads(json_str)
         if "job" in cluster_spec_json and cluster_spec_json["job"] is not None:
-            job_spec = CustomJobSpec(**cluster_spec_json.pop("job"))
+            logger.info(f"Job spec: {cluster_spec_json['job']}")
+            job_spec = json.loads(cluster_spec_json.pop("job"))
         else:
             job_spec = None
         conf = omegaconf.OmegaConf.create(cluster_spec_json)
         if isinstance(conf, omegaconf.ListConfig):
             raise ValueError("ListConfig is not supported")
-        return cls(
+        cluster_spec = cls(
             cluster=conf.cluster,
             environment=conf.environment,
             task=conf.task,
             job=job_spec,
         )
+        logger.info(f"Cluster spec: {cluster_spec}")
+        return cluster_spec
 
 
 def get_cluster_spec() -> ClusterSpec:
