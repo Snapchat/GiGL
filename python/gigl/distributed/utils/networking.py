@@ -202,9 +202,12 @@ def get_graph_store_info() -> GraphStoreInfo:
     if is_currently_running_in_vertex_ai_job():
         cluster_spec = get_cluster_spec()
         # We setup the VAI cluster such that the compute nodes come first, followed by the storage nodes.
-        num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
-            cluster_spec.cluster["workerpool1"]
-        )
+        if "workerpool1" in cluster_spec.cluster:
+            num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
+                cluster_spec.cluster["workerpool1"]
+            )
+        else:
+            num_compute_nodes = len(cluster_spec.cluster["workerpool0"])
         num_storage_nodes = len(cluster_spec.cluster["workerpool2"])
     else:
         raise ValueError(

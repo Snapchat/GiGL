@@ -4,9 +4,9 @@ from textwrap import dedent
 
 from parameterized import param, parameterized
 
-from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
+from gigl.common.constants import GIGL_RELEASE_SRC_IMAGE_CPU
 
 
 class NetworkingUtlsIntegrationTest(unittest.TestCase):
@@ -51,28 +51,28 @@ class NetworkingUtlsIntegrationTest(unittest.TestCase):
                 from gigl.distributed.utils import get_graph_store_info
                 torch.distributed.init_process_group(backend="gloo")
                 info = get_graph_store_info()
-                assert info.num_storage_nodes == {storage_nodes}
-                assert info.num_compute_nodes == {compute_nodes}
-                assert info.num_cluster_nodes == {storage_nodes + compute_nodes}
-                assert info.cluster_master_ip is not None
-                assert info.storage_cluster_master_ip is not None
-                assert info.compute_cluster_master_ip is not None
-                assert info.cluster_master_port is not None
-                assert info.storage_cluster_master_port is not None
-                assert info.compute_cluster_master_port is not None
+                assert info.num_storage_nodes == {storage_nodes}, f"Expected {storage_nodes} storage nodes, but got {{ info.num_storage_nodes }}"
+                assert info.num_compute_nodes == {compute_nodes}, f"Expected {compute_nodes} compute nodes, but got {{ info.num_compute_nodes }}"
+                assert info.num_cluster_nodes == {storage_nodes + compute_nodes}, f"Expected {storage_nodes + compute_nodes} cluster nodes, but got {{ info.num_cluster_nodes }}"
+                assert info.cluster_master_ip is not None, f"Cluster master IP is None"
+                assert info.storage_cluster_master_ip is not None, f"Storage cluster master IP is None"
+                assert info.compute_cluster_master_ip is not None, f"Compute cluster master IP is None"
+                assert info.cluster_master_port is not None, f"Cluster master port is None"
+                assert info.storage_cluster_master_port is not None, f"Storage cluster master port is None"
+                assert info.compute_cluster_master_port is not None, f"Compute cluster master port is None"
                 """
             ),
         ]
         compute_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,  # different image for storage and compute
+            container_uri=GIGL_RELEASE_SRC_IMAGE_CPU,
             replica_count=compute_nodes,
             command=command,
             machine_type="n2-standard-8",
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+            container_uri=GIGL_RELEASE_SRC_IMAGE_CPU,
             replica_count=storage_nodes,
             machine_type="n1-standard-4",
             command=command,
