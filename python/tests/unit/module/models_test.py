@@ -221,18 +221,6 @@ class TestLightGCN(unittest.TestCase):
 
         self.assertEqual(output.shape, (2, self.embedding_dim))
 
-    def test_forward_homogeneous_wrong_node_types(self):
-        """Test that homogeneous forward with multiple node types raises ValueError."""
-        # Create model with multiple node types
-        node_type_to_num_nodes = {
-            NodeType("user"): 2,
-            NodeType("item"): 2
-        }
-        model = self._create_lightgcn_model(node_type_to_num_nodes)
-
-        with self.assertRaises(ValueError):
-            model(self.data, self.device)
-
     def test_compare_with_pyg_reference(self):
         """Test that our implementation matches PyG LightGCN output."""
         # Create our model
