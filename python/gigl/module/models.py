@@ -220,8 +220,6 @@ class LightGCN(nn.Module):
         # Construct LightGCN propagation layers (LGConv = Ā X)
         self._convs = nn.ModuleList([LGConv() for _ in range(self._num_layers)])  # K layers
 
-        self._is_sharded = False
-
     def forward(
         self,
         data: Union[Data, HeteroData],
