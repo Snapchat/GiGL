@@ -152,6 +152,7 @@ class LinkPredictionGNN(nn.Module):
 
 # TODO(swong3): Move specific models to gigl.nn.models whenever we restructure model placement.
 # TODO(swong3): Abstract TorchRec functionality, and make this LightGCN specific
+# TODO(swong3): Remove device context from LightGCN module (use meta, but will have to figure out how to handle buffer transfer)
 class LightGCN(nn.Module):
     """
     LightGCN model with TorchRec integration for distributed ID embeddings.
