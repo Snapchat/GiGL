@@ -385,6 +385,7 @@ _GraphEntity = TypeVar(
     Optional[SerializedTFRecordInfo],
     list,
     str,
+    int,
     # TODO(kmonte): Add GLT Partition book here
     # We cannot at the moment as we mypy ignore GLT
     # And adding it as a type here will break mypy.
