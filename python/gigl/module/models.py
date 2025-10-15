@@ -2,33 +2,15 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
-from torch.optim.optimizer import DeviceDict
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.conv import LGConv
-from torch_geometric import utils
+from torchrec.modules.embedding_configs import EmbeddingBagConfig
+from torchrec.modules.embedding_modules import EmbeddingBagCollection
+from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 from typing_extensions import Self
-import torch.distributed as dist
-from torch_sparse import SparseTensor
-
-from torchrec.modules.embedding_configs import (
-    EmbeddingBagConfig,
-)
-from torchrec.modules.embedding_modules import (
-    EmbeddingBagCollection,
-)
-from torchrec.sparse.jagged_tensor import (
-    KeyedJaggedTensor,
-)
-
-from torchrec.distributed.planner import Topology, EmbeddingShardingPlanner
-from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
-from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
-from torchrec.distributed.embedding_types import EmbeddingComputeKernel
 
 from gigl.src.common.types.graph_data import NodeType
-from gigl.types.graph import to_homogeneous
 from gigl.types.graph import to_heterogeneous_node
 
 
@@ -150,6 +132,7 @@ class LinkPredictionGNN(nn.Module):
 
         return LinkPredictionGNN(encoder=encoder, decoder=decoder)
 
+
 # TODO(swong3): Move specific models to gigl.nn.models whenever we restructure model placement.
 # TODO(swong3): Abstract TorchRec functionality, and make this LightGCN specific
 # TODO(swong3): Remove device context from LightGCN module (use meta, but will have to figure out how to handle buffer transfer)
@@ -204,7 +187,9 @@ class LightGCN(nn.Module):
 
         # Build TorchRec EBC (one table per node type)
         # feature key naming convention: f"{node_type}_id"
-        self._feature_keys: list[str] = [f"{node_type}_id" for node_type in self._node_type_to_num_nodes.keys()]
+        self._feature_keys: list[str] = [
+            f"{node_type}_id" for node_type in self._node_type_to_num_nodes.keys()
+        ]
         tables: list[EmbeddingBagConfig] = []
         for node_type, num_nodes in self._node_type_to_num_nodes.items():
             tables.append(
@@ -216,10 +201,14 @@ class LightGCN(nn.Module):
                 )
             )
 
-        self._embedding_bag_collection = EmbeddingBagCollection(tables=tables, device=self._device)
+        self._embedding_bag_collection = EmbeddingBagCollection(
+            tables=tables, device=self._device
+        )
 
         # Construct LightGCN propagation layers (LGConv = Ā X)
-        self._convs = nn.ModuleList([LGConv() for _ in range(self._num_layers)])  # K layers
+        self._convs = nn.ModuleList(
+            [LGConv() for _ in range(self._num_layers)]
+        )  # K layers
 
     def forward(
         self,
@@ -247,11 +236,18 @@ class LightGCN(nn.Module):
         if isinstance(data, HeteroData):
             raise NotImplementedError("HeteroData is not yet supported for LightGCN")
             output_node_types = output_node_types or list(data.node_types)
-            return self._forward_heterogeneous(data, device, output_node_types, anchor_node_ids)
+            return self._forward_heterogeneous(
+                data, device, output_node_types, anchor_node_ids
+            )
         else:
             return self._forward_homogeneous(data, device, anchor_node_ids)
 
-    def _forward_homogeneous(self, data: Data, device: torch.device, anchor_node_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def _forward_homogeneous(
+        self,
+        data: Data,
+        device: torch.device,
+        anchor_node_ids: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Forward pass for homogeneous graphs using LightGCN propagation.
 
@@ -282,31 +278,49 @@ class LightGCN(nn.Module):
             f"{len(self._feature_keys)} types: {self._feature_keys}"
         )
         key = self._feature_keys[0]
-        edge_index = data.edge_index.to(device)  # shape [2, E], where E is the number of edges
+        edge_index = data.edge_index.to(
+            device
+        )  # shape [2, E], where E is the number of edges
 
-        assert hasattr(data, "node"), "Subgraph must include .node to map local→global IDs."
-        global_ids = data.node.to(device).long() # shape [N_sub], maps local 0..N_sub-1 → global ids
+        assert hasattr(
+            data, "node"
+        ), "Subgraph must include .node to map local→global IDs."
+        global_ids = data.node.to(
+            device
+        ).long()  # shape [N_sub], maps local 0..N_sub-1 → global ids
 
-        embeddings_0 = self._lookup_embeddings_for_single_node_type(key, global_ids)   # shape [N_sub, D], where N_sub is number of nodes in subgraph and D is embedding_dim
+        embeddings_0 = self._lookup_embeddings_for_single_node_type(
+            key, global_ids
+        )  # shape [N_sub, D], where N_sub is number of nodes in subgraph and D is embedding_dim
 
         all_layer_embeddings: list[torch.Tensor] = [embeddings_0]
         embeddings_k = embeddings_0
 
         for conv in self._convs:
-            embeddings_k = conv(embeddings_k, edge_index)     # shape [N_sub, D], normalized neighbor averaging over *subgraph* edges
+            embeddings_k = conv(
+                embeddings_k, edge_index
+            )  # shape [N_sub, D], normalized neighbor averaging over *subgraph* edges
             all_layer_embeddings.append(embeddings_k)
 
-        final_embeddings = self._weighted_layer_sum(all_layer_embeddings)  # shape [N_sub, D], weighted sum of all layer embeddings
+        final_embeddings = self._weighted_layer_sum(
+            all_layer_embeddings
+        )  # shape [N_sub, D], weighted sum of all layer embeddings
 
         # If anchor node ids are provided, return the embeddings for the anchor nodes only
         if anchor_node_ids is not None:
             anchors_local = anchor_node_ids.to(device).long()  # shape [num_anchors]
-            return final_embeddings[anchors_local]      # shape [num_anchors, D], embeddings for anchor nodes only
+            return final_embeddings[
+                anchors_local
+            ]  # shape [num_anchors, D], embeddings for anchor nodes only
 
         # Otherwise, return the embeddings for all nodes in the subgraph
-        return final_embeddings                         # shape [N_sub, D], embeddings for all nodes in subgraph
+        return (
+            final_embeddings  # shape [N_sub, D], embeddings for all nodes in subgraph
+        )
 
-    def _lookup_embeddings_for_single_node_type(self, node_type: str, ids: torch.Tensor) -> torch.Tensor:
+    def _lookup_embeddings_for_single_node_type(
+        self, node_type: str, ids: torch.Tensor
+    ) -> torch.Tensor:
         """
         Fetch per-ID embeddings for a single node type using EmbeddingBagCollection.
 
@@ -324,10 +338,12 @@ class LightGCN(nn.Module):
             torch.Tensor: Embeddings for the requested node type, shape [batch_size, embedding_dim].
         """
         if node_type not in self._feature_keys:
-            raise KeyError(f"Unknown feature key '{node_type}'. Valid keys: {self._feature_keys}")
+            raise KeyError(
+                f"Unknown feature key '{node_type}'. Valid keys: {self._feature_keys}"
+            )
 
         # Number of examples (one ID per "bag")
-        batch_size = int(ids.numel()) # B is the number of node IDs to lookup
+        batch_size = int(ids.numel())  # B is the number of node IDs to lookup
         device = ids.device
 
         # Build lengths in key-major order: for each key, we give B lengths.
@@ -336,23 +352,33 @@ class LightGCN(nn.Module):
         lengths_per_key: list[torch.Tensor] = []
         for nt in self._feature_keys:
             if nt == node_type:
-                lengths_per_key.append(torch.ones(batch_size, dtype=torch.long, device=device))  # shape [B], all ones for requested key
+                lengths_per_key.append(
+                    torch.ones(batch_size, dtype=torch.long, device=device)
+                )  # shape [B], all ones for requested key
             else:
-                lengths_per_key.append(torch.zeros(batch_size, dtype=torch.long, device=device))  # shape [B], all zeros for other keys
+                lengths_per_key.append(
+                    torch.zeros(batch_size, dtype=torch.long, device=device)
+                )  # shape [B], all zeros for other keys
 
-        lengths = torch.cat(lengths_per_key, dim=0)  # shape [batch_size * num_keys], concatenated lengths for all keys
+        lengths = torch.cat(
+            lengths_per_key, dim=0
+        )  # shape [batch_size * num_keys], concatenated lengths for all keys
 
         # Values only contain the requested key's ids (sum of other lengths is 0)
         kjt = KeyedJaggedTensor(
-            keys=self._feature_keys,       # include ALL keys known by EBC
-            values=ids.long(),             # shape [batch_size], only batch_size values for the requested key
-            lengths=lengths,               # shape [batch_size * num_keys], batch_size lengths per key, concatenated key-major
+            keys=self._feature_keys,  # include ALL keys known by EBC
+            values=ids.long(),  # shape [batch_size], only batch_size values for the requested key
+            lengths=lengths,  # shape [batch_size * num_keys], batch_size lengths per key, concatenated key-major
         )
 
-        out = self._embedding_bag_collection(kjt)              # KeyedTensor (dict-like): out[key] -> [batch_size, D]
-        return out[node_type]                   # shape [batch_size, D], embeddings for the requested key
+        out = self._embedding_bag_collection(
+            kjt
+        )  # KeyedTensor (dict-like): out[key] -> [batch_size, D]
+        return out[node_type]  # shape [batch_size, D], embeddings for the requested key
 
-    def _weighted_layer_sum(self, all_layer_embeddings: list[torch.Tensor]) -> torch.Tensor:
+    def _weighted_layer_sum(
+        self, all_layer_embeddings: list[torch.Tensor]
+    ) -> torch.Tensor:
         """
         Computes weighted sum: w_0 * e^(0) + w_1 * e^(1) + ... + w_K * e^(K).
 
@@ -373,8 +399,10 @@ class LightGCN(nn.Module):
 
         # Stack all layer embeddings and compute weighted sum
         # _layer_weights is already a tensor buffer registered in __init__
-        stacked = torch.stack(all_layer_embeddings, dim=0)                             # shape [K+1, N, D]
-        w = self._layer_weights.to(stacked.device)                                      # shape [K+1], ensure on same device
-        out = (stacked * w.view(-1, 1, 1)).sum(dim=0)                                  # shape [N, D], w_0*X_0 + w_1*X_1 + ...
+        stacked = torch.stack(all_layer_embeddings, dim=0)  # shape [K+1, N, D]
+        w = self._layer_weights.to(stacked.device)  # shape [K+1], ensure on same device
+        out = (stacked * w.view(-1, 1, 1)).sum(
+            dim=0
+        )  # shape [N, D], w_0*X_0 + w_1*X_1 + ...
 
         return out

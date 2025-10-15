@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
 
-from gigl.module.models import LinkPredictionGNN, LightGCN
+from gigl.module.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
@@ -136,6 +136,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
         self.assertIs(unwrapped.encoder, encoder)
         self.assertIs(unwrapped.decoder, decoder)
 
+
 # TODO(swong3): Move create model and graph data in individual tests, rather than using a method to do so
 class TestLightGCN(unittest.TestCase):
     def setUp(self):
@@ -148,43 +149,56 @@ class TestLightGCN(unittest.TestCase):
 
         # Create test edge index (undirected graph)
         # Graph diagram: https://is.gd/1QuU4J
-        self.edge_index = torch.tensor([
-            [0, 0, 1, 2, 3, 3],
-            [2, 3, 3, 0, 0, 1],
-        ], dtype=torch.long)
+        self.edge_index = torch.tensor(
+            [
+                [0, 0, 1, 2, 3, 3],
+                [2, 3, 3, 0, 0, 1],
+            ],
+            dtype=torch.long,
+        )
 
         # Create test data
         self.data = Data(edge_index=self.edge_index, num_nodes=self.num_nodes)
         self.data.node = torch.tensor([0, 1, 2, 3], dtype=torch.long)
 
         # Fixed embedding weights for reproducible testing
-        self.test_embeddings = torch.tensor([
-            [0.2, 0.5, 0.1, 0.4],  # Node 0
-            [0.6, 0.1, 0.2, 0.5],  # Node 1
-            [0.9, 0.4, 0.1, 0.4],  # Node 2
-            [0.3, 0.8, 0.3, 0.6],  # Node 3
-        ], dtype=torch.float32)
+        self.test_embeddings = torch.tensor(
+            [
+                [0.2, 0.5, 0.1, 0.4],  # Node 0
+                [0.6, 0.1, 0.2, 0.5],  # Node 1
+                [0.9, 0.4, 0.1, 0.4],  # Node 2
+                [0.3, 0.8, 0.3, 0.6],  # Node 3
+            ],
+            dtype=torch.float32,
+        )
 
-        self.expected_output = torch.tensor([
-            [0.4495, 0.5311, 0.1555, 0.4865], # Node 0
-            [0.3943, 0.2975, 0.1825, 0.4386], # Node 1
-            [0.5325, 0.4121, 0.1089, 0.3650], # Node 2
-            [0.4558, 0.6207, 0.2506, 0.5817], # Node 3
-        ], dtype=torch.float32)
+        self.expected_output = torch.tensor(
+            [
+                [0.4495, 0.5311, 0.1555, 0.4865],  # Node 0
+                [0.3943, 0.2975, 0.1825, 0.4386],  # Node 1
+                [0.5325, 0.4121, 0.1089, 0.3650],  # Node 2
+                [0.4558, 0.6207, 0.2506, 0.5817],  # Node 3
+            ],
+            dtype=torch.float32,
+        )
 
-    def _create_lightgcn_model(self, node_type_to_num_nodes: Union[int, dict[NodeType, int]]) -> LightGCN:
+    def _create_lightgcn_model(
+        self, node_type_to_num_nodes: Union[int, dict[NodeType, int]]
+    ) -> LightGCN:
         """Create a LightGCN model with the specified configuration."""
         return LightGCN(
             node_type_to_num_nodes=node_type_to_num_nodes,
             embedding_dim=self.embedding_dim,
             num_layers=self.num_layers,
-            device=self.device
+            device=self.device,
         )
 
     def _set_embeddings(self, model: LightGCN, node_type: str):
         """Set the embedding weights for the model to match test data."""
         with torch.no_grad():
-            table = model._embedding_bag_collection.embedding_bags[f"node_embedding_{node_type}"]
+            table = model._embedding_bag_collection.embedding_bags[
+                f"node_embedding_{node_type}"
+            ]
             table.weight[:] = self.test_embeddings
 
     def _create_pyg_reference(self) -> PyGLightGCN:
@@ -192,10 +206,14 @@ class TestLightGCN(unittest.TestCase):
             num_nodes=self.num_nodes,
             embedding_dim=self.embedding_dim,
             num_layers=self.num_layers,
-        ).to(self.device)  # <<< move model to device
+        ).to(
+            self.device
+        )  # <<< move model to device
 
         with torch.no_grad():
-            ref.embedding.weight[:] = self.test_embeddings.to(self.device)  # <<< set on device
+            ref.embedding.weight[:] = self.test_embeddings.to(
+                self.device
+            )  # <<< set on device
         return ref
 
     def test_forward_homogeneous(self):
@@ -232,7 +250,9 @@ class TestLightGCN(unittest.TestCase):
         pyg_model = self._create_pyg_reference()
         with torch.no_grad():
             our_output = our_model(self.data, self.device)
-            pyg_output = pyg_model.get_embedding(self.edge_index.to(self.device))  # <<< edge_index on device
+            pyg_output = pyg_model.get_embedding(
+                self.edge_index.to(self.device)
+            )  # <<< edge_index on device
         assert_tensor_equality(our_output, pyg_output)
 
     def test_compare_with_math(self):
@@ -242,7 +262,9 @@ class TestLightGCN(unittest.TestCase):
         self._set_embeddings(our_model, "default_homogeneous_node_type")
         output = our_model(self.data, self.device)
 
-        self.assertTrue(torch.allclose(output, self.expected_output, atol=1e-4, rtol=1e-4))
+        self.assertTrue(
+            torch.allclose(output, self.expected_output, atol=1e-4, rtol=1e-4)
+        )
 
     def test_gradient_flow(self):
         """Test that gradients flow properly through the model."""
@@ -255,9 +277,12 @@ class TestLightGCN(unittest.TestCase):
         loss.backward()
 
         # Check that gradients exist for embedding parameters
-        embedding_table = model._embedding_bag_collection.embedding_bags["node_embedding_default_homogeneous_node_type"]
+        embedding_table = model._embedding_bag_collection.embedding_bags[
+            "node_embedding_default_homogeneous_node_type"
+        ]
         self.assertIsNotNone(embedding_table.weight.grad)
         self.assertTrue(torch.any(embedding_table.weight.grad != 0))
+
 
 if __name__ == "__main__":
     unittest.main()
