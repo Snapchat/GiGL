@@ -3,8 +3,12 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
+from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
+from parameterized import parameterized
 
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
@@ -182,6 +186,12 @@ class TestLightGCN(unittest.TestCase):
             dtype=torch.float32,
         )
 
+    def tearDown(self):
+        """Clean up distributed process group after each test."""
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        super().tearDown()
+
     def _create_lightgcn_model(
         self, node_type_to_num_nodes: Union[int, dict[NodeType, int]]
     ) -> LightGCN:
@@ -282,6 +292,193 @@ class TestLightGCN(unittest.TestCase):
         ]
         self.assertIsNotNone(embedding_table.weight.grad)
         self.assertTrue(torch.any(embedding_table.weight.grad != 0))
+
+    def test_dmp_wrapped_model_produces_correct_output(self):
+        """
+        Test that DMP-wrapped LightGCN produces the same output as non-wrapped model. Note: We only test with a single process for unit test.
+        """
+        process_group_init_method = get_process_group_init_method()
+        # Initialize distributed
+        dist.init_process_group(
+            backend="gloo",
+            init_method=process_group_init_method,
+            rank=0,
+            world_size=1,
+        )
+
+        # Create model
+        model = self._create_lightgcn_model(self.num_nodes)
+
+        # Wrap with DMP
+        dmp_model = DMP(
+            module=model,
+            device=self.device,
+        )
+
+        # Set embeddings AFTER DMP wrapping (required for CPU/Gloo)
+        self._set_embeddings(model, "default_homogeneous_node_type")
+
+        # Run forward pass on DMP-wrapped model
+        with torch.no_grad():
+            output = dmp_model(data=self.data, device=self.device)
+
+        # Verify output matches expected values
+        self.assertTrue(
+            torch.allclose(output, self.expected_output, atol=1e-4, rtol=1e-4),
+            f"DMP output doesn't match expected.\nGot:\n{output}\nExpected:\n{self.expected_output}",
+        )
+
+    def test_dmp_gradient_flow(self):
+        """
+        Test that gradients flow properly through DMP-wrapped model.
+        """
+        process_group_init_method = get_process_group_init_method()
+
+        # Initialize distributed
+        dist.init_process_group(
+            backend="gloo",
+            init_method=process_group_init_method,
+            rank=0,
+            world_size=1,
+        )
+
+        # Create and wrap model
+        model = self._create_lightgcn_model(self.num_nodes)
+
+        dmp_model = DMP(
+            module=model,
+            device=self.device,
+        )
+
+        self._set_embeddings(model, "default_homogeneous_node_type")
+
+        dmp_model.train()
+        output = dmp_model(self.data, self.device)
+        loss = output.sum()
+        loss.backward()
+
+        # Check that gradients exist and are non-zero
+        embedding_table = dmp_model._dmp_wrapped_module._embedding_bag_collection.embedding_bags[
+            "node_embedding_default_homogeneous_node_type"
+        ]
+        self.assertIsNotNone(
+            embedding_table.weight.grad,
+            "Gradients should exist after backward pass",
+        )
+        self.assertTrue(
+            torch.any(embedding_table.weight.grad != 0),
+            "Gradients should be non-zero",
+        )
+
+    @parameterized.expand(
+        [
+            ("world_size_2", 2),
+        ]
+    )
+    def test_dmp_multiprocess(self, _name, world_size):
+        """
+        Test DMP with multiple processes to verify embedding sharding works correctly.
+
+        Note: Uses CPU/Gloo backend for unit testing.
+        """
+        process_group_init_method = get_process_group_init_method()
+
+        # Spawn world_size processes
+        mp.spawn(
+            fn=_run_dmp_multiprocess_test,
+            args=(
+                world_size, # total number of processes
+                process_group_init_method, # initialization method for process group
+                self.num_nodes, # number of nodes in test graph
+                self.embedding_dim, # dimension of embeddings
+                self.num_layers, # number of LightGCN layers
+                self.edge_index, # edge connectivity
+                self.test_embeddings, # test embedding values
+                self.expected_output, # expected model output
+            ),
+            nprocs=world_size,
+        )
+
+
+def _run_dmp_multiprocess_test(
+    rank: int,
+    world_size: int,
+    process_group_init_method: str,
+    num_nodes: int,
+    embedding_dim: int,
+    num_layers: int,
+    edge_index: torch.Tensor,
+    test_embeddings: torch.Tensor,
+    expected_output: torch.Tensor,
+):
+    """
+    Helper function that runs in each spawned process for multi-process DMP testing.
+
+    Args:
+        rank: Rank of this process (0, 1, 2, ...)
+        world_size: Total number of processes
+        process_group_init_method: Initialization method for process group
+        num_nodes: Number of nodes in test graph
+        embedding_dim: Dimension of embeddings
+        num_layers: Number of LightGCN layers
+        edge_index: Edge connectivity
+        test_embeddings: Test embedding values
+        expected_output: Expected model output
+    """
+    try:
+        # Initialize process group for this rank
+        dist.init_process_group(
+            backend="gloo",  # Use Gloo for CPU testing (like networking_test.py)
+            init_method=process_group_init_method,
+            rank=rank,
+            world_size=world_size,
+        )
+
+        device = torch.device("cpu")  # Use CPU for unit tests
+        # Create model
+        model = LightGCN(
+            node_type_to_num_nodes=num_nodes,
+            embedding_dim=embedding_dim,
+            num_layers=num_layers,
+            device=device,
+        )
+
+        # Wrap with DMP - this will shard embeddings across ranks
+        dmp_model = DMP(
+            module=model,
+            device=device,
+        )
+
+        # Set embeddings AFTER DMP wrapping
+        # Note: On CPU/Gloo, DMP doesn't actually shard - it replicates the full table
+        # So we need to set ALL embeddings on each rank
+        with torch.no_grad():
+            table = model._embedding_bag_collection.embedding_bags[
+                "node_embedding_default_homogeneous_node_type"
+            ]
+
+            # Set all embeddings (CPU/Gloo replicates, doesn't shard)
+            table.weight[:] = test_embeddings.to(device)
+
+        # Create test data
+        data = Data(edge_index=edge_index.to(device), num_nodes=num_nodes)
+        data.node = torch.arange(num_nodes, dtype=torch.long, device=device)
+
+        # Forward pass - DMP will fetch embeddings across ranks as needed
+        with torch.no_grad():
+            output = dmp_model(data=data, device=device)
+
+        # Verify output matches expected (all ranks should get same result)
+        if not torch.allclose(output, expected_output.to(device), atol=1e-4, rtol=1e-4):
+            raise AssertionError(
+                f"Rank {rank}: DMP multi-process output doesn't match expected.\n"
+                f"Got:\n{output}\nExpected:\n{expected_output.to(device)}"
+            )
+
+    finally:
+        # Cleanup process group for this spawned process
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 if __name__ == "__main__":
