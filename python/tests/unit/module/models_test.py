@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
+from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
 
 from gigl.module.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
@@ -183,6 +184,12 @@ class TestLightGCN(unittest.TestCase):
             dtype=torch.float32,
         )
 
+    def tearDown(self):
+        """Clean up distributed process group after each test."""
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        super().tearDown()
+
     def _create_lightgcn_model(
         self, node_type_to_num_nodes: Union[int, dict[NodeType, int]]
     ) -> LightGCN:
@@ -288,45 +295,36 @@ class TestLightGCN(unittest.TestCase):
         """
         Test that DMP-wrapped LightGCN produces the same output as non-wrapped model. Note: We only test with a single process for unit test.
         """
-        from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
-
         # Initialize distributed
         if not dist.is_initialized():
             dist.init_process_group(
                 backend="gloo",
-                init_method="tcp://localhost:29500",
+                init_method=get_process_group_init_method(),
                 rank=0,
-                world_size=1,  # Single process for unit test
+                world_size=1,
             )
 
-        # It is worth noting that when using CPU, we must set embeddings again after DMP wrapping
+        # Create model
+        model = self._create_lightgcn_model(self.num_nodes)
 
-        try:
-            # Create model and move to device
-            model = self._create_lightgcn_model(self.num_nodes)
+        # Wrap with DMP
+        dmp_model = DMP(
+            module=model,
+            device=self.device,
+        )
 
-            # Wrap with DMP
-            dmp_model = DMP(
-                module=model,
-                device=self.device,
-            )
+        # Set embeddings AFTER DMP wrapping (required for CPU/Gloo)
+        self._set_embeddings(model, "default_homogeneous_node_type")
 
-            # Set embeddings After DMP wrapping
-            self._set_embeddings(model, "default_homogeneous_node_type")
+        # Run forward pass on DMP-wrapped model
+        with torch.no_grad():
+            output = dmp_model(data=self.data, device=self.device)
 
-            # Run forward pass on DMP-wrapped model
-            with torch.no_grad():
-                output = dmp_model(data=self.data, device=self.device)
-
-            # Verify output matches expected values
-            self.assertTrue(
-                torch.allclose(output, self.expected_output, atol=1e-4, rtol=1e-4),
-                f"DMP output doesn't match expected.\nGot:\n{output}\nExpected:\n{self.expected_output}",
-            )
-
-        finally:
-            if dist.is_initialized():
-                dist.destroy_process_group()
+        # Verify output matches expected values
+        self.assertTrue(
+            torch.allclose(output, self.expected_output, atol=1e-4, rtol=1e-4),
+            f"DMP output doesn't match expected.\nGot:\n{output}\nExpected:\n{self.expected_output}",
+        )
 
     def test_dmp_gradient_flow(self):
         """
@@ -338,45 +336,40 @@ class TestLightGCN(unittest.TestCase):
         if not dist.is_initialized():
             dist.init_process_group(
                 backend="gloo",
-                init_method="tcp://localhost:29500",
+                init_method=get_process_group_init_method(),
                 rank=0,
                 world_size=1,
             )
 
-        try:
-            # Create and wrap model
-            model = self._create_lightgcn_model(self.num_nodes)
+        # Create and wrap model
+        model = self._create_lightgcn_model(self.num_nodes)
 
-            dmp_model = DMP(
-                module=model,
-                device=self.device,
-            )
+        dmp_model = DMP(
+            module=model,
+            device=self.device,
+        )
 
-            self._set_embeddings(model, "default_homogeneous_node_type")
+        self._set_embeddings(model, "default_homogeneous_node_type")
 
-            model.train()
+        model.train()
 
-            # Forward and backward pass
-            output = dmp_model(data=self.data, device=self.device)
-            loss = output.sum()
-            loss.backward()
+        # Forward and backward pass
+        output = dmp_model(data=self.data, device=self.device)
+        loss = output.sum()
+        loss.backward()
 
-            # Check that gradients exist and are non-zero
-            embedding_table = model._embedding_bag_collection.embedding_bags[
-                "node_embedding_default_homogeneous_node_type"
-            ]
-            self.assertIsNotNone(
-                embedding_table.weight.grad,
-                "Gradients should exist after backward pass",
-            )
-            self.assertTrue(
-                torch.any(embedding_table.weight.grad != 0),
-                "Gradients should be non-zero",
-            )
-
-        finally:
-            if dist.is_initialized():
-                dist.destroy_process_group()
+        # Check that gradients exist and are non-zero
+        embedding_table = model._embedding_bag_collection.embedding_bags[
+            "node_embedding_default_homogeneous_node_type"
+        ]
+        self.assertIsNotNone(
+            embedding_table.weight.grad,
+            "Gradients should exist after backward pass",
+        )
+        self.assertTrue(
+            torch.any(embedding_table.weight.grad != 0),
+            "Gradients should be non-zero",
+        )
 
 if __name__ == "__main__":
     unittest.main()
