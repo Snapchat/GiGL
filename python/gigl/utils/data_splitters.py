@@ -684,7 +684,7 @@ def _get_padded_labels(
         ],
         dim=0,
     )
-    return labels
+    return labels[:,:3]
 
 
 def _assert_sampling_direction(sampling_direction: str):
