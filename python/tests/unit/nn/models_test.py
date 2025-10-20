@@ -6,6 +6,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
 from torchrec.distributed.model_parallel import (
