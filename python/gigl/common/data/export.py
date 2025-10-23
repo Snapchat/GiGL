@@ -47,7 +47,7 @@ EMBEDDING_AVRO_SCHEMA: Final[fastavro.types.Schema] = {
 
 # BigQuery schema for embedding records.
 EMBEDDING_BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
-    bigquery.SchemaField(_NODE_ID_KEY, "INTEGER"),
+    bigquery.SchemaField(_NODE_ID_KEY, "INT64"),
     bigquery.SchemaField(_NODE_TYPE_KEY, "STRING"),
     bigquery.SchemaField(_EMBEDDING_KEY, "FLOAT64", mode="REPEATED"),
 ]
@@ -64,24 +64,22 @@ PREDICTION_AVRO_SCHEMA: Final[fastavro.types.Schema] = {
 
 # BigQuery schema for prediction records.
 PREDICTION_BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
-    bigquery.SchemaField(_NODE_ID_KEY, "INTEGER"),
+    bigquery.SchemaField(_NODE_ID_KEY, "INT64"),
     bigquery.SchemaField(_NODE_TYPE_KEY, "STRING"),
     bigquery.SchemaField(_PREDICTION_KEY, "FLOAT64"),
 ]
 
 
-class BaseGcsExporter:
-    _avro_schema: Optional[fastavro.types.Schema] = None
-
+class GcsExporter:
     def __init__(
         self,
         export_dir: Uri,
+        avro_schema: fastavro.types.Schema,
         file_prefix: Optional[str] = None,
         min_shard_size_threshold_bytes: int = 0,
     ):
         """
-        Initializes a BaseGcsExporter instance. Note that this class is not meant to be used directly,
-        but should be subclassed with a specific avro schema, such as EmbeddingExporter or PredictionExporter.
+        Initializes a BaseGcsExporter instance.
 
         Note that after every flush, either via exiting a context manager, by calling `flush_records()`,
         or when the buffer reaches the `file_flush_threshold`, a new avro file will be created, and
@@ -109,11 +107,6 @@ class BaseGcsExporter:
                                         Note that for the *last* shard, the buffer may be much smaller than this limit.
         """
 
-        if self._avro_schema is None:
-            raise NotImplementedError(
-                "Avro schema must be provided through a subclass of BaseGcsExporter"
-            )
-
         if min_shard_size_threshold_bytes < 0:
             raise ValueError(
                 f"file_flush_threshold must be a non-negative integer, but got {min_shard_size_threshold_bytes}"
@@ -130,6 +123,7 @@ class BaseGcsExporter:
         self._file_utils = FileLoader()
         self._prefix = file_prefix
         self._min_shard_size_threshold_bytes = min_shard_size_threshold_bytes
+        self._avro_schema = avro_schema
 
         if isinstance(
             self._base_export_uri, LocalUri
@@ -149,11 +143,6 @@ class BaseGcsExporter:
         Args:
             records (Iterable[dict]): An iterable of dictionaries containing the records.
         """
-
-        if self._avro_schema is None:
-            raise NotImplementedError(
-                "Avro schema must be provided through a subclass of BaseGcsExporter"
-            )
 
         start = time.perf_counter()
         fastavro.writer(self._buffer, self._avro_schema, records)
@@ -233,8 +222,28 @@ class BaseGcsExporter:
         self._in_context = False
 
 
-class EmbeddingExporter(BaseGcsExporter):
-    _avro_schema: Optional[fastavro.types.Schema] = EMBEDDING_AVRO_SCHEMA
+class EmbeddingExporter(GcsExporter):
+    def __init__(
+        self,
+        export_dir: Uri,
+        file_prefix: Optional[str] = None,
+        min_shard_size_threshold_bytes: int = 0,
+    ):
+        """
+        Initializes an EmbeddingExporter instance, which will write embeddings to gcs with an embedding avro schema for
+        writing an array of floats per record.
+
+        Args:
+            export_dir (Uri): URI where the Avro files will be uploaded.
+            file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
+            min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+        """
+        super().__init__(
+            export_dir,
+            EMBEDDING_AVRO_SCHEMA,
+            file_prefix,
+            min_shard_size_threshold_bytes,
+        )
 
     def add_embedding(
         self,
@@ -272,14 +281,38 @@ class EmbeddingExporter(BaseGcsExporter):
 
     def flush_embeddings(self):
         """
-        Flushes the in-memory buffer.
-        After this method is called, the buffer is reset to an empty state.
+        NOTE: This method is deprecated, and the `flush_records` method should be used instead.
+        This method will be removed in a future version.
         """
+        logger.warning(
+            "flush_embeddings() is deprecated, and the `flush_records` method should be used instead. This method will be removed in a future version."
+        )
         self.flush_records()
 
 
-class PredictionExporter(BaseGcsExporter):
-    _avro_schema: Optional[fastavro.types.Schema] = PREDICTION_AVRO_SCHEMA
+class PredictionExporter(GcsExporter):
+    def __init__(
+        self,
+        export_dir: Uri,
+        file_prefix: Optional[str] = None,
+        min_shard_size_threshold_bytes: int = 0,
+    ):
+        """
+        Initializes a PredictionExporter instance, which will write predictions to gcs with a prediction avro schema for
+        writing a single float per record.
+
+        Args:
+            export_dir (Uri): URI where the Avro files will be uploaded.
+            file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
+            min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+        """
+
+        super().__init__(
+            export_dir,
+            PREDICTION_AVRO_SCHEMA,
+            file_prefix,
+            min_shard_size_threshold_bytes,
+        )
 
     def add_prediction(
         self,
@@ -314,13 +347,6 @@ class PredictionExporter(BaseGcsExporter):
         )
 
         self.add_record(batched_records)
-
-    def flush_predictions(self):
-        """
-        Flushes the in-memory buffer.
-        After this method is called, the buffer is reset to an empty state.
-        """
-        self.flush_records()
 
 
 # TODO(kmonte): We should migrate this over to `BqUtils.load_files_to_bq` once that is implemented.
