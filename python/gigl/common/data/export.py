@@ -52,11 +52,6 @@ BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
 ]
 
 
-
-
-
-
-
 class GcsExporter:
     def __init__(
         self,
