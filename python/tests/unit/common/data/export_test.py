@@ -31,7 +31,7 @@ from gigl.common.utils.retry import RetriesFailedException
 TEST_NODE_TYPE = "test_type"
 
 
-class TestGcsExporter(unittest.TestCase):
+class TestExporter(unittest.TestCase):
     """Test suite for both EmbeddingExporter and PredictionExporter."""
 
     def setUp(self):
@@ -45,15 +45,20 @@ class TestGcsExporter(unittest.TestCase):
         self._temp_dir.cleanup()
 
     def assertPredictionRecordsAlmostEqual(
-        self, actual_records, expected_records, places=5
-    ):
-        """Helper method to compare prediction records with float tolerance."""
+        self,
+        actual_records,
+        expected_records,
+    ) -> None:
+        """Helper method to compare prediction records with float tolerance. This is needed specifically
+        for the prediction embeddings since they are stored as floats in the Avro file and may have small
+        differences in precision as a result that may cause errors in the tests for exact matching.
+        """
         self.assertEqual(len(actual_records), len(expected_records))
         for actual, expected in zip(actual_records, expected_records):
             self.assertEqual(actual[_NODE_ID_KEY], expected[_NODE_ID_KEY])
             self.assertEqual(actual[_NODE_TYPE_KEY], expected[_NODE_TYPE_KEY])
             self.assertAlmostEqual(
-                actual[_PREDICTION_KEY], expected[_PREDICTION_KEY], places=places
+                actual[_PREDICTION_KEY], expected[_PREDICTION_KEY], places=5
             )
 
     @parameterized.expand(
