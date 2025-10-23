@@ -331,7 +331,6 @@ class TestEmbeddingExporter(unittest.TestCase):
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
         id_batch = torch.tensor([1])
         embedding_batch = torch.tensor([[1, 11]])
-        embedding_type = "test_type"
 
         mock_gcs_utils = MagicMock()
         google_cloud_error = GoogleCloudError("GCS upload failed")
@@ -339,7 +338,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         mock_gcs_utils.upload_from_filelike.side_effect = google_cloud_error
         mock_gcs_utils_class.return_value = mock_gcs_utils
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
-        exporter.add_embedding(id_batch, embedding_batch, embedding_type)
+        exporter.add_embedding(id_batch, embedding_batch, TEST_NODE_TYPE)
 
         # Assertions
         with self.assertRaisesRegex(RetriesFailedException, "GCS upload failed"):
@@ -358,7 +357,6 @@ class TestEmbeddingExporter(unittest.TestCase):
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
         id_batch = torch.tensor([1])
         embedding_batch = torch.tensor([[1, 11]])
-        embedding_type = "test_type"
 
         mock_gcs_utils = MagicMock()
         mock_gcs_utils.upload_from_filelike.side_effect = (
@@ -366,7 +364,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         )
         mock_gcs_utils_class.return_value = mock_gcs_utils
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
-        exporter.add_embedding(id_batch, embedding_batch, embedding_type)
+        exporter.add_embedding(id_batch, embedding_batch, TEST_NODE_TYPE)
 
         # Assertions
         with self.assertRaisesRegex(RetriesFailedException, CONNECTION_ABORTED_MESSAGE):
@@ -597,14 +595,13 @@ class TestPredictionsExporter(unittest.TestCase):
             torch.tensor([0.1, 0.2, 0.3]),
             torch.tensor([0.4, 0.5, 0.6]),
         ]
-        prediction_type = "test_type"
 
         with PredictionExporter(
             export_dir=UriFactory.create_uri(self._local_export_dir),
             min_shard_size_threshold_bytes=1,
         ) as exporter:
             for id_batch, prediction_batch in zip(id_batches, prediction_batches):
-                exporter.add_prediction(id_batch, prediction_batch, prediction_type)
+                exporter.add_prediction(id_batch, prediction_batch, TEST_NODE_TYPE)
 
         # Assertions
         written_files = sorted(
