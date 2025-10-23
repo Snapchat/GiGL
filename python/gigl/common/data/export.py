@@ -70,7 +70,7 @@ PREDICTION_BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
 ]
 
 
-class BaseExporter:
+class BaseGcsExporter:
     _avro_schema: Optional[fastavro.types.Schema] = None
 
     def __init__(
@@ -80,7 +80,7 @@ class BaseExporter:
         min_shard_size_threshold_bytes: int = 0,
     ):
         """
-        Initializes a BaseExporter instance. Note that this class is not meant to be used directly,
+        Initializes a BaseGcsExporter instance. Note that this class is not meant to be used directly,
         but should be subclassed with a specific avro schema, such as EmbeddingExporter or PredictionExporter.
 
         Note that after every flush, either via exiting a context manager, by calling `flush_records()`,
@@ -111,7 +111,7 @@ class BaseExporter:
 
         if self._avro_schema is None:
             raise NotImplementedError(
-                "Avro schema must be provided through a subclass of BaseExporter"
+                "Avro schema must be provided through a subclass of BaseGcsExporter"
             )
 
         if min_shard_size_threshold_bytes < 0:
@@ -152,13 +152,10 @@ class BaseExporter:
 
         if self._avro_schema is None:
             raise NotImplementedError(
-                "Avro schema must be provided through a subclass of BaseExporter"
+                "Avro schema must be provided through a subclass of BaseGcsExporter"
             )
 
         start = time.perf_counter()
-
-        self._num_records_written += len(list(records))
-
         fastavro.writer(self._buffer, self._avro_schema, records)
         self._write_time += time.perf_counter() - start
 
@@ -236,7 +233,7 @@ class BaseExporter:
         self._in_context = False
 
 
-class EmbeddingExporter(BaseExporter):
+class EmbeddingExporter(BaseGcsExporter):
     _avro_schema: Optional[fastavro.types.Schema] = EMBEDDING_AVRO_SCHEMA
 
     def add_embedding(
@@ -260,6 +257,8 @@ class EmbeddingExporter(BaseExporter):
         ids = id_batch.numpy()
         embeddings = embedding_batch.numpy()
 
+        self._num_records_written += len(ids)
+
         batched_records = (
             {
                 _NODE_ID_KEY: int(node_id),
@@ -279,7 +278,7 @@ class EmbeddingExporter(BaseExporter):
         self.flush_records()
 
 
-class PredictionExporter(BaseExporter):
+class PredictionExporter(BaseGcsExporter):
     _avro_schema: Optional[fastavro.types.Schema] = PREDICTION_AVRO_SCHEMA
 
     def add_prediction(
@@ -302,6 +301,8 @@ class PredictionExporter(BaseExporter):
         # is more efficient.
         ids = id_batch.numpy()
         predictions = prediction_batch.numpy()
+
+        self._num_records_written += len(ids)
 
         batched_records = (
             {
