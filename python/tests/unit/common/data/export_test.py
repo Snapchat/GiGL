@@ -146,7 +146,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         # Write second batch with explict flush
         id_batch, embedding_batch = next(id_embedding_batch_iter)
         exporter.add_embedding(id_batch, embedding_batch, TEST_NODE_TYPE)
-        exporter.flush_embeddings()
+        exporter.flush_records()
 
         # Assertions
         written_files = sorted(
@@ -342,7 +342,7 @@ class TestEmbeddingExporter(unittest.TestCase):
 
         # Assertions
         with self.assertRaisesRegex(RetriesFailedException, "GCS upload failed"):
-            exporter.flush_embeddings()
+            exporter.flush_records()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
     @patch("time.sleep")
@@ -368,7 +368,7 @@ class TestEmbeddingExporter(unittest.TestCase):
 
         # Assertions
         with self.assertRaisesRegex(RetriesFailedException, CONNECTION_ABORTED_MESSAGE):
-            exporter.flush_embeddings()
+            exporter.flush_records()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
     @patch("gigl.src.common.utils.file_loader.GcsUtils")
@@ -379,7 +379,7 @@ class TestEmbeddingExporter(unittest.TestCase):
             "Should not be uploading if not data!"
         )
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
-        exporter.flush_embeddings()
+        exporter.flush_records()
 
     @parameterized.expand(
         [
@@ -533,7 +533,7 @@ class TestPredictionsExporter(unittest.TestCase):
         # Write second batch with explict flush
         id_batch, prediction_batch = next(id_prediction_batch_iter)
         exporter.add_prediction(id_batch, prediction_batch, TEST_NODE_TYPE)
-        exporter.flush_predictions()
+        exporter.flush_records()
 
         # Assertions
         written_files = sorted(
@@ -721,7 +721,7 @@ class TestPredictionsExporter(unittest.TestCase):
 
         # Assertions
         with self.assertRaisesRegex(RetriesFailedException, "GCS upload failed"):
-            exporter.flush_predictions()
+            exporter.flush_records()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
     @patch("time.sleep")
@@ -747,7 +747,7 @@ class TestPredictionsExporter(unittest.TestCase):
 
         # Assertions
         with self.assertRaisesRegex(RetriesFailedException, CONNECTION_ABORTED_MESSAGE):
-            exporter.flush_predictions()
+            exporter.flush_records()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
     @patch("gigl.src.common.utils.file_loader.GcsUtils")
@@ -758,7 +758,7 @@ class TestPredictionsExporter(unittest.TestCase):
             "Should not be uploading if not data!"
         )
         exporter = PredictionExporter(export_dir=gcs_base_uri)
-        exporter.flush_predictions()
+        exporter.flush_records()
 
     @parameterized.expand(
         [
