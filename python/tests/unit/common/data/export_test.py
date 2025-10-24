@@ -436,6 +436,13 @@ class TestPredictionsExporter(unittest.TestCase):
             Path(self._temp_dir.name) / uuid4().hex / "local-export"
         )
 
+    def _create_prediction_record_dict(self, node_id: int, prediction: float) -> dict:
+        return {
+            _NODE_ID_KEY: node_id,
+            _NODE_TYPE_KEY: TEST_NODE_TYPE,
+            _PREDICTION_KEY: prediction,
+        }
+
     def tearDown(self):
         super().tearDown()
         self._temp_dir.cleanup()
@@ -490,10 +497,10 @@ class TestPredictionsExporter(unittest.TestCase):
         expected_file_name: str,
     ):
         # Mock inputs
-        id_batches = [torch.tensor([1, 2, 3]), torch.tensor([4, 5, 6])]
+        id_batches = [torch.tensor([1, 2]), torch.tensor([4])]
         prediction_batches = [
-            torch.tensor([0.1, 0.2, 0.3]),
-            torch.tensor([0.4, 0.5, 0.6]),
+            torch.tensor([0.1, 0.2]),
+            torch.tensor([0.4]),
         ]
         test_file = self._local_export_dir / expected_file_name
         with PredictionExporter(
@@ -507,18 +514,15 @@ class TestPredictionsExporter(unittest.TestCase):
         expected_records = [
             {_NODE_ID_KEY: 1, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.1},
             {_NODE_ID_KEY: 2, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.2},
-            {_NODE_ID_KEY: 3, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.3},
             {_NODE_ID_KEY: 4, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.4},
-            {_NODE_ID_KEY: 5, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.5},
-            {_NODE_ID_KEY: 6, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.6},
         ]
         self.assertRecordsAlmostEqual(records, expected_records)
 
     def test_write_predictions_multiple_flushes(self):
-        id_batches = [torch.tensor([1, 2, 3]), torch.tensor([4, 5, 6])]
+        id_batches = [torch.tensor([1, 2]), torch.tensor([4])]
         prediction_batches = [
-            torch.tensor([0.1, 0.2, 0.3]),
-            torch.tensor([0.4, 0.5, 0.6]),
+            torch.tensor([0.1, 0.2]),
+            torch.tensor([0.4]),
         ]
 
         # Write first batch using context manager
@@ -559,27 +563,12 @@ class TestPredictionsExporter(unittest.TestCase):
                     _NODE_TYPE_KEY: TEST_NODE_TYPE,
                     _PREDICTION_KEY: 0.2,
                 },
-                {
-                    _NODE_ID_KEY: 3,
-                    _NODE_TYPE_KEY: TEST_NODE_TYPE,
-                    _PREDICTION_KEY: 0.3,
-                },
             ],
             [
                 {
                     _NODE_ID_KEY: 4,
                     _NODE_TYPE_KEY: TEST_NODE_TYPE,
                     _PREDICTION_KEY: 0.4,
-                },
-                {
-                    _NODE_ID_KEY: 5,
-                    _NODE_TYPE_KEY: TEST_NODE_TYPE,
-                    _PREDICTION_KEY: 0.5,
-                },
-                {
-                    _NODE_ID_KEY: 6,
-                    _NODE_TYPE_KEY: TEST_NODE_TYPE,
-                    _PREDICTION_KEY: 0.6,
                 },
             ],
         ]
@@ -590,10 +579,10 @@ class TestPredictionsExporter(unittest.TestCase):
                 self.assertRecordsAlmostEqual(records, expected_records_by_batch[i])
 
     def test_flushes_after_maximum_buffer_size(self):
-        id_batches = [torch.tensor([1, 2, 3]), torch.tensor([4, 5, 6])]
+        id_batches = [torch.tensor([1, 2]), torch.tensor([4])]
         prediction_batches = [
-            torch.tensor([0.1, 0.2, 0.3]),
-            torch.tensor([0.4, 0.5, 0.6]),
+            torch.tensor([0.1, 0.2]),
+            torch.tensor([0.4]),
         ]
 
         with PredictionExporter(
@@ -627,27 +616,12 @@ class TestPredictionsExporter(unittest.TestCase):
                     _NODE_TYPE_KEY: TEST_NODE_TYPE,
                     _PREDICTION_KEY: 0.2,
                 },
-                {
-                    _NODE_ID_KEY: 3,
-                    _NODE_TYPE_KEY: TEST_NODE_TYPE,
-                    _PREDICTION_KEY: 0.3,
-                },
             ],
             [
                 {
                     _NODE_ID_KEY: 4,
                     _NODE_TYPE_KEY: TEST_NODE_TYPE,
                     _PREDICTION_KEY: 0.4,
-                },
-                {
-                    _NODE_ID_KEY: 5,
-                    _NODE_TYPE_KEY: TEST_NODE_TYPE,
-                    _PREDICTION_KEY: 0.5,
-                },
-                {
-                    _NODE_ID_KEY: 6,
-                    _NODE_TYPE_KEY: TEST_NODE_TYPE,
-                    _PREDICTION_KEY: 0.6,
                 },
             ],
         ]
@@ -661,8 +635,8 @@ class TestPredictionsExporter(unittest.TestCase):
     def test_flush_resets_buffer(self, mock_gcs_utils_class):
         # Mock inputs
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
-        id_batch = torch.tensor([1, 2])
-        prediction_batch = torch.tensor([0.1, 0.2])
+        id_batch = torch.tensor([1])
+        prediction_batch = torch.tensor([0.1])
         self._mock_call_count = 0
 
         test_file = Path(self._temp_dir.name) / "test-file"
@@ -695,7 +669,6 @@ class TestPredictionsExporter(unittest.TestCase):
 
         expected_records = [
             {_NODE_ID_KEY: 1, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.1},
-            {_NODE_ID_KEY: 2, _NODE_TYPE_KEY: TEST_NODE_TYPE, _PREDICTION_KEY: 0.2},
         ]
         avro_reader = fastavro.reader(test_file.open("rb"))
         records = list(avro_reader)

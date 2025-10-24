@@ -421,7 +421,7 @@ def load_embeddings_to_bigquery(
     Loads multiple Avro files containing GNN embeddings from GCS into BigQuery.
 
     Note that this function will upload *all* Avro files in the GCS folder to BigQuery, recursively.
-    So if we have some nested directories, e.g.:
+    So if you specify gcs_folder to be `gs://MY BUCKET/embeddings/` and if we have some nested directories, e.g.:
 
     gs://MY BUCKET/embeddings/shard_0000.avro
     gs://MY BUCKET/embeddings/nested/shard_0001.avro
@@ -462,7 +462,7 @@ def load_predictions_to_bigquery(
     Loads multiple Avro files containing GNN predictions from GCS into BigQuery.
 
     Note that this function will upload *all* Avro files in the GCS folder to BigQuery, recursively.
-    So if we have some nested directories, e.g.:
+    So if you specify gcs_folder to be `gs://MY BUCKET/predictions/` and if we have some nested directories, e.g.:
 
     gs://MY BUCKET/predictions/shard_0000.avro
     gs://MY BUCKET/predictions/nested/shard_0001.avro
