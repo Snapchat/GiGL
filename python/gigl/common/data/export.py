@@ -1,4 +1,4 @@
-"""Utility functions for exporting embeddings to Google Cloud Storage and BigQuery.
+"""Utility functions for exporting embeddings and predictions to Google Cloud Storage and BigQuery.
 
 Note that we use avro files here since due to testing they are quicker to generate and upload
 compared to parquet files.
@@ -10,7 +10,7 @@ import io
 import os
 import time
 from pathlib import Path
-from typing import Final, Optional, Sequence
+from typing import Final, Iterable, Optional, Sequence
 
 import fastavro
 import fastavro.types
@@ -30,64 +30,83 @@ logger = Logger()
 
 # Shared key names between Avro and BigQuery schemas.
 _NODE_ID_KEY: Final[str] = "node_id"
-_EMBEDDING_TYPE_KEY: Final[str] = "node_type"
+_NODE_TYPE_KEY: Final[str] = "node_type"
 _EMBEDDING_KEY: Final[str] = "emb"
+_PREDICTION_KEY: Final[str] = "pred"
 
 # AVRO schema for embedding records.
-AVRO_SCHEMA: Final[fastavro.types.Schema] = {
+EMBEDDING_AVRO_SCHEMA: Final[fastavro.types.Schema] = {
     "type": "record",
     "name": "Embedding",
     "fields": [
         {"name": _NODE_ID_KEY, "type": "long"},
-        {"name": _EMBEDDING_TYPE_KEY, "type": "string"},
+        {"name": _NODE_TYPE_KEY, "type": "string"},
         {"name": _EMBEDDING_KEY, "type": {"type": "array", "items": "float"}},
     ],
 }
 
 # BigQuery schema for embedding records.
-BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
-    bigquery.SchemaField(_NODE_ID_KEY, "INTEGER"),
-    bigquery.SchemaField(_EMBEDDING_TYPE_KEY, "STRING"),
+EMBEDDING_BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
+    bigquery.SchemaField(_NODE_ID_KEY, "INT64"),
+    bigquery.SchemaField(_NODE_TYPE_KEY, "STRING"),
     bigquery.SchemaField(_EMBEDDING_KEY, "FLOAT64", mode="REPEATED"),
 ]
 
+PREDICTION_AVRO_SCHEMA: Final[fastavro.types.Schema] = {
+    "type": "record",
+    "name": "Prediction",
+    "fields": [
+        {"name": _NODE_ID_KEY, "type": "long"},
+        {"name": _NODE_TYPE_KEY, "type": "string"},
+        {"name": _PREDICTION_KEY, "type": "float"},
+    ],
+}
 
-class EmbeddingExporter:
+# BigQuery schema for prediction records.
+PREDICTION_BIGQUERY_SCHEMA: Final[Sequence[bigquery.SchemaField]] = [
+    bigquery.SchemaField(_NODE_ID_KEY, "INT64"),
+    bigquery.SchemaField(_NODE_TYPE_KEY, "STRING"),
+    bigquery.SchemaField(_PREDICTION_KEY, "FLOAT64"),
+]
+
+
+class GcsExporter:
     def __init__(
         self,
         export_dir: Uri,
+        avro_schema: fastavro.types.Schema,
         file_prefix: Optional[str] = None,
         min_shard_size_threshold_bytes: int = 0,
     ):
         """
-        Initializes an EmbeddingExporter instance.
+        Initializes a BaseGcsExporter instance.
 
-        Note that after every flush, either via exiting a context manager, by calling `flush_embeddings()`,
+        Note that after every flush, either via exiting a context manager, by calling `flush_records()`,
         or when the buffer reaches the `file_flush_threshold`, a new avro file will be created, and
-        subsequent calls to `add_embedding` will add to the new file. This means that after all
-        embeddings have been added the `export_dir` may look like the below:
+        subsequent calls to `add_record` will add to the new file. This means that after all
+        records have been added the `export_dir` may look like the below:
 
-        gs://my_bucket/embeddings/
+        gs://my_bucket/records/
         ├── shard_00000000.avro
         ├── shard_00000001.avro
         └── shard_00000002.avro
-
         Args:
             export_dir (Uri): URI where the Avro files will be uploaded.
                                  If a GCS URI, this should be a fully qualified GCS path,
                                  e.g., 'gs://bucket_name/path/to/'.
-                                 If a local URI (e.g. /tmp/gigl/embeddings), then the directory
-                                 will be created when EmbeddingExporter is initialized.
+                                 If a local URI (e.g. /tmp/gigl/records), then the directory
+                                 will be created when GcsExporter is initialized.
             file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
                                          the file names will be like $file_prefix_shard_00000000.avro.
             min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
-                                        The buffer will contain the entire batch of embeddings that caused it to
+                                        The buffer will contain the entire batch of records that caused it to
                                         reach the threshold, so the file sizes on GCS may be larger than this value.
                                         If set to zero, the default, then the buffer will be flushed only when
-                                        `flush_embeddings` is called or when the context manager is exited.
+                                        `flush_records` is called or when the context manager is exited.
                                         An error will be thrown if this value is negative.
-                                        Note that for the *last* shared, the buffer may be much smaller than this limit.
+                                        Note that for the *last* shard, the buffer may be much smaller than this limit.
         """
+
         if min_shard_size_threshold_bytes < 0:
             raise ValueError(
                 f"file_flush_threshold must be a non-negative integer, but got {min_shard_size_threshold_bytes}"
@@ -104,51 +123,29 @@ class EmbeddingExporter:
         self._file_utils = FileLoader()
         self._prefix = file_prefix
         self._min_shard_size_threshold_bytes = min_shard_size_threshold_bytes
+        self._avro_schema = avro_schema
 
         if isinstance(
             self._base_export_uri, LocalUri
         ) and not self._file_utils.does_uri_exist(self._base_export_uri):
             logger.info(
-                f"Creating local directory {self._base_export_uri.uri} for exporting embeddings."
+                f"Creating local directory {self._base_export_uri.uri} for exporting records."
             )
             Path(self._base_export_uri.uri).mkdir(parents=True, exist_ok=True)
 
-    def add_embedding(
+    def add_record(
         self,
-        id_batch: torch.Tensor,
-        embedding_batch: torch.Tensor,
-        embedding_type: str,
+        records: Iterable[dict],
     ):
         """
-        Adds to the in-memory buffer the integer IDs and their corresponding embeddings.
+        Adds to the in-memory buffer the records.
 
         Args:
-            id_batch (torch.Tensor): A torch.Tensor containing integer IDs.
-            embedding_batch (torch.Tensor): A torch.Tensor containing embeddings corresponding to the integer IDs in `id_batch`.
-            embedding_type (str): A tag for the type of the embeddings, e.g., 'user', 'content', etc.
+            records (Iterable[dict]): An iterable of dictionaries containing the records.
         """
+
         start = time.perf_counter()
-        # Convert torch tensors to NumPy arrays, and then to Python int(s)
-        # and Python list(s). This is faster than converting torch tensors
-        # directly to Python int(s) and Python list(s), as Numpy's implementation
-        # is more efficient.
-        ids = id_batch.numpy()
-        embeddings = embedding_batch.numpy()
-        self._num_records_written += len(ids)
-
-        batched_records = (
-            {
-                "node_id": int(node_id),
-                "node_type": embedding_type,
-                "emb": embedding.tolist(),
-            }
-            for node_id, embedding in zip(ids, embeddings)
-        )
-
-        # fastavro.writer can accept the generator directly.
-        # Doing this appends to self._buffer, so in order to *read* all data from the buffer
-        # we *must* call self._buffer.seek(0) before reading.
-        fastavro.writer(self._buffer, AVRO_SCHEMA, batched_records)
+        fastavro.writer(self._buffer, self._avro_schema, records)
         self._write_time += time.perf_counter() - start
 
         if (
@@ -158,7 +155,7 @@ class EmbeddingExporter:
             logger.info(
                 f"Flushing buffer due to the buffer size ({self._buffer.tell():,} bytes) exceeding the threshold ({self._min_shard_size_threshold_bytes:,} bytes)."
             )
-            self.flush_embeddings()
+            self.flush_records()
 
     @retry(
         exception_to_check=(GoogleCloudError, requests.exceptions.RequestException),
@@ -201,13 +198,13 @@ class EmbeddingExporter:
         self._num_records_written = 0
         self._write_time = 0.0
 
-    def flush_embeddings(self):
+    def flush_records(self):
         """Flushes the in-memory buffer.
 
         After this method is called, the buffer is reset to an empty state.
         """
         if self._buffer.tell() == 0:
-            logger.info("No embeddings to flush, will skip upload.")
+            logger.info("No records to flush, will skip upload.")
             return
         self._flush()
 
@@ -221,34 +218,155 @@ class EmbeddingExporter:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.flush_embeddings()
+        self.flush_records()
         self._in_context = False
 
 
+class EmbeddingExporter(GcsExporter):
+    def __init__(
+        self,
+        export_dir: Uri,
+        file_prefix: Optional[str] = None,
+        min_shard_size_threshold_bytes: int = 0,
+    ):
+        """
+        Initializes an EmbeddingExporter instance, which will write embeddings to gcs with an embedding avro schema for
+        writing an array of floats per record.
+
+        Args:
+            export_dir (Uri): URI where the Avro files will be uploaded.
+            file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
+            min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+        """
+        super().__init__(
+            export_dir,
+            EMBEDDING_AVRO_SCHEMA,
+            file_prefix,
+            min_shard_size_threshold_bytes,
+        )
+
+    def add_embedding(
+        self,
+        id_batch: torch.Tensor,
+        embedding_batch: torch.Tensor,
+        embedding_type: str,
+    ):
+        """
+        Adds to the in-memory buffer the integer IDs and their corresponding embeddings.
+
+        Args:
+            id_batch (torch.Tensor): A torch.Tensor containing integer IDs.
+            embedding_batch (torch.Tensor): A torch.Tensor containing embeddings corresponding to the integer IDs in `id_batch`.
+            embedding_type (str): A tag for the type of the embeddings, e.g., 'user', 'content', etc.
+        """
+        # Convert torch tensors to NumPy arrays, and then to Python int(s)
+        # and Python list(s). This is faster than converting torch tensors
+        # directly to Python int(s) and Python list(s), as Numpy's implementation
+        # is more efficient.
+        ids = id_batch.numpy()
+        embeddings = embedding_batch.numpy()
+
+        self._num_records_written += len(ids)
+
+        batched_records = (
+            {
+                _NODE_ID_KEY: int(node_id),
+                _NODE_TYPE_KEY: embedding_type,
+                _EMBEDDING_KEY: embedding.tolist(),
+            }
+            for node_id, embedding in zip(ids, embeddings)
+        )
+
+        self.add_record(batched_records)
+
+    def flush_embeddings(self):
+        """
+        NOTE: This method is deprecated, and the `flush_records` method should be used instead.
+        This method will be removed in a future version.
+        """
+        logger.warning(
+            "flush_embeddings() is deprecated, and the `flush_records` method should be used instead. This method will be removed in a future version."
+        )
+        self.flush_records()
+
+
+class PredictionExporter(GcsExporter):
+    def __init__(
+        self,
+        export_dir: Uri,
+        file_prefix: Optional[str] = None,
+        min_shard_size_threshold_bytes: int = 0,
+    ):
+        """
+        Initializes a PredictionExporter instance, which will write predictions to gcs with a prediction avro schema for
+        writing a single float per record.
+
+        Args:
+            export_dir (Uri): URI where the Avro files will be uploaded.
+            file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
+            min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+        """
+
+        super().__init__(
+            export_dir,
+            PREDICTION_AVRO_SCHEMA,
+            file_prefix,
+            min_shard_size_threshold_bytes,
+        )
+
+    def add_prediction(
+        self,
+        id_batch: torch.Tensor,
+        prediction_batch: torch.Tensor,
+        prediction_type: str,
+    ):
+        """
+        Adds to the in-memory buffer the integer IDs and their corresponding predictions.
+
+        Args:
+            id_batch (torch.Tensor): A torch.Tensor containing integer IDs.
+            prediction_batch (torch.Tensor): A torch.Tensor containing predictions corresponding to the integer IDs in `id_batch`.
+            prediction_type (str): A tag for the type of the predictions, e.g., 'user', 'content', etc.
+        """
+        # Convert torch tensors to NumPy arrays, and then to Python int(s)
+        # and Python list(s). This is faster than converting torch tensors
+        # directly to Python int(s) and Python list(s), as Numpy's implementation
+        # is more efficient.
+        ids = id_batch.numpy()
+        predictions = prediction_batch.numpy()
+
+        self._num_records_written += len(ids)
+
+        batched_records = (
+            {
+                _NODE_ID_KEY: int(node_id),
+                _NODE_TYPE_KEY: prediction_type,
+                _PREDICTION_KEY: float(prediction),
+            }
+            for node_id, prediction in zip(ids, predictions)
+        )
+
+        self.add_record(batched_records)
+
+
 # TODO(kmonte): We should migrate this over to `BqUtils.load_files_to_bq` once that is implemented.
-def load_embeddings_to_bigquery(
+def _load_records_to_bigquery(
     gcs_folder: GcsUri,
     project_id: str,
     dataset_id: str,
     table_id: str,
+    schema: Sequence[bigquery.SchemaField],
     should_run_async: bool = False,
 ) -> LoadJob:
     """
-    Loads multiple Avro files containing GNN embeddings from GCS into BigQuery.
-
-    Note that this function will upload *all* Avro files in the GCS folder to BigQuery, recursively.
-    So if we have some nested directories, e.g.:
-
-    gs://MY BUCKET/embeddings/shard_0000.avro
-    gs://MY BUCKET/embeddings/nested/shard_0001.avro
-
-    Both files will be uploaded to BigQuery.
+    Loads multiple Avro files containing GNN records from GCS into BigQuery.
 
     Args:
-        gcs_folder (GcsUri): The GCS folder containing the Avro files with embeddings.
+        gcs_folder (GcsUri): The GCS folder containing the Avro files with records.
         project_id (str): The GCP project ID.
         dataset_id (str): The BigQuery dataset ID.
         table_id (str): The BigQuery table ID.
+        schema (Sequence[bigquery.SchemaField]): The BigQuery schema for the records.
         should_run_async (bool): Whether loading to bigquery step should happen asynchronously. Defaults to False.
 
     Returns:
@@ -258,7 +376,7 @@ def load_embeddings_to_bigquery(
         `should_run_asnyc=True`.
     """
     start = time.perf_counter()
-    logger.info(f"Loading embeddings from {gcs_folder} to BigQuery.")
+    logger.info(f"Loading records from {gcs_folder} to BigQuery.")
     # Initialize the BigQuery client
     bigquery_client = bigquery.Client(project=project_id)
 
@@ -270,7 +388,7 @@ def load_embeddings_to_bigquery(
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.AVRO,
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,  # Use WRITE_APPEND to append data
-        schema=BIGQUERY_SCHEMA,
+        schema=schema,
     )
 
     load_job = bigquery_client.load_table_from_uri(
@@ -290,3 +408,85 @@ def load_embeddings_to_bigquery(
         )
 
     return load_job
+
+
+def load_embeddings_to_bigquery(
+    gcs_folder: GcsUri,
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    should_run_async: bool = False,
+) -> LoadJob:
+    """
+    Loads multiple Avro files containing GNN embeddings from GCS into BigQuery.
+
+    Note that this function will upload *all* Avro files in the GCS folder to BigQuery, recursively.
+    So if you specify gcs_folder to be `gs://MY BUCKET/embeddings/` and if we have some nested directories, e.g.:
+
+    gs://MY BUCKET/embeddings/shard_0000.avro
+    gs://MY BUCKET/embeddings/nested/shard_0001.avro
+
+    Both files will be uploaded to BigQuery.
+
+    Args:
+        gcs_folder (GcsUri): The GCS folder containing the Avro files with embeddings.
+        project_id (str): The GCP project ID.
+        dataset_id (str): The BigQuery dataset ID.
+        table_id (str): The BigQuery table ID.
+        should_run_async (bool): Whether loading to bigquery step should happen asynchronously. Defaults to False.
+
+    Returns:
+        LoadJob: A BigQuery LoadJob object representing the load operation, which allows
+        user to monitor and retrieve details about the job status and result. The returned job will be done if
+        `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
+        `should_run_asnyc=True`.
+    """
+    return _load_records_to_bigquery(
+        gcs_folder,
+        project_id,
+        dataset_id,
+        table_id,
+        EMBEDDING_BIGQUERY_SCHEMA,
+        should_run_async,
+    )
+
+
+def load_predictions_to_bigquery(
+    gcs_folder: GcsUri,
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    should_run_async: bool = False,
+) -> LoadJob:
+    """
+    Loads multiple Avro files containing GNN predictions from GCS into BigQuery.
+
+    Note that this function will upload *all* Avro files in the GCS folder to BigQuery, recursively.
+    So if you specify gcs_folder to be `gs://MY BUCKET/predictions/` and if we have some nested directories, e.g.:
+
+    gs://MY BUCKET/predictions/shard_0000.avro
+    gs://MY BUCKET/predictions/nested/shard_0001.avro
+
+    Both files will be uploaded to BigQuery.
+
+    Args:
+        gcs_folder (GcsUri): The GCS folder containing the Avro files with predictions.
+        project_id (str): The GCP project ID.
+        dataset_id (str): The BigQuery dataset ID.
+        table_id (str): The BigQuery table ID.
+        should_run_async (bool): Whether loading to bigquery step should happen asynchronously. Defaults to False.
+
+    Returns:
+        LoadJob: A BigQuery LoadJob object representing the load operation, which allows
+        user to monitor and retrieve details about the job status and result. The returned job will be done if
+        `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
+        `should_run_asnyc=True`.
+    """
+    return _load_records_to_bigquery(
+        gcs_folder,
+        project_id,
+        dataset_id,
+        table_id,
+        PREDICTION_BIGQUERY_SCHEMA,
+        should_run_async,
+    )
