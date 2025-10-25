@@ -24,15 +24,12 @@ frozen config generated from the `config_populator` component after the run has 
 
 from __future__ import annotations
 
-
 import argparse
 import statistics
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence
-from typing import Union
-
+from typing import Literal, Optional, Sequence, Union
 
 import torch
 import torch.distributed
@@ -40,12 +37,10 @@ import torch.multiprocessing as mp
 from torch import nn
 from torch.optim import AdamW
 from torch_geometric.data import Data
+from torchrec.distributed.embedding_types import EmbeddingComputeKernel
 
-
-# --- Replace this import with the path where your LightGCN class lives ---
-from gigl.module.models import LinkPredictionGNN
-from gigl.module.models import LightGCN
-
+# TorchRec / DMP imports
+from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
 
 import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
@@ -58,42 +53,36 @@ from gigl.distributed import (
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_available_device
+
+# --- Replace this import with the path where your LightGCN class lives ---
+from gigl.module.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.types.graph import to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
 from gigl.utils.sampling import parse_fanout
 
-
-# TorchRec / DMP imports
-from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
-from torchrec.distributed.model_parallel import (
-    DistributedModelParallel as DMP,
-)
-from torchrec.distributed.planner import EmbeddingShardingPlanner, Topology
-from torchrec.distributed.types import ParameterConstraints, ShardingEnv
-from torchrec.distributed.embedding_types import EmbeddingComputeKernel
-
-
 logger = Logger()
+
 
 @dataclass
 class DMPConfig:
     device: torch.device
     world_size: int
     local_world_size: int
-    pg: torch.distributed.ProcessGroup
-    compute_device: str = "cuda" # or "cpu"
+    pg: Optional[torch.distributed.ProcessGroup] = None
+    compute_device: str = "cuda"  # or "cpu"
     prefer_sharding_types: Optional[Sequence[str]] = ("table_wise", "row_wise")
     compute_kernel: EmbeddingComputeKernel = EmbeddingComputeKernel.FUSED
 
-def wrap_with_dmp(model: nn.Module, cfg: DMPConfig) -> Union[tuple[nn.Module, object], nn.Module]:
+
+def wrap_with_dmp(
+    model: nn.Module, cfg: DMPConfig
+) -> Union[tuple[nn.Module, object], nn.Module]:
     """Wraps `model` with TorchRec DMP (shards EBCs, DP for the rest). Returns (dmp_model, plan)."""
     # model.to(cfg.device)
 
-
     # sharders = [EmbeddingBagCollectionSharder()]
-
 
     # constraints = None
     # if cfg.prefer_sharding_types:
@@ -104,7 +93,6 @@ def wrap_with_dmp(model: nn.Module, cfg: DMPConfig) -> Union[tuple[nn.Module, ob
     #         )
     #     }
 
-
     # topology = Topology(
     #     world_size=cfg.world_size,
     #     local_world_size=cfg.local_world_size,
@@ -113,7 +101,6 @@ def wrap_with_dmp(model: nn.Module, cfg: DMPConfig) -> Union[tuple[nn.Module, ob
     # planner = EmbeddingShardingPlanner(topology=topology, constraints=constraints)
     # env = ShardingEnv.from_process_group(cfg.pg)
     # plan = planner.collective_plan(module=model, sharders=sharders, pg=cfg.pg)
-
 
     # dmp_model = DMP(
     #     module=model,
@@ -126,13 +113,13 @@ def wrap_with_dmp(model: nn.Module, cfg: DMPConfig) -> Union[tuple[nn.Module, ob
 
     dmp_model = DMP(module=model, device=cfg.device)
 
-
     return dmp_model
 
 
 def unwrap_from_dmp(model: nn.Module) -> nn.Module:
     """Return the underlying nn.Module if wrapped by DMP, otherwise the module itself."""
     return getattr(model, "module", model)
+
 
 def _sync_metric_across_processes(metric: torch.Tensor) -> float:
     """
@@ -147,6 +134,7 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
     loss_tensor = metric.detach().clone()
     torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
     return loss_tensor.item() / torch.distributed.get_world_size()
+
 
 def _setup_dataloaders(
     dataset: DistDataset,
@@ -229,10 +217,11 @@ def _setup_dataloaders(
 
     return main_loader, random_negative_loader
 
+
 def bpr_loss(
-    query_emb: torch.Tensor, # [M, D]
-    pos_emb: torch.Tensor, # [M, D]
-    neg_emb: torch.Tensor, # [M, D] or [M, K, D]
+    query_emb: torch.Tensor,  # [M, D]
+    pos_emb: torch.Tensor,  # [M, D]
+    neg_emb: torch.Tensor,  # [M, D] or [M, K, D]
     l2_lambda: float = 0.0,
     l2_params: Optional[Sequence[torch.Tensor]] = None,
 ) -> torch.Tensor:
@@ -244,26 +233,24 @@ def bpr_loss(
     # s_pos: [M]
     s_pos = (query_emb * pos_emb).sum(dim=-1)
 
-
-    if neg_emb.dim() == 2: # [M, D]
+    if neg_emb.dim() == 2:  # [M, D]
         s_neg = (query_emb * neg_emb).sum(dim=-1)
         loss = -torch.nn.functional.logsigmoid(s_pos - s_neg)
-    elif neg_emb.dim() == 3: # [M, K, D]
+    elif neg_emb.dim() == 3:  # [M, K, D]
         # Broadcast query: [M, 1, D]
-        s_neg = (query_emb.unsqueeze(1) * neg_emb).sum(dim=-1) # [M, K]
+        s_neg = (query_emb.unsqueeze(1) * neg_emb).sum(dim=-1)  # [M, K]
         loss = -torch.nn.functional.logsigmoid(s_pos.unsqueeze(1) - s_neg).mean(dim=1)
     else:
         raise ValueError("neg_emb must be [M, D] or [M, K, D]")
 
-
     loss = loss.mean()
-
 
     if l2_lambda > 0.0 and l2_params:
         l2 = sum(p.pow(2).sum() for p in l2_params)
         loss = loss + l2_lambda * l2
 
     return loss
+
 
 def _compute_bpr_batch(
     model: nn.Module,
@@ -282,25 +269,23 @@ def _compute_bpr_batch(
     """
 
     # Encode
-    main_emb = model(data=main_data, device=device) # [N_main, D]
-    rand_emb = model(data=random_negative_data, device=device) # [N_rand, D]
-
+    main_emb = model(data=main_data, device=device)  # [N_main, D]
+    rand_emb = model(data=random_negative_data, device=device)  # [N_rand, D]
 
     # Query indices and positives from the main batch
     B = int(main_data.batch_size)
-    query_idx = torch.arange(B, device=device) # [B]
+    query_idx = torch.arange(B, device=device)  # [B]
 
-
-    pos_idx = torch.cat(list(main_data.y_positive.values())).to(device) # [M]
+    pos_idx = torch.cat(list(main_data.y_positive.values())).to(device)  # [M]
     # Repeat queries to align with positives
     rep_query_idx = query_idx.repeat_interleave(
         torch.tensor([len(v) for v in main_data.y_positive.values()], device=device)
-    ) # [M]
+    )  # [M]
 
     # Optional hard negatives from the main batch
     if use_hard_negs and hasattr(main_data, "y_negative"):
         hard_neg_idx = torch.cat(list(main_data.y_negative.values())).to(device)
-        hard_neg_emb = main_emb[hard_neg_idx] # [H, D]
+        hard_neg_emb = main_emb[hard_neg_idx]  # [H, D]
     else:
         hard_neg_idx = torch.empty(0, dtype=torch.long, device=device)
         hard_neg_emb = torch.empty(0, main_emb.size(1), device=device)
@@ -317,17 +302,14 @@ def _compute_bpr_batch(
     else:
         and_pool = rand_emb[:total_needed]
 
-
     if num_random_negs_per_pos == 1:
-        rand_neg_emb = rand_pool # [M, D]
+        rand_neg_emb = rand_pool  # [M, D]
     else:
-        rand_neg_emb = rand_pool.view(M, num_random_negs_per_pos, D) # [M, K, D]
-
+        rand_neg_emb = rand_pool.view(M, num_random_negs_per_pos, D)  # [M, K, D]
 
     # Positive and query embeddings
-    q = main_emb[rep_query_idx] # [M, D]
-    pos = main_emb[pos_idx] # [M, D]
-
+    q = main_emb[rep_query_idx]  # [M, D]
+    pos = main_emb[pos_idx]  # [M, D]
 
     # If we have hard negatives, merge with random negatives by stacking along K
     if hard_neg_emb.numel() > 0:
@@ -335,102 +317,16 @@ def _compute_bpr_batch(
         if hard_neg_emb.size(0) < M:
             ht = (M + hard_neg_emb.size(0) - 1) // hard_neg_emb.size(0)
             hard_neg_emb = hard_neg_emb.repeat(ht, 1)[:M]
-        if rand_neg_emb.dim() == 2: # [M, D]
-            neg = torch.stack([rand_neg_emb, hard_neg_emb], dim=1) # [M, 2, D]
-        else: # [M, K, D]
-            neg = torch.cat([rand_neg_emb, hard_neg_emb.unsqueeze(1)], dim=1) # [M, K+1, D]
+        if rand_neg_emb.dim() == 2:  # [M, D]
+            neg = torch.stack([rand_neg_emb, hard_neg_emb], dim=1)  # [M, 2, D]
+        else:  # [M, K, D]
+            neg = torch.cat(
+                [rand_neg_emb, hard_neg_emb.unsqueeze(1)], dim=1
+            )  # [M, K+1, D]
     else:
-        neg = rand_neg_emb # [M, D] or [M, K, D]
-
+        neg = rand_neg_emb  # [M, D] or [M, K, D]
 
     loss = bpr_loss(q, pos, neg, l2_lambda=l2_lambda, l2_params=None)
-    return loss
-
-def _compute_loss(
-    model: LinkPredictionGNN,
-    main_data: Data,
-    random_negative_data: Data,
-    loss_fn: RetrievalLoss,
-    device: torch.device,
-) -> torch.Tensor:
-    """
-    With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
-    Args:
-        model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
-        main_data (Data): The batch of data containing query nodes, positive nodes, and hard negative nodes
-        random_negative_data (Data): The batch of data containing random negative nodes
-        loss_fn (RetrievalLoss): Initialized class to use for loss calculation
-        device (torch.device): Device for training or validation
-    Returns:
-        torch.Tensor: Final loss for the current batch on the current process
-    """
-    # Forward pass through encoder
-    main_embeddings = model(data=main_data, device=device)
-    random_negative_embeddings = model(data=random_negative_data, device=device)
-
-    # Extracting local query, random negative, positive, hard_negative, and random_negative indices.
-    # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
-    # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local index for global id `50`. Note that each global id in data.node is unique.
-    query_node_idx: torch.Tensor = torch.arange(main_data.batch_size).to(device)
-    random_negative_batch_size = random_negative_data.batch_size
-
-    # main_data.y_positive is a dict[query_node_local_index: int, labeled_node_local_indices: torch.Tensor]
-    positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-        device
-    )
-    # We also extract a repeated query node index tensor which upsamples each query node based on the number of positives it has
-    repeated_query_node_idx = query_node_idx.repeat_interleave(
-        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-    )
-    if hasattr(main_data, "y_negative"):
-        hard_negative_idx: torch.Tensor = torch.cat(
-            list(main_data.y_negative.values())
-        ).to(device)
-    else:
-        hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
-
-    # Use local IDs to get the corresponding embeddings in the tensors
-
-    repeated_query_embeddings = main_embeddings[repeated_query_node_idx]
-    positive_node_embeddings = main_embeddings[positive_idx]
-    hard_negative_embeddings = main_embeddings[hard_negative_idx]
-    random_negative_embeddings = random_negative_embeddings[:random_negative_batch_size]
-
-    # Decode the query embeddings and the candidate embeddings to get a tensor of scores of shape [num_positives, num_positives + num_hard_negatives + num_random_negatives]
-
-    repeated_candidate_scores = model.decode(
-        query_embeddings=repeated_query_embeddings,
-        candidate_embeddings=torch.cat(
-            [
-                positive_node_embeddings,
-                hard_negative_embeddings,
-                random_negative_embeddings,
-            ],
-            dim=0,
-        ),
-    )
-
-    # Compute the global candidate ids and concatentate into a single tensor
-
-    global_candidate_ids = torch.cat(
-        (
-            main_data.node[positive_idx],
-            main_data.node[hard_negative_idx],
-            random_negative_data.node[:random_negative_batch_size],
-        )
-    )
-
-    global_repeated_query_ids = main_data.node[repeated_query_node_idx]
-
-    # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
-
-    loss = loss_fn(
-        repeated_candidate_scores=repeated_candidate_scores,
-        candidate_ids=global_candidate_ids,
-        repeated_query_ids=global_repeated_query_ids,
-        device=device,
-    )
-
     return loss
 
 def _training_process(
@@ -521,7 +417,6 @@ def _training_process(
     #     remove_accidental_hits=True,
     # )
 
-
     # Dataloaders
     if not should_skip_training:
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
@@ -579,7 +474,9 @@ def _training_process(
             compute_kernel=EmbeddingComputeKernel.FUSED,
         ),
     )
-    optimizer = AdamW(params=dmp_model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer = AdamW(
+        params=dmp_model.parameters(), lr=learning_rate, weight_decay=weight_decay
+    )
 
     logger.info(
         f"Model initialized on rank {rank} training device {device}\n{dmp_model}"
@@ -690,9 +587,7 @@ def _training_process(
     else:  # should_skip_training is True, meaning we should only run testing
         state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
         base_model.load_state_dict(state_dict)
-        logger.info(
-            f"Model loaded on rank {rank}"
-        )
+        logger.info(f"Model loaded on rank {rank}")
 
     logger.info(f"---Rank {rank} started testing")
     testing_start_time = time.time()
@@ -745,14 +640,14 @@ def _training_process(
 
 @torch.inference_mode()
 def _run_validation_loops(
-    model: LinkPredictionGNN,
+    model: nn.Module,
     main_loader: Iterator[Data],
     random_negative_loader: Iterator[Data],
     device: torch.device,
     log_every_n_batch: int,
     num_batches: Optional[int] = None,
     num_random_negs_per_pos: int = 1,
-    l2_lambda: float = 0.0
+    l2_lambda: float = 0.0,
 ) -> None:
     """
     Runs validation using the provided models and dataloaders.
@@ -820,9 +715,7 @@ def _run_validation_loops(
     else:
         local_avg = float("nan")
 
-    logger.info(
-        f"rank={rank} finished validation loop, local loss: {local_avg=:.6f}"
-    )
+    logger.info(f"rank={rank} finished validation loop, local loss: {local_avg=:.6f}")
     device_for_tensor = device if device.type == "cuda" else torch.device("cpu")
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg, device=device_for_tensor)
