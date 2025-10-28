@@ -54,7 +54,6 @@ from gigl.distributed import (
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_available_device
 
-# --- Replace this import with the path where your LightGCN class lives ---
 from gigl.module.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
