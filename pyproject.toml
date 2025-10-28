@@ -1,0 +1,209 @@
+[project]
+name = "gigl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available for python 3.13
+
+dependencies = [
+  "argo-workflows",
+  "chardet",
+  "google-cloud-aiplatform~=1.44.0",
+  "google-cloud-dataproc",
+  "google-cloud-logging",
+  "google-cloud-pipeline-components",
+  "google-cloud-storage",
+  # ipython and ipykernel are required for us to run jupyter notebooks as a part of our test suite.
+  # See https://stackoverflow.com/questions/69759351/error-jupyter-client-kernelspec-nosuchkernel-no-such-kernel-named-python3-occu
+  "ipykernel",
+  "ipython",
+  "kfp>=2.0.0",
+  "matplotlib",
+  "mmh3",
+  "msgpack",
+  "nbconvert",
+  "nbformat",
+  "numpy",
+  "omegaconf>=2.3.0,<3.0.0",
+  "pandas",
+  "protobuf",
+  "python-dotenv",
+  "pyyaml",
+  "scikit-learn",
+  # When updating to a new tensorflow version, please ensure that the version changes align with
+  # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
+  "tensorflow==2.17",
+]
+
+
+[project.optional-dependencies]
+transform = [
+  "apache-beam[gcp]==2.56.0",
+  "pyarrow==10.0.1",
+  # Tensorflow transform packages.
+  # There is no official MAC support for these packages - thus we ignore them on darwin machines.
+  # These packages are also required to be in sync.
+  # See the following for the compatibility matrix: https://pypi.org/project/tensorflow-transform/
+  "tensorflow-transform==1.17.0 ; sys_platform != 'darwin'",
+  "tensorflow-metadata==1.17.1 ; sys_platform != 'darwin'",
+  "tfx-bsl==1.17.1 ; sys_platform != 'darwin'",
+]
+pyg27-torch28-cpu = [
+  "torch==2.8",
+  # Oct 24, 25 - 2.7 is latest version and torch ver support is inconsistant accross minor version changes
+  "torch_geometric==2.7",
+  "torchrec ; sys_platform != 'darwin'",
+  "fbgemm-gpu; sys_platform != 'darwin'",
+  "pyg_lib; sys_platform != 'darwin'",
+  "torch_scatter; sys_platform != 'darwin'",
+  "torch_sparse; sys_platform != 'darwin'",
+  "torch_cluster; sys_platform != 'darwin'",
+  "torch_spline_conv; sys_platform != 'darwin'",
+]
+pyg27-torch28-cu128 = [
+  "torch==2.8",
+  "torch_geometric==2.7",
+  "torchrec ; sys_platform != 'darwin'",
+  "fbgemm-gpu; sys_platform != 'darwin'",
+  "pyg_lib; sys_platform != 'darwin'",
+  "torch_scatter; sys_platform != 'darwin'",
+  "torch_sparse; sys_platform != 'darwin'",
+  "torch_cluster; sys_platform != 'darwin'",
+  "torch_spline_conv; sys_platform != 'darwin'",
+]
+experimental = [
+  "hydra-core==1.3.2",
+]
+
+# Declares what deps are conflicting so they are not resolved together.
+# In the case below, we cannot have both pyg27-torch28-cpu and pyg27-torch28-cu128
+# installed at the same time. Thus, they are resolved separately.
+[tool.uv]
+conflicts = [
+  [{ extra = "pyg27-torch28-cpu" },{ extra = "pyg27-torch28-cu128" }],
+]
+
+[dependency-groups]
+dev = [
+  {include-group = "docs"},
+  {include-group = "typing-stubs"},
+  {include-group = "test"},
+  {include-group = "lint"},
+  "pre-commit==3.3.2",
+]
+docs = [
+  "sphinx==7.4.7",
+  "sphinx-rtd-theme==2.0.0",
+  "pydata-sphinx-theme==0.16.1",
+  "myst-parser==2.0.0",
+  "nbsphinx==0.9.3",
+  "sphinx-hoverxref==1.3.0",
+  "mistune>=2.0.3",
+  "nbconvert>=7.16.2",
+  "sphinx-tabs==3.4.5",
+  "sphinx-design==0.6.0",
+  "sphinx-autodoc-typehints==2.3.0",
+  "sphinx-autoapi==3.6.0",
+  "myst_nb==1.2.0",
+  "sphinx-copybutton==0.5.2"
+]
+typing-stubs = [
+  "types-psutil==7.0.0.20250401",
+  "types-PyYAML~=6.0.12",
+  "types-requests==2.31.0.6",
+  "types-tqdm==4.67.0.20250513",
+  "pandas-stubs==2.2.2.240807",
+]
+test = [
+  "parameterized==0.9.0",
+]
+lint = [
+  "autoflake==2.3.1",
+  "black~=23.1.0",
+  "isort~=5.12.0",
+  "mdformat==0.7.22",
+  "mdformat_tables==1.0.0",
+  "mypy==1.8.0",
+  "mypy-protobuf==3.3.0",
+  "mypy-extensions",
+]
+
+
+
+# =============================== PyTorch Indexes =============================
+[[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+# Setting this to true prevents packages from being installed from this index
+# unless explicitlypinned to it in [tool.uv.sources]
+explicit = true
+[[tool.uv.index]]
+name = "torch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# =============================== PyG Indexes ==================================
+[[tool.uv.index]]
+name = "pyg-torch28-cpu"
+url = "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
+explicit = true
+# By default, [[tool.uv.index]] entries are assumed to be PyPI-style registries
+# that implement the PEP 503. However, pyg is hosted in a "flat" index, which is
+# just an HTML page that contain flat lists of wheels and source distributions.
+format = "flat"
+
+[[tool.uv.index]]
+name = "pyg-torch28-cu128"
+url = "https://data.pyg.org/whl/torch-2.8.0+cu128.html"
+explicit = true
+format = "flat"
+
+# ========== Mapping individual packages to their appropriate index =============
+[tool.uv.sources]
+# ============= PyTorch hosted Package Index Mappings
+torch = [
+  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+]
+torchrec = [
+  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+]
+fbgemm-gpu = [
+  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+]
+
+# ============= PyG hosted Package Index Mappings
+# PyG wheels are built for specific versions of torch @ a time. Thus the packages
+# are mapped to the appropriate PyG index based on the torch version.
+pyg_lib = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_scatter = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_sparse = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_cluster = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_spline_conv = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+
+# ===================== Setuptools Configuration =================================
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools.packages.find]
+where = ["python"]  # list of folders that contain the packages
+include = ["gigl*", "snapchat*"]  # Include only packages that match the specified patterns

@@ -53,8 +53,9 @@ get_ver_hash:
 	$(eval GIT_COMMIT=$(shell git log -1 --pretty=format:"%H"))
 
 initialize_environment:
-	conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION} pip=${PIP_VERSION} pip-tools=${PIP_TOOLS_VERSION}
-	@echo "If conda environment was successfully installed, ensure to activate it and run \`make install_dev_deps\` or \`make install_deps\` to complete setup"
+	conda create -y --override-channels --channel conda-forge --name gigl_py313 python=3.13
+	# conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION}
+	# @echo "If conda environment was successfully installed, ensure to activate it and run \`make install_dev_deps\` or \`make install_deps\` to complete setup"
 
 clean_environment:
 	if [ "${CONDA_DEFAULT_ENV}" == "${CONDA_ENV_NAME}" ]; then \
