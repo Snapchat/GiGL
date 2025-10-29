@@ -396,8 +396,8 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def get_training_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
+        graph_backend: GraphBackend = GraphBackend.PYG,
     ) -> Dataloaders:
         data_loader_types = [
             DataloaderTypes.train_main,
@@ -425,8 +425,8 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def get_test_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
+        graph_backend: GraphBackend = GraphBackend.PYG,
     ) -> Dataloaders:
         data_loader_types = [
             DataloaderTypes.test_main,

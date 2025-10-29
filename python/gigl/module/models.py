@@ -155,6 +155,8 @@ class LightGCN(nn.Module):
             Must have length K+1. If None, uses uniform weights 1/(K+1). Default: None.
     """
 
+    _layer_weights: torch.Tensor
+
     def __init__(
         self,
         node_type_to_num_nodes: Union[int, dict[NodeType, int]],

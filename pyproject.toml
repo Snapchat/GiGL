@@ -32,7 +32,7 @@ dependencies = [
   "scikit-learn",
   # When updating to a new tensorflow version, please ensure that the version changes align with
   # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
-  "tensorflow==2.17",
+  "tensorflow~=2.16",
 ]
 
 
@@ -44,9 +44,11 @@ transform = [
   # There is no official MAC support for these packages - thus we ignore them on darwin machines.
   # These packages are also required to be in sync.
   # See the following for the compatibility matrix: https://pypi.org/project/tensorflow-transform/
-  "tensorflow-transform==1.17.0 ; sys_platform != 'darwin'",
-  "tensorflow-metadata==1.17.1 ; sys_platform != 'darwin'",
-  "tfx-bsl==1.17.1 ; sys_platform != 'darwin'",
+  "tensorflow-transform==1.16.0 ; sys_platform != 'darwin'",
+  "tensorflow-metadata==1.16.1 ; sys_platform != 'darwin'",
+  # Oct 28, 2025 - Latest ver tfx-bsl==1.17.1 requires latest version of Linux distros using glibc 2.39+
+  # i.e. Ubuntu 24.04. Currently, not compatible with our docker images.
+  "tfx-bsl==1.16.1 ; sys_platform != 'darwin'",
 ]
 pyg27-torch28-cpu = [
   "torch==2.8",
@@ -61,8 +63,8 @@ pyg27-torch28-cpu = [
   "torch_spline_conv; sys_platform != 'darwin'",
 ]
 pyg27-torch28-cu128 = [
-  "torch==2.8",
-  "torch_geometric==2.7",
+  "torch==2.8 ; sys_platform != 'darwin'",
+  "torch_geometric==2.7 ; sys_platform != 'darwin'",
   "torchrec ; sys_platform != 'darwin'",
   "fbgemm-gpu; sys_platform != 'darwin'",
   "pyg_lib; sys_platform != 'darwin'",
@@ -81,6 +83,10 @@ experimental = [
 [tool.uv]
 conflicts = [
   [{ extra = "pyg27-torch28-cpu" },{ extra = "pyg27-torch28-cu128" }],
+]
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [dependency-groups]
@@ -173,7 +179,6 @@ fbgemm-gpu = [
   { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
   { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
 ]
-
 # ============= PyG hosted Package Index Mappings
 # PyG wheels are built for specific versions of torch @ a time. Thus the packages
 # are mapped to the appropriate PyG index based on the torch version.
@@ -198,12 +203,22 @@ torch_spline_conv = [
   { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
 ]
 
-# ===================== Setuptools Configuration =================================
+
+
+# ===================== Build/Project Configurations ===========================
 [build-system]
 requires      = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-
 [tool.setuptools.packages.find]
 where = ["python"]  # list of folders that contain the packages
 include = ["gigl*", "snapchat*"]  # Include only packages that match the specified patterns
+
+[project.urls]
+Homepage = "https://github.com/snapchat/gigl"
+
+[project.scripts]
+gigl-post-install = "gigl.scripts.post_install:main"
+
+[tool.setuptools.package-data]
+"gigl.scripts" = ["*.sh"]

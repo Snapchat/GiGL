@@ -144,8 +144,8 @@ def get_internal_ip_from_node(
         # Other nodes will receive the master's IP via broadcast
         ip_list = [None]
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.distributed.broadcast_object_list(object_list=ip_list, src=node_rank, device=device)
     node_ip = ip_list[0]
     logger.info(f"Rank {rank} received master internal IP: {node_ip}")
     assert node_ip is not None, "Could not retrieve master node's internal IP"

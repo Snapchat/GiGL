@@ -149,7 +149,8 @@ class DCNv2(nn.Module):
 
     def reset_parameters(self):
         for layer in self._layers:
-            layer.reset_parameters()
+            if (hasattr(layer, "reset_parameters") and callable(layer.reset_parameters)):
+                layer.reset_parameters()
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(in_dim={self._in_dim}, num_layers={self._num_layers}, projection_dim={self._projection_dim}, diag_scale={self._diag_scale}, use_bias={self._use_bias})"

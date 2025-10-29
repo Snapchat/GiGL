@@ -4,8 +4,13 @@ requires-python = "==3.11.*"
 resolution-markers = [
     "extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128'",
     "sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra != 'extra-4-gigl-pyg27-torch28-cu128'",
-    "sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra != 'extra-4-gigl-pyg27-torch28-cu128'",
+    "platform_machine != 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra != 'extra-4-gigl-pyg27-torch28-cu128'",
+    "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra != 'extra-4-gigl-pyg27-torch28-cu128'",
     "extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra != 'extra-4-gigl-pyg27-torch28-cu128'",
+]
+required-markers = [
+    "platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "platform_machine == 'arm64' and sys_platform == 'darwin'",
 ]
 conflicts = [[
     { package = "gigl", extra = "pyg27-torch28-cpu" },
@@ -609,7 +614,7 @@ resolution-markers = [
     "sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "numpy", marker = "sys_platform != 'darwin'" },
+    { name = "numpy" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/fbgemm_gpu-1.4.1%2Bcpu-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:8c5f8c1ea55eebaa3f545f0e988dc4066568ee81ac4449316e4b3064f35abcae" },
@@ -742,21 +747,25 @@ experimental = [
 pyg27-torch28-cpu = [
     { name = "fbgemm-gpu", version = "1.4.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "pyg-lib", version = "0.5.0+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "sys_platform != 'darwin'" },
-    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "torch-cluster", version = "1.6.3+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "torch-cluster", version = "1.6.3", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128'" },
+    { name = "torch-cluster", version = "1.6.3+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "torch-geometric" },
-    { name = "torch-scatter", version = "2.1.2+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "sys_platform != 'darwin'" },
-    { name = "torch-sparse", version = "0.6.18+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "sys_platform != 'darwin'" },
-    { name = "torch-spline-conv", version = "1.2.2+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "sys_platform != 'darwin'" },
+    { name = "torch-scatter", version = "2.1.2", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128'" },
+    { name = "torch-scatter", version = "2.1.2+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "torch-sparse", version = "0.6.18", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128'" },
+    { name = "torch-sparse", version = "0.6.18+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "torch-spline-conv", version = "1.2.2", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128'" },
+    { name = "torch-spline-conv", version = "1.2.2+pt28cpu", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }, marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "torchrec", version = "1.3.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
 ]
 pyg27-torch28-cu128 = [
     { name = "fbgemm-gpu", version = "1.4.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
     { name = "pyg-lib", version = "0.5.0+pt28cu128", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cu128.html" }, marker = "sys_platform != 'darwin'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform != 'darwin'" },
     { name = "torch-cluster", version = "1.6.3+pt28cu128", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cu128.html" }, marker = "sys_platform != 'darwin'" },
-    { name = "torch-geometric" },
+    { name = "torch-geometric", marker = "sys_platform != 'darwin'" },
     { name = "torch-scatter", version = "2.1.2+pt28cu128", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cu128.html" }, marker = "sys_platform != 'darwin'" },
     { name = "torch-sparse", version = "0.6.18+pt28cu128", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cu128.html" }, marker = "sys_platform != 'darwin'" },
     { name = "torch-spline-conv", version = "1.2.2+pt28cu128", source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cu128.html" }, marker = "sys_platform != 'darwin'" },
@@ -870,16 +879,16 @@ requires-dist = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
-    { name = "tensorflow", specifier = "==2.17" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.17.1" },
-    { name = "tensorflow-transform", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.17.0" },
-    { name = "tfx-bsl", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.17.1" },
+    { name = "tensorflow", specifier = "~=2.16" },
+    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.1" },
+    { name = "tensorflow-transform", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.0" },
+    { name = "tfx-bsl", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.1" },
+    { name = "torch", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "==2.8", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "torch", marker = "extra == 'pyg27-torch28-cpu'", specifier = "==2.8", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
-    { name = "torch", marker = "extra == 'pyg27-torch28-cu128'", specifier = "==2.8", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "torch-cluster", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
     { name = "torch-cluster", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://data.pyg.org/whl/torch-2.8.0+cu128.html", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
+    { name = "torch-geometric", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "==2.7" },
     { name = "torch-geometric", marker = "extra == 'pyg27-torch28-cpu'", specifier = "==2.7" },
-    { name = "torch-geometric", marker = "extra == 'pyg27-torch28-cu128'", specifier = "==2.7" },
     { name = "torch-scatter", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
     { name = "torch-scatter", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://data.pyg.org/whl/torch-2.8.0+cu128.html", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "torch-sparse", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
@@ -985,12 +994,12 @@ name = "google-api-python-client"
 version = "1.12.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-api-core", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "google-auth", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "google-auth-httplib2", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "httplib2", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "six", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "uritemplate", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "google-api-core" },
+    { name = "google-auth" },
+    { name = "google-auth-httplib2" },
+    { name = "httplib2" },
+    { name = "six" },
+    { name = "uritemplate" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dd/12/07e966db6bfa4bd440af2f83ca6cc7bd61c2f4859992b7103437e8a98ce1/google-api-python-client-1.12.11.tar.gz", hash = "sha256:1b4bd42a46321e13c0542a9e4d96fa05d73626f07b39f83a73a947d70ca706a9", size = 146876, upload-time = "2022-03-15T13:49:56.711Z" }
 wheels = [
@@ -1618,9 +1627,9 @@ name = "iopath"
 version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "portalocker", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tqdm", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "portalocker" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/72/73/b3d451dfc523756cf177d3ebb0af76dc7751b341c60e2a21871be400ae29/iopath-0.1.10.tar.gz", hash = "sha256:3311c16a4d9137223e20f141655759933e1eda24f8bff166af834af3c645ef01", size = 42226, upload-time = "2022-07-09T19:00:50.866Z" }
 
@@ -1963,9 +1972,9 @@ name = "lightning-utilities"
 version = "0.15.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "packaging" },
+    { name = "setuptools" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b8/39/6fc58ca81492db047149b4b8fd385aa1bfb8c28cd7cacb0c7eb0c44d842f/lightning_utilities-0.15.2.tar.gz", hash = "sha256:cdf12f530214a63dacefd713f180d1ecf5d165338101617b4742e8f22c032e24", size = 31090, upload-time = "2025-08-06T13:57:39.242Z" }
 wheels = [
@@ -2110,17 +2119,17 @@ wheels = [
 
 [[package]]
 name = "ml-dtypes"
-version = "0.4.1"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/15/76f86faa0902836cc133939732f7611ace68cf54148487a99c539c272dc8/ml_dtypes-0.4.1.tar.gz", hash = "sha256:fad5f2de464fd09127e49b7fd1252b9006fb43d2edc1ff112d390c324af5ca7a", size = 692594, upload-time = "2024-09-13T19:07:11.624Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/7d/8d85fcba868758b3a546e6914e727abd8f29ea6918079f816975c9eecd63/ml_dtypes-0.3.2.tar.gz", hash = "sha256:533059bc5f1764fac071ef54598db358c167c51a718f68f5bb55e3dee79d2967", size = 692014, upload-time = "2024-01-03T19:21:23.615Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/76/9835c8609c29f2214359e88f29255fc4aad4ea0f613fb48aa8815ceda1b6/ml_dtypes-0.4.1-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:2d55b588116a7085d6e074cf0cdb1d6fa3875c059dddc4d2c94a4cc81c23e975", size = 397973, upload-time = "2024-09-13T19:06:51.748Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/99/e68c56fac5de973007a10254b6e17a0362393724f40f66d5e4033f4962c2/ml_dtypes-0.4.1-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e138a9b7a48079c900ea969341a5754019a1ad17ae27ee330f7ebf43f23877f9", size = 2185134, upload-time = "2024-09-13T19:06:53.197Z" },
-    { url = "https://files.pythonhosted.org/packages/28/bc/6a2344338ea7b61cd7b46fb24ec459360a5a0903b57c55b156c1e46c644a/ml_dtypes-0.4.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:74c6cfb5cf78535b103fde9ea3ded8e9f16f75bc07789054edc7776abfb3d752", size = 2163661, upload-time = "2024-09-13T19:06:54.519Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/d3/ddfd9878b223b3aa9a930c6100a99afca5cfab7ea703662e00323acb7568/ml_dtypes-0.4.1-cp311-cp311-win_amd64.whl", hash = "sha256:274cc7193dd73b35fb26bef6c5d40ae3eb258359ee71cd82f6e96a8c948bdaa6", size = 126727, upload-time = "2024-09-13T19:06:55.897Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/a4/6aabb78f1569550fd77c74d2c1d008b502c8ce72776bd88b14ea6c182c9e/ml_dtypes-0.3.2-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:763697ab8a88d47443997a7cdf3aac7340049aed45f7521f6b0ec8a0594821fe", size = 389791, upload-time = "2024-01-03T19:21:02.844Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/ed/211bf2e1c66e4ec9b712c3be848a876185c7f0d5e94bf647b60e64ef32eb/ml_dtypes-0.3.2-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b89b194e9501a92d289c1ffd411380baf5daafb9818109a4f49b0a1b6dce4462", size = 2185796, upload-time = "2024-01-03T19:21:04.291Z" },
+    { url = "https://files.pythonhosted.org/packages/77/a0/d4ee9e3aca5b9101c590b58555820618e8201c2ccb7004eabb417ec046ac/ml_dtypes-0.3.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2c34f2ba9660b21fe1034b608308a01be82bbef2a92fb8199f24dc6bad0d5226", size = 2164071, upload-time = "2024-01-03T19:21:05.78Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/db/1784b87285588788170f87e987bfb4bda218d62a70a81ebb66c94e7f9b95/ml_dtypes-0.3.2-cp311-cp311-win_amd64.whl", hash = "sha256:6604877d567a29bfe7cc02969ae0f2425260e5335505cf5e7fefc3e5465f5655", size = 127681, upload-time = "2024-01-03T19:21:07.337Z" },
 ]
 
 [[package]]
@@ -3129,8 +3138,8 @@ name = "pyre-extensions"
 version = "0.0.32"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "typing-inspect", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "typing-extensions" },
+    { name = "typing-inspect" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a7/53/5bc2532536e921c48366ad1047c1344ccef6afa5e84053f0f6e20a453767/pyre_extensions-0.0.32.tar.gz", hash = "sha256:5396715f14ea56c4d5fd0a88c57ca7e44faa468f905909edd7de4ad90ed85e55", size = 10852, upload-time = "2024-11-22T19:26:44.152Z" }
 wheels = [
@@ -3172,7 +3181,7 @@ name = "pyvers"
 version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "packaging" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/39/c5432f541e6ea1d616dfd6ef42ce02792f7eb42dd44f5ed4439dbe17a58b/pyvers-0.1.0-py3-none-any.whl", hash = "sha256:065249805ae537ddf9a2d1a8dffc6d0a12474a347d2eaa2f35ebdae92c0c8199", size = 10092, upload-time = "2025-06-08T23:46:46.219Z" },
@@ -3737,14 +3746,13 @@ wheels = [
 
 [[package]]
 name = "tensorboard"
-version = "2.17.1"
+version = "2.16.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py" },
     { name = "grpcio" },
     { name = "markdown" },
     { name = "numpy" },
-    { name = "packaging" },
     { name = "protobuf" },
     { name = "setuptools" },
     { name = "six" },
@@ -3752,7 +3760,7 @@ dependencies = [
     { name = "werkzeug" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/41/dccba8c5f955bc35b6110ff78574e4e5c8226ad62f08e732096c3861309b/tensorboard-2.17.1-py3-none-any.whl", hash = "sha256:253701a224000eeca01eee6f7e978aea7b408f60b91eb0babdb04e78947b773e", size = 5502989, upload-time = "2024-08-14T18:10:47.657Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/d0/b97889ffa769e2d1fdebb632084d5e8b53fc299d43a537acee7ec0c021a3/tensorboard-2.16.2-py3-none-any.whl", hash = "sha256:9f2b4e7dad86667615c0e5cd072f1ea8403fc032a299f0072d6f74855775cc45", size = 5490335, upload-time = "2024-02-16T19:56:55.912Z" },
 ]
 
 [[package]]
@@ -3770,13 +3778,14 @@ name = "tensordict"
 version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cloudpickle", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "importlib-metadata", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "numpy", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "orjson", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "packaging", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pyvers", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "cloudpickle" },
+    { name = "importlib-metadata" },
+    { name = "numpy" },
+    { name = "orjson" },
+    { name = "packaging" },
+    { name = "pyvers" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-4-gigl-pyg27-torch28-cu128'" },
 ]
 wheels = [
@@ -3788,7 +3797,7 @@ wheels = [
 
 [[package]]
 name = "tensorflow"
-version = "2.17.0"
+version = "2.16.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py" },
@@ -3815,10 +3824,11 @@ dependencies = [
     { name = "wrapt" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/a5/89a9bdae9f241cad167edb6c890ef2b4c842c5ae81058a2fbfd702dba9bf/tensorflow-2.17.0-cp311-cp311-macosx_12_0_arm64.whl", hash = "sha256:e8d26d6c24ccfb139db1306599257ca8f5cfe254ef2d023bfb667f374a17a64d", size = 236174211, upload-time = "2024-07-11T16:46:38.778Z" },
-    { url = "https://files.pythonhosted.org/packages/76/81/a03d7724df23d476af954673ae79836a5ca8d6fde66f88483dbe26f61a23/tensorflow-2.17.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ca82f98ea38fa6c9e08ccc69eb6c2fab5b35b30a8999115b8b63b6f02fc69d9d", size = 223945591, upload-time = "2024-07-11T16:46:48.327Z" },
-    { url = "https://files.pythonhosted.org/packages/63/4e/f5404467b31cf640ed8de31a283d104c845be6fa430dac9daef0c4385af8/tensorflow-2.17.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8339777b1b5ebd8ffadaa8196f786e65fbb081a371d8e87b52f24563392d8552", size = 601301478, upload-time = "2024-07-11T16:47:05.705Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/b6/62345568cd07de5d9254fcf64d7e44aacbb6abde11ea953b3cb320e58d19/tensorflow-2.17.0-cp311-cp311-win_amd64.whl", hash = "sha256:ef615c133cf4d592a073feda634ccbeb521a554be57de74f8c318d38febbeab5", size = 2046, upload-time = "2024-07-11T16:52:09.532Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/69/9999c2d9e8a3b08dfcfc7e9259a05fb1da5f700936091d2eb4a7985c2776/tensorflow-2.16.2-cp311-cp311-macosx_10_15_x86_64.whl", hash = "sha256:ec06570d57bfa0e2be804405e3cdc2960e94887e7619ffb6bc053e9775b695aa", size = 259588062, upload-time = "2024-06-28T18:51:09.316Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/72/6f09443493b9df2fd8a9585c9af4d9453762906a8e5735a8a5efa6e3d1e3/tensorflow-2.16.2-cp311-cp311-macosx_12_0_arm64.whl", hash = "sha256:2c8a0e79395639b762e62002db99b2f6cc608f744312c9940899c1128f325331", size = 227025342, upload-time = "2024-06-28T18:51:19.421Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/01/c03e98c8e97d151d9ce075fae210f838832eb53d8aa55669d384cb72925b/tensorflow-2.16.2-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8728b12bc86941d90d0a927c40d4b21f8820964a80439a7c45f850eb37d57067", size = 218904025, upload-time = "2024-06-28T18:51:29.52Z" },
+    { url = "https://files.pythonhosted.org/packages/43/dd/8f03331107b76e63313d2089ddfbd13f15e51fb8ed73517cdd0ab3341928/tensorflow-2.16.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d8798dea8e2281b4a0b569d9c00e7949c0090509be363da271e1ef21828bffae", size = 590660880, upload-time = "2024-06-28T18:51:42.788Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/97/dec9dfa95cfbee631adffbeb0b7eda51ddc93a5f7e8aa8f4d95dde59e69e/tensorflow-2.16.2-cp311-cp311-win_amd64.whl", hash = "sha256:1da04e39834cdba509b4dd5ac5c71c3a1d1ffe6bc03e6970e65791b9a4071340", size = 2070, upload-time = "2024-06-28T18:51:55.409Z" },
 ]
 
 [[package]]
@@ -3834,48 +3844,48 @@ wheels = [
 
 [[package]]
 name = "tensorflow-metadata"
-version = "1.17.1"
+version = "1.16.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "googleapis-common-protos", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "absl-py" },
+    { name = "googleapis-common-protos" },
+    { name = "protobuf" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/30/944470f0ec0f00ccf25f0fdc84cf28be83838da5636c2b2b002960ba7ac1/tensorflow_metadata-1.17.1-py3-none-any.whl", hash = "sha256:f60d6605a16094c46921ffcf064747ba4b57840adad9fad682e2f28d0bac20eb", size = 31555, upload-time = "2025-04-10T18:29:33.596Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/57/393aa9dde72347cde9e01f665bac344f14adefd5c748be45b23aa5804f6d/tensorflow_metadata-1.16.1-py3-none-any.whl", hash = "sha256:2ce72ea31d78a00c0c74c6d465482335aa5cb2a3b2a104dedba0b258bc7bb18a", size = 28984, upload-time = "2024-10-09T19:57:12.683Z" },
 ]
 
 [[package]]
 name = "tensorflow-serving-api"
-version = "2.17.0"
+version = "2.16.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "grpcio", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "tensorflow" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/c0/3a73e1b6952a1f8e45f90773410a7930a2140a0441ef3dac634438682495/tensorflow_serving_api-2.17.0-py2.py3-none-any.whl", hash = "sha256:6fbbca42607a962085b0347216ca646f147de213c10fabbb41716f34df0c7775", size = 26739, upload-time = "2024-07-19T21:49:50.02Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/6a/6e91fbca9593663edc368df59a5d57e5549048530ba42c6833b560e30cba/tensorflow_serving_api-2.16.1-py2.py3-none-any.whl", hash = "sha256:13f859ea45055d393acd4cd8b44283ac52ff2970051fb9b96a69e0a626f07992", size = 26539, upload-time = "2024-03-22T02:01:06.207Z" },
 ]
 
 [[package]]
 name = "tensorflow-transform"
-version = "1.17.0"
+version = "1.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "apache-beam", extra = ["gcp"], marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pyarrow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pydot", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tf-keras", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tfx-bsl", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "absl-py" },
+    { name = "apache-beam", extra = ["gcp"] },
+    { name = "numpy" },
+    { name = "protobuf" },
+    { name = "pyarrow" },
+    { name = "pydot" },
+    { name = "tensorflow" },
+    { name = "tensorflow-metadata" },
+    { name = "tf-keras" },
+    { name = "tfx-bsl" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/b2/32d2ad3fbf16a67f7e91e125dca616a9e1b0d10588167ce3c19394a1811f/tensorflow_transform-1.17.0-py3-none-any.whl", hash = "sha256:6b30fa38f36073c1b6f087bfd571e18683e89b66b6765e2f850194b8e4740d1a", size = 453679, upload-time = "2025-06-13T22:57:53.747Z" },
+    { url = "https://files.pythonhosted.org/packages/30/a4/7610ef37f429855bd832f98377715298f66478c8e16174e9330f10bd1eed/tensorflow_transform-1.16.0-py3-none-any.whl", hash = "sha256:a2138d6c052cb5ad30ca08191d8795d2059e86d6001b2cb5a3b00d567727d7f1", size = 451456, upload-time = "2024-10-28T22:32:45.384Z" },
 ]
 
 [[package]]
@@ -3889,34 +3899,35 @@ wheels = [
 
 [[package]]
 name = "tf-keras"
-version = "2.17.0"
+version = "2.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "tensorflow" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/2b/d647100a2e80d159b020f1dbc2ef2c6787ed33c914951a63b3c88cd805d0/tf_keras-2.17.0.tar.gz", hash = "sha256:fda97c18da30da0f72a5a7e80f3eee343b09f4c206dad6c57c944fb2cd18560e", size = 1260098, upload-time = "2024-07-15T21:31:01.6Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/63/59a4aee62ea8999850e4b3b5d94b60fe280ca93de60d0e2958066e24d6a7/tf_keras-2.16.0.tar.gz", hash = "sha256:db53891f1ac98197c2acced98cdca8c06ba8255655a6cb7eb95ed49676118280", size = 1259784, upload-time = "2024-03-09T02:28:18.742Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/8b/75f7572ec0273ed8da50bc19defe08aaaafcc15fda3407db53f49acec814/tf_keras-2.17.0-py3-none-any.whl", hash = "sha256:cc97717e4dc08487f327b0740a984043a9e0123c7a4e21206711669d3ec41c88", size = 1724905, upload-time = "2024-07-15T21:30:58.941Z" },
+    { url = "https://files.pythonhosted.org/packages/75/aa/cf09f8956d4f276f655b13674e15d8d6015fd832f9689aa9ff2a515781ab/tf_keras-2.16.0-py3-none-any.whl", hash = "sha256:b2ad0541fa7d9e92c4b7a1b96593377afb58aaff374299a6ca6be1a42f51d899", size = 1724695, upload-time = "2024-03-09T02:28:15.99Z" },
 ]
 
 [[package]]
 name = "tfx-bsl"
-version = "1.17.1"
+version = "1.16.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "apache-beam", extra = ["gcp"], marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "google-api-python-client", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pandas", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pyarrow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-serving-api", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "absl-py" },
+    { name = "apache-beam", extra = ["gcp"] },
+    { name = "google-api-python-client" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "protobuf" },
+    { name = "pyarrow" },
+    { name = "tensorflow" },
+    { name = "tensorflow-metadata" },
+    { name = "tensorflow-serving-api" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/f5/8be4a53879cc4383386f33e2ae71f385138e5a29199f5529fab3181cadb6/tfx_bsl-1.17.1-cp311-cp311-manylinux_2_39_x86_64.whl", hash = "sha256:8af566644597722664545366681d242b03dfc6b5784567951eb22062fe8b51ff", size = 28705320, upload-time = "2025-06-06T01:18:37.076Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/e5/a123d09e160be09423544529883f59b89dcbfb3242218a535af2b23826f4/tfx_bsl-1.16.1-cp311-cp311-macosx_12_0_x86_64.whl", hash = "sha256:1c13ff8f4de36ceea598a5a06b9cccabb73c7b9792ca280b915abd24b6a141b5", size = 24141870, upload-time = "2024-10-14T19:08:53.096Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/e7/b5f7858a63884248bc58f9ecf4d2d41d1eca66103ac742a8b6bb6ec6a075/tfx_bsl-1.16.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cc767ff141f5f6b0b21ef0a0479f8294a678c0340f8f9b7e69413fb429e329a6", size = 22546327, upload-time = "2024-10-14T19:22:45.563Z" },
 ]
 
 [[package]]
@@ -3945,15 +3956,15 @@ name = "torch"
 version = "2.8.0"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
+    "platform_machine == 'arm64' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "sys_platform == 'darwin'" },
-    { name = "fsspec", marker = "sys_platform == 'darwin'" },
-    { name = "jinja2", marker = "sys_platform == 'darwin'" },
-    { name = "networkx", marker = "sys_platform == 'darwin'" },
-    { name = "sympy", marker = "sys_platform == 'darwin'" },
-    { name = "typing-extensions", marker = "sys_platform == 'darwin'" },
+    { name = "filelock", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "fsspec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "jinja2", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "networkx", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "sympy", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "typing-extensions", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:3d05017d19bc99741288e458888283a44b0ee881d53f05f72f8b1cfea8998122" },
@@ -3965,14 +3976,15 @@ version = "2.8.0+cpu"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
     "sys_platform != 'darwin'",
+    "platform_machine != 'arm64' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "filelock", marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "fsspec", marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "jinja2", marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "networkx", marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "sympy", marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "typing-extensions", marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-linux_s390x.whl", hash = "sha256:2bfc013dd6efdc8f8223a0241d3529af9f315dffefb53ffa3bf14d3f10127da6" },
@@ -4012,6 +4024,17 @@ dependencies = [
 wheels = [
     { url = "https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed" },
     { url = "https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:34c55443aafd31046a7963b63d30bc3b628ee4a704f826796c865fdfd05bb596" },
+]
+
+[[package]]
+name = "torch-cluster"
+version = "1.6.3"
+source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }
+dependencies = [
+    { name = "scipy", marker = "sys_platform == 'darwin'" },
+]
+wheels = [
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcpu/torch_cluster-1.6.3-cp311-cp311-macosx_10_9_universal2.whl" },
 ]
 
 [[package]]
@@ -4064,6 +4087,14 @@ wheels = [
 
 [[package]]
 name = "torch-scatter"
+version = "2.1.2"
+source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }
+wheels = [
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcpu/torch_scatter-2.1.2-cp311-cp311-macosx_10_9_universal2.whl" },
+]
+
+[[package]]
+name = "torch-scatter"
 version = "2.1.2+pt28cpu"
 source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }
 resolution-markers = [
@@ -4082,6 +4113,17 @@ source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cu128.html" }
 wheels = [
     { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu128/torch_scatter-2.1.2%2Bpt28cu128-cp311-cp311-linux_x86_64.whl" },
     { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu128/torch_scatter-2.1.2%2Bpt28cu128-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "torch-sparse"
+version = "0.6.18"
+source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }
+dependencies = [
+    { name = "scipy", marker = "sys_platform == 'darwin'" },
+]
+wheels = [
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcpu/torch_sparse-0.6.18-cp311-cp311-macosx_11_0_universal2.whl" },
 ]
 
 [[package]]
@@ -4114,6 +4156,14 @@ wheels = [
 
 [[package]]
 name = "torch-spline-conv"
+version = "1.2.2"
+source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }
+wheels = [
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcpu/torch_spline_conv-1.2.2-cp311-cp311-macosx_10_9_universal2.whl" },
+]
+
+[[package]]
+name = "torch-spline-conv"
 version = "1.2.2+pt28cpu"
 source = { registry = "https://data.pyg.org/whl/torch-2.8.0+cpu.html" }
 resolution-markers = [
@@ -4139,10 +4189,11 @@ name = "torchmetrics"
 version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "lightning-utilities", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "numpy", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "packaging", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "lightning-utilities" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-4-gigl-pyg27-torch28-cu128'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/28/01/b6c344ac04b53ebe3759ba938f1406775fe7649c44ba2e27e467be4e6fe9/torchmetrics-1.0.3.tar.gz", hash = "sha256:1c20ea2f0db434334e88da6c015ddf936d43379bfb403e9dc2a7272b0eab453c", size = 432173, upload-time = "2023-08-08T15:50:49.966Z" }
@@ -4158,12 +4209,12 @@ resolution-markers = [
     "sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "fbgemm-gpu", version = "1.4.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
-    { name = "iopath", marker = "sys_platform != 'darwin'" },
-    { name = "pyre-extensions", marker = "sys_platform != 'darwin'" },
-    { name = "tensordict", marker = "sys_platform != 'darwin'" },
-    { name = "torchmetrics", marker = "sys_platform != 'darwin'" },
-    { name = "tqdm", marker = "sys_platform != 'darwin'" },
+    { name = "fbgemm-gpu", version = "1.4.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" } },
+    { name = "iopath" },
+    { name = "pyre-extensions" },
+    { name = "tensordict" },
+    { name = "torchmetrics" },
+    { name = "tqdm" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/torchrec-1.3.0%2Bcpu-py3-none-any.whl", hash = "sha256:be2b572625792feac1656afcac19e35448df5447d215575a4b8cb22d9220d2cf" },
@@ -4319,8 +4370,8 @@ name = "typing-inspect"
 version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mypy-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform == 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cu128') or (extra != 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "mypy-extensions" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dc/74/1789779d91f1961fa9438e9a8710cdae6bd138c80d7303996933d117264a/typing_inspect-0.9.0.tar.gz", hash = "sha256:b23fc42ff6f6ef6954e4852c1fb512cdd18dbea03134f91f856a95ccc9461f78", size = 13825, upload-time = "2023-05-24T20:25:47.612Z" }
 wheels = [

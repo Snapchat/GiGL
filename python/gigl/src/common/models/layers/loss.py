@@ -111,7 +111,7 @@ class SoftmaxLoss(nn.Module):
 
     def __init__(
         self,
-        softmax_temperature: Optional[float] = None,
+        softmax_temperature: float,
     ):
         super(SoftmaxLoss, self).__init__()
         self.softmax_temperature = softmax_temperature
