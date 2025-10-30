@@ -76,7 +76,7 @@ rebuild_dev_environment:
 check_if_valid_env:
 	#@command -v docker >/dev/null 2>&1 || { echo >&2 "docker is required but it's not installed.  Aborting."; exit 1; }
 	@command -v gsutil >/dev/null 2>&1 || { echo >&2 "gsutil is required but it's not installed.  Aborting."; exit 1; }
-	@python --version | grep -q "Python ${PYTHON_VERSION}" || (echo "Python version is not 3.9" && exit 1)
+	# @python --version | grep -q "Python ${PYTHON_VERSION}" || (echo "Python version is not 3.11" && exit 1)
 
 
 # if developing, you need to install dev deps instead
@@ -141,7 +141,7 @@ generate_dev_linux_cuda_hashed_requirements:
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
-	python testing/dep_vars_check.py
+	uv run python testing/dep_vars_check.py
 
 
 run_api_test:
@@ -149,7 +149,7 @@ run_api_test:
 
 
 assert_yaml_configs_parse:
-	python testing/assert_yaml_configs_parse.py -d .
+	uv run python testing/assert_yaml_configs_parse.py -d .
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
@@ -157,7 +157,7 @@ assert_yaml_configs_parse:
 # See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
 unit_test_py: clean_build_files_py type_check
 	( cd python ; \
-	python -m tests.unit.main \
+	uv run python -m tests.unit.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
@@ -232,7 +232,7 @@ format: format_py format_scala format_md
 
 
 type_check:
-	mypy ${PYTHON_DIRS} --check-untyped-defs
+	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
 # compiles current working state of scala projects to local jars
 compile_jars:

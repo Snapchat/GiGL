@@ -57,7 +57,7 @@ then
         echo "Will use CPU for GLT..."
         WITH_CUDA="OFF" python setup.py bdist_wheel
     fi
-    pip install dist/*.whl \
+    uv pip install dist/*.whl \
         && cd .. \
         && rm -rf graphlearn-for-pytorch
 else

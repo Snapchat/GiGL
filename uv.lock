@@ -770,6 +770,7 @@ pyg27-torch28-cu128 = [
 transform = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "pyarrow" },
+    { name = "tensorflow-data-validation", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "tensorflow-transform", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "tfx-bsl", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
@@ -876,6 +877,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "scikit-learn" },
     { name = "tensorflow", specifier = "~=2.16" },
+    { name = "tensorflow-data-validation", marker = "sys_platform != 'darwin' and extra == 'transform'" },
     { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.1" },
     { name = "tensorflow-transform", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.0" },
     { name = "tfx-bsl", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.1" },
@@ -3046,6 +3048,12 @@ wheels = [
 ]
 
 [[package]]
+name = "pyfarmhash"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/7f/256f1954343fc44641d04292e1410470337db3720bd57b510782e449d6db/pyfarmhash-0.3.2.tar.gz", hash = "sha256:4146308a0ed0b37d69003199c90fa59b155666c9deb0249b40e594cee10551ea", size = 99890, upload-time = "2021-12-31T08:23:27.642Z" }
+
+[[package]]
 name = "pyflakes"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3824,6 +3832,29 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/01/c03e98c8e97d151d9ce075fae210f838832eb53d8aa55669d384cb72925b/tensorflow-2.16.2-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8728b12bc86941d90d0a927c40d4b21f8820964a80439a7c45f850eb37d57067", size = 218904025, upload-time = "2024-06-28T18:51:29.52Z" },
     { url = "https://files.pythonhosted.org/packages/43/dd/8f03331107b76e63313d2089ddfbd13f15e51fb8ed73517cdd0ab3341928/tensorflow-2.16.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d8798dea8e2281b4a0b569d9c00e7949c0090509be363da271e1ef21828bffae", size = 590660880, upload-time = "2024-06-28T18:51:42.788Z" },
     { url = "https://files.pythonhosted.org/packages/1f/97/dec9dfa95cfbee631adffbeb0b7eda51ddc93a5f7e8aa8f4d95dde59e69e/tensorflow-2.16.2-cp311-cp311-win_amd64.whl", hash = "sha256:1da04e39834cdba509b4dd5ac5c71c3a1d1ffe6bc03e6970e65791b9a4071340", size = 2070, upload-time = "2024-06-28T18:51:55.409Z" },
+]
+
+[[package]]
+name = "tensorflow-data-validation"
+version = "1.16.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "apache-beam", extra = ["gcp"], marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "joblib", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "pandas", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "pyarrow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "pyfarmhash", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "six", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "tfx-bsl", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/d8/8b193132c8769d31d11e92b058cd6651b5d8cba1b91878665bdb7408260b/tensorflow_data_validation-1.16.1-cp311-cp311-macosx_12_0_x86_64.whl", hash = "sha256:b21fa86c61da5cee81b4d602953fea16878de4874eb6035bf7f3221cfeb91559", size = 20236896, upload-time = "2024-10-15T20:20:03.396Z" },
+    { url = "https://files.pythonhosted.org/packages/da/4d/4e758f700f1e1b0162ff74c0dca0f0ebd8e366e57088a29ec1f3bdaf0287/tensorflow_data_validation-1.16.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bb2e666e724a418fb45cca17442d33f906e91c086ad4a897aaf4473c94e0f4ee", size = 18961461, upload-time = "2024-10-15T20:40:56.17Z" },
 ]
 
 [[package]]

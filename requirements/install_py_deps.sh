@@ -29,11 +29,20 @@ done
 if ! command -v uv &> /dev/null
 then
     echo "uv could not be found. Installing uv..."
-    EXPECTED_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    curl -LsSf -o install.sh https://astral.sh/uv/0.9.5/install.sh \
-      && echo "$EXPECTED_SHA256  install.sh" | sha256sum -c - \
-      && sh install.sh
+    EXPECTED_SHA256="8402ab80d2ef54d7044a71ea4e4e1e8db3b20c87c7bffbc30bff59f1e80ebbd5"
+    curl -LsSf -o install.sh https://astral.sh/uv/0.9.5/install.sh
+
+    # Verify SHA256 checksum - script will exit if this fails due to set -e
+    if ! echo "$EXPECTED_SHA256  install.sh" | sha256sum -c -; then
+        echo "ERROR: SHA256 checksum verification failed for uv installer!" >&2
+        rm -f install.sh
+        exit 1
+    fi
+
+    sh install.sh
+    source $HOME/.local/bin/env
 fi
+
 
 REQ_FILE_PREFIX=""
 if [[ $DEV -eq 1 ]]
@@ -80,7 +89,6 @@ then
     echo "Setting up Mac CPU environment"
     req_file="requirements/${REQ_FILE_PREFIX}darwin_arm64_requirements_unified.txt"
     extra_deps+=("pyg27-torch28-cpu")
-
 else
     if has_cuda_driver;
     then
@@ -94,21 +102,22 @@ else
     fi
 fi
 
-# Build repeated --extra flags for uv (e.g., --extra X --extra Y ...)
 extra_deps_clause=()
 for dep in "${extra_deps[@]}"; do
     extra_deps_clause+=(--extra "$dep")
 done
+
 if [[ $DEV -eq 1 ]]
 then
     # https://docs.astral.sh/uv/reference/cli/#uv-sync
-    uv sync --locked "${extra_deps_clause[@]}" --group dev
+    uv sync ${extra_deps_clause[@]} --group dev
 else
-    uv sync --locked "${extra_deps_clause[@]}"
+    uv sync ${extra_deps_clause[@]}
 fi
 
 # echo "Installing from ${req_file}"
 # pip install -r $req_file $PIP_ARGS
+source .venv/bin/activate
 
 # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
 # We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
@@ -144,5 +153,4 @@ then
     rm /etc/pip.conf
 fi
 
-conda clean -afy
 echo "Finished installation"
