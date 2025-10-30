@@ -28,7 +28,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: ..github/actions/setup-python-tools
+      uses: .github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
