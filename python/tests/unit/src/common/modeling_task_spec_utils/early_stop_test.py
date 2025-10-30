@@ -12,6 +12,7 @@ _EARLY_STOP_PATIENCE = 3
 
 
 class _DummyModel(nn.Module):
+    foo: torch.Tensor
     def __init__(self):
         super(_DummyModel, self).__init__()
         self.register_buffer("foo", torch.tensor(0.0))
@@ -83,7 +84,7 @@ class EarlyStopTests(unittest.TestCase):
         mocked_criteria_values: list[float],
         improvement_steps: list[int],
         should_maximize: bool,
-        model: Optional[nn.Module],
+        model: Optional[_DummyModel],
         expected_best_criterion: float,
     ):
         early_stopper = EarlyStopper(

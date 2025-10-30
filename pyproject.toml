@@ -55,7 +55,7 @@ pyg27-torch28-cpu = [
   # Oct 24, 25 - 2.7 is latest version and torch ver support is inconsistant accross minor version changes
   "torch_geometric==2.7",
   "torchrec ; sys_platform != 'darwin'",
-  "fbgemm-gpu; sys_platform != 'darwin'",
+  "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'", # Compatiblity table: https://docs.pytorch.org/FBGEMM/general/Releases.html#fbgemm-releases-compatibility
   "pyg_lib; sys_platform != 'darwin'",
   "torch_scatter; sys_platform != 'darwin'",
   "torch_sparse; sys_platform != 'darwin'",
@@ -66,7 +66,7 @@ pyg27-torch28-cu128 = [
   "torch==2.8 ; sys_platform != 'darwin'",
   "torch_geometric==2.7 ; sys_platform != 'darwin'",
   "torchrec ; sys_platform != 'darwin'",
-  "fbgemm-gpu; sys_platform != 'darwin'",
+  "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'",
   "pyg_lib; sys_platform != 'darwin'",
   "torch_scatter; sys_platform != 'darwin'",
   "torch_sparse; sys_platform != 'darwin'",

@@ -94,12 +94,17 @@ else
     fi
 fi
 
+# Build repeated --extra flags for uv (e.g., --extra X --extra Y ...)
+extra_deps_clause=()
+for dep in "${extra_deps[@]}"; do
+    extra_deps_clause+=(--extra "$dep")
+done
 if [[ $DEV -eq 1 ]]
 then
     # https://docs.astral.sh/uv/reference/cli/#uv-sync
-    uv sync --extra ${extra_deps[@]} --group dev
+    uv sync --locked "${extra_deps_clause[@]}" --group dev
 else
-    uv sync --extra ${extra_deps[@]}
+    uv sync --locked "${extra_deps_clause[@]}"
 fi
 
 # echo "Installing from ${req_file}"
