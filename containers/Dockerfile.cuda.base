@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Used to generate hashed requirements.txt
-FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
 
 SHELL ["/bin/bash", "-c"]
 
@@ -13,23 +13,6 @@ RUN apt-get update \
     && apt-get install -y build-essential git wget cmake iputils-ping \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Miniconda
-ENV CONDA_DIR=/opt/conda
-RUN wget -O Miniforge3.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh" && bash Miniforge3.sh -b -p ${CONDA_DIR}
-ENV PATH=${CONDA_DIR}/bin:$PATH
-
-# Create the conda env environment:
-# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y --override-channels --channel conda-forge --name gnn python=3.9 pip
-
-# Update path so any call for python executables in the built image defaults to using the gnn conda environment
-ENV PATH=${CONDA_DIR}/envs/gnn/bin:$PATH
-
-# The default bashrc exists early and is mainly for local dev niceties - we delete so we can
-# Setup Conda for debugging purposes
-RUN rm ~/.bashrc && touch ~/.bashrc && conda init bash
-RUN echo "conda activate gnn" >> ~/.bashrc
 
 COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts

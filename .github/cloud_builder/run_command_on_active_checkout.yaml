@@ -26,7 +26,7 @@ steps:
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Install GiGL
-        pip install -e ./python/
+        uv pip install -e .
         # The builder operates in its own user dir, usually /workspace,
         # so we need to copy the gigl tools dir to the current cloud_builder's user dir.
         # See: containers/Dockerfile.builder.

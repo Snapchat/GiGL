@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM condaforge/miniforge3:25.3.0-1
+FROM ubuntu:noble-20251001
 
 SHELL ["/bin/bash", "-c"]
 
@@ -15,20 +15,8 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create the environment:
-# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y --override-channels --channel conda-forge --name gnn python=3.9 pip
-
-# Update path so any call for python executables in the built image defaults to using the gnn conda environment
-ENV PATH=/opt/conda/envs/gnn/bin:$PATH
-
-# For debugging purposes, we also initialize respective conda env in bashrc
-RUN conda init bash
-RUN echo "conda activate gnn" >> ~/.bashrc
-
 COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
-RUN pip install --upgrade pip
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
 
 CMD [ "/bin/bash" ]

@@ -3,7 +3,7 @@
 # This dockerfile is contains all Dev dependencies, and is used by gcloud
 # builders for running tests, et al.
 
-FROM condaforge/miniforge3:25.3.0-1
+FROM ubuntu:noble-20251001
 
 SHELL ["/bin/bash", "-c"]
 
@@ -24,7 +24,6 @@ RUN apt-get update && apt-get install && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-
 RUN curl -fsSL https://get.docker.com -o get-docker.sh && \
     sh get-docker.sh && \
     rm get-docker.sh
@@ -39,16 +38,6 @@ RUN mkdir -p /tools && \
 ENV PATH="/tools/google-cloud-sdk/bin:/usr/lib/jvm/java-1.11.0-openjdk-amd64/bin:$PATH"
 ENV JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"
 
-# Create the environment:
-# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y --override-channels --channel conda-forge --name gigl python=3.9 pip
-
-# Update path so any call for python executables in the built image defaults to using the gnn conda environment
-ENV PATH=/opt/conda/envs/gigl/bin:$PATH
-# For debugging purposes, we also initialize respective conda env in bashrc
-RUN conda init bash
-RUN echo "conda activate gigl" >> ~/.bashrc
-
 # We copy the tools directory from the host machine to the container
 # to avoid re-downloading the dependencies as some of them require GCP credentials.
 # and, mounting GCP credentials to build time can be a pain and more prone to
@@ -57,7 +46,6 @@ COPY tools gigl_deps/tools
 COPY dep_vars.env gigl_deps/dep_vars.env
 COPY requirements gigl_deps/requirements
 COPY python/gigl/scripts gigl_deps/python/gigl/scripts
-RUN pip install --upgrade pip
 RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
 RUN cd gigl_deps && bash ./requirements/install_scala_deps.sh
 
