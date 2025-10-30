@@ -78,7 +78,6 @@ check_if_valid_env:
 	@command -v gsutil >/dev/null 2>&1 || { echo >&2 "gsutil is required but it's not installed.  Aborting."; exit 1; }
 	# @python --version | grep -q "Python ${PYTHON_VERSION}" || (echo "Python version is not 3.11" && exit 1)
 
-
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
