@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Used to generate hashed requirements.txt
-FROM nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
 SHELL ["/bin/bash", "-c"]
 
