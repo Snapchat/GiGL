@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install && apt-get install -y \
     cmake \
     sudo \
     build-essential \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
