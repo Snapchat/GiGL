@@ -43,12 +43,17 @@ ENV JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"
 # to avoid re-downloading the dependencies as some of them require GCP credentials.
 # and, mounting GCP credentials to build time can be a pain and more prone to
 # accidental leaking of credentials.
-COPY pyproject.toml gigl_deps/pyproject.toml
 COPY tools gigl_deps/tools
+COPY pyproject.toml gigl_deps/pyproject.toml
 COPY dep_vars.env gigl_deps/dep_vars.env
 COPY requirements gigl_deps/requirements
+# Needed to install glt dependencies - which is done.
 COPY python/gigl/scripts gigl_deps/python/gigl/scripts
 RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+ENV UV_PROJECT_ENVIRONMENT=/gigl_deps/.venv
+
 RUN cd gigl_deps && bash ./requirements/install_scala_deps.sh
 
 CMD [ "/bin/bash" ]
