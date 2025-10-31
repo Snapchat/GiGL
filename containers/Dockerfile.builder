@@ -45,6 +45,7 @@ ENV JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"
 # accidental leaking of credentials.
 COPY tools gigl_deps/tools
 COPY pyproject.toml gigl_deps/pyproject.toml
+COPY uv.lock gigl_deps/uv.lock
 COPY dep_vars.env gigl_deps/dep_vars.env
 COPY requirements gigl_deps/requirements
 # Needed to install glt dependencies - which is done.

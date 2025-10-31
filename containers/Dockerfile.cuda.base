@@ -15,6 +15,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml tmp/pyproject.toml
+COPY uv.lock tmp/uv.lock
 COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
