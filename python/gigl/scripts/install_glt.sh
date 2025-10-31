@@ -52,6 +52,17 @@ then
     if has_cuda_driver;
     then
         echo "Will use CUDA for GLT..."
+
+        # Potential values for TORCH_CUDA_ARCH_LIST: (not all are tested)
+        # 6.0 = Pascal support i.e. Tesla P100 - CUDA 8 or later
+        # 6.1 = Pascal support i.e. Tesla P4 - CUDA 8 or later
+        # 7.0 = Volta support i.e. Tesla V100 - CUDA 9 or later
+        # 7.5 = Turing support i.e. Tesla T4 - CUDA 10 or later
+        # 8.0 = Ampere support i.e. A100 - CUDA 11 or later
+        # 8.9 = Ada Lovelace support i.e. L4 - CUDA 11.8 or later
+        # 9.0 = Hopper support i.e. H100 , H200 - CUDA 12.0 or later
+        # 10.0 = Blackwell support i.e. B200 - CUDA 12.6 or later
+        # 12.0 = Blackwell support i.e. B200 - CUDA 12.8 or later
         TORCH_CUDA_ARCH_LIST="7.5" WITH_CUDA="ON" python setup.py bdist_wheel
     else
         echo "Will use CPU for GLT..."
