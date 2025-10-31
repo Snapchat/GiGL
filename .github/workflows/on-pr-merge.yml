@@ -4,7 +4,11 @@ on:
   # Run whenever GitHub’s merge queue asks for required checks
   # We add `pull_request` below to get around a merge queue status check limitation:
   # https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
-  push:
+  pull_request:
+  merge_group:
+
+  # Strictly for testing purposes
+  # push:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
