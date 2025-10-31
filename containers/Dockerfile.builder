@@ -10,6 +10,8 @@ SHELL ["/bin/bash", "-c"]
 # Non-interactive install
 ENV DEBIAN_FRONTEND=noninteractive
 
+USER root
+
 # Install base dependencies
 RUN apt-get update && apt-get install && apt-get install -y \
     curl \
