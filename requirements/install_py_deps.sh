@@ -110,9 +110,9 @@ done
 if [[ $DEV -eq 1 ]]
 then
     # https://docs.astral.sh/uv/reference/cli/#uv-sync
-    uv sync ${extra_deps_clause[@]} --group dev
+    uv sync ${extra_deps_clause[@]} --group dev --locked
 else
-    uv sync ${extra_deps_clause[@]}
+    uv sync ${extra_deps_clause[@]} --locked
 fi
 
 # echo "Installing from ${req_file}"
