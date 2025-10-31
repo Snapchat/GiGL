@@ -18,6 +18,8 @@ steps:
 
         echo "Setting up environment..."
         # gcloud runner will run as a non-root user, but all paths/profiles, etc are set up for root
+        mkdir -p /home/builder/.local/bin
+        cp -r /root/.local/bin /home/builder/.local/bin
         echo "source /root/.bashrc" >> ~/.bashrc
         echo "source /root/.profile" >> ~/.profile
 
