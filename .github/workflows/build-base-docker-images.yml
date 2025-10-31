@@ -145,6 +145,7 @@ jobs:
       - build-builder-image
     runs-on: ubuntu-latest
     steps:
+
     - name: Commit and Push Base Images (on-dispatch)
       if: ${{ github.event_name == 'workflow_dispatch' }}
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -154,9 +155,12 @@ jobs:
         should_leave_progress_comments: "false"
         command: bash .github/scripts/update_docker_image_refs.sh
 
+    - name: Checkout repository (on-push)
+      if: ${{ github.event_name == 'push' }}
+      uses: actions/checkout@v4
+
     - name: Commit and Push Base Images (on-push)
       if: ${{ github.event_name == 'push' }}
-      shell: bash
       run: bash .github/scripts/update_docker_image_refs.sh
 
     - name: Commit and Push Dep Vars
