@@ -84,7 +84,7 @@ install_dev_deps: check_if_valid_env
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
 	uv pip install -e .
-	pre-commit install --hook-type pre-commit --hook-type pre-push
+	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 
 # Production environments, if you are developing use `make install_dev_deps` instead
