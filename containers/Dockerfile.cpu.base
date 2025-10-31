@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+COPY pyproject.toml tmp/pyproject.toml
 COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache

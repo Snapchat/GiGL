@@ -43,6 +43,7 @@ ENV JAVA_HOME="/usr/lib/jvm/java-1.11.0-openjdk-amd64"
 # to avoid re-downloading the dependencies as some of them require GCP credentials.
 # and, mounting GCP credentials to build time can be a pain and more prone to
 # accidental leaking of credentials.
+COPY pyproject.toml gigl_deps/pyproject.toml
 COPY tools gigl_deps/tools
 COPY dep_vars.env gigl_deps/dep_vars.env
 COPY requirements gigl_deps/requirements
