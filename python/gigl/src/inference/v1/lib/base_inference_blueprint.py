@@ -3,7 +3,6 @@ from typing import Callable, Generic, Iterable, Optional, TypeVar
 
 import apache_beam as beam
 from apache_beam import pvalue
-
 from gigl.common import Uri
 from gigl.src.common.types.graph_data import NodeType
 

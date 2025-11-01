@@ -7,8 +7,6 @@ import torch
 import torch.distributed
 import torch.nn.functional as F
 import torch.utils.data
-from torch.distributed.algorithms.join import Join, Joinable
-
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import (
     get_rank,
@@ -41,6 +39,7 @@ from gigl.src.training.v1.lib.data_loaders.supervised_node_classification_data_l
     SupervisedNodeClassificationBatch,
 )
 from snapchat.research.gbml import dataset_metadata_pb2
+from torch.distributed.algorithms.join import Join, Joinable
 
 logger = Logger()
 

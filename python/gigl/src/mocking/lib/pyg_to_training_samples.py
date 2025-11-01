@@ -3,9 +3,6 @@ from typing import Optional, Tuple
 
 import torch
 import torch_geometric.transforms as T
-from torch_geometric.data import HeteroData
-from torch_geometric.loader import NeighborLoader
-
 from gigl.common.env_config import get_available_cpus
 from gigl.src.common.types.graph_data import (
     CondensedNodeType,
@@ -20,6 +17,8 @@ from gigl.src.common.utils.data.feature_serialization import FeatureSerializatio
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.user_defined_edge_sampling import sample_hydrate_user_def_edge
 from snapchat.research.gbml import graph_schema_pb2, training_samples_schema_pb2
+from torch_geometric.data import HeteroData
+from torch_geometric.loader import NeighborLoader
 
 DEFAULT_NUM_HOPS_FOR_DATASETS = 1  # Number of hops to consider for each subgraph.
 DEFAULT_NUM_NODES_PER_HOP = 5  # -1 means select all nodes at each hop.

@@ -1,11 +1,8 @@
 from collections import defaultdict
-from typing import Any, Set, Union, cast
+from typing import Union
 
 import torch
 import torch.nn as nn
-from torch_geometric.data import Data
-from torch_geometric.data.hetero_data import HeteroData
-
 from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.loss import ModelResultType
 from gigl.src.common.types.graph_data import (
@@ -28,6 +25,8 @@ from gigl.src.training.v1.lib.data_loaders.node_anchor_based_link_prediction_dat
 from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader import (
     RootedNodeNeighborhoodBatch,
 )
+from torch_geometric.data import Data
+from torch_geometric.data.hetero_data import HeteroData
 
 # TODO (mkolodner-sc) Move PyG Logic to PyG-specific location
 
@@ -137,12 +136,14 @@ def infer_task_inputs(
     # Unwrap any DDP layers
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         module = model.module
-        decoder = module.decode
-        batch_result_types = model.module.tasks.result_types # type: ignore
+        decoder = module.decode  # type: ignore
+        batch_result_types = model.module.tasks.result_types
     else:
-        decoder = model.decode
-        assert hasattr(model.tasks, "result_types") and isinstance(model.tasks.result_types, list)
-        batch_result_types = model.tasks.result_types # type: ignore
+        decoder = model.decode  # type: ignore
+        assert hasattr(model.tasks, "result_types") and isinstance(
+            model.tasks.result_types, list
+        )
+        batch_result_types = model.tasks.result_types
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.

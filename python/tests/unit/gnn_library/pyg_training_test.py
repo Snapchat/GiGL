@@ -12,11 +12,10 @@ import unittest
 
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
-
 from gigl.src.common.models.layers.decoder import DecoderType, LinkPredictionDecoder
 from gigl.src.common.models.pyg.homogeneous import Transformer
 from gigl.src.common.models.pyg.link_prediction import LinkPredictionGNN
+from torch_geometric.nn import GCNConv
 
 
 class GCN(torch.nn.Module):

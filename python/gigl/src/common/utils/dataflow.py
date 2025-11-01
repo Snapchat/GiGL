@@ -8,7 +8,6 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
     WorkerOptions,
 )
-
 from gigl.common import UriFactory
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU
 from gigl.common.logger import Logger

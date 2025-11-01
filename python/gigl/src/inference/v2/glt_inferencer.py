@@ -1,8 +1,6 @@
 import argparse
 from typing import Optional
 
-from google.cloud.aiplatform_v1.types import accelerator_type
-
 from gigl.common import Uri, UriFactory
 from gigl.common.constants import (
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
@@ -18,6 +16,7 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
 from gigl.src.common.utils.metrics_service_provider import initialize_metrics
+from google.cloud.aiplatform_v1.types import accelerator_type
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
     LocalResourceConfig,
     VertexAiResourceConfig,

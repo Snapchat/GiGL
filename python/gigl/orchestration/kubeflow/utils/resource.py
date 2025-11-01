@@ -1,6 +1,5 @@
-from kfp.dsl import PipelineTask
-
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
+from kfp.dsl import PipelineTask
 
 
 def add_task_resource_requirements(

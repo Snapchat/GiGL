@@ -64,6 +64,8 @@ import time
 from dataclasses import dataclass
 from typing import Final, Optional, Union
 
+from gigl.common import GcsUri, Uri
+from gigl.common.logger import Logger
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
@@ -72,9 +74,6 @@ from google.cloud.aiplatform_v1.types import (
     WorkerPoolSpec,
     env_var,
 )
-
-from gigl.common import GcsUri, Uri
-from gigl.common.logger import Logger
 
 logger = Logger()
 

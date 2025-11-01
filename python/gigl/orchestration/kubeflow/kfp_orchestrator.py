@@ -4,9 +4,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union
 
-from google.cloud import aiplatform
-from kfp.compiler import Compiler
-
 import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
@@ -21,6 +18,8 @@ from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
+from google.cloud import aiplatform
+from kfp.compiler import Compiler
 
 logger = Logger()
 

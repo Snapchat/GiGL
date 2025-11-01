@@ -8,7 +8,7 @@ requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available fo
 dependencies = [
   "argo-workflows",
   "chardet",
-  "google-cloud-aiplatform~=1.44.0",
+  "google-cloud-aiplatform",
   "google-cloud-dataproc",
   "google-cloud-logging",
   "google-cloud-pipeline-components",
@@ -223,3 +223,38 @@ gigl-post-install = "gigl.scripts.post_install:main"
 
 [tool.setuptools.package-data]
 "gigl.scripts" = ["*.sh"]
+
+
+[tool.black]
+# Skip generated proto files.
+# Note black uses regex instead of the glob isort/autoflake use.
+exclude = ".*_pb2.pyi?"
+
+[tool.isort]
+profile = "black"
+src_paths = [
+    "../python",
+    "../scripts",
+]
+# Skip generated proto files.
+skip_glob = [
+    "**_pb2.py*",
+]
+skip_gitignore = true
+
+[tool.autoflake]
+exclude =  [
+    # Skip generated proto files. If we run autoflake on generated protos
+    # their descriptor gets removed and they break, see below.
+    #   File "python/snapchat/research/gbml/gbml_config_pb2.py", line 17, in <module>
+    #   DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(...)
+    #   TypeError: Couldn't build proto file into descriptor pool!
+    #   Invalid proto descriptor for file "snapchat/research/gbml/gbml_config.proto":
+    #   snapchat/research/gbml/trained_model_metadata.proto: Import "snapchat/research/gbml/trained_model_metadata.proto" has not been loaded.
+    "**_pb2.py*",
+    # __init__.py are used to "export" modules, and their input are often not directly used.
+    "__init__.py",
+]
+remove-all-unused-imports = true
+in-place = true
+recursive = true

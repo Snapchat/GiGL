@@ -5,14 +5,13 @@ from unittest.mock import patch
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from parameterized import param, parameterized
-
 from gigl.distributed.utils import (
     get_free_ports_from_master_node,
     get_free_ports_from_node,
     get_internal_ip_from_master_node,
     get_internal_ip_from_node,
 )
+from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import get_process_group_init_method
 
 

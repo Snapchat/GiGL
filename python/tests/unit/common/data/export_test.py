@@ -9,12 +9,11 @@ from uuid import uuid4
 import fastavro
 import requests
 import torch
-from google.cloud.exceptions import GoogleCloudError
-from parameterized import param, parameterized
-
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.utils.retry import RetriesFailedException
+from google.cloud.exceptions import GoogleCloudError
+from parameterized import param, parameterized
 
 
 class TestEmbeddingExporter(unittest.TestCase):

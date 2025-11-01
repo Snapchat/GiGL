@@ -1,6 +1,5 @@
-import torch.nn
-
 import gigl.src.common.utils.model as model_utils
+import torch.nn
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.os_utils import import_obj

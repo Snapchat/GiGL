@@ -1,7 +1,6 @@
 from typing import Optional
 
 import torch
-
 from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
     NegativeSamplingCorruptionType,
     SimilarityType,

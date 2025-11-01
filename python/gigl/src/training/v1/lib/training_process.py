@@ -8,12 +8,11 @@ import traceback
 from distutils.util import strtobool
 from typing import Any, Optional
 
+import gigl.src.common.utils.model as model_utils
 import tensorflow as tf
 import torch
 import torch.distributed
 import torch.nn.parallel
-
-import gigl.src.common.utils.model as model_utils
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit

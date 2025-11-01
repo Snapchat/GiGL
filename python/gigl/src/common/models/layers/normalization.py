@@ -1,9 +1,8 @@
 from typing import Union
 
 import torch
-from torch.nn import functional as F
-
 from gigl.src.common.types.graph_data import NodeType
+from torch.nn import functional as F
 
 
 def l2_normalize_embeddings(

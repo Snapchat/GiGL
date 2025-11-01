@@ -1,5 +1,4 @@
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
-
 from gigl.common import HttpUri
 from gigl.common.logger import Logger
 

@@ -16,15 +16,14 @@ import fastavro
 import fastavro.types
 import requests
 import torch
-from google.cloud import bigquery
-from google.cloud.bigquery.job import LoadJob
-from google.cloud.exceptions import GoogleCloudError
-from typing_extensions import Self
-
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
 from gigl.src.common.utils.file_loader import FileLoader
+from google.cloud import bigquery
+from google.cloud.bigquery.job import LoadJob
+from google.cloud.exceptions import GoogleCloudError
+from typing_extensions import Self
 
 logger = Logger()
 

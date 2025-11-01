@@ -9,15 +9,6 @@ from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.distributed import (
-    barrier,
-    get_context,
-    init_rpc,
-    init_worker_group,
-    rpc_is_initialized,
-    shutdown_rpc,
-)
-
 from gigl.common import Uri, UriFactory
 from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
@@ -49,6 +40,14 @@ from gigl.utils.data_splitters import (
     NodeAnchorLinkSplitter,
     NodeSplitter,
     select_ssl_positive_label_edges,
+)
+from graphlearn_torch.distributed import (
+    barrier,
+    get_context,
+    init_rpc,
+    init_worker_group,
+    rpc_is_initialized,
+    shutdown_rpc,
 )
 
 logger = Logger()

@@ -1,15 +1,14 @@
 import tempfile
 from distutils.util import strtobool
 
+from gigl.common import LocalUri
+from gigl.common.logger import Logger
 from torch.profiler import (
     ProfilerActivity,
     profile,
     schedule,
     tensorboard_trace_handler,
 )
-
-from gigl.common import LocalUri
-from gigl.common.logger import Logger
 
 logger = Logger()
 

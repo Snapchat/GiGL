@@ -2,7 +2,6 @@ from functools import partial
 from typing import Callable
 
 import apache_beam as beam
-
 from gigl.common import Uri, UriFactory
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder
 from gigl.src.common.types.graph_data import NodeType

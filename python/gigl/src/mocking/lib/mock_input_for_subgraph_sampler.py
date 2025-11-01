@@ -4,8 +4,6 @@ from typing import Optional
 
 import tensorflow as tf
 import torch
-from tensorflow_transform.tf_metadata import schema_utils
-
 from gigl.common import GcsUri, LocalUri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
@@ -28,6 +26,7 @@ from gigl.src.mocking.lib.constants import (
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from snapchat.research.gbml import gbml_config_pb2, preprocessed_metadata_pb2
+from tensorflow_transform.tf_metadata import schema_utils
 
 logger = Logger()
 

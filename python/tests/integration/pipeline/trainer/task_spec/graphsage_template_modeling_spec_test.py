@@ -1,7 +1,6 @@
 import unittest
 
 import torch
-
 from gigl.common.logger import Logger
 from gigl.src.common.modeling_task_specs.graphsage_template_modeling_spec import (
     GraphSageTemplateTrainerSpec,

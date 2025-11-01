@@ -3,15 +3,14 @@ import tempfile
 import unittest
 from typing import Optional
 
+import gigl.common.utils.local_fs as local_fs_utils
+import gigl.src.common.constants.gcs as gcs_consts
+import gigl.src.common.constants.local_fs as local_fs_constants
 import numpy as np
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
 import tensorflow_transform as tft
 import torch
-
-import gigl.common.utils.local_fs as local_fs_utils
-import gigl.src.common.constants.gcs as gcs_consts
-import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils

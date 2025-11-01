@@ -6,14 +6,13 @@ from unittest import mock
 from uuid import uuid4
 
 import nbformat
-from nbconvert.preprocessors import ExecutePreprocessor
-
 from gigl.common.constants import GIGL_ROOT_DIR
 from gigl.common.logger import Logger
 from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
+from nbconvert.preprocessors import ExecutePreprocessor
 
 logger = Logger()
 

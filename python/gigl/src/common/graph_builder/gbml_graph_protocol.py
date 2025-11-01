@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Protocol, Set
 
 import torch
-
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.types.graph_data import Edge, EdgeType, Node
 

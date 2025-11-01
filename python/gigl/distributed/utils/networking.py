@@ -2,7 +2,6 @@ import socket
 from typing import Optional
 
 import torch
-
 from gigl.common.logger import Logger
 
 logger = Logger()
@@ -145,7 +144,9 @@ def get_internal_ip_from_node(
         ip_list = [None]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    torch.distributed.broadcast_object_list(object_list=ip_list, src=node_rank, device=device)
+    torch.distributed.broadcast_object_list(
+        object_list=ip_list, src=node_rank, device=device
+    )
     node_ip = ip_list[0]
     logger.info(f"Rank {rank} received master internal IP: {node_ip}")
     assert node_ip is not None, "Could not retrieve master node's internal IP"

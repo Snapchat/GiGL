@@ -7,7 +7,6 @@ from typing import Callable, NamedTuple, Optional, Sequence, Tuple, Union
 import psutil
 import tensorflow as tf
 import torch
-
 from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu

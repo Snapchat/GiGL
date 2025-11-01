@@ -3,8 +3,6 @@ import tempfile
 from typing import Optional
 
 import torch
-from google.cloud import bigquery
-
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType
@@ -15,6 +13,7 @@ from gigl.src.mocking.lib.constants import (
 )
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
+from google.cloud import bigquery
 
 logger = Logger()
 

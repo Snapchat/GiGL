@@ -1,14 +1,13 @@
 import unittest
 
 import torch
-from graphlearn_torch.partition import RangePartitionBook
-from parameterized import param, parameterized
-
 from gigl.distributed.utils.partition_book import (
     _check_partition_book,
     get_ids_on_rank,
     get_total_ids,
 )
+from graphlearn_torch.partition import RangePartitionBook
+from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 

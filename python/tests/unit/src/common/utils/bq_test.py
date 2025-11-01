@@ -1,8 +1,7 @@
 import unittest
 
-from parameterized import param, parameterized
-
 from gigl.src.common.utils.bq import BqUtils
+from parameterized import param, parameterized
 
 
 class BqUtilsTest(unittest.TestCase):

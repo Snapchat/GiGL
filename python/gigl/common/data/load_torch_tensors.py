@@ -5,9 +5,6 @@ from typing import MutableMapping, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.distributed.rpc import barrier, rpc_is_initialized
-from torch.multiprocessing import Manager
-
 from gigl.common.data.dataloaders import (
     SerializedTFRecordInfo,
     TFDatasetOptions,
@@ -21,6 +18,8 @@ from gigl.types.graph import (
     LoadedGraphTensors,
 )
 from gigl.utils.share_memory import share_memory
+from graphlearn_torch.distributed.rpc import barrier, rpc_is_initialized
+from torch.multiprocessing import Manager
 
 logger = Logger()
 

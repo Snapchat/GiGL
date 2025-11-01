@@ -4,9 +4,8 @@ import tempfile
 import unittest
 from typing import Tuple
 
-import torch
-
 import gigl.src.common.constants.gcs as gcs_consts
+import torch
 from gigl.common import GcsUri, LocalUri
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils

@@ -3,7 +3,6 @@ import unittest
 from collections import defaultdict
 
 import tensorflow as tf
-
 from gigl.common import LocalUri
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
 from gigl.src.common.types.graph_data import Node, NodeType

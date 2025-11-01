@@ -1,8 +1,6 @@
 import unittest
 from collections import abc
 
-from parameterized import param, parameterized
-
 from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
 from gigl.distributed.dist_context import DistributedContext
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
@@ -10,6 +8,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from parameterized import param, parameterized
 
 
 # TODO(kmonte, mkolodner): Add more tests for heterogeneous datasets.

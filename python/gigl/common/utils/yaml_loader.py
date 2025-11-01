@@ -1,11 +1,10 @@
 from typing import Type, TypeVar, cast
 
-from omegaconf import OmegaConf
-
 from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.common.omegaconf_resolvers import register_resolvers
 from gigl.src.common.utils.file_loader import FileLoader
+from omegaconf import OmegaConf
 
 logger = Logger()
 

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Sequence, Tuple
 
 import google.cloud.bigquery as bigquery
-
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants import bq as bq_constants

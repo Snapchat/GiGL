@@ -49,14 +49,13 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
 
-from google.cloud.aiplatform import PipelineJob
-
 from gigl import __version__
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.yaml_loader import load_resolved_yaml
 from gigl.orchestration.kubeflow.kfp_orchestrator import KfpOrchestrator
 from gigl.src.common.types import AppliedTaskIdentifier
+from google.cloud.aiplatform import PipelineJob
 
 logger = Logger()
 

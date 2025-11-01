@@ -2,7 +2,6 @@ from typing import Tuple, TypedDict
 
 import msgpack
 import numpy as np
-
 from gigl.common.utils.compute.serialization.coder import CoderProtocol
 
 

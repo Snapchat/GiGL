@@ -3,7 +3,6 @@ import unittest
 from typing import cast
 
 import tensorflow as tf
-
 from gigl.common import LocalUri
 from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
