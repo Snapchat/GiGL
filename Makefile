@@ -43,13 +43,7 @@ GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # but since we don't push those dependenices (or their documentation) to git,
 # then when we *check* the format of those files, we will fail.
 # Thus, we only want to format the Markdown files that we explicitly include in our repo.
-MD_FILES := $(shell \
-	if [ ! "${GIT_BRANCH}" ]; then \
-		find . -type f -name "*.md" ! -path "*/.venv/*"; \
-	else \
-		git ls-tree --name-only -r ${GIT_BRANCH} . | grep "\.md$$" | grep -v "\.venv/"; \
-	fi \
-)
+MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*")
 GIGL_ALERT_EMAILS?=""
 
 
@@ -131,7 +125,7 @@ check_format_scala:
 
 check_format_md:
 	@echo "Checking markdown files..."
-	uv run mdformat --check ${MD_FILES} --exclude .venv/
+	uv run mdformat --check ${MD_FILES}
 
 check_format: check_format_py check_format_scala check_format_md
 
