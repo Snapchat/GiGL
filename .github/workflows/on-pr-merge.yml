@@ -119,4 +119,8 @@ jobs:
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Lint Tests
       shell: bash
-      run: make lint_test
+      run: |
+        # sourcing .profile is important to resolve paths for java, sbt, et al.
+        # It is setup in the setup-python-tools action.
+        source ~/.profile
+        make lint_test
