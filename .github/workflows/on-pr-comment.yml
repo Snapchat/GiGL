@@ -139,4 +139,8 @@ jobs:
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        command: make lint_test
+        command: |
+          # sourcing .profile is important to resolve paths for java, sbt, et al.
+          # It is setup in the setup-python-tools action.
+          source ~/.profile
+          make lint_test
