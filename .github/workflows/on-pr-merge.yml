@@ -118,8 +118,5 @@ jobs:
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Lint Tests
-      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
-      with:
-        cmd: "make lint_test"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
+      shell: bash
+      run: make lint_test
