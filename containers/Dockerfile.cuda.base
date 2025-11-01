@@ -19,5 +19,11 @@ COPY uv.lock tmp/uv.lock
 COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
+ENV UV_PROJECT_ENVIRONMENT=/tmp/.venv
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+ENV PATH="/tmp/.venv/bin:${PATH}"
 
 CMD [ "/bin/bash" ]
