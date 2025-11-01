@@ -41,7 +41,6 @@ from graphlearn_torch.distributed import (
     get_context,
 )
 from graphlearn_torch.sampler import SamplingConfig, SamplingType
-from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 

@@ -143,7 +143,7 @@ def infer_task_inputs(
         # assert hasattr(model.tasks, "result_types") and isinstance(
         #     model.tasks.result_types, list
         # )
-        batch_result_types = model.tasks.result_types
+        batch_result_types = model.tasks.result_types #type: ignore
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.
