@@ -139,7 +139,4 @@ jobs:
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        command: |
-          source ~/.profile
-          make check_format
-          make assert_yaml_configs_parse
+        command: make lint_test
