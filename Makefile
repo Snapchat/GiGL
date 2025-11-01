@@ -187,7 +187,7 @@ check_format_scala:
 
 check_format_md:
 	@echo "Checking markdown files..."
-	mdformat --check ${MD_FILES}
+	uv run mdformat --check ${MD_FILES}
 
 check_format: check_format_py check_format_scala check_format_md
 
@@ -225,7 +225,7 @@ format_scala:
 
 format_md:
 	@echo "Formatting markdown files..."
-	mdformat ${MD_FILES}
+	uv run mdformat ${MD_FILES}
 
 format: format_py format_scala format_md
 
