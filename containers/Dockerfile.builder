@@ -56,7 +56,10 @@ RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
 # We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
 ENV UV_PROJECT_ENVIRONMENT=/gigl_deps/.venv
 ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
-ENV PATH="/gigl_deps/.venv/bin:${PATH}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
 
 RUN cd gigl_deps && bash ./requirements/install_scala_deps.sh
 

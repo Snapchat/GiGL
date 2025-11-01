@@ -5,6 +5,8 @@ FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
 SHELL ["/bin/bash", "-c"]
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
@@ -24,6 +26,9 @@ RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
 # We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
 ENV UV_PROJECT_ENVIRONMENT=/tmp/.venv
 ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
-ENV PATH="/tmp/.venv/bin:${PATH}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
 
 CMD [ "/bin/bash" ]

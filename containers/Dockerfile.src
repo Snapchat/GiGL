@@ -8,6 +8,7 @@ RUN touch __init__.py
 
 # Note: main package files must live in root of the repo for the python package to be built correctly for Dataflow workers.
 # See https://beam.apache.org/documentation/sdks/python-pipxeline-dependencies/#create-reproducible-environments.
+WORKDIR /gigl
 COPY MANIFEST.in MANIFEST.in
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
@@ -16,7 +17,4 @@ COPY deployment deployment
 COPY python python
 COPY examples examples
 
-RUN ls -al
-RUN cat /root/.bashrc
-# RUN /root/.local/bin/uv
-RUN uv run pip install -e .
+RUN uv pip install -e .
