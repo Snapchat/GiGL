@@ -52,26 +52,6 @@ get_ver_hash:
 	git diff --quiet || { echo Branch is dirty, please commit changes and ensure branch is clean; exit 1; }
 	$(eval GIT_COMMIT=$(shell git log -1 --pretty=format:"%H"))
 
-initialize_environment:
-	conda create -y --override-channels --channel conda-forge --name gigl_py313 python=3.13
-	# conda create -y --override-channels --channel conda-forge --name ${CONDA_ENV_NAME} python=${PYTHON_VERSION}
-	# @echo "If conda environment was successfully installed, ensure to activate it and run \`make install_dev_deps\` or \`make install_deps\` to complete setup"
-
-clean_environment:
-	if [ "${CONDA_DEFAULT_ENV}" == "${CONDA_ENV_NAME}" ]; then \
-		pip uninstall -y -r <(pip freeze); \
-	else \
-		echo Change your local env to dev first.; \
-	fi
-
-reset_environment: generate_cpu_hashed_requirements clean_environment install_deps
-
-rebuild_dev_environment:
-	conda deactivate
-	conda remove --name ${CONDA_ENV_NAME} --all -y
-	make initialize_environment
-	conda activate ${CONDA_ENV_NAME}
-	make install_dev_deps
 
 check_if_valid_env:
 	#@command -v docker >/dev/null 2>&1 || { echo >&2 "docker is required but it's not installed.  Aborting."; exit 1; }
@@ -93,48 +73,6 @@ install_deps:
 	bash ./requirements/install_py_deps.sh
 	bash ./requirements/install_scala_deps.sh
 	uv pip install -e .
-
-# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong
-generate_mac_arm64_cpu_hashed_requirements:
-	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
-	--output-file=requirements/darwin_arm64_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra experimental \
-	./python/pyproject.toml
-
-# Can only be run on an arm64 mac, otherwise generated hashed req file will be wrong.
-generate_dev_mac_arm64_cpu_hashed_requirements:
-	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
-	--output-file=requirements/dev_darwin_arm64_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra dev --extra experimental \
-	./python/pyproject.toml
-
-# Can only be run on linux, otherwise generated hashed req file will be wrong.
-generate_linux_cpu_hashed_requirements:
-	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
-	--output-file=requirements/linux_cpu_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra experimental \
-	./python/pyproject.toml
-
-# Can only be run on linux, otherwise generated hashed req file will be wrong.
-generate_dev_linux_cpu_hashed_requirements:
-	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
-	--output-file=requirements/dev_linux_cpu_requirements_unified.txt \
-	--extra torch25-cpu --extra transform --extra dev --extra experimental \
-	./python/pyproject.toml
-
-# Can only be run on linux, otherwise generated hashed req file will be wrong.
-generate_linux_cuda_hashed_requirements:
-	pip-compile  -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
-	--output-file=requirements/linux_cuda_requirements_unified.txt \
-	--extra torch25-cuda-121 --extra transform --extra experimental \
-	./python/pyproject.toml
-
-# Can only be run on linux, otherwise generated hashed req file will be wrong.
-generate_dev_linux_cuda_hashed_requirements:
-	pip-compile -v --allow-unsafe --generate-hashes --no-emit-index-url --resolver=backtracking \
-	--output-file=requirements/dev_linux_cuda_requirements_unified.txt \
-	--extra torch25-cuda-121 --extra transform --extra dev --extra experimental \
-	./python/pyproject.toml
 
 # These are a collection of tests that are run before anything is installed using tools available on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
@@ -200,7 +138,7 @@ check_format: check_format_py check_format_scala check_format_md
 integration_test:
 	( \
 	cd python ;\
-	python -m tests.integration.main \
+	uv run python -m tests.integration.main \
 	--env=test \
 	--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 	--test_file_pattern=$(PY_TEST_FILES) \
@@ -210,7 +148,7 @@ notebooks_test:
 	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m testing.notebooks_test
 
 mock_assets:
-	( cd python ; python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test)
+	( cd python ; uv run python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test)
 
 format_py:
 	uv run autoflake --config pyproject.toml ${PYTHON_DIRS}
@@ -240,7 +178,7 @@ lint_test:
 # compiles current working state of scala projects to local jars
 compile_jars:
 	@echo "Compiling jars..."
-	@python -m scripts.scala_packager
+	@uv run python -m scripts.scala_packager
 
 # Removes local jar files from python/deps directory
 remove_jars:
@@ -248,13 +186,13 @@ remove_jars:
 	rm -rf python/deps/scala/subgraph_sampler/jars/*
 
 push_cpu_docker_image:
-	@python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}
+	@uv run python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}
 
 push_cuda_docker_image:
-	@python -m scripts.build_and_push_docker_image --predefined_type cuda --image_name ${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}
+	@uv run python -m scripts.build_and_push_docker_image --predefined_type cuda --image_name ${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}
 
 push_dataflow_docker_image:
-	@python -m scripts.build_and_push_docker_image --predefined_type dataflow --image_name ${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG}
+	@uv run python -m scripts.build_and_push_docker_image --predefined_type dataflow --image_name ${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG}
 
 push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_dataflow_docker_image
 	# Dockerize the src code and push it to gcr.
@@ -268,7 +206,7 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	@echo "All Docker images compiled and pushed"
 
 push_dev_workbench_docker_image: compile_jars
-	@python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
+	@uv run python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 
 # Set compiled_pipeline path so compile_gigl_kubeflow_pipeline knows where to save the pipeline to so
@@ -276,7 +214,7 @@ push_dev_workbench_docker_image: compile_jars
 run_cora_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_nalp_e2e_test:
-	python testing/e2e_tests/e2e_test.py \
+	uv run python testing/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_nalp_test"
@@ -284,7 +222,7 @@ run_cora_nalp_e2e_test:
 run_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_snc_e2e_test:
-	python testing/e2e_tests/e2e_test.py \
+	uv run python testing/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_snc_test"
@@ -292,7 +230,7 @@ run_cora_snc_e2e_test:
 run_cora_udl_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_udl_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_udl_e2e_test:
-	python testing/e2e_tests/e2e_test.py \
+	uv run python testing/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_udl_test"
@@ -300,7 +238,7 @@ run_cora_udl_e2e_test:
 run_dblp_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_dblp_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_dblp_nalp_e2e_test:
-	python testing/e2e_tests/e2e_test.py \
+	uv run python testing/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
 		--test_names="dblp_nalp_test"
@@ -308,7 +246,7 @@ run_dblp_nalp_e2e_test:
 run_hom_cora_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_e2e_test:
-	python testing/e2e_tests/e2e_test.py \
+	uv run python testing/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_test"
@@ -316,7 +254,7 @@ run_hom_cora_sup_e2e_test:
 run_het_dblp_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_e2e_test:
-	python testing/e2e_tests/e2e_test.py \
+	uv run python testing/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_test"
@@ -324,7 +262,7 @@ run_het_dblp_sup_e2e_test:
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
-	python testing/e2e_tests/e2e_test.py \
+	uv run python testing/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml"
 
@@ -335,7 +273,7 @@ run_all_e2e_tests:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
 compile_gigl_kubeflow_pipeline: compile_jars push_new_docker_images
-	python -m gigl.orchestration.kubeflow.runner \
+	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
 		--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG} \
 		--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG} \
@@ -361,7 +299,7 @@ _skip_build_deps:
 # 	compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" \
 # 	run_dev_gnn_kubeflow_pipeline
 run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, compile_jars push_new_docker_images)
-	python -m gigl.orchestration.kubeflow.runner \
+	uv run python -m gigl.orchestration.kubeflow.runner \
 		$(if $(compiled_pipeline_path),,--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}) \
 		$(if $(compiled_pipeline_path),,--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}) \
 		$(if $(compiled_pipeline_path),,--container_image_dataflow=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG}) \
