@@ -55,7 +55,6 @@ COPY python/gigl/scripts gigl_deps/python/gigl/scripts
 COPY .python-version tmp/.python-version
 # ENV UV_SYSTEM_PYTHON=1
 RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
-RUN uv tools install pip==25.3
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.
@@ -66,6 +65,7 @@ ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
+RUN uv tools install pip==25.3
 
 RUN cd gigl_deps && bash ./requirements/install_scala_deps.sh
 
