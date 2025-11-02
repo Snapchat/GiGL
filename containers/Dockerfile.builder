@@ -51,11 +51,12 @@ COPY requirements gigl_deps/requirements
 # Needed to install glt dependencies - which is done.
 COPY python/gigl/scripts gigl_deps/python/gigl/scripts
 
+
 COPY .python-version tmp/.python-version
 ENV UV_SYSTEM_PYTHON=1
-RUN uv python install
-RUN uv tools install pip==25.3
 RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
+RUN uv tools install pip==25.3
+
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.
 # We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
