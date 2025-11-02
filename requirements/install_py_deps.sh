@@ -41,7 +41,6 @@ then
 
     sh install.sh
     source $HOME/.local/bin/env
-    uv python install
 fi
 
 

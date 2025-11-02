@@ -53,7 +53,7 @@ COPY python/gigl/scripts gigl_deps/python/gigl/scripts
 
 
 COPY .python-version tmp/.python-version
-ENV UV_SYSTEM_PYTHON=1
+# ENV UV_SYSTEM_PYTHON=1
 RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
 RUN uv tools install pip==25.3
 
