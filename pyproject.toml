@@ -38,6 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 transform = [
+  # Apache Beam version has to match with what is specified in `containers/Dockerfile.dataflow.base`
   "apache-beam[gcp]==2.56.0",
   "pyarrow==10.0.1",
   # Tensorflow transform packages.
