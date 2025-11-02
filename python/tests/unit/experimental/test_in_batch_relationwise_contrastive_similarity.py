@@ -1,7 +1,6 @@
 import unittest
 
 import torch
-
 from gigl.experimental.knowledge_graph_embedding.lib.model.negative_sampling import (
     in_batch_relationwise_contrastive_similarity,
 )

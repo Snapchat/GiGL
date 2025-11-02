@@ -2,12 +2,11 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from tensorflow_metadata.proto.v0.schema_pb2 import Feature
-
 from gigl.common.logger import Logger
 from gigl.common.utils.tensorflow_schema import get_feature_len_from_fixed_len_feature
 from gigl.src.common.utils.data.training import filter_features
 from gigl.src.data_preprocessor.lib.types import FeatureSchema
+from tensorflow_metadata.proto.v0.schema_pb2 import Feature
 
 logger = Logger()
 

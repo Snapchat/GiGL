@@ -2,7 +2,6 @@ from typing import Any
 
 import numpy as np
 import torch
-
 from gigl.common.logger import Logger
 
 logger = Logger()

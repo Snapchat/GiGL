@@ -1,7 +1,6 @@
 import unittest
 
 import torch
-
 from gigl.common.logger import Logger
 from gigl.src.common.modeling_task_specs.node_classification_modeling_task_spec import (
     NodeClassificationModelingTaskSpec,

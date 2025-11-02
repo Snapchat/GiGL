@@ -1,5 +1,4 @@
 from apache_beam import coders
-
 from gigl.src.common.types.pb_wrappers.graph_data_types import (
     EdgePbWrapper,
     GraphPbWrapper,
@@ -8,10 +7,10 @@ from gigl.src.common.types.pb_wrappers.graph_data_types import (
 from snapchat.research.gbml import graph_schema_pb2
 
 """
-In dataflow, we use wrapper object as key, value beam DoFn outputs and also for shuffle. We only 
-need to serialize the proto itself and not the wrapper. The proto objects also do not contain Map, 
-therefore can be deterministic. Which is specially important when shuffling with proto wrapper 
-objects as key. 
+In dataflow, we use wrapper object as key, value beam DoFn outputs and also for shuffle. We only
+need to serialize the proto itself and not the wrapper. The proto objects also do not contain Map,
+therefore can be deterministic. Which is specially important when shuffling with proto wrapper
+objects as key.
 """
 
 

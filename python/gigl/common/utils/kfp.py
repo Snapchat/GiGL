@@ -6,7 +6,6 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 

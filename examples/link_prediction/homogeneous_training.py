@@ -28,13 +28,11 @@ import time
 from collections.abc import Iterator
 from typing import Literal, Optional
 
+import gigl.distributed.utils
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from torch_geometric.data import Data
-
-import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
@@ -52,6 +50,7 @@ from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dic
 from gigl.types.graph import to_homogeneous
 from gigl.utils.iterator import InfiniteIterator
 from gigl.utils.sampling import parse_fanout
+from torch_geometric.data import Data
 
 logger = Logger()
 

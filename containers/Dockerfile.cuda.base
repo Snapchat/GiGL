@@ -1,39 +1,40 @@
 # syntax=docker/dockerfile:1
 
 # Used to generate hashed requirements.txt
-FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
 SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y build-essential git wget cmake iputils-ping \
+    && apt-get install -y build-essential git wget cmake iputils-ping curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Miniconda
-ENV CONDA_DIR=/opt/conda
-RUN wget -O Miniforge3.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh" && bash Miniforge3.sh -b -p ${CONDA_DIR}
-ENV PATH=${CONDA_DIR}/bin:$PATH
-
-# Create the conda env environment:
-# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y --override-channels --channel conda-forge --name gnn python=3.9 pip
-
-# Update path so any call for python executables in the built image defaults to using the gnn conda environment
-ENV PATH=${CONDA_DIR}/envs/gnn/bin:$PATH
-
-# The default bashrc exists early and is mainly for local dev niceties - we delete so we can
-# Setup Conda for debugging purposes
-RUN rm ~/.bashrc && touch ~/.bashrc && conda init bash
-RUN echo "conda activate gnn" >> ~/.bashrc
-
+COPY pyproject.toml tmp/pyproject.toml
+COPY uv.lock tmp/uv.lock
 COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
-RUN pip install --upgrade pip
+
+COPY .python-version tmp/.python-version
+# ENV UV_SYSTEM_PYTHON=1
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
+ENV UV_PROJECT_ENVIRONMENT=/tmp/.venv
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
+RUN uv tool install pip==25.3
+
 
 CMD [ "/bin/bash" ]

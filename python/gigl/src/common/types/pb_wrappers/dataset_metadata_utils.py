@@ -6,7 +6,6 @@ from typing import Optional, Type, TypeVar, Union, cast
 
 import google.protobuf.message
 import torch
-
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
@@ -396,8 +395,8 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def get_training_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
+        graph_backend: GraphBackend = GraphBackend.PYG,
     ) -> Dataloaders:
         data_loader_types = [
             DataloaderTypes.train_main,
@@ -425,8 +424,8 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def get_test_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
+        graph_backend: GraphBackend = GraphBackend.PYG,
     ) -> Dataloaders:
         data_loader_types = [
             DataloaderTypes.test_main,

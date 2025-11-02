@@ -24,14 +24,12 @@ import gc
 import time
 from typing import Optional, Union
 
+import gigl.distributed
+import gigl.distributed.utils
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
-from graphlearn_torch.distributed import barrier, shutdown_rpc
-
-import gigl.distributed
-import gigl.distributed.utils
 from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
@@ -45,6 +43,7 @@ from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
+from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 logger = Logger()
 

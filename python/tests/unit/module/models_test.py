@@ -3,15 +3,14 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-from torch_geometric.data import Data, HeteroData
-from torch_geometric.nn.models import LightGCN as PyGLightGCN
-
 from gigl.module.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
 )
+from torch_geometric.data import Data, HeteroData
+from torch_geometric.nn.models import LightGCN as PyGLightGCN
 
 
 class DummyEncoder(nn.Module):

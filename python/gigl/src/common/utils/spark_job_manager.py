@@ -2,6 +2,9 @@ import datetime
 from dataclasses import dataclass
 from typing import Optional
 
+from gigl.common import GcsUri, Uri
+from gigl.common.logger import Logger
+from gigl.common.services.dataproc import DataprocService
 from google.cloud.dataproc_v1.types import (
     Cluster,
     ClusterConfig,
@@ -14,10 +17,6 @@ from google.cloud.dataproc_v1.types import (
     SoftwareConfig,
 )
 from google.protobuf.duration_pb2 import Duration
-
-from gigl.common import GcsUri, Uri
-from gigl.common.logger import Logger
-from gigl.common.services.dataproc import DataprocService
 
 IDLE_TTL_DEFAULT_S = 600  # Auto delete cluster after 10 mins of idle time (i.e. no job is running on cluster)
 IDLE_TTL_DEV_DEFAULT_S = 36_000  # Auto delete cluster after 10 hours of idle time (i.e. no job is running on cluster)

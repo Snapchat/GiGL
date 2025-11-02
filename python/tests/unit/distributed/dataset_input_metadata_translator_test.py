@@ -2,8 +2,6 @@ import unittest
 from collections import abc
 from typing import Optional, Union
 
-from parameterized import param, parameterized
-
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -21,6 +19,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from parameterized import param, parameterized
 
 
 class TranslatorTestCase(unittest.TestCase):

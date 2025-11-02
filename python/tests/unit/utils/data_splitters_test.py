@@ -4,10 +4,6 @@ from typing import Union
 
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.data import Dataset, Topology
-from parameterized import param, parameterized
-from torch.testing import assert_close
-
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
 from gigl.utils.data_splitters import (
@@ -20,10 +16,13 @@ from gigl.utils.data_splitters import (
     get_labels_for_anchor_nodes,
     select_ssl_positive_label_edges,
 )
+from graphlearn_torch.data import Dataset, Topology
+from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
 )
+from torch.testing import assert_close
 
 # For TestDataSplitters
 _NODE_A = NodeType("A")

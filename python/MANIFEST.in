@@ -1,2 +1,0 @@
-global-exclude tests/*
-recursive-include gigl/deps *.jar

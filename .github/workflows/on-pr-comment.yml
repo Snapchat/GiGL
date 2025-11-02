@@ -24,7 +24,7 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.x'
+        python-version-file: ".python-version"
 
     - name: Install PyYAML
       run: pip install PyYAML
@@ -140,6 +140,7 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
+          # sourcing .profile is important to resolve paths for java, sbt, et al.
+          # It is setup in the setup-python-tools action.
           source ~/.profile
-          make check_format
-          make assert_yaml_configs_parse
+          make lint_test

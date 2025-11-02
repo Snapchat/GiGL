@@ -6,6 +6,10 @@ on:
       pr_number:
         description: 'PR to run the workflow on'
         required: true
+
+  # Strictly for testing purposes
+  push:
+
 env:
   DOCKER_BUILDKIT: 1
   GIGL_BASE_CUDA_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cuda-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
@@ -16,6 +20,7 @@ env:
 
 jobs:
   comment-workflow-started:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
     - name: Comment on PR
@@ -35,13 +40,17 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-    - name: Checkout PR Branch
+    - name: Checkout PR Branch (on-dispatch)
+      if: ${{ github.event_name == 'workflow_dispatch' }}
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+    - name: Checkout repository (on-push)
+      if: ${{ github.event_name == 'push' }}
+      uses: actions/checkout@v4
     - name: Setup Machine for building Docker images
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -63,13 +72,17 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-    - name: Checkout PR Branch
+    - name: Checkout PR Branch (on-dispatch)
+      if: ${{ github.event_name == 'workflow_dispatch' }}
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+    - name: Checkout repository (on-push)
+      if: ${{ github.event_name == 'push' }}
+      uses: actions/checkout@v4
     - name: Setup Machine for building Docker images
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -97,13 +110,17 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-    - name: Checkout PR Branch
+    - name: Checkout PR Branch (on-dispatch)
+      if: ${{ github.event_name == 'workflow_dispatch' }}
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+    - name: Checkout repository (on-push)
+      if: ${{ github.event_name == 'push' }}
+      uses: actions/checkout@v4
     - name: Setup Machine for building Docker images
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -128,22 +145,23 @@ jobs:
       - build-builder-image
     runs-on: ubuntu-latest
     steps:
-    - name: Commit and Push Base Images
+
+    - name: Commit and Push Base Images (on-dispatch)
+      if: ${{ github.event_name == 'workflow_dispatch' }}
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
         should_leave_progress_comments: "false"
-        command: |
-          echo "Writing new image names to dep_vars.env:"
-          echo "  DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CUDA_IMAGE}"
-          echo "  DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CPU_IMAGE}"
-          echo "  DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=${GIGL_BASE_DATAFLOW_IMAGE}"
-          echo "  DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG=${GIGL_BUILDER_IMAGE}"
-          sed -i "s|^DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CUDA_IMAGE}|" dep_vars.env
-          sed -i "s|^DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CPU_IMAGE}|" dep_vars.env
-          sed -i "s|^DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=${GIGL_BASE_DATAFLOW_IMAGE}|" dep_vars.env
-          sed -i "s|name: us-central1-docker\.pkg\.dev.*|name: ${GIGL_BUILDER_IMAGE}|" .github/cloud_builder/run_command_on_active_checkout.yaml
+        command: bash .github/scripts/update_docker_image_refs.sh
+
+    - name: Checkout repository (on-push)
+      if: ${{ github.event_name == 'push' }}
+      uses: actions/checkout@v4
+
+    - name: Commit and Push Base Images (on-push)
+      if: ${{ github.event_name == 'push' }}
+      run: bash .github/scripts/update_docker_image_refs.sh
 
     - name: Commit and Push Dep Vars
       uses: snapchat/gigl/.github/actions/commit-and-push@main
@@ -152,6 +170,7 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
 
     - uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      if: ${{ github.event_name == 'workflow_dispatch' }}
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |

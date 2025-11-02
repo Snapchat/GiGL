@@ -3,11 +3,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, call, patch
 
-import yaml
-from google.protobuf.json_format import MessageToDict
-
 import gigl.env.dep_constants as dep_constants
 import gigl.src.common.constants.gcs as gcs_constants
+import yaml
 from gigl.common import GcsUri, LocalUri, UriFactory
 from gigl.common.constants import (
     SPARK_31_TFRECORD_JAR_GCS_PATH,
@@ -17,6 +15,7 @@ from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils import metrics_service_provider
 from gigl.src.subgraph_sampler import subgraph_sampler
 from gigl.src.subgraph_sampler.lib.ingestion_protocol import BaseIngestion
+from google.protobuf.json_format import MessageToDict
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 
 

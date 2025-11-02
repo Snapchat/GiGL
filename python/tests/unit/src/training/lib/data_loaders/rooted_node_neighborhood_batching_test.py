@@ -2,7 +2,6 @@ import unittest
 from typing import cast
 
 import numpy as np
-
 from gigl.src.common.constants.graph_metadata import (
     DEFAULT_CONDENSED_EDGE_TYPE,
     DEFAULT_CONDENSED_NODE_TYPE,

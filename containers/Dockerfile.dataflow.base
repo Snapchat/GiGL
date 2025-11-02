@@ -2,4 +2,4 @@
 ARG BASE_IMAGE
 FROM $BASE_IMAGE
 
-COPY --from=apache/beam_python3.9_sdk:2.53.0 /opt/apache/beam /opt/apache/beam
+COPY --from=apache/beam_python3.11_sdk:2.56.0 /opt/apache/beam /opt/apache/beam

@@ -1,12 +1,9 @@
 import unittest
 from collections.abc import Mapping
 
+import gigl.distributed.utils
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.distributed import shutdown_rpc
-from torch_geometric.data import Data, HeteroData
-
-import gigl.distributed.utils
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
@@ -34,6 +31,7 @@ from gigl.types.graph import (
 )
 from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter, HashedNodeSplitter
 from gigl.utils.iterator import InfiniteIterator
+from graphlearn_torch.distributed import shutdown_rpc
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -41,6 +39,7 @@ from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
 )
+from torch_geometric.data import Data, HeteroData
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)

@@ -3,8 +3,6 @@ import os
 import unittest
 from unittest.mock import call, patch
 
-from google.cloud.aiplatform_v1.types import CustomJobSpec
-
 from gigl.common import GcsUri
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.vertex_ai_context import (
@@ -20,6 +18,7 @@ from gigl.common.utils.vertex_ai_context import (
     get_world_size,
     is_currently_running_in_vertex_ai_job,
 )
+from google.cloud.aiplatform_v1.types import CustomJobSpec
 
 
 class TestVertexAIContext(unittest.TestCase):

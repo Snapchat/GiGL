@@ -1,13 +1,12 @@
 import torch
 import torch_geometric.transforms as T
-from torch_geometric.data import HeteroData
-
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.mocking.lib import pyg_to_training_samples, tfrecord_io
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from snapchat.research.gbml import gbml_config_pb2, training_samples_schema_pb2
+from torch_geometric.data import HeteroData
 
 logger = Logger()
 

@@ -10,7 +10,6 @@ from distutils.util import strtobool
 from typing import Optional
 
 import yaml
-
 from gigl.common import GcsUri, HttpUri, LocalUri, UriFactory
 from gigl.src.common.utils.file_loader import FileLoader
 

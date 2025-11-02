@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import tensorflow as tf
-
 from gigl.common import GcsUri, LocalUri, UriFactory
 from gigl.common.constants import (
     SPARK_31_TFRECORD_JAR_LOCAL_PATH,

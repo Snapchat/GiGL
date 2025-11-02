@@ -6,7 +6,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import CondensedEdgeType
 from gigl.src.common.types.task_inputs import BatchCombinedScores, BatchScores
@@ -111,7 +110,7 @@ class SoftmaxLoss(nn.Module):
 
     def __init__(
         self,
-        softmax_temperature: Optional[float] = None,
+        softmax_temperature: float,
     ):
         super(SoftmaxLoss, self).__init__()
         self.softmax_temperature = softmax_temperature

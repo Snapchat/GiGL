@@ -9,7 +9,6 @@ import unittest
 
 import torch
 import torchrec
-
 from gigl.experimental.knowledge_graph_embedding.lib.data.edge_batch import EdgeBatch
 from gigl.src.common.types.graph_data import (
     CondensedEdgeType,

@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-
 from gigl.src.common.types.graph_data import CondensedEdgeType, CondensedNodeType
 from gigl.src.training.v1.lib.data_loaders.node_anchor_based_link_prediction_data_loader import (
     NodeAnchorBasedLinkPredictionBatch,

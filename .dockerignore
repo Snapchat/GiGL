@@ -4,9 +4,9 @@
 **/*.pyo
 **/*.pyd
 **/*.pkl
-.python-version
 .mypy_cache
 _autosummary
+.venv
 
 # ==================== Build artifacts
 build

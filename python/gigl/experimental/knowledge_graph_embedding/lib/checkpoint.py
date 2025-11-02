@@ -3,7 +3,6 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.experimental.knowledge_graph_embedding.common.dist_checkpoint import (

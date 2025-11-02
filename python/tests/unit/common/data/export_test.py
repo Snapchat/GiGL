@@ -9,9 +9,6 @@ from uuid import uuid4
 import fastavro
 import requests
 import torch
-from google.cloud.exceptions import GoogleCloudError
-from parameterized import param, parameterized
-
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.data.export import (
     _EMBEDDING_KEY,
@@ -24,6 +21,8 @@ from gigl.common.data.export import (
     load_predictions_to_bigquery,
 )
 from gigl.common.utils.retry import RetriesFailedException
+from google.cloud.exceptions import GoogleCloudError
+from parameterized import param, parameterized
 
 TEST_NODE_TYPE = "test_type"
 

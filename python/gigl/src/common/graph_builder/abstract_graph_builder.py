@@ -5,7 +5,6 @@ from collections import defaultdict
 from typing import Generic, Optional, TypeVar
 
 import torch
-
 from gigl.src.common.graph_builder.gbml_graph_protocol import GbmlGraphDataProtocol
 from gigl.src.common.types.graph_data import Edge, EdgeType, Node, NodeId, NodeType
 

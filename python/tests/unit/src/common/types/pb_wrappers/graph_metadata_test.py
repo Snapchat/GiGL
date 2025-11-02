@@ -1,9 +1,8 @@
 import unittest
 
-from parameterized import param, parameterized
-
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
+from parameterized import param, parameterized
 from snapchat.research.gbml import graph_schema_pb2
 
 _NODE_TYPE_USER: str = "user"

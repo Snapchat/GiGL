@@ -4,13 +4,12 @@ from dataclasses import dataclass
 from typing import Literal, Optional, TypeVar, Union, overload
 
 import torch
-from graphlearn_torch.partition import PartitionBook
-
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.logger import Logger
 
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from graphlearn_torch.partition import PartitionBook
 
 logger = Logger()
 

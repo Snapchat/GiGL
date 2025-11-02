@@ -5,7 +5,6 @@ from typing import Optional
 
 import torch
 import yaml
-
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory

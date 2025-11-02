@@ -1,7 +1,6 @@
 from typing import Callable, Optional
 
 import torch
-
 from gigl.distributed.utils import get_free_port
 
 

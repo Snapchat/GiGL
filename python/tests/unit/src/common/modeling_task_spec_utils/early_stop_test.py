@@ -3,15 +3,16 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from parameterized import param, parameterized
-
 from gigl.src.common.modeling_task_specs.utils.early_stop import EarlyStopper
+from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 _EARLY_STOP_PATIENCE = 3
 
 
 class _DummyModel(nn.Module):
+    foo: torch.Tensor
+
     def __init__(self):
         super(_DummyModel, self).__init__()
         self.register_buffer("foo", torch.tensor(0.0))
@@ -83,7 +84,7 @@ class EarlyStopTests(unittest.TestCase):
         mocked_criteria_values: list[float],
         improvement_steps: list[int],
         should_maximize: bool,
-        model: Optional[nn.Module],
+        model: Optional[_DummyModel],
         expected_best_criterion: float,
     ):
         early_stopper = EarlyStopper(

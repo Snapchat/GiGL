@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchrec
-
 from gigl.common.logger import Logger
 from gigl.experimental.knowledge_graph_embedding.common.torchrec.large_embedding_lookup import (
     LargeEmbeddingLookup,

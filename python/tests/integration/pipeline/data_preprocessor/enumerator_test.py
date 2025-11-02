@@ -1,10 +1,9 @@
 import unittest
 from typing import Any, Tuple, Union
 
+import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
 import google.cloud.bigquery as bigquery
 import pandas as pd
-
-import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
 from gigl.common.beam.sharded_read import BigQueryShardedReadConfig
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config

@@ -24,6 +24,27 @@ do
     esac
 done
 
+# We use the uv package manager
+# Check if uv is already installed
+if ! command -v uv &> /dev/null
+then
+    echo "uv could not be found. Installing uv..."
+    EXPECTED_SHA256="8402ab80d2ef54d7044a71ea4e4e1e8db3b20c87c7bffbc30bff59f1e80ebbd5"
+    curl -LsSf -o install.sh https://astral.sh/uv/0.9.5/install.sh # Matches the version in .github/actions/setup-python-tools/action.yml
+
+    # Verify SHA256 checksum - script will exit if this fails due to set -e
+    if ! echo "$EXPECTED_SHA256  install.sh" | sha256sum -c -; then
+        echo "ERROR: SHA256 checksum verification failed for uv installer!" >&2
+        rm -f install.sh
+        exit 1
+    fi
+
+    sh install.sh
+    source $HOME/.local/bin/env
+fi
+
+
+
 REQ_FILE_PREFIX=""
 if [[ $DEV -eq 1 ]]
 then
@@ -63,35 +84,47 @@ is_running_on_m1_mac() {
     return $?
 }
 
-pip install --upgrade pip
-
+extra_deps=("experimental" "transform")
 if is_running_on_mac;
 then
     echo "Setting up Mac CPU environment"
     req_file="requirements/${REQ_FILE_PREFIX}darwin_arm64_requirements_unified.txt"
+    extra_deps+=("pyg27-torch28-cpu")
 else
     if has_cuda_driver;
     then
         echo "Setting up Linux CUDA environment"
-        req_file="requirements/${REQ_FILE_PREFIX}linux_cuda_requirements_unified.txt"
+        # req_file="requirements/${REQ_FILE_PREFIX}linux_cuda_requirements_unified.txt"
+        extra_deps+=("pyg27-torch28-cu128")
     else
         echo "Setting up Linux CPU environment"
-        req_file="requirements/${REQ_FILE_PREFIX}linux_cpu_requirements_unified.txt"
+        # req_file="requirements/${REQ_FILE_PREFIX}linux_cpu_requirements_unified.txt"
+        extra_deps+=("pyg27-torch28-cpu")
     fi
 fi
 
-echo "Installing from ${req_file}"
-pip install -r $req_file $PIP_ARGS
+extra_deps_clause=()
+for dep in "${extra_deps[@]}"; do
+    extra_deps_clause+=(--extra "$dep")
+done
 
+if [[ $DEV -eq 1 ]]
+then
+    # https://docs.astral.sh/uv/reference/cli/#uv-sync
+    uv sync ${extra_deps_clause[@]} --group dev --locked
+else
+    uv sync ${extra_deps_clause[@]} --locked
+fi
+
+# echo "Installing from ${req_file}"
+# pip install -r $req_file $PIP_ARGS
+# source .venv/bin/activate
 
 # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
 # We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
+uv run python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
 
-# TODO: (svij) Check if gperftools is still needed
-# https://github.com/Snapchat/GiGL/issues/296
-conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
 
 if [[ $DEV -eq 1 ]]
 then
@@ -121,5 +154,4 @@ then
     rm /etc/pip.conf
 fi
 
-conda clean -afy
 echo "Finished installation"

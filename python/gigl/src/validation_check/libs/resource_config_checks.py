@@ -1,7 +1,5 @@
 from typing import Union
 
-from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
-
 from gigl.common.logger import Logger
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
@@ -10,6 +8,7 @@ from gigl.src.validation_check.libs.utils import (
     assert_proto_field_value_is_truthy,
     assert_proto_has_field,
 )
+from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
 from snapchat.research.gbml import gigl_resource_config_pb2
 
 logger = Logger()
@@ -165,9 +164,9 @@ def check_if_trainer_resource_config_valid(
                 )
         else:
             raise ValueError(
-                f"""Expected distributed trainer config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__}, 
-                {gigl_resource_config_pb2.VertexAiResourceConfig.__name__}, 
-                or {gigl_resource_config_pb2.KFPResourceConfig.__name__}. 
+                f"""Expected distributed trainer config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__},
+                {gigl_resource_config_pb2.VertexAiResourceConfig.__name__},
+                or {gigl_resource_config_pb2.KFPResourceConfig.__name__}.
                 Got {type(trainer_config)}"""
             )
 
@@ -180,12 +179,12 @@ def check_if_trainer_resource_config_valid(
         if trainer_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:  # type: ignore
             assert (
                 trainer_config.gpu_limit == 0
-            ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {trainer_config.gpu_type}. 
+            ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {trainer_config.gpu_type}.
                 Got gpu_limit {trainer_config.gpu_limit}"""
         else:
             assert (
                 trainer_config.gpu_limit > 0
-            ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {trainer_config.gpu_type}. 
+            ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {trainer_config.gpu_type}.
                 Got gpu_limit {trainer_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""  # type: ignore
 
 
@@ -216,12 +215,12 @@ def check_if_inferencer_resource_config_valid(
         if inferencer_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:  # type: ignore
             assert (
                 inferencer_config.gpu_limit == 0
-            ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {inferencer_config.gpu_type}. 
+            ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {inferencer_config.gpu_type}.
                 Got gpu_limit {inferencer_config.gpu_limit}"""
         else:
             assert (
                 inferencer_config.gpu_limit > 0
-            ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {inferencer_config.gpu_type}. 
+            ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {inferencer_config.gpu_type}.
                 Got gpu_limit {inferencer_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""  # type: ignore
     elif isinstance(inferencer_config, gigl_resource_config_pb2.LocalResourceConfig):
         assert_proto_field_value_is_truthy(
@@ -229,8 +228,8 @@ def check_if_inferencer_resource_config_valid(
         )
     else:
         raise ValueError(
-            f"""Expected inferencer config to be one of {gigl_resource_config_pb2.DataflowResourceConfig.__name__}, 
-            {gigl_resource_config_pb2.VertexAiResourceConfig.__name__}, 
-            or {gigl_resource_config_pb2.LocalResourceConfig.__name__}. 
+            f"""Expected inferencer config to be one of {gigl_resource_config_pb2.DataflowResourceConfig.__name__},
+            {gigl_resource_config_pb2.VertexAiResourceConfig.__name__},
+            or {gigl_resource_config_pb2.LocalResourceConfig.__name__}.
             Got {type(inferencer_config)}"""
         )

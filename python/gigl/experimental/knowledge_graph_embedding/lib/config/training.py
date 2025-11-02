@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
-
 from gigl.experimental.knowledge_graph_embedding.lib.config.dataloader import (
     DataloaderConfig,
 )

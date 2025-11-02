@@ -1,7 +1,6 @@
 import unittest
 
 import torch
-
 from gigl.src.common.utils.eval_metrics import hit_rate_at_k, mean_reciprocal_rank
 
 

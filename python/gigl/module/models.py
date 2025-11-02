@@ -2,6 +2,8 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+from gigl.src.common.types.graph_data import NodeType
+from gigl.types.graph import to_heterogeneous_node
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.conv import LGConv
@@ -9,9 +11,6 @@ from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.modules.embedding_modules import EmbeddingBagCollection
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 from typing_extensions import Self
-
-from gigl.src.common.types.graph_data import NodeType
-from gigl.types.graph import to_heterogeneous_node
 
 
 class LinkPredictionGNN(nn.Module):
@@ -154,6 +153,8 @@ class LightGCN(nn.Module):
         layer_weights (Optional[List[float]]): Weights for [e^(0), e^(1), ..., e^(K)].
             Must have length K+1. If None, uses uniform weights 1/(K+1). Default: None.
     """
+
+    _layer_weights: torch.Tensor
 
     def __init__(
         self,

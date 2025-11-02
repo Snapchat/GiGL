@@ -7,7 +7,6 @@ from typing import Set, Union
 
 import torch
 import torch_geometric.data
-
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator

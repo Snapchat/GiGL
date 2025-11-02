@@ -1,10 +1,9 @@
 import unittest
 from typing import Union
 
-from parameterized import param, parameterized
-
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.utils.sampling import parse_fanout
+from parameterized import param, parameterized
 
 
 class SamplingTest(unittest.TestCase):

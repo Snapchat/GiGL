@@ -1,7 +1,6 @@
 import unittest
 
 import torch
-
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 

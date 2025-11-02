@@ -1,7 +1,5 @@
 import unittest
 
-from parameterized import param, parameterized
-
 from gigl.common.logger import Logger
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.dataset_metadata import DatasetMetadataPbWrapper
@@ -9,6 +7,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
 from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.config_populator.config_populator import ConfigPopulator
+from parameterized import param, parameterized
 from snapchat.research.gbml import (
     dataset_metadata_pb2,
     flattened_graph_metadata_pb2,

@@ -18,3 +18,4 @@ if __name__ == "__main__":
                 raise ValueError(
                     f"Invalid line found in `dep_vars.env`: {line}. Expected format: var=value"
                 )
+    print(f"{DEP_VARS_FILE_PATH} is valid")

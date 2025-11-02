@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from typing import Callable, Optional
 
 import tensorflow as tf
-
 from gigl.common.logger import Logger
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.data_preprocessor.lib.ingest.reference import (

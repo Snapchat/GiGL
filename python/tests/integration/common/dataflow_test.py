@@ -3,7 +3,6 @@ import unittest
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.testing.util import assert_that, equal_to
-
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.dataflow import init_beam_pipeline_options
 
