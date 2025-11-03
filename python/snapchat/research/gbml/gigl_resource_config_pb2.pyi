@@ -217,6 +217,7 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     NUM_REPLICAS_FIELD_NUMBER: builtins.int
     TIMEOUT_FIELD_NUMBER: builtins.int
     GCP_REGION_OVERRIDE_FIELD_NUMBER: builtins.int
+    SCHEDULING_STRATEGY_FIELD_NUMBER: builtins.int
     machine_type: builtins.str
     """Machine type for job"""
     gpu_type: builtins.str
@@ -236,6 +237,11 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     ex: "us-west1"
     NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
     """
+    scheduling_strategy: builtins.str
+    """Scheduling strategy for the job.
+    If unset, will use the Vertex AI default.
+    See https://cloud.google.com/vertex-ai/docs/training/schedule-jobs-dws for more info.
+    """
     def __init__(
         self,
         *,
@@ -245,8 +251,9 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
         num_replicas: builtins.int = ...,
         timeout: builtins.int = ...,
         gcp_region_override: builtins.str = ...,
+        scheduling_strategy: builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing_extensions.Literal["gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "timeout", b"timeout"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "scheduling_strategy", b"scheduling_strategy", "timeout", b"timeout"]) -> None: ...
 
 global___VertexAiResourceConfig = VertexAiResourceConfig
 

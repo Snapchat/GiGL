@@ -119,6 +119,9 @@ class GLTTrainer:
             timeout_s=trainer_resource_config.timeout
             if trainer_resource_config.timeout
             else None,
+            scheduling_strategy=trainer_resource_config.scheduling_strategy
+            if trainer_resource_config.scheduling_strategy
+            else None,
         )
 
         vertex_ai_service = VertexAIService(

@@ -105,6 +105,7 @@ class VertexAiJobConfig:
         int
     ] = None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
     enable_web_access: bool = True
+    scheduling_strategy: Optional[str] = None
 
 
 class VertexAIService:
@@ -226,6 +227,7 @@ class VertexAIService:
             service_account=self._service_account,
             timeout=job_config.timeout_s,
             enable_web_access=job_config.enable_web_access,
+            scheduling_strategy=job_config.scheduling_strategy,
         )
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")
@@ -308,6 +310,7 @@ class VertexAIService:
             service_account=self._service_account,
             timeout=compute_pool_job_config.timeout_s,
             enable_web_access=compute_pool_job_config.enable_web_access,
+            scheduling_strategy=compute_pool_job_config.scheduling_strategy,
         )
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")

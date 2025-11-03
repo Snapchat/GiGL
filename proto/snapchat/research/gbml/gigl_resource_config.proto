@@ -95,6 +95,11 @@ message VertexAiResourceConfig {
   // ex: "us-west1"
   // NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
   string gcp_region_override = 6;
+
+  // Scheduling strategy for the job.
+  // If unset, will use the Vertex AI default.
+  // See https://cloud.google.com/vertex-ai/docs/training/schedule-jobs-dws for more info.
+  string scheduling_strategy = 7;
  }
 
  // Configuration for KFP job resources

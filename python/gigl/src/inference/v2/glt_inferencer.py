@@ -121,6 +121,9 @@ class GLTInferencer:
             timeout_s=inferencer_resource_config.timeout
             if inferencer_resource_config.timeout
             else None,
+            scheduling_strategy=inferencer_resource_config.scheduling_strategy
+            if inferencer_resource_config.scheduling_strategy
+            else None,
         )
 
         vertex_ai_service = VertexAIService(
