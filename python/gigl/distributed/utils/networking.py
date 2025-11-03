@@ -4,10 +4,7 @@ from typing import Optional
 import torch
 
 from gigl.common.logger import Logger
-from gigl.common.utils.vertex_ai_context import (
-    get_cluster_spec,
-    is_currently_running_in_vertex_ai_job,
-)
+from gigl.common.utils.vertex_ai_context import get_cluster_spec
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
@@ -197,22 +194,17 @@ def get_graph_store_info() -> GraphStoreInfo:
         ValueError: If a torch distributed environment is not initialized.
         ValueError: If not running running in a supported environment.
     """
-    if not torch.distributed.is_initialized():
-        raise ValueError("Distributed environment must be initialized")
-    if is_currently_running_in_vertex_ai_job():
-        cluster_spec = get_cluster_spec()
-        # We setup the VAI cluster such that the compute nodes come first, followed by the storage nodes.
-        if "workerpool1" in cluster_spec.cluster:
-            num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
-                cluster_spec.cluster["workerpool1"]
-            )
-        else:
-            num_compute_nodes = len(cluster_spec.cluster["workerpool0"])
-        num_storage_nodes = len(cluster_spec.cluster["workerpool2"])
-    else:
-        raise ValueError(
-            "Must be running on a vertex AI job to get graph store cluster info!"
+    # If we want to ever support other (non-VAI) environments,
+    # we must switch here depending on the environment.
+    cluster_spec = get_cluster_spec()
+    # We setup the VAI cluster such that the compute nodes come first, followed by the storage nodes.
+    if "workerpool1" in cluster_spec.cluster:
+        num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
+            cluster_spec.cluster["workerpool1"]
         )
+    else:
+        num_compute_nodes = len(cluster_spec.cluster["workerpool0"])
+    num_storage_nodes = len(cluster_spec.cluster["workerpool2"])
 
     cluster_master_ip = get_internal_ip_from_master_node()
     # We assume that the compute cluster nodes come first, followed by the storage nodes.

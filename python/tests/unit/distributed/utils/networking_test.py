@@ -195,7 +195,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             ),
         ]
     )
-    def _test_get_free_ports_from_master_node_two_ranks(
+    def test_get_free_ports_from_master_node_two_ranks(
         self, _name, num_ports, world_size
     ):
         init_process_group_init_method = get_process_group_init_method()
@@ -223,7 +223,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             ),
         ]
     )
-    def _test_get_free_ports_from_master_node_two_ranks_custom_master_node_rank(
+    def test_get_free_ports_from_master_node_two_ranks_custom_master_node_rank(
         self, _name, num_ports, world_size, master_node_rank, ports
     ):
         init_process_group_init_method = get_process_group_init_method()
@@ -239,14 +239,14 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             nprocs=world_size,
         )
 
-    def _test_get_free_ports_from_master_fails_if_process_group_not_initialized(self):
+    def test_get_free_ports_from_master_fails_if_process_group_not_initialized(self):
         with self.assertRaises(
             AssertionError,
             msg="An error should be raised since the `dist.init_process_group` is not initialized",
         ):
             get_free_ports_from_master_node(num_ports=1)
 
-    def _test_get_internal_ip_from_master_node(self):
+    def test_get_internal_ip_from_master_node(self):
         init_process_group_init_method = get_process_group_init_method()
         expected_host_ip = subprocess.check_output(["hostname", "-i"]).decode().strip()
         world_size = 2
@@ -270,7 +270,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             ),
         ]
     )
-    def _test_get_internal_ip_from_master_node_with_master_node_rank(
+    def test_get_internal_ip_from_master_node_with_master_node_rank(
         self, _, world_size, master_node_rank
     ):
         init_process_group_init_method = get_process_group_init_method()
@@ -286,7 +286,7 @@ class TestDistributedNetworkingUtils(unittest.TestCase):
             nprocs=world_size,
         )
 
-    def _test_get_internal_ip_from_master_node_fails_if_process_group_not_initialized(
+    def test_get_internal_ip_from_master_node_fails_if_process_group_not_initialized(
         self,
     ):
         with self.assertRaises(
@@ -437,29 +437,13 @@ class TestGetGraphStoreInfo(unittest.TestCase):
         if dist.is_initialized():
             dist.destroy_process_group()
 
-    def _test_get_graph_store_info_fails_when_distributed_not_initialized(self):
-        """Test that get_graph_store_info fails when distributed environment is not initialized."""
-        with self.assertRaises(ValueError) as context:
-            get_graph_store_info()
-
-        self.assertIn(
-            "Distributed environment must be initialized", str(context.exception)
-        )
-
-    def _test_get_graph_store_info_fails_when_not_running_in_vertex_ai_job(self):
+    def test_get_graph_store_info_fails_when_not_running_in_vertex_ai_job(self):
         """Test that get_graph_store_info fails when not running in a Vertex AI job."""
-        init_process_group_init_method = get_process_group_init_method()
-        torch.distributed.init_process_group(
-            backend="gloo",
-            init_method=init_process_group_init_method,
-            world_size=1,
-            rank=0,
-        )
         with self.assertRaises(ValueError) as context:
             get_graph_store_info()
 
         self.assertIn(
-            "Must be running on a vertex AI job to get graph store cluster info!",
+            "Not running in a Vertex AI job",
             str(context.exception),
         )
 
