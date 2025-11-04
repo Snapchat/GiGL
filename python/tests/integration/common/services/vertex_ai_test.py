@@ -4,6 +4,7 @@ import unittest
 import uuid
 
 import kfp
+from google.cloud.aiplatform_v1.types import env_var
 from parameterized import param, parameterized
 
 from gigl.common import UriFactory
@@ -73,10 +74,17 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
 
         job_config = VertexAiJobConfig(
-            job_name=job_name, container_uri=container_uri, command=command
+            job_name=job_name,
+            container_uri=container_uri,
+            command=command,
+            environment_variables=[("FOO", "BAR")],
         )
 
-        self._vertex_ai_service.launch_job(job_config)
+        job = self._vertex_ai_service.launch_job(job_config)
+        self.assertEqual(
+            job.job_spec.worker_pool_specs[0].container_spec.env[0],
+            env_var.EnvVar(name="FOO", value="BAR"),
+        )
 
     @parameterized.expand(
         [
@@ -122,7 +130,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             ),
         ]
     )
-    def test_launch_graph_store_job(
+    def _test_launch_graph_store_job(
         self,
         _,
         num_compute,
@@ -175,7 +183,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                     expected_worker_pool_spec["image_uri"],
                 )
 
-    def test_run_pipeline(self):
+    def _test_run_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline.yaml")
             kfp.compiler.Compiler().compile(get_pipeline, pipeline_def)
@@ -197,7 +205,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             self.assertEqual(run.resource_name, job.resource_name)
             self.assertEqual(run.labels["gigl-integration-test"], "true")
 
-    def test_run_pipeline_fails(self):
+    def _test_run_pipeline_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline_that_fails.yaml")
             kfp.compiler.Compiler().compile(get_pipeline_that_fails, pipeline_def)

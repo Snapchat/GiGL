@@ -477,6 +477,6 @@ def _get_vai_env_vars(
     """Get the environment variables for a job config."""
     env_vars: list[env_var.EnvVar] = []
     if environment_variables:
-        for env_var, value in environment_variables.items():
-            env_vars.append(env_var.EnvVar(name=env_var, value=value))
+        for var, value in environment_variables:
+            env_vars.append(env_var.EnvVar(name=var, value=value))
     return env_vars
