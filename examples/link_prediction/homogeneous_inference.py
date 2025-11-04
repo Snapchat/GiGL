@@ -35,7 +35,7 @@ from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigque
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
-from gigl.module.models import LinkPredictionGNN
+from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
