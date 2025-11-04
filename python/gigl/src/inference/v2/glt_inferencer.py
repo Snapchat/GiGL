@@ -101,15 +101,14 @@ class GLTInferencer:
         command = inference_process_command.strip().split(" ")
         logger.info(f"Running inference with command: {command}")
         vai_job_name = f"gigl_infer_{applied_task_identifier}"
-        environment_variables: list[tuple[str, str]] = [
-            ("TF_CPP_MIN_LOG_LEVEL", "3"),
-        ]
         job_config = VertexAiJobConfig(
             job_name=vai_job_name,
             container_uri=container_uri,
             command=command,
             args=job_args,
-            environment_variables=environment_variables,
+            environment_variables=[
+                {"name": "TF_CPP_MIN_LOG_LEVEL", "value": "3"},
+            ],
             machine_type=inferencer_resource_config.machine_type,
             accelerator_type=inferencer_resource_config.gpu_type.upper().replace(
                 "-", "_"

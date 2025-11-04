@@ -17,7 +17,6 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import (
     SharedResourceConfig,
     SparkResourceConfig,
     TrainerResourceConfig,
-    VertexAiGraphStoreConfig,
     VertexAiResourceConfig,
 )
 
@@ -36,13 +35,11 @@ _TRAINER_CONFIG_FIELD = "trainer_config"
 _VERTEX_AI_TRAINER_CONFIG = "vertex_ai_trainer_config"
 _KFP_TRAINER_CONFIG = "kfp_trainer_config"
 _LOCAL_TRAINER_CONFIG = "local_trainer_config"
-_VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG = "vertex_ai_graph_store_trainer_config"
 
 _INFERENCER_CONFIG_FIELD = "inferencer_config"
 _VERTEX_AI_INFERENCER_CONFIG = "vertex_ai_inferencer_config"
 _DATAFLOW_INFERENCER_CONFIG = "dataflow_inferencer_config"
 _LOCAL_INFERENCER_CONFIG = "local_inferencer_config"
-_VERTEX_AI_GRAPH_STORE_INFERENCER_CONFIG = "vertex_ai_graph_store_inferencer_config"
 
 
 @dataclass
@@ -272,12 +269,7 @@ class GiglResourceConfigWrapper:
     @property
     def trainer_config(
         self,
-    ) -> Union[
-        VertexAiResourceConfig,
-        KFPResourceConfig,
-        LocalResourceConfig,
-        VertexAiGraphStoreConfig,
-    ]:
+    ) -> Union[VertexAiResourceConfig, KFPResourceConfig, LocalResourceConfig]:
         """
         Returns the trainer config specified in the resource config. (e.g. Vertex AI, KFP, Local)
         """
@@ -295,10 +287,7 @@ class GiglResourceConfigWrapper:
                     self.resource_config.trainer_config
                 )
                 _trainer_config: Union[
-                    VertexAiResourceConfig,
-                    KFPResourceConfig,
-                    LocalResourceConfig,
-                    VertexAiGraphStoreConfig,
+                    VertexAiResourceConfig, KFPResourceConfig, LocalResourceConfig
                 ]
                 if deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD) == _VERTEX_AI_TRAINER_CONFIG:  # type: ignore[arg-type]
                     logger.info(
@@ -342,27 +331,18 @@ class GiglResourceConfigWrapper:
                     _trainer_config = config.kfp_trainer_config
                 elif config.WhichOneof(_TRAINER_CONFIG_FIELD) == _LOCAL_TRAINER_CONFIG:  # type: ignore[arg-type]
                     _trainer_config = config.local_trainer_config
-                elif config.WhichOneof(_TRAINER_CONFIG_FIELD) == _VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG:  # type: ignore[arg-type]
-                    _trainer_config = config.vertex_ai_graph_store_trainer_config
                 else:
                     raise ValueError(f"Invalid trainer_config type: {config}")
             else:
                 raise ValueError(
                     f"Trainer config not found in resource config; neither trainer_config nor trainer_resource_config is set: {self.resource_config}"
                 )
-            self._trainer_config = _trainer_config
-
-        return self._trainer_config
+        return _trainer_config
 
     @property
     def inferencer_config(
         self,
-    ) -> Union[
-        DataflowResourceConfig,
-        VertexAiResourceConfig,
-        LocalResourceConfig,
-        VertexAiGraphStoreConfig,
-    ]:
+    ) -> Union[DataflowResourceConfig, VertexAiResourceConfig, LocalResourceConfig]:
         """
         Returns the inferencer config specified in the resource config. (Dataflow)
         """
@@ -384,10 +364,6 @@ class GiglResourceConfigWrapper:
                     self._inference_config = config.local_inferencer_config
                 elif config.WhichOneof(_INFERENCER_CONFIG_FIELD) == _VERTEX_AI_INFERENCER_CONFIG:  # type: ignore[arg-type]
                     self._inference_config = config.vertex_ai_inferencer_config
-                elif config.WhichOneof(_INFERENCER_CONFIG_FIELD) == _VERTEX_AI_GRAPH_STORE_INFERENCER_CONFIG:  # type: ignore[arg-type]
-                    self._inference_config = (
-                        config.vertex_ai_graph_store_inferencer_config
-                    )
                 else:
                     raise ValueError("Invalid inferencer_config type")
             else:
