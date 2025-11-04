@@ -196,7 +196,6 @@ class ClusterSpec:
         """Instantiates ClusterSpec from a JSON string."""
         cluster_spec_json = json.loads(json_str)
         if "job" in cluster_spec_json and cluster_spec_json["job"] is not None:
-            logger.info(f"Job spec: {cluster_spec_json['job']}")
             job_spec = json.loads(cluster_spec_json.pop("job"))
         else:
             job_spec = None

@@ -18,6 +18,7 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_internal_ip_from_node,
 )
+from gigl.env.distributed import GraphStoreInfo
 from tests.test_assets.distributed.utils import get_process_group_init_method
 
 
@@ -378,37 +379,8 @@ def _test_get_graph_store_info_in_dist_context(
         for i, info in enumerate(gathered_info):
             assert info is not None
             assert (
-                info.num_cluster_nodes == graph_store_info.num_cluster_nodes
-            ), f"Rank {i} should have same cluster nodes"
-            assert (
-                info.num_storage_nodes == graph_store_info.num_storage_nodes
-            ), f"Rank {i} should have same storage nodes"
-            assert (
-                info.num_compute_nodes == graph_store_info.num_compute_nodes
-            ), f"Rank {i} should have same compute nodes"
-            assert (
-                info.cluster_master_ip == graph_store_info.cluster_master_ip
-            ), f"Rank {i} should have same cluster master IP"
-            assert (
-                info.storage_cluster_master_ip
-                == graph_store_info.storage_cluster_master_ip
-            ), f"Rank {i} should have same storage master IP"
-            assert (
-                info.compute_cluster_master_ip
-                == graph_store_info.compute_cluster_master_ip
-            ), f"Rank {i} should have same compute master IP"
-            assert (
-                info.cluster_master_port == graph_store_info.cluster_master_port
-            ), f"Rank {i} should have same cluster master port"
-            assert (
-                info.storage_cluster_master_port
-                == graph_store_info.storage_cluster_master_port
-            ), f"Rank {i} should have same storage master port"
-            assert (
-                info.compute_cluster_master_port
-                == graph_store_info.compute_cluster_master_port
-            ), f"Rank {i} should have same compute master port"
-
+                info == graph_store_info
+            ), f"Rank {i} should have same GraphStoreInfo. Got {info} but expected {graph_store_info}"
     finally:
         dist.destroy_process_group()
 

@@ -198,6 +198,11 @@ def get_graph_store_info() -> GraphStoreInfo:
     # we must switch here depending on the environment.
     cluster_spec = get_cluster_spec()
     # We setup the VAI cluster such that the compute nodes come first, followed by the storage nodes.
+    if len(cluster_spec.cluster["workerpool0"]) != 1:
+        raise ValueError(
+            f"Expected exactly one machine in workerpool0, but got {len(cluster_spec.cluster['workerpool0'])}"
+        )
+
     if "workerpool1" in cluster_spec.cluster:
         num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
             cluster_spec.cluster["workerpool1"]
@@ -208,11 +213,13 @@ def get_graph_store_info() -> GraphStoreInfo:
 
     cluster_master_ip = get_internal_ip_from_master_node()
     # We assume that the compute cluster nodes come first, followed by the storage nodes.
-    compute_cluster_master_ip = get_internal_ip_from_node(node_rank=0)
+    # Since the compute cluster nodes are the first in the cluster spec, we can use the cluster master IP for the compute cluster master IP.
+    compute_cluster_master_ip = cluster_master_ip
     storage_cluster_master_ip = get_internal_ip_from_node(node_rank=num_compute_nodes)
 
-    cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
-    compute_cluster_master_port = get_free_ports_from_node(num_ports=1, node_rank=0)[0]
+    cluster_master_port, compute_cluster_master_port = get_free_ports_from_node(
+        num_ports=2, node_rank=0
+    )
     storage_cluster_master_port = get_free_ports_from_node(
         num_ports=1, node_rank=num_compute_nodes
     )[0]
