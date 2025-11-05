@@ -120,8 +120,13 @@ class GLTTrainer:
             timeout_s=trainer_resource_config.timeout
             if trainer_resource_config.timeout
             else None,
-            scheduling_strategy=aiplatform.gapic.Scheduling.Strategy.value(
-                trainer_resource_config.scheduling_strategy
+            # This should be `aiplatform.gapic.Scheduling.Strategy[trainer_resource_config.scheduling_strategy]`
+            # But mypy complains otherwise...
+            # python/gigl/src/training/v2/glt_trainer.py:123: error: The type "type[Strategy]" is not generic and not indexable  [misc]
+            # TODO(kmonte): Fix this
+            scheduling_strategy=getattr(
+                aiplatform.gapic.Scheduling.Strategy,
+                trainer_resource_config.scheduling_strategy,
             )
             if trainer_resource_config.scheduling_strategy
             else None,
