@@ -210,7 +210,7 @@ class RetrievalLoss(nn.Module):
         self._remove_accidental_hits = remove_accidental_hits
         logger.warning(
             "Calculating retrieval loss with the class at gigl.src.common.models.layers.loss.RetrievalLoss is deprecated and will be removed in a future release. "
-            "Please use the `gigl.module.loss.RetrievalLoss` class instead."
+            "Please use the `gigl.nn.loss.RetrievalLoss` class instead."
         )
 
     def calculate_batch_retrieval_loss(

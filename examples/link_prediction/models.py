@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 
-from gigl.module.models import LinkPredictionGNN
+from gigl.nn.models import LinkPredictionGNN
 from gigl.src.common.models.pyg.heterogeneous import HGT
 from gigl.src.common.models.pyg.homogeneous import GraphSAGE
 from gigl.src.common.models.pyg.link_prediction import LinkPredictionDecoder
