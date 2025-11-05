@@ -312,85 +312,118 @@ def _test_get_graph_store_info_in_dist_context(
         world_size=world_size,
         rank=rank,
     )
-    try:
-        # Call get_graph_store_info
-        graph_store_info = get_graph_store_info()
 
-        # Verify the result is a GraphStoreInfo instance
-        assert isinstance(
-            graph_store_info, GraphStoreInfo
-        ), "Result should be a GraphStoreInfo instance"
-        # Verify cluster sizes
-        assert (
-            graph_store_info.num_storage_nodes == storage_nodes
-        ), f"Expected {storage_nodes} storage nodes"
-        assert (
-            graph_store_info.num_compute_nodes == compute_nodes
-        ), f"Expected {compute_nodes} compute nodes"
-        assert (
-            graph_store_info.num_cluster_nodes == storage_nodes + compute_nodes
-        ), "Total nodes should be sum of storage and compute nodes"
+    if compute_nodes == 1:
+        worker_pool_sizes = [1, 0, storage_nodes]
+        if rank == 0:
+            worker_pool = "workerpool0"
+            index = 0
+        else:
+            worker_pool = "workerpool2"
+            index = rank - 1
+    else:
+        if rank == 0:
+            worker_pool = "workerpool0"
+            index = 0
+        elif rank < compute_nodes:
+            worker_pool = "workerpool1"
+            index = rank - 1
+        else:
+            worker_pool = "workerpool2"
+            index = rank - compute_nodes
+        worker_pool_sizes = [1, compute_nodes - 1, storage_nodes]
+    with patch.dict(
+        os.environ,
+        {
+            "RANK": str(rank),
+            "WORLD_SIZE": str(world_size),
+            "CLUSTER_SPEC": json.dumps(
+                _get_cluster_spec_for_test(worker_pool_sizes, worker_pool, index)
+            ),
+        },
+        clear=False,
+    ):
+        try:
+            # Call get_graph_store_info
+            graph_store_info = get_graph_store_info()
 
-        # Verify IP addresses are strings and not empty
-        assert isinstance(
-            graph_store_info.cluster_master_ip, str
-        ), "Cluster master IP should be a string"
-        assert (
-            len(graph_store_info.cluster_master_ip) > 0
-        ), "Cluster master IP should not be empty"
-        assert isinstance(
-            graph_store_info.storage_cluster_master_ip, str
-        ), "Storage cluster master IP should be a string"
-        assert (
-            len(graph_store_info.storage_cluster_master_ip) > 0
-        ), "Storage cluster master IP should not be empty"
-        assert isinstance(
-            graph_store_info.compute_cluster_master_ip, str
-        ), "Compute cluster master IP should be a string"
-        assert (
-            len(graph_store_info.compute_cluster_master_ip) > 0
-        ), "Compute cluster master IP should not be empty"
-
-        # Verify ports are positive integers
-        assert isinstance(
-            graph_store_info.cluster_master_port, int
-        ), "Cluster master port should be an integer"
-        assert (
-            graph_store_info.cluster_master_port > 0
-        ), "Cluster master port should be positive"
-        assert isinstance(
-            graph_store_info.storage_cluster_master_port, int
-        ), "Storage cluster master port should be an integer"
-        assert (
-            graph_store_info.storage_cluster_master_port > 0
-        ), "Storage cluster master port should be positive"
-        assert isinstance(
-            graph_store_info.compute_cluster_master_port, int
-        ), "Compute cluster master port should be an integer"
-        assert (
-            graph_store_info.compute_cluster_master_port > 0
-        ), "Compute cluster master port should be positive"
-
-        # Verify all ranks get the same result (since they should all get the same broadcasted values)
-        gathered_info: list[Optional[GraphStoreInfo]] = [None] * world_size
-        dist.all_gather_object(gathered_info, graph_store_info)
-
-        # All ranks should have the same GraphStoreInfo
-        for i, info in enumerate(gathered_info):
-            assert info is not None
+            # Verify the result is a GraphStoreInfo instance
+            assert isinstance(
+                graph_store_info, GraphStoreInfo
+            ), "Result should be a GraphStoreInfo instance"
+            # Verify cluster sizes
             assert (
-                info == graph_store_info
-            ), f"Rank {i} should have same GraphStoreInfo. Got {info} but expected {graph_store_info}"
-    finally:
-        dist.destroy_process_group()
+                graph_store_info.num_storage_nodes == storage_nodes
+            ), f"Expected {storage_nodes} storage nodes"
+            assert (
+                graph_store_info.num_compute_nodes == compute_nodes
+            ), f"Expected {compute_nodes} compute nodes"
+            assert (
+                graph_store_info.num_cluster_nodes == storage_nodes + compute_nodes
+            ), "Total nodes should be sum of storage and compute nodes"
+
+            # Verify IP addresses are strings and not empty
+            assert isinstance(
+                graph_store_info.cluster_master_ip, str
+            ), "Cluster master IP should be a string"
+            assert (
+                len(graph_store_info.cluster_master_ip) > 0
+            ), "Cluster master IP should not be empty"
+            assert isinstance(
+                graph_store_info.storage_cluster_master_ip, str
+            ), "Storage cluster master IP should be a string"
+            assert (
+                len(graph_store_info.storage_cluster_master_ip) > 0
+            ), "Storage cluster master IP should not be empty"
+            assert isinstance(
+                graph_store_info.compute_cluster_master_ip, str
+            ), "Compute cluster master IP should be a string"
+            assert (
+                len(graph_store_info.compute_cluster_master_ip) > 0
+            ), "Compute cluster master IP should not be empty"
+
+            # Verify ports are positive integers
+            assert isinstance(
+                graph_store_info.cluster_master_port, int
+            ), "Cluster master port should be an integer"
+            assert (
+                graph_store_info.cluster_master_port > 0
+            ), "Cluster master port should be positive"
+            assert isinstance(
+                graph_store_info.storage_cluster_master_port, int
+            ), "Storage cluster master port should be an integer"
+            assert (
+                graph_store_info.storage_cluster_master_port > 0
+            ), "Storage cluster master port should be positive"
+            assert isinstance(
+                graph_store_info.compute_cluster_master_port, int
+            ), "Compute cluster master port should be an integer"
+            assert (
+                graph_store_info.compute_cluster_master_port > 0
+            ), "Compute cluster master port should be positive"
+
+            # Verify all ranks get the same result (since they should all get the same broadcasted values)
+            gathered_info: list[Optional[GraphStoreInfo]] = [None] * world_size
+            dist.all_gather_object(gathered_info, graph_store_info)
+
+            # All ranks should have the same GraphStoreInfo
+            for i, info in enumerate(gathered_info):
+                assert info is not None
+                assert (
+                    info == graph_store_info
+                ), f"Rank {i} should have same GraphStoreInfo. Got {info} but expected {graph_store_info}"
+        finally:
+            dist.destroy_process_group()
 
 
-def _get_cluster_spec_for_test(worker_pool_sizes: list[int]) -> dict:
+def _get_cluster_spec_for_test(
+    worker_pool_sizes: list[int], worker_pool: str, index: int
+) -> dict:
     cluster_spec: dict = {
         "environment": "cloud",
         "task": {
-            "type": "workerpool0",
-            "index": 0,
+            "type": worker_pool,
+            "index": index,
         },
         "cluster": {},
     }
@@ -444,16 +477,9 @@ class TestGetGraphStoreInfo(unittest.TestCase):
         """Test successful execution of get_graph_store_info in a real distributed context."""
         init_process_group_init_method = get_process_group_init_method()
         world_size = storage_nodes + compute_nodes
-        if compute_nodes == 1:
-            worker_pool_sizes = [1, 0, storage_nodes]
-        else:
-            worker_pool_sizes = [1, compute_nodes - 1, storage_nodes]
         with patch.dict(
             os.environ,
             {
-                "CLUSTER_SPEC": json.dumps(
-                    _get_cluster_spec_for_test(worker_pool_sizes)
-                ),
                 "CLOUD_ML_JOB_ID": "test_job_id",
             },
             clear=False,

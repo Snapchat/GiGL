@@ -1,8 +1,7 @@
 import argparse
 from typing import Optional
 
-from google.cloud import aiplatform
-from google.cloud.aiplatform_v1.types import accelerator_type
+from google.cloud.aiplatform_v1.types import Scheduling, accelerator_type, env_var
 
 from gigl.common import Uri, UriFactory
 from gigl.common.constants import (
@@ -102,14 +101,15 @@ class GLTTrainer:
         command = training_process_command.strip().split(" ")
         logger.info(f"Running trainer with command: {command}")
         vai_job_name = f"gigl_train_{applied_task_identifier}"
+        environment_variables: list[env_var.EnvVar] = [
+            env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
+        ]
         job_config = VertexAiJobConfig(
             job_name=vai_job_name,
             container_uri=container_uri,
             command=command,
             args=job_args,
-            environment_variables=[
-                {"name": "TF_CPP_MIN_LOG_LEVEL", "value": "3"},
-            ],
+            environment_variables=environment_variables,
             machine_type=trainer_resource_config.machine_type,
             accelerator_type=trainer_resource_config.gpu_type.upper().replace("-", "_"),
             accelerator_count=trainer_resource_config.gpu_limit,
@@ -125,7 +125,7 @@ class GLTTrainer:
             # python/gigl/src/training/v2/glt_trainer.py:123: error: The type "type[Strategy]" is not generic and not indexable  [misc]
             # TODO(kmonte): Fix this
             scheduling_strategy=getattr(
-                aiplatform.gapic.Scheduling.Strategy,
+                Scheduling.Strategy,
                 trainer_resource_config.scheduling_strategy,
             )
             if trainer_resource_config.scheduling_strategy
