@@ -45,31 +45,29 @@ logger = Logger()
 
 def run_server(
     server_rank: int,
-    num_servers: int,
-    num_clients: int,
-    host: str,
+    cluster_info: GraphStoreInfo,
     port: int,
     task_config_uri: Uri,
     is_inference: bool,
 ) -> None:
-    logger.info(f"Initializing server {server_rank} / {num_servers}. Cluster rank: {os.environ.get('RANK')}")
+    logger.info(f"Initializing server {server_rank} / {cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage}. Cluster rank: {os.environ.get('RANK')}")
     dataset = gd.build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
         is_inference=is_inference,
         _tfrecord_uri_pattern=".*tfrecord",
     )
 
-    logger.info(f"Initializing server {server_rank} / {num_servers}")
+    logger.info(f"Initializing server {server_rank} / {cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage}")
     glt.distributed.init_server(
-        num_servers=num_servers,
+        num_servers=cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage,
         server_rank=server_rank,
         dataset=dataset,
-        master_addr=host,
+        master_addr=cluster_info.storage_cluster_master_ip,
         master_port=port,
-        num_clients=num_clients,
+        num_clients=cluster_info.num_compute_nodes * cluster_info.num_processes_per_compute,
     )
 
-    logger.info(f"Waiting for server rank {server_rank} / {num_servers} to exit")
+    logger.info(f"Waiting for server rank {server_rank} / {cluster_info.num_storage_nodes} to exit")
     glt.distributed.wait_and_shutdown_server()
     logger.info(f"Server rank {server_rank} exited")
 
@@ -82,7 +80,7 @@ def run_servers(
 ) -> list:
     torch.distributed.init_process_group(
         backend="gloo",
-        world_size=cluster_info.num_cluster_nodes,
+        world_size=cluster_info.num_storage_nodes,
         rank=server_rank,
         init_method=f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}",
         group_name="gigl_server_comms",
@@ -93,14 +91,12 @@ def run_servers(
     )[0]
     server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
-    for i in range(1):
+    for i in range(cluster_info.num_processes_per_storage):
         server_process = mp_context.Process(
             target=run_server,
             args=(
-                server_rank, # server_rank
-                cluster_info.num_cluster_nodes, # num_servers
-                cluster_info.num_compute_nodes, # num_clients
-                cluster_info.storage_cluster_master_ip, # host
+                server_rank * cluster_info.num_processes_per_storage + i, # server_rank
+                cluster_info, # cluster_info
                 glt_port, # port
                 task_config_uri, # task_config_uri
                 is_inference, # is_inference

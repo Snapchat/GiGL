@@ -24,6 +24,7 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import (
     VertexAiGraphStoreConfig,
     VertexAiResourceConfig,
 )
+from gigl.env.distributed import GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME, GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME
 
 logger = Logger()
 
@@ -139,7 +140,7 @@ class GLTInferencer:
         cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
         container_uri = cpu_docker_uri if is_cpu_inference else cuda_docker_uri
 
-        job_args = (
+        compute_job_args = (
             [
                 f"--job_name={applied_task_identifier}",
                 f"--task_config_uri={task_config_uri}",
@@ -152,17 +153,25 @@ class GLTInferencer:
         command = inference_process_command.strip().split(" ")
         logger.info(f"Running inference with command: {command}")
         vai_job_name = f"gigl_infer_{applied_task_identifier}"
-
+        num_storage_processes = vertex_ai_graph_store_config.num_processes_per_storage_machine
+        if not num_storage_processes:
+            num_storage_processes = 1
+        num_compute_processes = vertex_ai_graph_store_config.num_processes_per_compute_machine
+        if not num_compute_processes:
+            if is_cpu_inference:
+                num_compute_processes = 1
+            else:
+                num_compute_processes = vertex_ai_graph_store_config.compute_pool.gpu_limit
         # Add server/client environment variables
         environment_variables: list[env_var.EnvVar] = [
             env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
             env_var.EnvVar(
-                name="NUM_SERVER_PROCESSES",
-                value=str(vertex_ai_graph_store_config.num_processes_per_storage_machine),
+                name=GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME,
+                value=str(num_storage_processes),
             ),
             env_var.EnvVar(
-                name="NUM_CLIENT_PROCESSES",
-                value=str(vertex_ai_graph_store_config.num_processes_per_compute_machine),
+                name=GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME,
+                value=str(num_compute_processes),
             ),
         ]
 
@@ -171,7 +180,7 @@ class GLTInferencer:
             job_name=vai_job_name,
             container_uri=container_uri,
             command=command,
-            args=job_args,
+            args=compute_job_args,
             environment_variables=environment_variables,
             machine_type=compute_pool_config.machine_type,
             accelerator_type=compute_pool_config.gpu_type.upper().replace("-", "_"),
@@ -186,11 +195,24 @@ class GLTInferencer:
         )
 
         # Create storage pool job config
+        storage_job_args = (
+            [
+                f"--job_name={applied_task_identifier}",
+                f"--task_config_uri={task_config_uri}",
+                f"--resource_config_uri={resource_config_uri}",
+            ]
+            + ([] if is_cpu_inference else ["--use_cuda"])
+        )
+        storage_job_command = [
+            "python",
+            "-m",
+            "gigl.distributed.server_client.server_main",
+        ]
         storage_job_config = VertexAiJobConfig(
             job_name=vai_job_name,  # Will be ignored, using compute pool's job name
             container_uri=container_uri,
-            command=command,
-            args=job_args,
+            command=storage_job_command,
+            args=storage_job_args,
             environment_variables=environment_variables,
             machine_type=storage_pool_config.machine_type,
             accelerator_type=storage_pool_config.gpu_type.upper().replace("-", "_"),

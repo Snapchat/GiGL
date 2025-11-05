@@ -3,7 +3,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
+from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions, DistServer, request_server
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -28,6 +28,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
+from gigl.env.distributed import GraphStoreInfo
 logger = Logger()
 
 # When using CPU based inference/training, we default cpu threads for neighborloading on top of the per process parallelism.
@@ -37,10 +38,10 @@ DEFAULT_NUM_CPU_THREADS = 2
 class DistNeighborLoader(DistLoader):
     def __init__(
         self,
-        dataset: DistDataset,
+        dataset: Optional[DistDataset],
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
-            Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
+            Union[torch.Tensor, Tuple[NodeType, torch.Tensor], list[torch.Tensor]]
         ] = None,
         num_workers: int = 1,
         batch_size: int = 1,
@@ -54,6 +55,7 @@ class DistNeighborLoader(DistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        graph_store_info: Optional[GraphStoreInfo] = None,
     ):
         """
         Note: We try to adhere to pyg dataloader api as much as possible.
@@ -193,6 +195,10 @@ class DistNeighborLoader(DistLoader):
         )
 
         if input_nodes is None:
+            if dataset is None:
+                raise ValueError(
+                    "Dataset must be provided if input_nodes are not provided."
+                )
             if dataset.node_ids is None:
                 raise ValueError(
                     "Dataset must have node ids if input_nodes are not provided."
@@ -205,44 +211,92 @@ class DistNeighborLoader(DistLoader):
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
         self._is_labeled_heterogeneous = False
-        if isinstance(input_nodes, torch.Tensor):
-            node_ids = input_nodes
-
-            # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
-            # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
-            if isinstance(dataset.node_ids, abc.Mapping):
-                if (
-                    len(dataset.node_ids) == 1
-                    and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
-                ):
-                    node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-                    self._is_labeled_heterogeneous = True
-                else:
-                    raise ValueError(
-                        f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
-                    )
-            else:
-                node_type = None
+        if dataset is None:
+            if graph_store_info is None:
+                raise ValueError(
+                    "graph_store_info must be provided if dataset is not provided."
+                )
+            num_partitions, partition_idx, ntypes, etypes = request_server(
+                server_rank=0,
+                func=DistServer.get_dataset_meta,
+            )
+            if not isinstance(input_nodes, list):
+                raise ValueError(
+                    "input_nodes must be a list if dataset is not provided."
+                )
+            if len(input_nodes) != len(graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage):
+                raise ValueError(
+                    f"input_nodes must be a list of length {len(graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage)}, got {len(input_nodes)}. E.g. one entry per process in the storage cluster."
+                )
+            worker_options = RemoteDistSamplingWorkerOptions(
+                server_rank=[
+                    server_rank for server_rank in range(graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage)
+                ],
+                num_workers=num_workers,
+                worker_devices=[torch.device("cpu") for i in range(num_workers)],
+                master_addr=graph_store_info.cluster_master_ip,
+                master_port=graph_store_info.cluster_master_port,
+            )
         else:
-            node_type, node_ids = input_nodes
-            assert isinstance(
-                dataset.node_ids, abc.Mapping
-            ), "Dataset must be heterogeneous if provided input nodes are a tuple."
+            if isinstance(input_nodes, torch.Tensor):
+                node_ids = input_nodes
 
-        num_neighbors = patch_fanout_for_sampling(
-            dataset.get_edge_types(), num_neighbors
-        )
+                # If the dataset is heterogeneous, we may be in the "labeled homogeneous" setting,
+                # if so, then we should use DEFAULT_HOMOGENEOUS_NODE_TYPE.
+                if isinstance(dataset.node_ids, abc.Mapping):
+                    if (
+                        len(dataset.node_ids) == 1
+                        and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
+                    ):
+                        node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                        self._is_labeled_heterogeneous = True
+                    else:
+                        raise ValueError(
+                            f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
+                        )
+                else:
+                    node_type = None
+            else:
+                node_type, node_ids = input_nodes
+                assert isinstance(
+                    dataset.node_ids, abc.Mapping
+                ), "Dataset must be heterogeneous if provided input nodes are a tuple."
+            etypes = dataset.get_edge_types()
 
-        curr_process_nodes = shard_nodes_by_process(
-            input_nodes=node_ids,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-        )
+            curr_process_nodes = shard_nodes_by_process(
+                input_nodes=node_ids,
+                local_process_rank=local_rank,
+                local_process_world_size=local_world_size,
+            )
 
-        self._node_feature_info = dataset.node_feature_info
-        self._edge_feature_info = dataset.edge_feature_info
+            self._node_feature_info = dataset.node_feature_info
+            self._edge_feature_info = dataset.edge_feature_info
 
-        input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
+            input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
+            dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(
+                num_ports=local_world_size
+            )
+            dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
+
+            worker_options = MpDistSamplingWorkerOptions(
+                num_workers=num_workers,
+                worker_devices=[torch.device("cpu") for _ in range(num_workers)],
+                worker_concurrency=worker_concurrency,
+                # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
+                # need to be connected. Thus, we need master ip address and master port to
+                # initate the connection.
+                # Note that different groups of workers are independent, and thus
+                # the sampling processes in different groups should be independent, and should
+                # use different master ports.
+                master_addr=master_ip_address,
+                master_port=dist_sampling_port_for_current_rank,
+                # Load testing show that when num_rpc_threads exceed 16, the performance
+                # will degrade.
+                num_rpc_threads=min(dataset.num_partitions, 16),
+                rpc_timeout=600,
+                channel_size=channel_size,
+                pin_memory=device.type == "cuda",
+            )
 
         # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
         # the memory overhead and CPU contention.
@@ -280,31 +334,16 @@ class DistNeighborLoader(DistLoader):
         )
 
         # Sets up worker options for the dataloader
-        dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
 
-        worker_options = MpDistSamplingWorkerOptions(
-            num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
-            worker_concurrency=worker_concurrency,
-            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
-            # need to be connected. Thus, we need master ip address and master port to
-            # initate the connection.
-            # Note that different groups of workers are independent, and thus
-            # the sampling processes in different groups should be independent, and should
-            # use different master ports.
-            master_addr=master_ip_address,
-            master_port=dist_sampling_port_for_current_rank,
-            # Load testing show that when num_rpc_threads exceed 16, the performance
-            # will degrade.
-            num_rpc_threads=min(dataset.num_partitions, 16),
-            rpc_timeout=600,
-            channel_size=channel_size,
-            pin_memory=device.type == "cuda",
-        )
+        if should_cleanup_distributed_context and torch.distributed.is_initialized():
+            logger.info(
+                f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
+            )
+            torch.distributed.destroy_process_group()
 
+        num_neighbors = patch_fanout_for_sampling(
+            etypes, num_neighbors
+        )
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -318,12 +357,6 @@ class DistNeighborLoader(DistLoader):
             edge_dir=dataset.edge_dir,
             seed=None,  # it's actually optional - None means random.
         )
-
-        if should_cleanup_distributed_context and torch.distributed.is_initialized():
-            logger.info(
-                f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
-            )
-            torch.distributed.destroy_process_group()
 
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
