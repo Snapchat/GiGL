@@ -93,7 +93,7 @@ class VertexAiJobConfig:
     container_uri: str
     command: list[str]
     args: Optional[list[str]] = None
-    environment_variables: Optional[list[dict[str, str]]] = None
+    environment_variables: Optional[list[env_var.EnvVar]] = None
     machine_type: str = "n1-standard-4"
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
@@ -167,12 +167,14 @@ class VertexAIService:
             datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
             "leader_worker_internal_ip.txt",
         )
-        env_vars = [
+        env_vars: list[env_var.EnvVar] = [
             env_var.EnvVar(
                 name=LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY,
                 value=leader_worker_internal_ip_file_path.uri,
             )
         ]
+        if job_config.environment_variables:
+            env_vars.extend(job_config.environment_variables)
 
         container_spec = _create_container_spec(job_config, env_vars)
 
@@ -265,8 +267,16 @@ class VertexAIService:
         storage_disk_spec = _create_disk_spec(storage_pool_job_config)
         compute_disk_spec = _create_disk_spec(compute_pool_job_config)
 
-        storage_container_spec = _create_container_spec(storage_pool_job_config)
-        compute_container_spec = _create_container_spec(compute_pool_job_config)
+        env_vars: list[env_var.EnvVar] = (
+            compute_pool_job_config.environment_variables or []
+        )
+
+        storage_container_spec = _create_container_spec(
+            storage_pool_job_config, env_vars
+        )
+        compute_container_spec = _create_container_spec(
+            compute_pool_job_config, env_vars
+        )
 
         worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
 
