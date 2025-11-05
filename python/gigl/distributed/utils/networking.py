@@ -1,3 +1,4 @@
+import os
 import socket
 from typing import Optional
 
@@ -201,6 +202,31 @@ def get_graph_store_info() -> GraphStoreInfo:
     if len(cluster_spec.cluster["workerpool0"]) != 1:
         raise ValueError(
             f"Expected exactly one machine in workerpool0, but got {len(cluster_spec.cluster['workerpool0'])}"
+        )
+
+    # We want to ensure that the cluster is setup as we'd expect.
+    # e.g. `[[compute0], [compute1, ..., computeN], [storage0, ..., storageN]]`
+    # So we do this by checking that the task index matches up with the rank.
+    env_rank = int(os.environ["RANK"])
+    if cluster_spec.task.type == "workerpool0":
+        offset = 0
+    elif cluster_spec.task.type == "workerpool1":
+        offset = len(cluster_spec.cluster["workerpool0"])
+    elif cluster_spec.task.type == "workerpool2":
+        if "workerpool1" in cluster_spec.cluster:
+            offset = len(cluster_spec.cluster["workerpool0"]) + len(
+                cluster_spec.cluster["workerpool1"]
+            )
+        else:
+            offset = len(cluster_spec.cluster["workerpool0"])
+    else:
+        raise ValueError(
+            f"Expected task type to be workerpool0, workerpool1, or workerpool2, but got {cluster_spec.task.type}"
+        )
+
+    if cluster_spec.task.index + offset != env_rank:
+        raise ValueError(
+            f"Expected task index to be {env_rank}, but got {cluster_spec.task.index + offset}"
         )
 
     if "workerpool1" in cluster_spec.cluster:
