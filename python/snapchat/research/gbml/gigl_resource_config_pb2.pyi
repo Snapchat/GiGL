@@ -241,6 +241,8 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     """Scheduling strategy for the job.
     If unset, will use the Vertex AI default.
     See https://cloud.google.com/vertex-ai/docs/training/schedule-jobs-dws for more info.
+    The available options are in the GCP docs:
+    https://docs.cloud.google.com/python/docs/reference/aiplatform/latest/google.cloud.aiplatform_v1.types.Scheduling.Strategy
     """
     def __init__(
         self,
