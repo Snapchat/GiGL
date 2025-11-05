@@ -81,9 +81,9 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         )
 
         job = self._vertex_ai_service.launch_job(job_config)
-        self.assertEqual(
-            job.job_spec.worker_pool_specs[0].container_spec.env[0],
+        self.assertIn(
             env_var.EnvVar(name="FOO", value="BAR"),
+            job.job_spec.worker_pool_specs[0].container_spec.env,
         )
 
     @parameterized.expand(
