@@ -77,7 +77,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             job_name=job_name,
             container_uri=container_uri,
             command=command,
-            environment_variables=[("FOO", "BAR")],
+            environment_variables=[env_var.EnvVar(name="FOO", value="BAR")],
         )
 
         job = self._vertex_ai_service.launch_job(job_config)

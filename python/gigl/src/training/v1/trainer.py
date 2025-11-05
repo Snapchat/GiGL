@@ -2,7 +2,7 @@ import argparse
 from typing import Optional
 
 import torch
-from google.cloud.aiplatform_v1.types import accelerator_type
+from google.cloud.aiplatform_v1.types import accelerator_type, env_var
 
 from gigl.common import Uri, UriFactory
 from gigl.common.constants import (
@@ -46,8 +46,8 @@ class Trainer:
             cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
             cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
             container_uri = cpu_docker_uri if is_cpu_training else cuda_docker_uri
-            environment_variables: list[tuple[str, str]] = [
-                ("TF_CPP_MIN_LOG_LEVEL", "3"),
+            environment_variables: list[env_var.EnvVar] = [
+                env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
             ]
             job_args = [
                 f"--job_name={applied_task_identifier}",

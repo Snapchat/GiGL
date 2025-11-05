@@ -1,7 +1,7 @@
 import argparse
 from typing import Optional
 
-from google.cloud.aiplatform_v1.types import accelerator_type
+from google.cloud.aiplatform_v1.types import accelerator_type, env_var
 
 from gigl.common import Uri, UriFactory
 from gigl.common.constants import (
@@ -101,8 +101,8 @@ class GLTTrainer:
         command = training_process_command.strip().split(" ")
         logger.info(f"Running trainer with command: {command}")
         vai_job_name = f"gigl_train_{applied_task_identifier}"
-        environment_variables: list[tuple[str, str]] = [
-            ("TF_CPP_MIN_LOG_LEVEL", "3"),
+        environment_variables: list[env_var.EnvVar] = [
+            env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
         ]
         job_config = VertexAiJobConfig(
             job_name=vai_job_name,
