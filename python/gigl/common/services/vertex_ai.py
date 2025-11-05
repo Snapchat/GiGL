@@ -93,7 +93,7 @@ class VertexAiJobConfig:
     container_uri: str
     command: list[str]
     args: Optional[list[str]] = None
-    environment_variables: Optional[list[tuple[str, str]]] = None
+    environment_variables: Optional[list[dict[str, str]]] = None
     machine_type: str = "n1-standard-4"
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
@@ -167,7 +167,7 @@ class VertexAIService:
             datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
             "leader_worker_internal_ip.txt",
         )
-        env_vars = _get_vai_env_vars(job_config.environment_variables) + [
+        env_vars = [
             env_var.EnvVar(
                 name=LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY,
                 value=leader_worker_internal_ip_file_path.uri,
@@ -265,16 +265,8 @@ class VertexAIService:
         storage_disk_spec = _create_disk_spec(storage_pool_job_config)
         compute_disk_spec = _create_disk_spec(compute_pool_job_config)
 
-        env_vars: list[env_var.EnvVar] = _get_vai_env_vars(
-            compute_pool_job_config.environment_variables
-        )
-
-        storage_container_spec = _create_container_spec(
-            storage_pool_job_config, env_vars
-        )
-        compute_container_spec = _create_container_spec(
-            compute_pool_job_config, env_vars
-        )
+        storage_container_spec = _create_container_spec(storage_pool_job_config)
+        compute_container_spec = _create_container_spec(compute_pool_job_config)
 
         worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
 
@@ -469,14 +461,3 @@ def _create_disk_spec(job_config: VertexAiJobConfig) -> DiskSpec:
         boot_disk_size_gb=job_config.boot_disk_size_gb,
     )
     return disk_spec
-
-
-def _get_vai_env_vars(
-    environment_variables: Optional[list[tuple[str, str]]]
-) -> list[env_var.EnvVar]:
-    """Get the environment variables for a job config."""
-    env_vars: list[env_var.EnvVar] = []
-    if environment_variables:
-        for env_var, value in environment_variables.items():
-            env_vars.append(env_var.EnvVar(name=env_var, value=value))
-    return env_vars

@@ -1,7 +1,6 @@
 """Information about distributed environments."""
 
 from dataclasses import dataclass
-from typing import Final
 
 
 @dataclass(frozen=True)
@@ -20,14 +19,6 @@ class DistributedContext:
 
     # Total number of machines
     global_world_size: int
-
-
-GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME: Final[
-    str
-] = "GRAPH_STORE_PROCESSES_PER_SERVER"
-GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME: Final[
-    str
-] = "GRAPH_STORE_PROCESSES_PER_COMPUTE"
 
 
 @dataclass(frozen=True)
