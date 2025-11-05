@@ -127,8 +127,6 @@ class TestVertexAIContext(unittest.TestCase):
                 },
                 "task": {"type": "workerpool0", "index": 1, "trial": "trial-123"},
                 "environment": "cloud",
-                # NOTE: We intentionally omit the "job" field from the ClusterSpec.
-                # But want to make sure we can handle it if it's present.
                 "job": '{ "worker_pool_specs": [ {"machine_spec": {"machine_type": "n1-standard-4"}}]}',
             }
         )
@@ -146,7 +144,44 @@ class TestVertexAIContext(unittest.TestCase):
                 },
                 environment="cloud",
                 task=TaskInfo(type="workerpool0", index=1, trial="trial-123"),
+                job={
+                    "worker_pool_specs": [
+                        {"machine_spec": {"machine_type": "n1-standard-4"}}
+                    ]
+                },
             )
+            self.assertEqual(cluster_spec, expected_cluster_spec)
+
+    def test_parse_cluster_spec_success_without_job(self):
+        """Test successful parsing of cluster specification."""
+        cluster_spec_json = json.dumps(
+            {
+                "cluster": {
+                    "workerpool0": ["replica0-0", "replica0-1"],
+                    "workerpool1": ["replica1-0"],
+                    "workerpool2": ["replica2-0"],
+                    "workerpool3": ["replica3-0", "replica3-1"],
+                },
+                "task": {"type": "workerpool0", "index": 1, "trial": "trial-123"},
+                "environment": "cloud",
+            }
+        )
+
+        with patch.dict(
+            os.environ, self.VAI_JOB_ENV | {"CLUSTER_SPEC": cluster_spec_json}
+        ):
+            cluster_spec = get_cluster_spec()
+            expected_cluster_spec = ClusterSpec(
+                cluster={
+                    "workerpool0": ["replica0-0", "replica0-1"],
+                    "workerpool1": ["replica1-0"],
+                    "workerpool2": ["replica2-0"],
+                    "workerpool3": ["replica3-0", "replica3-1"],
+                },
+                environment="cloud",
+                task=TaskInfo(type="workerpool0", index=1, trial="trial-123"),
+            )
+
             self.assertEqual(cluster_spec, expected_cluster_spec)
 
     def test_parse_cluster_spec_not_on_vai(self):

@@ -1,11 +1,10 @@
-import os
 import socket
 from typing import Optional
 
 import torch
 
 from gigl.common.logger import Logger
-from gigl.common.utils.vertex_ai_context import ClusterSpec, get_cluster_spec
+from gigl.common.utils.vertex_ai_context import get_cluster_spec
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
@@ -187,11 +186,6 @@ def get_internal_ip_from_all_ranks() -> list[str]:
 def get_graph_store_info() -> GraphStoreInfo:
     """
     Get the information about the graph store cluster.
-    MUST be called with a torch.distributed process group initialized, for the *entire* training cluster.
-    E.g. the process group *must* include both the compute and storage nodes.
-
-    This function should only be called on clusters that are setup by GiGL.
-    E.g. when GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config is set.
 
     Returns:
         GraphStoreInfo: The information about the graph store cluster.
@@ -203,8 +197,11 @@ def get_graph_store_info() -> GraphStoreInfo:
     # If we want to ever support other (non-VAI) environments,
     # we must switch here depending on the environment.
     cluster_spec = get_cluster_spec()
-
-    _validate_cluster_spec(cluster_spec)
+    # We setup the VAI cluster such that the compute nodes come first, followed by the storage nodes.
+    if len(cluster_spec.cluster["workerpool0"]) != 1:
+        raise ValueError(
+            f"Expected exactly one machine in workerpool0, but got {len(cluster_spec.cluster['workerpool0'])}"
+        )
 
     if "workerpool1" in cluster_spec.cluster:
         num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
@@ -238,37 +235,3 @@ def get_graph_store_info() -> GraphStoreInfo:
         storage_cluster_master_port=storage_cluster_master_port,
         compute_cluster_master_port=compute_cluster_master_port,
     )
-
-
-def _validate_cluster_spec(cluster_spec: ClusterSpec) -> None:
-    """Validate the cluster spec is setup as we'd expect."""
-
-    if len(cluster_spec.cluster["workerpool0"]) != 1:
-        raise ValueError(
-            f"Expected exactly one machine in workerpool0, but got {len(cluster_spec.cluster['workerpool0'])}"
-        )
-
-    # We want to ensure that the cluster is setup as we'd expect.
-    # e.g. `[[compute0], [compute1, ..., computeN], [storage0, ..., storageN]]`
-    # So we do this by checking that the task index matches up with the rank.
-    env_rank = int(os.environ["RANK"])
-    if cluster_spec.task.type == "workerpool0":
-        offset = 0
-    elif cluster_spec.task.type == "workerpool1":
-        offset = len(cluster_spec.cluster["workerpool0"])
-    elif cluster_spec.task.type == "workerpool2":
-        if "workerpool1" in cluster_spec.cluster:
-            offset = len(cluster_spec.cluster["workerpool0"]) + len(
-                cluster_spec.cluster["workerpool1"]
-            )
-        else:
-            offset = len(cluster_spec.cluster["workerpool0"])
-    else:
-        raise ValueError(
-            f"Expected task type to be workerpool0, workerpool1, or workerpool2, but got {cluster_spec.task.type}"
-        )
-
-    if cluster_spec.task.index + offset != env_rank:
-        raise ValueError(
-            f"Expected task index to be {env_rank}, but got {cluster_spec.task.index + offset}"
-        )
