@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
 
-from gigl.module.models import LightGCN, LinkPredictionGNN
+from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
