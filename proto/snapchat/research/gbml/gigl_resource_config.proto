@@ -125,6 +125,9 @@ message VertexAiResourceConfig {
  message VertexAiGraphStoreConfig {
   VertexAiResourceConfig graph_store_pool = 1;
   VertexAiResourceConfig compute_pool = 2;
+
+  int32 num_processes_per_storage_machine = 3;
+  int32 num_processes_per_compute_machine = 4;
  }
 // (deprecated)
 // Configuration for distributed training resources

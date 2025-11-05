@@ -1,5 +1,6 @@
 import argparse
 from typing import Optional
+from collections.abc import Mapping
 
 from google.cloud.aiplatform_v1.types import accelerator_type, env_var
 
@@ -59,7 +60,7 @@ class GLTTrainer:
         task_config_uri: Uri,
         resource_config_uri: Uri,
         training_process_command: str,
-        training_process_runtime_args: dict[str, str],
+        training_process_runtime_args: Mapping[str, str],
         resource_config: GiglResourceConfigWrapper,
         cpu_docker_uri: Optional[str],
         cuda_docker_uri: Optional[str],

@@ -50,10 +50,10 @@ class GiglResourceConfigWrapper:
     resource_config: GiglResourceConfig
     _loaded_shared_resource_config: Optional[SharedResourceConfig] = None
     _trainer_config: Optional[
-        Union[VertexAiResourceConfig, KFPResourceConfig, LocalResourceConfig]
+        Union[VertexAiResourceConfig, KFPResourceConfig, LocalResourceConfig, VertexAiGraphStoreConfig]
     ] = None
     _inference_config: Optional[
-        Union[DataflowResourceConfig, VertexAiResourceConfig, LocalResourceConfig]
+        Union[DataflowResourceConfig, VertexAiResourceConfig, LocalResourceConfig, VertexAiGraphStoreConfig]
     ] = None
 
     _split_gen_config: Union[
