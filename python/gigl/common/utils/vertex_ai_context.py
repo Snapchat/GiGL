@@ -183,12 +183,13 @@ class ClusterSpec:
     environment: str  # The environment string (e.g., "cloud")
     task: TaskInfo  # Information about the current task
 
+    # NOTE: We intentionally omit the "job" field from the ClusterSpec.
+    # As we don't need it atm.
     # DESPITE what the docs say, this is *not* a CustomJobSpec.
     # It's *sort of* like a PythonPackageSpec, but it's not.
     # It has `jobArgs` instead of `args`.
     # See an example:
     #  {"python_module":"","package_uris":[],"job_args":[]}
-    job: Optional[dict] = None
 
     # We use a custom method for parsing, the "job" is actually a serialized json string.
     @classmethod
@@ -196,9 +197,7 @@ class ClusterSpec:
         """Instantiates ClusterSpec from a JSON string."""
         cluster_spec_json = json.loads(json_str)
         if "job" in cluster_spec_json and cluster_spec_json["job"] is not None:
-            job_spec = json.loads(cluster_spec_json.pop("job"))
-        else:
-            job_spec = None
+            cluster_spec_json.pop("job")
         conf = omegaconf.OmegaConf.create(cluster_spec_json)
         if isinstance(conf, omegaconf.ListConfig):
             raise ValueError("ListConfig is not supported")
@@ -206,7 +205,6 @@ class ClusterSpec:
             cluster=conf.cluster,
             environment=conf.environment,
             task=conf.task,
-            job=job_spec,
         )
         logger.info(f"Cluster spec: {cluster_spec}")
         return cluster_spec
