@@ -130,7 +130,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             ),
         ]
     )
-    def _test_launch_graph_store_job(
+    def test_launch_graph_store_job(
         self,
         _,
         num_compute,
@@ -183,7 +183,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                     expected_worker_pool_spec["image_uri"],
                 )
 
-    def _test_run_pipeline(self):
+    def test_run_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline.yaml")
             kfp.compiler.Compiler().compile(get_pipeline, pipeline_def)
@@ -205,7 +205,7 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
             self.assertEqual(run.resource_name, job.resource_name)
             self.assertEqual(run.labels["gigl-integration-test"], "true")
 
-    def _test_run_pipeline_fails(self):
+    def test_run_pipeline_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline_that_fails.yaml")
             kfp.compiler.Compiler().compile(get_pipeline_that_fails, pipeline_def)
