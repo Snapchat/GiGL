@@ -1,6 +1,7 @@
 import argparse
 from typing import Optional
 
+from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import accelerator_type
 
 from gigl.common import Uri, UriFactory
@@ -121,7 +122,9 @@ class GLTInferencer:
             timeout_s=inferencer_resource_config.timeout
             if inferencer_resource_config.timeout
             else None,
-            scheduling_strategy=inferencer_resource_config.scheduling_strategy
+            scheduling_strategy=aiplatform.gapic.Scheduling.Strategy.value(
+                inferencer_resource_config.scheduling_strategy
+            )
             if inferencer_resource_config.scheduling_strategy
             else None,
         )

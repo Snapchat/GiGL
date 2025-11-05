@@ -1,6 +1,7 @@
 import argparse
 from typing import Optional
 
+from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import accelerator_type
 
 from gigl.common import Uri, UriFactory
@@ -119,7 +120,9 @@ class GLTTrainer:
             timeout_s=trainer_resource_config.timeout
             if trainer_resource_config.timeout
             else None,
-            scheduling_strategy=trainer_resource_config.scheduling_strategy
+            scheduling_strategy=aiplatform.gapic.Scheduling.Strategy.value(
+                trainer_resource_config.scheduling_strategy
+            )
             if trainer_resource_config.scheduling_strategy
             else None,
         )
