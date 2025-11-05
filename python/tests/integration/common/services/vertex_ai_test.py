@@ -4,6 +4,7 @@ import unittest
 import uuid
 
 import kfp
+from google.cloud.aiplatform_v1.types import env_var
 from parameterized import param, parameterized
 
 from gigl.common import UriFactory
@@ -73,10 +74,17 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
         command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
 
         job_config = VertexAiJobConfig(
-            job_name=job_name, container_uri=container_uri, command=command
+            job_name=job_name,
+            container_uri=container_uri,
+            command=command,
+            environment_variables=[env_var.EnvVar(name="FOO", value="BAR")],
         )
 
-        self._vertex_ai_service.launch_job(job_config)
+        job = self._vertex_ai_service.launch_job(job_config)
+        self.assertEqual(
+            job.job_spec.worker_pool_specs[0].container_spec.env[0],
+            env_var.EnvVar(name="FOO", value="BAR"),
+        )
 
     @parameterized.expand(
         [
