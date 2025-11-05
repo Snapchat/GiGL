@@ -52,37 +52,20 @@ class GLTTrainer:
     GiGL Component that runs a GLT Training using a provided class path
     """
 
-    def __execute_VAI_training(
+    def _launch_single_pool_training(
         self,
+        vertex_ai_resource_config: VertexAiResourceConfig,
         applied_task_identifier: AppliedTaskIdentifier,
         task_config_uri: Uri,
         resource_config_uri: Uri,
-        cpu_docker_uri: Optional[str] = None,
-        cuda_docker_uri: Optional[str] = None,
+        training_process_command: str,
+        training_process_runtime_args: dict[str, str],
+        resource_config: GiglResourceConfigWrapper,
+        cpu_docker_uri: Optional[str],
+        cuda_docker_uri: Optional[str],
     ) -> None:
-        resource_config: GiglResourceConfigWrapper = get_resource_config(
-            resource_config_uri=resource_config_uri
-        )
-        gbml_config_pb_wrapper = (
-            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-                gbml_config_uri=task_config_uri
-            )
-        )
-        training_process_command = gbml_config_pb_wrapper.trainer_config.command
-        if not training_process_command:
-            raise ValueError(
-                "Currently, GLT Trainer only supports training process command which"
-                + f" was not provided in trainer config: {gbml_config_pb_wrapper.trainer_config}"
-            )
-        training_process_runtime_args = (
-            gbml_config_pb_wrapper.trainer_config.trainer_args
-        )
-
-        assert isinstance(resource_config.trainer_config, VertexAiResourceConfig)
-        trainer_resource_config: VertexAiResourceConfig = resource_config.trainer_config
-
         is_cpu_training = _determine_if_cpu_training(
-            trainer_resource_config=trainer_resource_config
+            trainer_resource_config=vertex_ai_resource_config
         )
         cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
         cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
@@ -110,15 +93,17 @@ class GLTTrainer:
             command=command,
             args=job_args,
             environment_variables=environment_variables,
-            machine_type=trainer_resource_config.machine_type,
-            accelerator_type=trainer_resource_config.gpu_type.upper().replace("-", "_"),
-            accelerator_count=trainer_resource_config.gpu_limit,
-            replica_count=trainer_resource_config.num_replicas,
+            machine_type=vertex_ai_resource_config.machine_type,
+            accelerator_type=vertex_ai_resource_config.gpu_type.upper().replace(
+                "-", "_"
+            ),
+            accelerator_count=vertex_ai_resource_config.gpu_limit,
+            replica_count=vertex_ai_resource_config.num_replicas,
             labels=resource_config.get_resource_labels(
                 component=GiGLComponents.Trainer
             ),
-            timeout_s=trainer_resource_config.timeout
-            if trainer_resource_config.timeout
+            timeout_s=vertex_ai_resource_config.timeout
+            if vertex_ai_resource_config.timeout
             else None,
         )
 
@@ -129,6 +114,49 @@ class GLTTrainer:
             staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
         )
         vertex_ai_service.launch_job(job_config=job_config)
+
+    def __execute_VAI_training(
+        self,
+        applied_task_identifier: AppliedTaskIdentifier,
+        task_config_uri: Uri,
+        resource_config_uri: Uri,
+        cpu_docker_uri: Optional[str] = None,
+        cuda_docker_uri: Optional[str] = None,
+    ) -> None:
+        resource_config: GiglResourceConfigWrapper = get_resource_config(
+            resource_config_uri=resource_config_uri
+        )
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=task_config_uri
+            )
+        )
+        training_process_command = gbml_config_pb_wrapper.trainer_config.command
+        if not training_process_command:
+            raise ValueError(
+                "Currently, GLT Trainer only supports training process command which"
+                + f" was not provided in trainer config: {gbml_config_pb_wrapper.trainer_config}"
+            )
+        training_process_runtime_args = (
+            gbml_config_pb_wrapper.trainer_config.trainer_args
+        )
+
+        if isinstance(resource_config.trainer_config, VertexAiResourceConfig):
+            self._launch_single_pool_training(
+                vertex_ai_resource_config=resource_config.trainer_config,
+                applied_task_identifier=applied_task_identifier,
+                task_config_uri=task_config_uri,
+                resource_config_uri=resource_config_uri,
+                training_process_command=training_process_command,
+                training_process_runtime_args=training_process_runtime_args,
+                resource_config=resource_config,
+                cpu_docker_uri=cpu_docker_uri,
+                cuda_docker_uri=cuda_docker_uri,
+            )
+        else:
+            raise NotImplementedError(
+                f"Unsupported resource config for glt training: {type(resource_config.trainer_config).__name__}"
+            )
 
     def run(
         self,
