@@ -144,5 +144,5 @@ def build_dataset_for_testing(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
-    _DATASET_CACHE[task_config_uri] = dataset.share_ipc()
+    _DATASET_CACHE[task_config_uri] = copy.deepcopy(dataset.share_ipc())
     return dataset
