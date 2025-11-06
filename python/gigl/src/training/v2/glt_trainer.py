@@ -112,9 +112,9 @@ class GLTTrainer:
             # TODO(kmonte): Fix this
             scheduling_strategy=getattr(
                 Scheduling.Strategy,
-                trainer_resource_config.scheduling_strategy,
+                vertex_ai_resource_config.scheduling_strategy,
             )
-            if trainer_resource_config.scheduling_strategy
+            if vertex_ai_resource_config.scheduling_strategy
             else None,
         )
 

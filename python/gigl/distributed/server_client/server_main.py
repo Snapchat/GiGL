@@ -7,6 +7,8 @@ import torch
 import gigl.distributed as gd
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.server_client.remote_dataset import register_dataset
 from gigl.distributed.utils import get_free_ports_from_node, get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 
@@ -23,16 +25,12 @@ def run_server(
     port: int,
     task_config_uri: Uri,
     is_inference: bool,
+    dataset: DistDataset,
 ) -> None:
     logger.info(
         f"Initializing server {server_rank} / {cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage}. Cluster rank: {os.environ.get('RANK')}"
     )
-    dataset = gd.build_dataset_from_task_config_uri(
-        task_config_uri=task_config_uri,
-        is_inference=is_inference,
-        _tfrecord_uri_pattern=".*tfrecord",
-    )
-
+    register_dataset(dataset)
     logger.info(
         f"Initializing server {server_rank} / {cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage}"
     )
@@ -71,6 +69,11 @@ def run_servers(
         num_ports=1,
         node_rank=cluster_info.num_compute_nodes,
     )[0]
+    dataset = gd.build_dataset_from_task_config_uri(
+        task_config_uri=task_config_uri,
+        is_inference=is_inference,
+        _tfrecord_uri_pattern=".*tfrecord",
+    )
     server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
     for i in range(cluster_info.num_processes_per_storage):
@@ -82,6 +85,7 @@ def run_servers(
                 glt_port,  # port
                 task_config_uri,  # task_config_uri
                 is_inference,  # is_inference
+                dataset,  # dataset
             ),
         )
         server_processes.append(server_process)

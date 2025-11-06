@@ -230,12 +230,13 @@ class DistNeighborLoader(DistLoader):
                 raise ValueError(
                     "input_nodes must be a list if dataset is not provided."
                 )
-            if len(input_nodes) != len(
-                graph_store_info.num_storage_nodes
+            if (
+                len(input_nodes)
+                != graph_store_info.num_storage_nodes
                 * graph_store_info.num_processes_per_storage
             ):
                 raise ValueError(
-                    f"input_nodes must be a list of length {len(graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage)}, got {len(input_nodes)}. E.g. one entry per process in the storage cluster."
+                    f"input_nodes must be a list of length {graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage}, got {len(input_nodes)}. E.g. one entry per process in the storage cluster."
                 )
             worker_options = RemoteDistSamplingWorkerOptions(
                 server_rank=[
@@ -269,11 +270,15 @@ class DistNeighborLoader(DistLoader):
                         )
                 else:
                     node_type = None
-            else:
+            elif isinstance(input_nodes, tuple):
                 node_type, node_ids = input_nodes
                 assert isinstance(
                     dataset.node_ids, abc.Mapping
                 ), "Dataset must be heterogeneous if provided input nodes are a tuple."
+            else:
+                raise ValueError(
+                    f"input_nodes must be a torch.Tensor or a tuple of (node_type, node_ids), got {type(input_nodes)}"
+                )
             etypes = dataset.get_edge_types()
 
             curr_process_nodes = shard_nodes_by_process(
@@ -367,7 +372,7 @@ class DistNeighborLoader(DistLoader):
             collect_features=True,
             with_neg=False,
             with_weight=False,
-            edge_dir=dataset.edge_dir,
+            edge_dir=dataset.edge_dir if dataset is not None else "out",
             seed=None,  # it's actually optional - None means random.
         )
 

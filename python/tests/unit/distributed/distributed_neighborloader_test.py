@@ -36,6 +36,7 @@ from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter, HashedNodeSp
 from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
+    build_dataset_for_testing,
 )
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
@@ -117,15 +118,11 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
 def _run_infinite_distributed_neighbor_loader(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     max_num_batches: int,
 ):
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -328,14 +325,8 @@ def _run_cora_supervised_node_classification(
 class DistributedNeighborLoaderTest(unittest.TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
-        self._world_size = 1
         self._num_rpc_threads = 4
 
-        self._context = DistributedContext(
-            main_worker_ip_address=self._master_ip_address,
-            global_rank=0,
-            global_world_size=self._world_size,
-        )
 
     def tearDown(self):
         if torch.distributed.is_initialized():
@@ -349,27 +340,34 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         expected_data_count = 2708
         port = gigl.distributed.utils.get_free_port()
 
-        dataset = run_distributed_dataset(
-            rank=0,
-            world_size=self._world_size,
-            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            should_load_tensors_in_parallel=True,
-            _port=port,
+
+        # dataset = run_distributed_dataset(
+        #     rank=0,
+        #     world_size=self._world_size,
+        #     mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+        #     should_load_tensors_in_parallel=True,
+        #     _port=port,
+        # )
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        dataset = build_dataset_for_testing(
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
+            edge_dir="in",
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
         mp.spawn(
             fn=_run_distributed_neighbor_loader,
-            args=(dataset, self._context, expected_data_count),
+            args=(dataset, expected_data_count),
         )
 
     def test_infinite_distributed_neighbor_loader(self):
         port = gigl.distributed.utils.get_free_port()
-        dataset = run_distributed_dataset(
-            rank=0,
-            world_size=self._world_size,
-            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            should_load_tensors_in_parallel=True,
-            _port=port,
+        dataset = build_dataset_for_testing(
+            task_config_uri=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.frozen_gbml_config_uri,
+            edge_dir="in",
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
         assert isinstance(dataset.node_ids, torch.Tensor)
@@ -381,7 +379,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_infinite_distributed_neighbor_loader,
-            args=(dataset, self._context, max_num_batches),
+            args=(dataset, max_num_batches),
         )
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
