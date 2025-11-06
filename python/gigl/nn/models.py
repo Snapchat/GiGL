@@ -294,7 +294,6 @@ class LightGCN(nn.Module):
             key, global_ids
         )  # shape [N_sub, D], where N_sub is number of nodes in subgraph and D is embedding_dim
 
-        # TODO(swong3): Look into why we have to call wait() on the Awaitable returned by the embedding bag collection.
         # When using DMP, EmbeddingBagCollection returns Awaitable that needs to be resolved
         if isinstance(embeddings_0, Awaitable):
             embeddings_0 = embeddings_0.wait()
