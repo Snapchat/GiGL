@@ -39,19 +39,14 @@ def get_free_ports(num_ports: int) -> list[int]:
     ports: list[int] = []
     open_sockets: list[socket.socket] = []
     for _ in range(num_ports):
-        logger.info(f"Finding free port {_ + 1} of {num_ports}")
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        logger.info(f"Socket created: {s}")
         # OS assigns a free port; we want to keep it open until we have all ports so we only return unique ports
         s.bind(("", 0))
-        logger.info(f"Socket bound: {s.getsockname()}")
         open_sockets.append(s)
         port = s.getsockname()[1]
-        logger.info(f"Port: {port}")
         ports.append(port)
     # Free up ports by closing the sockets
     for s in open_sockets:
-        logger.info(f"Closing socket: {s}")
         s.close()
     return ports
 
@@ -153,17 +148,26 @@ def get_internal_ip_from_node(
     if rank == node_rank:
         # Master node, return its own internal IP
         ip_list = [socket.gethostbyname(socket.gethostname())]
-        logger.info(f"Rank {rank} found internal IP: {ip_list}")
     else:
         # Other nodes will receive the master's IP via broadcast
         ip_list = [None]
-        logger.info(f"Rank {rank} received internal IP list: {ip_list} from rank {node_rank}")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"Rank {rank} broadcasting internal IP list: {ip_list} to rank {node_rank}")
+    device = (
+        "cuda"
+        if torch.distributed.get_backend() == torch.distributed.Backend.NCCL
+        else "cpu"
+    )
+    logger.info(
+        f"Rank {rank} broadcasting internal IP list: {ip_list} to rank {node_rank}"
+    )
     torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
+    logger.info(
+        f"Rank {rank} broadcasted internal IP list: {ip_list} to rank {node_rank}"
+    )
     node_ip = ip_list[0]
-    logger.info(f"Rank {rank} received master internal IP: {node_ip} from rank {node_rank}")
+    logger.info(
+        f"Rank {rank} received master internal IP: {node_ip} from rank {node_rank}"
+    )
     assert node_ip is not None, "Could not retrieve master node's internal IP"
     return node_ip
 

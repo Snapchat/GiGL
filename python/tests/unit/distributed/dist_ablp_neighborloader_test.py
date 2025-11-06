@@ -35,11 +35,13 @@ from gigl.types.graph import (
     to_homogeneous,
 )
 from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
+from tests.test_assets.distributed.run_distributed_dataset import (
+    build_dataset_for_testing,
+)
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
-    get_process_group_init_method,
+    create_test_process_group,
 )
-from tests.test_assets.distributed.run_distributed_dataset import build_dataset_for_testing
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -125,9 +127,7 @@ def _run_distributed_ablp_neighbor_loader(
     input_nodes = torch.tensor([10, 15])
     batch_size = 2
 
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -175,9 +175,7 @@ def _run_cora_supervised(
     dataset: DistDataset,
     expected_data_count: int,
 ):
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -213,9 +211,7 @@ def _run_dblp_supervised(
     assert isinstance(dataset.graph, dict)
     fanout = [2, 2]
     num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -260,9 +256,7 @@ def _run_toy_heterogeneous_ablp(
     all_positive_supervision_nodes, all_anchor_nodes, _, _ = dataset.graph[
         labeled_edge_type
     ].topo.to_coo()
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=fanout,
@@ -327,9 +321,7 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 ):
     batch_size = 1
 
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -425,11 +417,6 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 
 
 class DistABLPLoaderTest(unittest.TestCase):
-    def setUp(self):
-        self._master_ip_address = "localhost"
-        self._world_size = 1
-        self._num_rpc_threads = 4
-
     def tearDown(self):
         if torch.distributed.is_initialized():
             print("Destroying process group")
@@ -474,7 +461,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def _test_ablp_dataloader(
+    def test_ablp_dataloader(
         self,
         _,
         labeled_edges,
@@ -540,10 +527,8 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         )
 
-    def _test_cora_supervised(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+    def test_cora_supervised(self):
+        create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -590,10 +575,8 @@ class DistABLPLoaderTest(unittest.TestCase):
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_dblp_supervised(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+    def test_dblp_supervised(self):
+        create_test_process_group()
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -666,9 +649,7 @@ class DistABLPLoaderTest(unittest.TestCase):
         partitioner_class: type[DistPartitioner],
         fanout: Union[list[int], dict[EdgeType, list[int]]],
     ):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[
             HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -900,7 +881,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def _test_ablp_dataloder_multiple_supervision_edge_types(
+    def test_ablp_dataloder_multiple_supervision_edge_types(
         self,
         _,
         edge_dir: Literal["in", "out"],
@@ -1011,16 +992,14 @@ class DistABLPLoaderTest(unittest.TestCase):
             ),
         ]
     )
-    def _test_ablp_dataloader_invalid_inputs(
+    def test_ablp_dataloader_invalid_inputs(
         self,
         _: str,
         expected_error: type[BaseException],
         expected_error_message: str,
         **kwargs,
     ):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         with self.assertRaises(expected_error, msg=expected_error_message):
             DistABLPLoader(**kwargs)
 
