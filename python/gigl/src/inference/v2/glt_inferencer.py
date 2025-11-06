@@ -2,7 +2,7 @@ import argparse
 from collections.abc import Mapping
 from typing import Optional
 
-from google.cloud.aiplatform_v1.types import accelerator_type, env_var
+from google.cloud.aiplatform_v1.types import Scheduling, accelerator_type, env_var
 
 from gigl.common import Uri, UriFactory
 from gigl.common.constants import (
@@ -109,6 +109,16 @@ class GLTInferencer:
             timeout_s=vertex_ai_resource_config.timeout
             if vertex_ai_resource_config.timeout
             else None,
+            # This should be `aiplatform.gapic.Scheduling.Strategy[inferencer_resource_config.scheduling_strategy]`
+            # But mypy complains otherwise...
+            # python/gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
+            # TODO(kmonte): Fix this
+            scheduling_strategy=getattr(
+                Scheduling.Strategy,
+                vertex_ai_resource_config.scheduling_strategy,
+            )
+            if vertex_ai_resource_config.scheduling_strategy
+            else None,
         )
 
         vertex_ai_service = VertexAIService(
@@ -201,6 +211,16 @@ class GLTInferencer:
             timeout_s=compute_pool_config.timeout
             if compute_pool_config.timeout
             else None,
+            # This should be `aiplatform.gapic.Scheduling.Strategy[inferencer_resource_config.scheduling_strategy]`
+            # But mypy complains otherwise...
+            # python/gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
+            # TODO(kmonte): Fix this
+            scheduling_strategy=getattr(
+                Scheduling.Strategy,
+                compute_pool_config.scheduling_strategy,
+            )
+            if compute_pool_config.scheduling_strategy
+            else None,
         )
 
         # Create storage pool job config
@@ -227,6 +247,16 @@ class GLTInferencer:
             labels=resource_config_wrapper.get_resource_labels(
                 component=GiGLComponents.Inferencer
             ),
+            # This should be `aiplatform.gapic.Scheduling.Strategy[inferencer_resource_config.scheduling_strategy]`
+            # But mypy complains otherwise...
+            # python/gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
+            # TODO(kmonte): Fix this
+            scheduling_strategy=getattr(
+                Scheduling.Strategy,
+                storage_pool_config.scheduling_strategy,
+            )
+            if storage_pool_config.scheduling_strategy
+            else None,
         )
 
         # Determine region from compute pool or use default region

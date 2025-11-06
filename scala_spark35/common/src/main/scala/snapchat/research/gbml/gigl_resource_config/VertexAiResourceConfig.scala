@@ -24,6 +24,12 @@ package snapchat.research.gbml.gigl_resource_config
   *   Otherwise, will launch jobs in the region specified at CommonComputeConfig.region
   *   ex: "us-west1"
   *   NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -&gt; gcp_region_override
+  * @param schedulingStrategy
+  *   Scheduling strategy for the job.
+  *   If unset, will use the Vertex AI default.
+  *   See https://cloud.google.com/vertex-ai/docs/training/schedule-jobs-dws for more info.
+  *   The available options are in the GCP docs:
+  *   https://docs.cloud.google.com/python/docs/reference/aiplatform/latest/google.cloud.aiplatform_v1.types.Scheduling.Strategy
   */
 @SerialVersionUID(0L)
 final case class VertexAiResourceConfig(
@@ -33,6 +39,7 @@ final case class VertexAiResourceConfig(
     numReplicas: _root_.scala.Int = 0,
     timeout: _root_.scala.Int = 0,
     gcpRegionOverride: _root_.scala.Predef.String = "",
+    schedulingStrategy: _root_.scala.Predef.String = "",
     unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
     ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[VertexAiResourceConfig] {
     @transient
@@ -79,6 +86,13 @@ final case class VertexAiResourceConfig(
         val __value = gcpRegionOverride
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(6, __value)
+        }
+      };
+
+      {
+        val __value = schedulingStrategy
+        if (!__value.isEmpty) {
+          __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(7, __value)
         }
       };
       __size += unknownFields.serializedSize
@@ -130,6 +144,12 @@ final case class VertexAiResourceConfig(
           _output__.writeString(6, __v)
         }
       };
+      {
+        val __v = schedulingStrategy
+        if (!__v.isEmpty) {
+          _output__.writeString(7, __v)
+        }
+      };
       unknownFields.writeTo(_output__)
     }
     def withMachineType(__v: _root_.scala.Predef.String): VertexAiResourceConfig = copy(machineType = __v)
@@ -138,6 +158,7 @@ final case class VertexAiResourceConfig(
     def withNumReplicas(__v: _root_.scala.Int): VertexAiResourceConfig = copy(numReplicas = __v)
     def withTimeout(__v: _root_.scala.Int): VertexAiResourceConfig = copy(timeout = __v)
     def withGcpRegionOverride(__v: _root_.scala.Predef.String): VertexAiResourceConfig = copy(gcpRegionOverride = __v)
+    def withSchedulingStrategy(__v: _root_.scala.Predef.String): VertexAiResourceConfig = copy(schedulingStrategy = __v)
     def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
     def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
     def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -166,6 +187,10 @@ final case class VertexAiResourceConfig(
           val __t = gcpRegionOverride
           if (__t != "") __t else null
         }
+        case 7 => {
+          val __t = schedulingStrategy
+          if (__t != "") __t else null
+        }
       }
     }
     def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -177,6 +202,7 @@ final case class VertexAiResourceConfig(
         case 4 => _root_.scalapb.descriptors.PInt(numReplicas)
         case 5 => _root_.scalapb.descriptors.PInt(timeout)
         case 6 => _root_.scalapb.descriptors.PString(gcpRegionOverride)
+        case 7 => _root_.scalapb.descriptors.PString(schedulingStrategy)
       }
     }
     def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -193,6 +219,7 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     var __numReplicas: _root_.scala.Int = 0
     var __timeout: _root_.scala.Int = 0
     var __gcpRegionOverride: _root_.scala.Predef.String = ""
+    var __schedulingStrategy: _root_.scala.Predef.String = ""
     var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
     var _done__ = false
     while (!_done__) {
@@ -211,6 +238,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
           __timeout = _input__.readUInt32()
         case 50 =>
           __gcpRegionOverride = _input__.readStringRequireUtf8()
+        case 58 =>
+          __schedulingStrategy = _input__.readStringRequireUtf8()
         case tag =>
           if (_unknownFields__ == null) {
             _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -225,6 +254,7 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
         numReplicas = __numReplicas,
         timeout = __timeout,
         gcpRegionOverride = __gcpRegionOverride,
+        schedulingStrategy = __schedulingStrategy,
         unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
     )
   }
@@ -237,7 +267,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
         gpuLimit = __fieldsMap.get(scalaDescriptor.findFieldByNumber(3).get).map(_.as[_root_.scala.Int]).getOrElse(0),
         numReplicas = __fieldsMap.get(scalaDescriptor.findFieldByNumber(4).get).map(_.as[_root_.scala.Int]).getOrElse(0),
         timeout = __fieldsMap.get(scalaDescriptor.findFieldByNumber(5).get).map(_.as[_root_.scala.Int]).getOrElse(0),
-        gcpRegionOverride = __fieldsMap.get(scalaDescriptor.findFieldByNumber(6).get).map(_.as[_root_.scala.Predef.String]).getOrElse("")
+        gcpRegionOverride = __fieldsMap.get(scalaDescriptor.findFieldByNumber(6).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
+        schedulingStrategy = __fieldsMap.get(scalaDescriptor.findFieldByNumber(7).get).map(_.as[_root_.scala.Predef.String]).getOrElse("")
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
@@ -252,7 +283,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     gpuLimit = 0,
     numReplicas = 0,
     timeout = 0,
-    gcpRegionOverride = ""
+    gcpRegionOverride = "",
+    schedulingStrategy = ""
   )
   implicit class VertexAiResourceConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig](_l) {
     def machineType: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.machineType)((c_, f_) => c_.copy(machineType = f_))
@@ -261,6 +293,7 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     def numReplicas: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.numReplicas)((c_, f_) => c_.copy(numReplicas = f_))
     def timeout: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.timeout)((c_, f_) => c_.copy(timeout = f_))
     def gcpRegionOverride: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.gcpRegionOverride)((c_, f_) => c_.copy(gcpRegionOverride = f_))
+    def schedulingStrategy: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.schedulingStrategy)((c_, f_) => c_.copy(schedulingStrategy = f_))
   }
   final val MACHINE_TYPE_FIELD_NUMBER = 1
   final val GPU_TYPE_FIELD_NUMBER = 2
@@ -268,20 +301,23 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
   final val NUM_REPLICAS_FIELD_NUMBER = 4
   final val TIMEOUT_FIELD_NUMBER = 5
   final val GCP_REGION_OVERRIDE_FIELD_NUMBER = 6
+  final val SCHEDULING_STRATEGY_FIELD_NUMBER = 7
   def of(
     machineType: _root_.scala.Predef.String,
     gpuType: _root_.scala.Predef.String,
     gpuLimit: _root_.scala.Int,
     numReplicas: _root_.scala.Int,
     timeout: _root_.scala.Int,
-    gcpRegionOverride: _root_.scala.Predef.String
+    gcpRegionOverride: _root_.scala.Predef.String,
+    schedulingStrategy: _root_.scala.Predef.String
   ): _root_.snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig = _root_.snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig(
     machineType,
     gpuType,
     gpuLimit,
     numReplicas,
     timeout,
-    gcpRegionOverride
+    gcpRegionOverride,
+    schedulingStrategy
   )
   // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.VertexAiResourceConfig])
 }
