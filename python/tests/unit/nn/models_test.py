@@ -2,13 +2,12 @@ import unittest
 from typing import Optional, Union
 
 import torch
-import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
+import torch.nn as nn
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
 from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
-from parameterized import parameterized
 
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
@@ -358,9 +357,11 @@ class TestLightGCN(unittest.TestCase):
         loss.backward()
 
         # Check that gradients exist and are non-zero
-        embedding_table = dmp_model._dmp_wrapped_module._embedding_bag_collection.embedding_bags[
-            "node_embedding_default_homogeneous_node_type"
-        ]
+        embedding_table = (
+            dmp_model._dmp_wrapped_module._embedding_bag_collection.embedding_bags[
+                "node_embedding_default_homogeneous_node_type"
+            ]
+        )
         self.assertIsNotNone(
             embedding_table.weight.grad,
             "Gradients should exist after backward pass",
@@ -370,31 +371,29 @@ class TestLightGCN(unittest.TestCase):
             "Gradients should be non-zero",
         )
 
-    @parameterized.expand(
-        [
-            ("world_size_2", 2),
-        ]
-    )
-    def test_dmp_multiprocess(self, _name, world_size):
+    def test_dmp_multiprocess(self):
         """
         Test DMP with multiple processes to verify embedding sharding works correctly.
 
+        Tests both forward pass (output correctness) and backward pass (gradient flow).
+
         Note: Uses CPU/Gloo backend for unit testing.
         """
+        world_size = 2
         process_group_init_method = get_process_group_init_method()
 
         # Spawn world_size processes
         mp.spawn(
             fn=_run_dmp_multiprocess_test,
             args=(
-                world_size, # total number of processes
-                process_group_init_method, # initialization method for process group
-                self.num_nodes, # number of nodes in test graph
-                self.embedding_dim, # dimension of embeddings
-                self.num_layers, # number of LightGCN layers
-                self.edge_index, # edge connectivity
-                self.test_embeddings, # test embedding values
-                self.expected_output, # expected model output
+                world_size,  # total number of processes
+                process_group_init_method,  # initialization method for process group
+                self.num_nodes,  # number of nodes in test graph
+                self.embedding_dim,  # dimension of embeddings
+                self.num_layers,  # number of LightGCN layers
+                self.edge_index,  # edge connectivity
+                self.test_embeddings,  # test embedding values
+                self.expected_output,  # expected model output
             ),
             nprocs=world_size,
         )
@@ -414,6 +413,9 @@ def _run_dmp_multiprocess_test(
     """
     Helper function that runs in each spawned process for multi-process DMP testing.
 
+    Tests both forward pass (output correctness) and backward pass (gradient flow)
+    in a multi-process distributed environment.
+
     Args:
         rank: Rank of this process (0, 1, 2, ...)
         world_size: Total number of processes
@@ -428,7 +430,7 @@ def _run_dmp_multiprocess_test(
     try:
         # Initialize process group for this rank
         dist.init_process_group(
-            backend="gloo",  # Use Gloo for CPU testing (like networking_test.py)
+            backend="gloo",  # Use Gloo for CPU testing
             init_method=process_group_init_method,
             rank=rank,
             world_size=world_size,
@@ -464,7 +466,7 @@ def _run_dmp_multiprocess_test(
         data = Data(edge_index=edge_index.to(device), num_nodes=num_nodes)
         data.node = torch.arange(num_nodes, dtype=torch.long, device=device)
 
-        # Forward pass - DMP will fetch embeddings across ranks as needed
+        # Test 1: Forward pass - DMP will fetch embeddings across ranks as needed
         with torch.no_grad():
             output = dmp_model(data=data, device=device)
 
@@ -473,6 +475,25 @@ def _run_dmp_multiprocess_test(
             raise AssertionError(
                 f"Rank {rank}: DMP multi-process output doesn't match expected.\n"
                 f"Got:\n{output}\nExpected:\n{expected_output.to(device)}"
+            )
+
+        # Test 2: Backward pass - verify gradients flow correctly in multi-process DMP
+        dmp_model.train()
+        output = dmp_model(data=data, device=device)
+        loss = output.sum()
+        loss.backward()
+
+        # Check that gradients exist and are non-zero
+        embedding_table = model._embedding_bag_collection.embedding_bags[
+            "node_embedding_default_homogeneous_node_type"
+        ]
+        if embedding_table.weight.grad is None:
+            raise AssertionError(
+                f"Rank {rank}: Gradients should exist after backward pass"
+            )
+        if not torch.any(embedding_table.weight.grad != 0):
+            raise AssertionError(
+                f"Rank {rank}: Gradients should be non-zero after backward pass"
             )
 
     finally:

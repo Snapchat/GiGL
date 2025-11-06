@@ -5,10 +5,10 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.conv import LGConv
+from torchrec.distributed.types import Awaitable
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.modules.embedding_modules import EmbeddingBagCollection
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
-from torchrec.distributed.types import Awaitable
 from typing_extensions import Self
 
 from gigl.src.common.types.graph_data import NodeType
@@ -137,7 +137,6 @@ class LinkPredictionGNN(nn.Module):
 # TODO(swong3): Move specific models to gigl.nn.models whenever we restructure model placement.
 # TODO(swong3): Abstract TorchRec functionality, and make this LightGCN specific
 # TODO(swong3): Remove device context from LightGCN module (use meta, but will have to figure out how to handle buffer transfer)
-# TODO(swong3): Look into why we have to call wait() on the Awaitable returned by the embedding bag collection.
 class LightGCN(nn.Module):
     """
     LightGCN model with TorchRec integration for distributed ID embeddings.
@@ -295,6 +294,7 @@ class LightGCN(nn.Module):
             key, global_ids
         )  # shape [N_sub, D], where N_sub is number of nodes in subgraph and D is embedding_dim
 
+        # TODO(swong3): Look into why we have to call wait() on the Awaitable returned by the embedding bag collection.
         # When using DMP, EmbeddingBagCollection returns Awaitable that needs to be resolved
         if isinstance(embeddings_0, Awaitable):
             embeddings_0 = embeddings_0.wait()
