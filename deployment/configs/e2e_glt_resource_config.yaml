@@ -25,30 +25,16 @@ preprocessor_config:
     disk_size_gb: 300
 trainer_resource_config:
   vertex_ai_trainer_config:
-    machine_type: g2-standard-32
-    gpu_type: NVIDIA_L4
-    gpu_limit: 1
-    num_replicas: 4
-    timeout: 36000  # 10 hours
-    # Run trainer in a different region than the other components.
-    # This should only be used when the region `us-central1` is out
-    # of GPU resources. Otherwise we should not use this override as
-    # it introduces cross region egress network cost.
-    gcp_region_override: us-east1
-    scheduling_strategy: "FLEX_START"
+    machine_type: n1-highmem-32
+    gpu_type: NVIDIA_TESLA_T4
+    gpu_limit: 2
+    num_replicas: 2
 inferencer_resource_config:
   vertex_ai_inferencer_config:
-    machine_type: g2-standard-32
-    gpu_type: NVIDIA_L4
-    gpu_limit: 1
-    num_replicas: 4
-    timeout: 36000  # 10 hours
-    # Run trainer in a different region than the other components.
-    # This should only be used when the region `us-central1` is out
-    # of GPU resources. Otherwise we should not use this override as
-    # it introduces cross region egress network cost.
-    gcp_region_override: us-east1
-    scheduling_strategy: "FLEX_START"
+    machine_type: n1-highmem-32
+    gpu_type: NVIDIA_TESLA_T4
+    gpu_limit: 2
+    num_replicas: 2
 # ======== Below are not used for GLT Inference
 subgraph_sampler_config:
   machine_type: "n2d-highmem-32"
