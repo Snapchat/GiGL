@@ -3,7 +3,13 @@ from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions, DistServer, request_server
+from graphlearn_torch.distributed import (
+    DistLoader,
+    DistServer,
+    MpDistSamplingWorkerOptions,
+    RemoteDistSamplingWorkerOptions,
+    request_server,
+)
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -20,6 +26,7 @@ from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
     strip_label_edges,
 )
+from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -28,7 +35,6 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-from gigl.env.distributed import GraphStoreInfo
 logger = Logger()
 
 # When using CPU based inference/training, we default cpu threads for neighborloading on top of the per process parallelism.
@@ -224,13 +230,20 @@ class DistNeighborLoader(DistLoader):
                 raise ValueError(
                     "input_nodes must be a list if dataset is not provided."
                 )
-            if len(input_nodes) != len(graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage):
+            if len(input_nodes) != len(
+                graph_store_info.num_storage_nodes
+                * graph_store_info.num_processes_per_storage
+            ):
                 raise ValueError(
                     f"input_nodes must be a list of length {len(graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage)}, got {len(input_nodes)}. E.g. one entry per process in the storage cluster."
                 )
             worker_options = RemoteDistSamplingWorkerOptions(
                 server_rank=[
-                    server_rank for server_rank in range(graph_store_info.num_storage_nodes * graph_store_info.num_processes_per_storage)
+                    server_rank
+                    for server_rank in range(
+                        graph_store_info.num_storage_nodes
+                        * graph_store_info.num_processes_per_storage
+                    )
                 ],
                 num_workers=num_workers,
                 worker_devices=[torch.device("cpu") for i in range(num_workers)],
@@ -273,8 +286,10 @@ class DistNeighborLoader(DistLoader):
             self._edge_feature_info = dataset.edge_feature_info
 
             input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
-            dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-                num_ports=local_world_size
+            dist_sampling_ports = (
+                gigl.distributed.utils.get_free_ports_from_master_node(
+                    num_ports=local_world_size
+                )
             )
             dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
 
@@ -341,9 +356,7 @@ class DistNeighborLoader(DistLoader):
             )
             torch.distributed.destroy_process_group()
 
-        num_neighbors = patch_fanout_for_sampling(
-            etypes, num_neighbors
-        )
+        num_neighbors = patch_fanout_for_sampling(etypes, num_neighbors)
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,

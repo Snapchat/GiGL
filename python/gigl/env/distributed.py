@@ -41,6 +41,11 @@ class GraphStoreInfo:
     # Number of nodes in the compute cluster
     num_compute_nodes: int
 
+    # Number of processes per storage machine
+    num_processes_per_storage: int
+    # Number of processes per compute machine
+    num_processes_per_compute: int
+
     # IP address of the master node for the whole cluster
     cluster_master_ip: str
     # IP address of the master node for the storage cluster

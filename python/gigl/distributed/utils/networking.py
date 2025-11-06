@@ -1,12 +1,16 @@
+import os
 import socket
 from typing import Optional
-import os
 
 import torch
 
 from gigl.common.logger import Logger
 from gigl.common.utils.vertex_ai_context import get_cluster_spec
-from gigl.env.distributed import GraphStoreInfo, GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME, GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME
+from gigl.env.distributed import (
+    GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME,
+    GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME,
+    GraphStoreInfo,
+)
 
 logger = Logger()
 
@@ -225,8 +229,12 @@ def get_graph_store_info() -> GraphStoreInfo:
         num_ports=1, node_rank=num_compute_nodes
     )[0]
 
-    num_processes_per_storage = int(os.environ[GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME])
-    num_processes_per_compute = int(os.environ[GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME])
+    num_processes_per_storage = int(
+        os.environ[GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME]
+    )
+    num_processes_per_compute = int(
+        os.environ[GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME]
+    )
 
     return GraphStoreInfo(
         num_cluster_nodes=num_storage_nodes + num_compute_nodes,

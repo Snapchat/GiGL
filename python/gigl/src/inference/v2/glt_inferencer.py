@@ -1,6 +1,6 @@
 import argparse
-from typing import Optional
 from collections.abc import Mapping
+from typing import Optional
 
 from google.cloud.aiplatform_v1.types import accelerator_type, env_var
 
@@ -11,6 +11,10 @@ from gigl.common.constants import (
 )
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.env.distributed import (
+    GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME,
+    GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME,
+)
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -24,7 +28,6 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import (
     VertexAiGraphStoreConfig,
     VertexAiResourceConfig,
 )
-from gigl.env.distributed import GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME, GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME
 
 logger = Logger()
 
@@ -153,15 +156,21 @@ class GLTInferencer:
         command = inference_process_command.strip().split(" ")
         logger.info(f"Running inference with command: {command}")
         vai_job_name = f"gigl_infer_{applied_task_identifier}"
-        num_storage_processes = vertex_ai_graph_store_config.num_processes_per_storage_machine
+        num_storage_processes = (
+            vertex_ai_graph_store_config.num_processes_per_storage_machine
+        )
         if not num_storage_processes:
             num_storage_processes = 1
-        num_compute_processes = vertex_ai_graph_store_config.num_processes_per_compute_machine
+        num_compute_processes = (
+            vertex_ai_graph_store_config.num_processes_per_compute_machine
+        )
         if not num_compute_processes:
             if is_cpu_inference:
                 num_compute_processes = 1
             else:
-                num_compute_processes = vertex_ai_graph_store_config.compute_pool.gpu_limit
+                num_compute_processes = (
+                    vertex_ai_graph_store_config.compute_pool.gpu_limit
+                )
         # Add server/client environment variables
         environment_variables: list[env_var.EnvVar] = [
             env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
@@ -195,14 +204,11 @@ class GLTInferencer:
         )
 
         # Create storage pool job config
-        storage_job_args = (
-            [
-                f"--job_name={applied_task_identifier}",
-                f"--task_config_uri={task_config_uri}",
-                f"--resource_config_uri={resource_config_uri}",
-            ]
-            + ([] if is_cpu_inference else ["--use_cuda"])
-        )
+        storage_job_args = [
+            f"--job_name={applied_task_identifier}",
+            f"--task_config_uri={task_config_uri}",
+            f"--resource_config_uri={resource_config_uri}",
+        ] + ([] if is_cpu_inference else ["--use_cuda"])
         storage_job_command = [
             "python",
             "-m",

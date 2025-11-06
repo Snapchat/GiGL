@@ -1,6 +1,6 @@
 import argparse
-from typing import Optional
 from collections.abc import Mapping
+from typing import Optional
 
 from google.cloud.aiplatform_v1.types import accelerator_type, env_var
 

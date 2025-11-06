@@ -156,19 +156,17 @@ def check_if_trainer_resource_config_valid(
             _validate_vertex_ai_resource_config(
                 vertex_ai_resource_config_pb=trainer_config
             )
-        elif isinstance(trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig):
+        elif isinstance(
+            trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
+        ):
             _validate_vertex_ai_resource_config(
                 vertex_ai_resource_config_pb=trainer_config.graph_store_pool
             )
-            _validate_accelerator_type(
-                proto_config=trainer_config.graph_store_pool
-            )
+            _validate_accelerator_type(proto_config=trainer_config.graph_store_pool)
             _validate_vertex_ai_resource_config(
                 vertex_ai_resource_config_pb=trainer_config.compute_pool
             )
-            _validate_accelerator_type(
-                proto_config=trainer_config.compute_pool
-            )
+            _validate_accelerator_type(proto_config=trainer_config.compute_pool)
         elif isinstance(trainer_config, gigl_resource_config_pb2.KFPResourceConfig):
             for field in [
                 "cpu_request",
@@ -191,10 +189,11 @@ def check_if_trainer_resource_config_valid(
         ]:
             assert_proto_field_value_is_truthy(proto=trainer_config, field_name=field)
 
-        if not isinstance(trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig):
-            _validate_accelerator_type(
-                proto_config=trainer_config
-            )
+        if not isinstance(
+            trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
+        ):
+            _validate_accelerator_type(proto_config=trainer_config)
+
 
 def check_if_inferencer_resource_config_valid(
     resource_config_pb: gigl_resource_config_pb2.GiglResourceConfig,
@@ -242,6 +241,7 @@ def check_if_inferencer_resource_config_valid(
             Got {type(inferencer_config)}"""
         )
 
+
 def _validate_vertex_ai_resource_config(
     vertex_ai_resource_config_pb: gigl_resource_config_pb2.VertexAiResourceConfig,
 ) -> None:
@@ -252,8 +252,12 @@ def _validate_vertex_ai_resource_config(
         proto=vertex_ai_resource_config_pb, field_name="machine_type"
     )
 
+
 def _validate_accelerator_type(
-    proto_config: Union[gigl_resource_config_pb2.VertexAiResourceConfig, gigl_resource_config_pb2.KFPResourceConfig],
+    proto_config: Union[
+        gigl_resource_config_pb2.VertexAiResourceConfig,
+        gigl_resource_config_pb2.KFPResourceConfig,
+    ],
 ) -> None:
     """
     Checks if the provided accelerator type is valid.
