@@ -105,6 +105,7 @@ class VertexAiJobConfig:
         int
     ] = None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
     enable_web_access: bool = True
+    scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
 
 
 class VertexAIService:
@@ -216,29 +217,7 @@ class VertexAIService:
                 f"Running Vertex AI job with timeout {job_config.timeout_s} seconds"
             )
 
-        job = aiplatform.CustomJob(
-            display_name=job_config.job_name,
-            worker_pool_specs=worker_pool_specs,
-            project=self._project,
-            location=self._location,
-            labels=job_config.labels,
-            staging_bucket=self._staging_bucket,
-        )
-        job.submit(
-            service_account=self._service_account,
-            timeout=job_config.timeout_s,
-            enable_web_access=job_config.enable_web_access,
-        )
-        job.wait_for_resource_creation()
-        logger.info(f"Created job: {job.resource_name}")
-        # Copying https://github.com/googleapis/python-aiplatform/blob/v1.48.0/google/cloud/aiplatform/jobs.py#L207-L215
-        # Since for some reason upgrading from VertexAI v1.27.1 to v1.48.0
-        # caused the logs to occasionally not be printed.
-        logger.info(
-            f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
-        )
-        job.wait_for_completion()
-        return job
+        return self._submit_job(worker_pool_specs, job_config)
 
     def launch_graph_store_job(
         self,
@@ -306,18 +285,27 @@ class VertexAIService:
         )
         worker_pool_specs.append(worker_spec)
 
+        return self._submit_job(worker_pool_specs, compute_pool_job_config)
+
+    def _submit_job(
+        self,
+        worker_pool_specs: Union[list[WorkerPoolSpec], list[dict]],
+        job_config: VertexAiJobConfig,
+    ) -> aiplatform.CustomJob:
+        """Submit a job to Vertex AI and wait for it to complete."""
         job = aiplatform.CustomJob(
-            display_name=compute_pool_job_config.job_name,
+            display_name=job_config.job_name,
             worker_pool_specs=worker_pool_specs,
             project=self._project,
             location=self._location,
-            labels=compute_pool_job_config.labels,
+            labels=job_config.labels,
             staging_bucket=self._staging_bucket,
         )
         job.submit(
             service_account=self._service_account,
-            timeout=compute_pool_job_config.timeout_s,
-            enable_web_access=compute_pool_job_config.enable_web_access,
+            timeout=job_config.timeout_s,
+            enable_web_access=job_config.enable_web_access,
+            scheduling_strategy=job_config.scheduling_strategy,
         )
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")

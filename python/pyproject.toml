@@ -29,7 +29,7 @@ classifiers     = [
 dependencies = [
     "argo-workflows",
     "chardet",
-    "google-cloud-aiplatform~=1.44.0",
+    "google-cloud-aiplatform~=1.124.0",
     "google-cloud-dataproc",
     "google-cloud-logging",
     "google-cloud-pipeline-components",
