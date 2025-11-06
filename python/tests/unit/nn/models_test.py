@@ -7,14 +7,19 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
-from torchrec.distributed.model_parallel import DistributedModelParallel as DMP
+from torchrec.distributed.model_parallel import DistributedModelParallel as DistributedModelParallel
 
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
 )
+
+# Embedding table name for default homogeneous node type
+# Constructed as f"node_embedding_{DEFAULT_HOMOGENEOUS_NODE_TYPE}" in LightGCN
+DEFAULT_EMBEDDING_TABLE_NAME = f"node_embedding_{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
 
 
 class DummyEncoder(nn.Module):
@@ -202,7 +207,7 @@ class TestLightGCN(unittest.TestCase):
             device=self.device,
         )
 
-    def _set_embeddings(self, model: LightGCN, node_type: str):
+    def _set_embeddings(self, model: LightGCN, node_type: NodeType):
         """Set the embedding weights for the model to match test data."""
         with torch.no_grad():
             table = model._embedding_bag_collection.embedding_bags[
@@ -229,7 +234,7 @@ class TestLightGCN(unittest.TestCase):
         """Test forward pass with homogeneous graph."""
         node_type_to_num_nodes = self.num_nodes
         model = self._create_lightgcn_model(node_type_to_num_nodes)
-        self._set_embeddings(model, "default_homogeneous_node_type")
+        self._set_embeddings(model, DEFAULT_HOMOGENEOUS_NODE_TYPE)
 
         # Forward pass
         output = model(self.data, self.device)
@@ -241,7 +246,7 @@ class TestLightGCN(unittest.TestCase):
         """Test forward pass with homogeneous graph and anchor node ids."""
         node_type_to_num_nodes = self.num_nodes
         model = self._create_lightgcn_model(node_type_to_num_nodes)
-        self._set_embeddings(model, "default_homogeneous_node_type")
+        self._set_embeddings(model, DEFAULT_HOMOGENEOUS_NODE_TYPE)
         anchor_node_ids = torch.tensor([0, 1], dtype=torch.long)
 
         output = model(self.data, self.device, anchor_node_ids=anchor_node_ids)
@@ -253,7 +258,7 @@ class TestLightGCN(unittest.TestCase):
         # Create our model
         node_type_to_num_nodes = self.num_nodes
         our_model = self._create_lightgcn_model(node_type_to_num_nodes)
-        self._set_embeddings(our_model, "default_homogeneous_node_type")
+        self._set_embeddings(our_model, DEFAULT_HOMOGENEOUS_NODE_TYPE)
 
         # Create PyG reference model
         pyg_model = self._create_pyg_reference()
@@ -268,7 +273,7 @@ class TestLightGCN(unittest.TestCase):
         """Test that our implementation matches the mathematical formulation of LightGCN."""
         node_type_to_num_nodes = self.num_nodes
         our_model = self._create_lightgcn_model(node_type_to_num_nodes)
-        self._set_embeddings(our_model, "default_homogeneous_node_type")
+        self._set_embeddings(our_model, DEFAULT_HOMOGENEOUS_NODE_TYPE)
         output = our_model(self.data, self.device)
 
         self.assertTrue(
@@ -287,89 +292,10 @@ class TestLightGCN(unittest.TestCase):
 
         # Check that gradients exist for embedding parameters
         embedding_table = model._embedding_bag_collection.embedding_bags[
-            "node_embedding_default_homogeneous_node_type"
+            DEFAULT_EMBEDDING_TABLE_NAME
         ]
         self.assertIsNotNone(embedding_table.weight.grad)
         self.assertTrue(torch.any(embedding_table.weight.grad != 0))
-
-    def test_dmp_wrapped_model_produces_correct_output(self):
-        """
-        Test that DMP-wrapped LightGCN produces the same output as non-wrapped model. Note: We only test with a single process for unit test.
-        """
-        process_group_init_method = get_process_group_init_method()
-        # Initialize distributed
-        dist.init_process_group(
-            backend="gloo",
-            init_method=process_group_init_method,
-            rank=0,
-            world_size=1,
-        )
-
-        # Create model
-        model = self._create_lightgcn_model(self.num_nodes)
-
-        # Wrap with DMP
-        dmp_model = DMP(
-            module=model,
-            device=self.device,
-        )
-
-        # Set embeddings AFTER DMP wrapping (required for CPU/Gloo)
-        self._set_embeddings(model, "default_homogeneous_node_type")
-
-        # Run forward pass on DMP-wrapped model
-        with torch.no_grad():
-            output = dmp_model(data=self.data, device=self.device)
-
-        # Verify output matches expected values
-        self.assertTrue(
-            torch.allclose(output, self.expected_output, atol=1e-4, rtol=1e-4),
-            f"DMP output doesn't match expected.\nGot:\n{output}\nExpected:\n{self.expected_output}",
-        )
-
-    def test_dmp_gradient_flow(self):
-        """
-        Test that gradients flow properly through DMP-wrapped model.
-        """
-        process_group_init_method = get_process_group_init_method()
-
-        # Initialize distributed
-        dist.init_process_group(
-            backend="gloo",
-            init_method=process_group_init_method,
-            rank=0,
-            world_size=1,
-        )
-
-        # Create and wrap model
-        model = self._create_lightgcn_model(self.num_nodes)
-
-        dmp_model = DMP(
-            module=model,
-            device=self.device,
-        )
-
-        self._set_embeddings(model, "default_homogeneous_node_type")
-
-        dmp_model.train()
-        output = dmp_model(self.data, self.device)
-        loss = output.sum()
-        loss.backward()
-
-        # Check that gradients exist and are non-zero
-        embedding_table = (
-            dmp_model._dmp_wrapped_module._embedding_bag_collection.embedding_bags[
-                "node_embedding_default_homogeneous_node_type"
-            ]
-        )
-        self.assertIsNotNone(
-            embedding_table.weight.grad,
-            "Gradients should exist after backward pass",
-        )
-        self.assertTrue(
-            torch.any(embedding_table.weight.grad != 0),
-            "Gradients should be non-zero",
-        )
 
     def test_dmp_multiprocess(self):
         """
@@ -446,7 +372,7 @@ def _run_dmp_multiprocess_test(
         )
 
         # Wrap with DMP - this will shard embeddings across ranks
-        dmp_model = DMP(
+        dmp_model = DistributedModelParallel(
             module=model,
             device=device,
         )
@@ -456,9 +382,8 @@ def _run_dmp_multiprocess_test(
         # So we need to set ALL embeddings on each rank
         with torch.no_grad():
             table = model._embedding_bag_collection.embedding_bags[
-                "node_embedding_default_homogeneous_node_type"
+                DEFAULT_EMBEDDING_TABLE_NAME
             ]
-
             # Set all embeddings (CPU/Gloo replicates, doesn't shard)
             table.weight[:] = test_embeddings.to(device)
 
@@ -485,7 +410,7 @@ def _run_dmp_multiprocess_test(
 
         # Check that gradients exist and are non-zero
         embedding_table = model._embedding_bag_collection.embedding_bags[
-            "node_embedding_default_homogeneous_node_type"
+            DEFAULT_EMBEDDING_TABLE_NAME
         ]
         if embedding_table.weight.grad is None:
             raise AssertionError(
