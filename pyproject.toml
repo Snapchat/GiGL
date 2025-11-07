@@ -30,6 +30,7 @@ dependencies = [
   "python-dotenv",
   "pyyaml",
   "scikit-learn",
+  "pip", # Used by KFP Python components - need to install pip as a package
   # When updating to a new tensorflow version, please ensure that the version changes align with
   # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
   "tensorflow~=2.16",
