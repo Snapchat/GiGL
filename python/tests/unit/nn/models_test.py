@@ -7,7 +7,9 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
-from torchrec.distributed.model_parallel import DistributedModelParallel as DistributedModelParallel
+from torchrec.distributed.model_parallel import (
+    DistributedModelParallel as DistributedModelParallel,
+)
 
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
