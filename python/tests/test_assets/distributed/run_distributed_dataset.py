@@ -112,7 +112,7 @@ def run_distributed_dataset(
     return dataset
 
 
-_DATASET_CACHE: dict[Uri, tuple] = {}
+_DATASET_CACHE: dict[tuple[Uri, str, str, Optional[float]], tuple] = {}
 
 
 def build_dataset_for_testing(
@@ -124,8 +124,14 @@ def build_dataset_for_testing(
     should_load_tensors_in_parallel: bool = True,
     ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistDataset:
-    if task_config_uri in _DATASET_CACHE:
-        ipc_handle = copy.deepcopy(_DATASET_CACHE[task_config_uri])
+    cache_key = (
+        task_config_uri,
+        partitioner_class.__name__,
+        splitter.__class__.__name__,
+        ssl_positive_label_percentage,
+    )
+    if cache_key in _DATASET_CACHE:
+        ipc_handle = copy.deepcopy(_DATASET_CACHE[cache_key])
         return DistDataset.from_ipc_handle(ipc_handle)
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
@@ -144,5 +150,5 @@ def build_dataset_for_testing(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
-    _DATASET_CACHE[task_config_uri] = copy.deepcopy(dataset.share_ipc())
+    _DATASET_CACHE[cache_key] = copy.deepcopy(dataset.share_ipc())
     return dataset

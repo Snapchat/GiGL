@@ -533,27 +533,10 @@ class DistABLPLoaderTest(unittest.TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
 
-        # gbml_config_pb_wrapper = (
-        #     GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-        #         gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
-        #     )
-        # )
-
-        # serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-        #     preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-        #     graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-        #     tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
-        # )
-
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
 
-        # dataset = build_dataset(
-        #     serialized_graph_metadata=serialized_graph_metadata,
-        #     sample_edge_direction="in",
-        #     splitter=splitter,
-        # )
         dataset = build_dataset_for_testing(
             task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
             edge_dir="in",
@@ -660,12 +643,6 @@ class DistABLPLoaderTest(unittest.TestCase):
             )
         )
 
-        # serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-        #     preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-        #     graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-        #     tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
-        # )
-
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
@@ -675,14 +652,6 @@ class DistABLPLoaderTest(unittest.TestCase):
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,
         )
-
-        # dataset = build_dataset(
-        #     serialized_graph_metadata=serialized_graph_metadata,
-        #     sample_edge_direction="in",
-        #     _ssl_positive_label_percentage=0.1,
-        #     splitter=splitter,
-        #     partitioner_class=partitioner_class,
-        # )
 
         dataset = build_dataset_for_testing(
             task_config_uri=toy_heterogeneous_supervised_info.frozen_gbml_config_uri,
