@@ -59,3 +59,19 @@ class GraphStoreInfo:
     storage_cluster_master_port: int
     # Port of the master node for the compute cluster
     compute_cluster_master_port: int
+
+    @property
+    def storage_world_size(self) -> int:
+        return self.num_storage_nodes * self.num_processes_per_storage
+
+    @property
+    def compute_world_size(self) -> int:
+        return self.num_compute_nodes * self.num_processes_per_compute
+
+    @property
+    def cluster_world_size(self) -> int:
+        return (
+            self.num_cluster_nodes
+            * self.num_processes_per_storage
+            * self.num_processes_per_compute
+        )
