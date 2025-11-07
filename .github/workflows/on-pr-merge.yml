@@ -8,7 +8,7 @@ on:
   merge_group:
 
   # Strictly for testing purposes
-  # push:
+  push:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
