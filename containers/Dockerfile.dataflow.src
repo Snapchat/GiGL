@@ -27,4 +27,4 @@ ENV LD_PRELOAD /opt/conda/envs/gnn/lib/libtcmalloc.so:$LD_PRELOAD
 # =================================================================================================================
 
 # Set the entrypoint to Apache Beam SDK launcher.
-ENTRYPOINT ["/opt/apache/beam/boot"]
+ENTRYPOINT ["/bin/bash", "-c", "source /tmp/.venv/bin/activate && exec /opt/apache/beam/boot \"$@\"", "--"]
