@@ -125,8 +125,12 @@ class TestRemoteDataset(unittest.TestCase):
         self.assertIsInstance(node_feature_info, dict)
         self.assertIn(_USER, node_feature_info)
         self.assertIn(_STORY, node_feature_info)
-        self.assertEqual(node_feature_info[_USER], FeatureInfo(dim=2, dtype=torch.float32))
-        self.assertEqual(node_feature_info[_STORY], FeatureInfo(dim=2, dtype=torch.float32))
+        self.assertEqual(
+            node_feature_info[_USER], FeatureInfo(dim=2, dtype=torch.float32)
+        )
+        self.assertEqual(
+            node_feature_info[_STORY], FeatureInfo(dim=2, dtype=torch.float32)
+        )
 
     def test_get_node_feature_info_with_homogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a registered homogeneous dataset."""
@@ -219,7 +223,6 @@ class TestRemoteDataset(unittest.TestCase):
         # Verify each rank gets different nodes
         assert_tensor_equality(rank_0_nodes, torch.arange(5))
         assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
-
 
         # Test with world_size=3 (uneven split)
         rank_0_nodes = remote_dataset.get_node_ids_for_rank(rank=0, world_size=3)
