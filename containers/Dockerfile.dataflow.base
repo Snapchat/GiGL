@@ -1,5 +1,23 @@
-# Use the main Dockerfile.cpu.base as the base
-ARG BASE_IMAGE
-FROM $BASE_IMAGE
+FROM apache/beam_python3.11_sdk:2.56.0
 
-COPY --from=apache/beam_python3.11_sdk:2.56.0 /opt/apache/beam /opt/apache/beam
+ENV DEBIAN_FRONTEND=noninteractive
+ENV UV_SYSTEM_PYTHON=true
+
+# TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
+# Once VAI natively supports this communication, we can remove this requirement.
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    cmake \
+    iputils-ping \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml tmp/pyproject.toml
+COPY uv.lock tmp/uv.lock
+COPY requirements tmp/requirements
+COPY python/gigl/scripts tmp/python/gigl/scripts
+
+RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache

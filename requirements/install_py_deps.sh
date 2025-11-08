@@ -108,12 +108,20 @@ for dep in "${extra_deps[@]}"; do
     extra_deps_clause+=(--extra "$dep")
 done
 
+flag_use_inexact_match = ""
+if [[ $UV_SYSTEM_PYTHON -eq 1 ]]
+then
+    echo "Recognized using system python."
+    echo "Will use inexact match for dependencies so we don't override system packages."
+    flag_use_inexact_match = "--inexact"
+fi
+
 if [[ $DEV -eq 1 ]]
 then
     # https://docs.astral.sh/uv/reference/cli/#uv-sync
-    uv sync ${extra_deps_clause[@]} --group dev --locked
+    uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
 else
-    uv sync ${extra_deps_clause[@]} --locked
+    uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match}
 fi
 
 # echo "Installing from ${req_file}"
