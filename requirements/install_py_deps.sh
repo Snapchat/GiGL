@@ -4,7 +4,9 @@ set -x
 
 DEV=0  # Flag to install dev dependencies.
 PIP_ARGS="--no-deps"  # We don't want to install dependencies when installing packages from hashed requirements files.
+SKIP_GLT_POST_INSTALL=0 # Flag to skip GLT post install.
 PIP_CREDENTIALS_MOUNTED=0  # When running this script in Docker environments, we may wish to mount pip credentials to install packages from a private repository.
+
 
 for arg in "$@"
 do
@@ -15,6 +17,10 @@ do
         ;;
     --no-pip-cache)
         PIP_ARGS+=" --no-cache-dir"
+        shift
+        ;;
+    --skip-glt-post-install)
+        SKIP_GLT_POST_INSTALL=1
         shift
         ;;
     --mount-pip-credentials)
@@ -130,8 +136,11 @@ fi
 
 # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
 # We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-uv run python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
+if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
+then
+    SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+    uv run python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
+fi
 
 
 if [[ $DEV -eq 1 ]]
