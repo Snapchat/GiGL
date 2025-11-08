@@ -108,12 +108,12 @@ for dep in "${extra_deps[@]}"; do
     extra_deps_clause+=(--extra "$dep")
 done
 
-flag_use_inexact_match = ""
-if [[ $UV_SYSTEM_PYTHON -eq 1 ]]
+flag_use_inexact_match=""
+if [[ "${UV_SYSTEM_PYTHON}" == "true" ]]
 then
     echo "Recognized using system python."
     echo "Will use inexact match for dependencies so we don't override system packages."
-    flag_use_inexact_match = "--inexact"
+    flag_use_inexact_match="--inexact"
 fi
 
 if [[ $DEV -eq 1 ]]
