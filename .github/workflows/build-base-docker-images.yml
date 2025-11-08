@@ -8,7 +8,7 @@ on:
         required: true
 
   # Strictly for testing purposes
-  push:
+  # push:
 
 env:
   DOCKER_BUILDKIT: 1
