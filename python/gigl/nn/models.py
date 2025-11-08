@@ -216,30 +216,40 @@ class LightGCN(nn.Module):
         data: Union[Data, HeteroData],
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-        anchor_node_ids: Optional[torch.Tensor] = None,
+        anchor_node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
     ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
         """
         Forward pass of the LightGCN model.
 
         Args:
-            data (Union[Data, HeteroData]): Graph data (homogeneous or heterogeneous).
+            data (Union[Data, HeteroData]): Graph data.
+                - For homogeneous: Data object with edge_index and node field
+                - For bipartite: HeteroData with 2 node types and edge_index_dict
             device (torch.device): Device to run the computation on.
-            output_node_types (Optional[List[NodeType]]): List of node types to return
-                embeddings for. Required for heterogeneous graphs. Default: None.
-            anchor_node_ids (Optional[torch.Tensor]): Local node indices to return
-                embeddings for. If None, returns embeddings for all nodes. Default: None.
+            output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
+                Required for bipartite graphs. If None, returns embeddings for all node types. Default: None.
+            anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]):
+                Local node indices to return embeddings for.
+                - For homogeneous: torch.Tensor of shape [num_anchors]
+                - For bipartite: dict mapping node types to anchor tensors
+                If None, returns embeddings for all nodes. Default: None.
 
         Returns:
             Union[torch.Tensor, Dict[NodeType, torch.Tensor]]: Node embeddings.
-                For homogeneous graphs, returns tensor of shape [num_nodes, embedding_dim].
-                For heterogeneous graphs, returns dict mapping node types to embeddings.
+                - For homogeneous: tensor of shape [num_nodes, embedding_dim]
+                - For bipartite: dict mapping node types to embeddings
         """
-        if isinstance(data, HeteroData):
-            raise NotImplementedError("HeteroData is not yet supported for LightGCN")
-            output_node_types = output_node_types or list(data.node_types)
-            return self._forward_heterogeneous(
-                data, device, output_node_types, anchor_node_ids
-            )
+        is_bipartite = isinstance(data, HeteroData)
+
+        # Validate model configuration
+        num_node_types = len(self._feature_keys)
+        assert num_node_types in [1, 2], (
+            f"LightGCN only supports homogeneous (1 node type) or bipartite (2 node types) graphs; "
+            f"got {num_node_types} node types: {self._feature_keys}"
+        )
+
+        if is_bipartite:
+            return self._forward_bipartite(data, device, output_node_types, anchor_node_ids)
         else:
             return self._forward_homogeneous(data, device, anchor_node_ids)
 
@@ -247,7 +257,7 @@ class LightGCN(nn.Module):
         self,
         data: Data,
         device: torch.device,
-        anchor_node_ids: Optional[torch.Tensor] = None,
+        anchor_node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
     ) -> torch.Tensor:
         """
         Forward pass for homogeneous graphs using LightGCN propagation.
@@ -266,7 +276,7 @@ class LightGCN(nn.Module):
         Args:
             data (Data): PyG Data object containing edge_index and node IDs.
             device (torch.device): Device to run computation on.
-            anchor_node_ids (Optional[torch.Tensor]): Local node indices to return
+            anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]): Local node indices to return
                 embeddings for. If None, returns embeddings for all nodes. Default: None.
 
         Returns:
@@ -313,7 +323,10 @@ class LightGCN(nn.Module):
 
         # If anchor node ids are provided, return the embeddings for the anchor nodes only
         if anchor_node_ids is not None:
-            anchors_local = anchor_node_ids.to(device).long()  # shape [num_anchors]
+            if isinstance(anchor_node_ids, torch.Tensor):
+                anchors_local = anchor_node_ids.to(device).long()  # shape [num_anchors]
+            else:
+                anchors_local = anchor_node_ids[NodeType(key)].to(device).long()  # shape [num_anchors]
             return final_embeddings[
                 anchors_local
             ]  # shape [num_anchors, D], embeddings for anchor nodes only
@@ -322,6 +335,128 @@ class LightGCN(nn.Module):
         return (
             final_embeddings  # shape [N_sub, D], embeddings for all nodes in subgraph
         )
+
+    def _forward_bipartite(
+        self,
+        data: HeteroData,
+        device: torch.device,
+        output_node_types: Optional[list[NodeType]] = None,
+        anchor_node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
+    ) -> dict[NodeType, torch.Tensor]:
+        """
+        Forward pass for bipartite graphs using LightGCN propagation.
+
+        For bipartite graphs (e.g., user-item), we have two node types and edges between them.
+        LightGCN propagates embeddings across both node types through the bipartite structure.
+
+        Args:
+            data (HeteroData): PyG HeteroData object with 2 node types.
+            device (torch.device): Device to run computation on.
+            output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
+                If None, returns all node types. Default: None.
+            anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]): Dict mapping node types
+                to local anchor indices. If None, returns all nodes. Default: None.
+
+        Returns:
+            Dict[NodeType, torch.Tensor]: Dict mapping node types to their embeddings,
+                each of shape [num_nodes_of_type, embedding_dim].
+        """
+        # Determine which node types to process
+        if output_node_types is None:
+            output_node_types = [NodeType(str(nt)) for nt in data.node_types]
+
+        # Lookup initial embeddings e^(0) for each node type
+        node_type_to_embeddings_0: dict[NodeType, torch.Tensor] = {}
+
+        for node_type in output_node_types:
+            node_type_str = str(node_type)
+            key = f"{node_type_str}_id"
+
+            assert hasattr(data[node_type_str], "node"), (
+                f"Subgraph must include .node field for node type {node_type_str}"
+            )
+
+            global_ids = data[node_type_str].node.to(device).long()  # shape [N_type]
+
+            embeddings = self._lookup_embeddings_for_single_node_type(
+                key, global_ids
+            )  # shape [N_type, D]
+
+            # Handle DMP Awaitable
+            if isinstance(embeddings, Awaitable):
+                embeddings = embeddings.wait()
+
+            node_type_to_embeddings_0[node_type] = embeddings
+
+        # LightGCN propagation across node types
+        all_node_types = list(node_type_to_embeddings_0.keys())
+
+        # For bipartite, we need to create a unified edge representation
+        # Collect all edges and map node indices to a combined space
+        # Node type 0 gets indices [0, num_type_0), node type 1 gets [num_type_0, num_type_0 + num_type_1)
+        node_type_to_offset = {}
+        offset = 0
+        for node_type in all_node_types:
+            node_type_to_offset[node_type] = offset
+            node_type_str = str(node_type)
+            offset += data[node_type_str].num_nodes
+
+        # Combine all embeddings into a single tensor
+        combined_embeddings_0 = torch.cat(
+            [node_type_to_embeddings_0[nt] for nt in all_node_types], dim=0
+        )  # shape [total_nodes, D]
+
+        # Combine all edges into a single edge_index
+        combined_edge_list = []
+        for edge_type_tuple in data.edge_types:
+            src_nt_str, _, dst_nt_str = edge_type_tuple
+            src_node_type = NodeType(src_nt_str)
+            dst_node_type = NodeType(dst_nt_str)
+
+            edge_index = data[edge_type_tuple].edge_index.to(device)  # shape [2, E]
+
+            # Offset the indices to the combined node space
+            src_offset = node_type_to_offset[src_node_type]
+            dst_offset = node_type_to_offset[dst_node_type]
+
+            offset_edge_index = edge_index.clone()
+            offset_edge_index[0] += src_offset
+            offset_edge_index[1] += dst_offset
+
+            combined_edge_list.append(offset_edge_index)
+
+        combined_edge_index = torch.cat(combined_edge_list, dim=1)  # shape [2, total_edges]
+
+        # Track all layer embeddings
+        all_layer_embeddings = [combined_embeddings_0]
+        current_embeddings = combined_embeddings_0
+
+        # Perform K layers of propagation
+        for conv in self._convs:
+            current_embeddings = conv(current_embeddings, combined_edge_index)  # shape [total_nodes, D]
+            all_layer_embeddings.append(current_embeddings)
+
+        # Weighted sum across layers
+        combined_final_embeddings = self._weighted_layer_sum(all_layer_embeddings)  # shape [total_nodes, D]
+
+        # Split back into per-node-type embeddings
+        final_embeddings: dict[NodeType, torch.Tensor] = {}
+        for node_type in all_node_types:
+            start_idx = node_type_to_offset[node_type]
+            node_type_str = str(node_type)
+            num_nodes = data[node_type_str].num_nodes
+            end_idx = start_idx + num_nodes
+
+            final_embeddings[node_type] = combined_final_embeddings[start_idx:end_idx]  # shape [num_nodes, D]
+
+        # Extract anchor nodes if specified
+        if anchor_node_ids is not None:
+            for node_type in all_node_types:
+                if isinstance(anchor_node_ids, dict) and node_type in anchor_node_ids:
+                    anchors = anchor_node_ids[node_type].to(device).long()
+                    final_embeddings[node_type] = final_embeddings[node_type][anchors]
+
+        return final_embeddings
 
     def _lookup_embeddings_for_single_node_type(
         self, node_type: str, ids: torch.Tensor
