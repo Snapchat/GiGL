@@ -1,7 +1,10 @@
 FROM apache/beam_python3.11_sdk:2.56.0
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# We use system python for dataflow images since it has python and apache beam pre-installed.
 ENV UV_SYSTEM_PYTHON=true
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
 
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
