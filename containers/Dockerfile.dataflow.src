@@ -16,6 +16,10 @@ COPY deployment deployment
 COPY python python
 COPY examples examples
 
+# TODO (svij): remove this and put in the base image
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
+
 RUN uv pip install -e .
 
 # =================================================================================================================

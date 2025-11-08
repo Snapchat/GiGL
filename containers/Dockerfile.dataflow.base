@@ -21,3 +21,6 @@ COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
 
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
