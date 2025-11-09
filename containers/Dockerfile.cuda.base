@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1
 
-# Used to generate hashed requirements.txt
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
 
 SHELL ["/bin/bash", "-c"]
-
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Already has python 3.11 installed - no need to install it again.
+# We use system python since it has packages pre-installed for us.
+ENV UV_SYSTEM_PYTHON=true
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
@@ -21,20 +25,9 @@ COPY uv.lock tmp/uv.lock
 COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
 
-COPY .python-version tmp/.python-version
-# ENV UV_SYSTEM_PYTHON=1
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
 
-# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
-# Since the above command should have created the .venv, we activate by default for any future uv commands.
-# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
-ENV UV_PROJECT_ENVIRONMENT=/tmp/.venv
-ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
-# We just created a virtual environment, lets add the bin to the path
-ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
-RUN uv tool install pip==25.3
-
 
 CMD [ "/bin/bash" ]
