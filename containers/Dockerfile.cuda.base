@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Already has python 3.11 installed - no need to install it again.
 # We use system python since it has packages pre-installed for us.
 ENV UV_SYSTEM_PYTHON=true
-ENV UV_PROJECT_ENVIRONMENT=/usr/local
+ENV UV_PROJECT_ENVIRONMENT=/opt/conda/
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
