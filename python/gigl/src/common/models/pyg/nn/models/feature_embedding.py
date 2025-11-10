@@ -71,7 +71,6 @@ class FeatureEmbeddingLayer(nn.Module):
         # whether to add 1 to the whole tensor, so all elements in tensor is >= 0 for nn.Embedding input
         # Since tft.compute_and_apply_vocabulary will be 0 based and use -1 as OOV padding
         self.__plus_one = False
-        self.__oov_idx: Optional[int] = None
         assert oov_idx is None or oov_idx >= -1, "oov_idx has to be >= -1"
         if oov_idx and oov_idx == -1:
             self.__plus_one = True
