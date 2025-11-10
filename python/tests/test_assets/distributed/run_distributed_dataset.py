@@ -1,12 +1,15 @@
-from typing import MutableMapping, Optional, Type, Union
+import copy
+from typing import Literal, MutableMapping, Optional, Type, Union
 
 import torch.distributed as dist
 
+from gigl.common import Uri
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
+from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -106,4 +109,46 @@ def run_distributed_dataset(
 
     if output_dict is not None:
         output_dict[rank] = dataset
+    return dataset
+
+
+_DATASET_CACHE: dict[tuple[Uri, str, str, Optional[float]], tuple] = {}
+
+
+def build_dataset_for_testing(
+    task_config_uri: Uri,
+    edge_dir: Literal["in", "out"] = "out",
+    tfrecord_uri_pattern: str = ".*.tfrecord(.gz)?$",
+    partitioner_class: Type[DistPartitioner] = DistRangePartitioner,
+    splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
+    should_load_tensors_in_parallel: bool = True,
+    ssl_positive_label_percentage: Optional[float] = None,
+) -> DistDataset:
+    cache_key = (
+        task_config_uri,
+        partitioner_class.__name__,
+        splitter.__class__.__name__,
+        ssl_positive_label_percentage,
+    )
+    if cache_key in _DATASET_CACHE:
+        ipc_handle = copy.deepcopy(_DATASET_CACHE[cache_key])
+        return DistDataset.from_ipc_handle(ipc_handle)
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        gbml_config_uri=task_config_uri
+    )
+
+    serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+        preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+        graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        tfrecord_uri_pattern=tfrecord_uri_pattern,
+    )
+    dataset = build_dataset(
+        serialized_graph_metadata=serialized_graph_metadata,
+        sample_edge_direction=edge_dir,
+        should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        partitioner_class=partitioner_class,
+        splitter=splitter,
+        _ssl_positive_label_percentage=ssl_positive_label_percentage,
+    )
+    _DATASET_CACHE[cache_key] = copy.deepcopy(dataset.share_ipc())
     return dataset

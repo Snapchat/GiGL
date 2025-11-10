@@ -54,3 +54,16 @@ def get_process_group_init_method(
         str: The initialization method for the process group.
     """
     return f"tcp://{host}:{port_picker()}"
+
+
+def create_test_process_group() -> None:
+    """
+    Creates a single node process group for testing.
+    Uses the "gloo" backend.
+    """
+    torch.distributed.init_process_group(
+        backend="gloo",
+        rank=0,
+        world_size=1,
+        init_method=get_process_group_init_method(),
+    )
