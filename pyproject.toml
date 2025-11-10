@@ -48,7 +48,7 @@ transform = [
   # See the following for the compatibility matrix: https://pypi.org/project/tensorflow-transform/
   "tensorflow-transform==1.16.0 ; sys_platform != 'darwin'",
   "tensorflow-metadata==1.16.1 ; sys_platform != 'darwin'",
-  "tensorflow-data-validation ; sys_platform != 'darwin'",
+  "tensorflow-data-validation==1.16.1 ; sys_platform != 'darwin'",
   # Oct 28, 2025 - Latest ver tfx-bsl==1.17.1 requires latest version of Linux distros using glibc 2.39+
   # i.e. Ubuntu 24.04. Currently, not compatible with our docker images.
   "tfx-bsl==1.16.1 ; sys_platform != 'darwin'",

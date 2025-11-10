@@ -4,7 +4,8 @@ set -x
 
 DEV=0  # Flag to install dev dependencies.
 PIP_ARGS="--no-deps"  # We don't want to install dependencies when installing packages from hashed requirements files.
-SKIP_GLT_POST_INSTALL=0 # Flag to skip GLT post install.
+SKIP_GIGL_LIB_INSTALL=0 # Flag to skip GiGL lib install.
+SKIP_GLT_POST_INSTALL=0 # Flag to skip GLT post install. if SKIP_GIGL_LIB_INSTALL=1, overrides SKIP_GLT_POST_INSTALL to =1.
 PIP_CREDENTIALS_MOUNTED=0  # When running this script in Docker environments, we may wish to mount pip credentials to install packages from a private repository.
 
 
@@ -17,6 +18,10 @@ do
         ;;
     --no-pip-cache)
         PIP_ARGS+=" --no-cache-dir"
+        shift
+        ;;
+    --skip-gigl-lib-install)
+        SKIP_GIGL_LIB_INSTALL=1
         shift
         ;;
     --skip-glt-post-install)
@@ -47,15 +52,6 @@ then
 
     sh install.sh
     source $HOME/.local/bin/env
-fi
-
-
-
-REQ_FILE_PREFIX=""
-if [[ $DEV -eq 1 ]]
-then
-  echo "Recognized '--dev' flag is set. Will also install dev dependencies."
-  REQ_FILE_PREFIX="dev_"
 fi
 
 if [[ $PIP_CREDENTIALS_MOUNTED -eq 1 ]]
@@ -90,59 +86,6 @@ is_running_on_m1_mac() {
     return $?
 }
 
-extra_deps=("experimental" "transform")
-if is_running_on_mac;
-then
-    echo "Setting up Mac CPU environment"
-    req_file="requirements/${REQ_FILE_PREFIX}darwin_arm64_requirements_unified.txt"
-    extra_deps+=("pyg27-torch28-cpu")
-else
-    if has_cuda_driver;
-    then
-        echo "Setting up Linux CUDA environment"
-        # req_file="requirements/${REQ_FILE_PREFIX}linux_cuda_requirements_unified.txt"
-        extra_deps+=("pyg27-torch28-cu128")
-    else
-        echo "Setting up Linux CPU environment"
-        # req_file="requirements/${REQ_FILE_PREFIX}linux_cpu_requirements_unified.txt"
-        extra_deps+=("pyg27-torch28-cpu")
-    fi
-fi
-
-extra_deps_clause=()
-for dep in "${extra_deps[@]}"; do
-    extra_deps_clause+=(--extra "$dep")
-done
-
-flag_use_inexact_match=""
-if [[ "${UV_SYSTEM_PYTHON}" == "true" ]]
-then
-    echo "Recognized using system python."
-    echo "Will use inexact match for dependencies so we don't override system packages."
-    flag_use_inexact_match="--inexact"
-fi
-
-if [[ $DEV -eq 1 ]]
-then
-    # https://docs.astral.sh/uv/reference/cli/#uv-sync
-    uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
-else
-    uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match}
-fi
-
-# echo "Installing from ${req_file}"
-# pip install -r $req_file $PIP_ARGS
-# source .venv/bin/activate
-
-# Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
-# We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
-if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
-then
-    SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-    uv run python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
-fi
-
-
 if [[ $DEV -eq 1 ]]
 then
     echo "Setting up required dev tooling"
@@ -164,6 +107,63 @@ then
     rm tools/python_protoc/python_protoc_3_19_6.zip
 
 fi
+
+install_gigl_lib() {
+    echo "Installing GiGL lib"
+    extra_deps=("experimental" "transform")
+    if is_running_on_mac;
+    then
+        echo "Setting up Mac CPU environment"
+        req_file="requirements/${REQ_FILE_PREFIX}darwin_arm64_requirements_unified.txt"
+        extra_deps+=("pyg27-torch28-cpu")
+    else
+        if has_cuda_driver;
+        then
+            echo "Setting up Linux CUDA environment"
+            # req_file="requirements/${REQ_FILE_PREFIX}linux_cuda_requirements_unified.txt"
+            extra_deps+=("pyg27-torch28-cu128")
+        else
+            echo "Setting up Linux CPU environment"
+            # req_file="requirements/${REQ_FILE_PREFIX}linux_cpu_requirements_unified.txt"
+            extra_deps+=("pyg27-torch28-cpu")
+        fi
+    fi
+
+    extra_deps_clause=()
+    for dep in "${extra_deps[@]}"; do
+        extra_deps_clause+=(--extra "$dep")
+    done
+
+    flag_use_inexact_match=""
+    if [[ "${UV_SYSTEM_PYTHON}" == "true" ]]
+    then
+        echo "Recognized using system python."
+        echo "Will use inexact match for dependencies so we don't override system packages."
+        flag_use_inexact_match="--inexact"
+    fi
+
+    if [[ $DEV -eq 1 ]]
+    then
+        # https://docs.astral.sh/uv/reference/cli/#uv-sync
+        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
+    else
+        uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match}
+    fi
+
+    # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
+    # We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
+    if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
+    then
+        SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+        uv run python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
+    fi
+}
+
+if [[ $SKIP_GIGL_LIB_INSTALL -eq 0 ]]
+then
+    install_gigl_lib
+fi
+
 
 if [[ $PIP_CREDENTIALS_MOUNTED -eq 1 ]]
 then

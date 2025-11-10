@@ -24,7 +24,6 @@ COPY requirements tmp/requirements
 COPY python/gigl/scripts tmp/python/gigl/scripts
 
 COPY .python-version tmp/.python-version
-# ENV UV_SYSTEM_PYTHON=1
 RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
