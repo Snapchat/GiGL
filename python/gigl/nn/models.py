@@ -415,7 +415,7 @@ class LightGCN(nn.Module):
         # For bipartite, we need to create a unified edge representation
         # Collect all edges and map node indices to a combined space
         # Node type 0 gets indices [0, num_type_0), node type 1 gets [num_type_0, num_type_0 + num_type_1)
-        node_type_to_offset = {}
+        node_type_to_offset: dict[NodeType, int] = {}
         offset = 0
         for node_type in all_node_types:
             node_type_to_offset[node_type] = offset
@@ -428,7 +428,7 @@ class LightGCN(nn.Module):
         )  # shape [total_nodes, D]
 
         # Combine all edges into a single edge_index
-        combined_edge_list = []
+        combined_edge_list: list[torch.Tensor] = []
         for edge_type_tuple in data.edge_types:
             src_nt_str, _, dst_nt_str = edge_type_tuple
             src_node_type = NodeType(src_nt_str)
@@ -449,7 +449,7 @@ class LightGCN(nn.Module):
         combined_edge_index = torch.cat(combined_edge_list, dim=1)  # shape [2, total_edges]
 
         # Track all layer embeddings
-        all_layer_embeddings = [combined_embeddings_0]
+        all_layer_embeddings: list[torch.Tensor] = [combined_embeddings_0]
         current_embeddings = combined_embeddings_0
 
         # Perform K layers of propagation
