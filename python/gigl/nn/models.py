@@ -134,6 +134,19 @@ class LinkPredictionGNN(nn.Module):
         return LinkPredictionGNN(encoder=encoder, decoder=decoder)
 
 
+def _get_feature_key(node_type: Union[str, NodeType]) -> str:
+    """
+    Get the feature key for a node type's embedding table.
+
+    Args:
+        node_type: Node type as string or NodeType object.
+
+    Returns:
+        str: Feature key in format "{node_type}_id"
+    """
+    return f"{node_type}_id"
+
+
 # TODO(swong3): Move specific models to gigl.nn.models whenever we restructure model placement.
 # TODO(swong3): Abstract TorchRec functionality, and make this LightGCN specific
 # TODO(swong3): Remove device context from LightGCN module (use meta, but will have to figure out how to handle buffer transfer)
@@ -155,19 +168,6 @@ class LightGCN(nn.Module):
         layer_weights (Optional[List[float]]): Weights for [e^(0), e^(1), ..., e^(K)].
             Must have length K+1. If None, uses uniform weights 1/(K+1). Default: None.
     """
-
-    @staticmethod
-    def _get_feature_key(node_type: Union[str, NodeType]) -> str:
-        """
-        Get the feature key for a node type's embedding table.
-
-        Args:
-            node_type: Node type as string or NodeType object.
-
-        Returns:
-            str: Feature key in format "{node_type}_id"
-        """
-        return f"{node_type}_id"
 
     def __init__(
         self,
@@ -201,8 +201,17 @@ class LightGCN(nn.Module):
 
         # Build TorchRec EBC (one table per node type)
         self._feature_keys: list[str] = [
-            self._get_feature_key(node_type) for node_type in self._node_type_to_num_nodes.keys()
+            _get_feature_key(node_type) for node_type in self._node_type_to_num_nodes.keys()
         ]
+
+        # Validate model configuration: restrict to homogeneous or bipartite graphs
+        num_node_types = len(self._feature_keys)
+        if num_node_types not in [1, 2]:
+            raise ValueError(
+                f"LightGCN only supports homogeneous (1 node type) or bipartite (2 node types) graphs; "
+                f"got {num_node_types} node types: {self._feature_keys}"
+            )
+
         tables: list[EmbeddingBagConfig] = []
         for node_type, num_nodes in self._node_type_to_num_nodes.items():
             tables.append(
@@ -210,7 +219,7 @@ class LightGCN(nn.Module):
                     name=f"node_embedding_{node_type}",
                     embedding_dim=embedding_dim,
                     num_embeddings=num_nodes,
-                    feature_names=[self._get_feature_key(node_type)],
+                    feature_names=[_get_feature_key(node_type)],
                 )
             )
 
@@ -236,38 +245,31 @@ class LightGCN(nn.Module):
         Args:
             data (Union[Data, HeteroData]): Graph data.
                 - For homogeneous: Data object with edge_index and node field
-                - For bipartite: HeteroData with 2 node types and edge_index_dict
+                - For heterogeneous: HeteroData with node types and edge_index_dict
             device (torch.device): Device to run the computation on.
             output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
-                Required for bipartite graphs. If None, returns embeddings for all node types. Default: None.
+                Required for heterogeneous graphs. If None, returns embeddings for all node types. Default: None.
             anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]):
                 Local node indices to return embeddings for.
                 - For homogeneous: torch.Tensor of shape [num_anchors]
-                - For bipartite: dict mapping node types to anchor tensors
+                - For heterogeneous: dict mapping node types to anchor tensors
                 If None, returns embeddings for all nodes. Default: None.
 
         Returns:
             Union[torch.Tensor, Dict[NodeType, torch.Tensor]]: Node embeddings.
                 - For homogeneous: tensor of shape [num_nodes, embedding_dim]
-                - For bipartite: dict mapping node types to embeddings
+                - For heterogeneous: dict mapping node types to embeddings
         """
-        is_bipartite = isinstance(data, HeteroData)
+        is_heterogeneous = isinstance(data, HeteroData)
 
-        # Validate model configuration
-        num_node_types = len(self._feature_keys)
-        assert num_node_types in [1, 2], (
-            f"LightGCN only supports homogeneous (1 node type) or bipartite (2 node types) graphs; "
-            f"got {num_node_types} node types: {self._feature_keys}"
-        )
-
-        if is_bipartite:
-            # For bipartite graphs, anchor_node_ids must be a dict, not a Tensor
+        if is_heterogeneous:
+            # For heterogeneous graphs, anchor_node_ids must be a dict, not a Tensor
             if anchor_node_ids is not None and not isinstance(anchor_node_ids, dict):
                 raise TypeError(
-                    f"For bipartite graphs, anchor_node_ids must be a dict or None, "
+                    f"For heterogeneous graphs, anchor_node_ids must be a dict or None, "
                     f"got {type(anchor_node_ids)}"
                 )
-            return self._forward_bipartite(data, device, output_node_types, anchor_node_ids)
+            return self._forward_heterogeneous(data, device, output_node_types, anchor_node_ids)
         else:
             # For homogeneous graphs, anchor_node_ids must be a Tensor, not a dict
             if anchor_node_ids is not None and not isinstance(anchor_node_ids, torch.Tensor):
@@ -357,7 +359,7 @@ class LightGCN(nn.Module):
             final_embeddings  # shape [N_sub, D], embeddings for all nodes in subgraph
         )
 
-    def _forward_bipartite(
+    def _forward_heterogeneous(
         self,
         data: HeteroData,
         device: torch.device,
@@ -365,13 +367,15 @@ class LightGCN(nn.Module):
         anchor_node_ids: Optional[dict[NodeType, torch.Tensor]] = None,
     ) -> dict[NodeType, torch.Tensor]:
         """
-        Forward pass for bipartite graphs using LightGCN propagation.
+        Forward pass for heterogeneous graphs using LightGCN propagation.
 
-        For bipartite graphs (e.g., user-item), we have two node types and edges between them.
-        LightGCN propagates embeddings across both node types through the bipartite structure.
+        For heterogeneous graphs (e.g., user-item), we have
+        multiple node types. Note that we restrict to one edge type. LightGCN propagates embeddings across
+        all node types by creating a unified node space, running propagation, then splitting
+        back into per-type embeddings.
 
         Args:
-            data (HeteroData): PyG HeteroData object with 2 node types.
+            data (HeteroData): PyG HeteroData object with node types.
             device (torch.device): Device to run computation on.
             output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
                 If None, returns all node types. Default: None.
@@ -391,7 +395,7 @@ class LightGCN(nn.Module):
 
         for node_type in output_node_types:
             node_type_str = str(node_type)
-            key = self._get_feature_key(node_type_str)
+            key = _get_feature_key(node_type_str)
 
             assert hasattr(data[node_type_str], "node"), (
                 f"Subgraph must include .node field for node type {node_type_str}"
@@ -412,9 +416,9 @@ class LightGCN(nn.Module):
         # LightGCN propagation across node types
         all_node_types = list(node_type_to_embeddings_0.keys())
 
-        # For bipartite, we need to create a unified edge representation
+        # For heterogeneous graphs, we need to create a unified edge representation
         # Collect all edges and map node indices to a combined space
-        # Node type 0 gets indices [0, num_type_0), node type 1 gets [num_type_0, num_type_0 + num_type_1)
+        # E.g., node type 0 gets indices [0, num_type_0), node type 1 gets [num_type_0, num_type_0 + num_type_1)
         node_type_to_offset: dict[NodeType, int] = {}
         offset = 0
         for node_type in all_node_types:
