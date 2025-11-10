@@ -388,7 +388,8 @@ class LightGCN(nn.Module):
         """
         # Determine which node types to process
         if output_node_types is None:
-            output_node_types = [NodeType(str(nt)) for nt in data.node_types]
+            # Sort node types for deterministic ordering across machines
+            output_node_types = sorted([NodeType(str(nt)) for nt in data.node_types], key=str)
 
         # Lookup initial embeddings e^(0) for each node type
         node_type_to_embeddings_0: dict[NodeType, torch.Tensor] = {}
@@ -414,7 +415,8 @@ class LightGCN(nn.Module):
             node_type_to_embeddings_0[node_type] = embeddings
 
         # LightGCN propagation across node types
-        all_node_types = list(node_type_to_embeddings_0.keys())
+        # Sort node types for deterministic ordering across machines
+        all_node_types = sorted(node_type_to_embeddings_0.keys(), key=str)
 
         # For heterogeneous graphs, we need to create a unified edge representation
         # Collect all edges and map node indices to a combined space
