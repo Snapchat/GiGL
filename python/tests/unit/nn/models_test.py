@@ -432,6 +432,70 @@ class TestLightGCN(unittest.TestCase):
             torch.allclose(output[NodeType("item")], expected_item_embeddings, atol=1e-4, rtol=1e-4)
         )
 
+    def test_bipartite_with_anchor_nodes(self):
+        """Test anchor node selection in bipartite/heterogeneous graphs."""
+        # Create bipartite graph
+        num_users = 2
+        num_items = 2
+
+        node_type_to_num_nodes = {
+            NodeType("user"): num_users,
+            NodeType("item"): num_items,
+        }
+
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        # Set embeddings
+        user_embeddings = torch.tensor(
+            [
+                [0.2, 0.5, 0.1, 0.4],  # User 0
+                [0.6, 0.1, 0.2, 0.5],  # User 1
+            ],
+            dtype=torch.float32,
+        )
+
+        item_embeddings = torch.tensor(
+            [
+                [0.9, 0.4, 0.1, 0.4],  # Item 0
+                [0.3, 0.8, 0.3, 0.6],  # Item 1
+            ],
+            dtype=torch.float32,
+        )
+
+        with torch.no_grad():
+            user_table = model._embedding_bag_collection.embedding_bags[
+                "node_embedding_user"
+            ]
+            user_table.weight[:] = user_embeddings
+
+            item_table = model._embedding_bag_collection.embedding_bags[
+                "node_embedding_item"
+            ]
+            item_table.weight[:] = item_embeddings
+
+        data = HeteroData()
+
+        # Set up nodes
+        data["user"].node = torch.tensor([0, 1], dtype=torch.long)
+        data["user"].num_nodes = num_users
+        data["item"].node = torch.tensor([0, 1], dtype=torch.long)
+        data["item"].num_nodes = num_items
+
+        # Set up edges
+        data["user", "to", "item"].edge_index = torch.tensor(
+            [[0, 0, 1], [0, 1, 1]], dtype=torch.long
+        )
+        data["item", "to", "user"].edge_index = torch.tensor(
+            [[0, 1, 1], [0, 0, 1]], dtype=torch.long
+        )
+
+        # First get full output to compare against
+        full_output = model(
+            data,
+            self.device,
+            output_node_types=[NodeType("user"), NodeType("item")],
+        )
+
         # Test with anchor nodes - select specific nodes from each type
         anchor_node_ids = {
             NodeType("user"): torch.tensor([0], dtype=torch.long),  # Select user 0
@@ -453,7 +517,7 @@ class TestLightGCN(unittest.TestCase):
         self.assertTrue(
             torch.allclose(
                 output_with_anchors[NodeType("user")],
-                expected_user_embeddings[0:1],  # User 0
+                full_output[NodeType("user")][0:1],  # User 0
                 atol=1e-4,
                 rtol=1e-4,
             )
@@ -461,7 +525,7 @@ class TestLightGCN(unittest.TestCase):
         self.assertTrue(
             torch.allclose(
                 output_with_anchors[NodeType("item")],
-                expected_item_embeddings[1:2],  # Item 1
+                full_output[NodeType("item")][1:2],  # Item 1
                 atol=1e-4,
                 rtol=1e-4,
             )
