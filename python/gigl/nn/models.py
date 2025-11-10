@@ -167,7 +167,6 @@ class LightGCN(nn.Module):
         Returns:
             str: Feature key in format "{node_type}_id"
         """
-        print("IM HERE")
         return f"{node_type}_id"
 
     def __init__(
