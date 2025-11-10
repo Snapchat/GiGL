@@ -156,6 +156,20 @@ class LightGCN(nn.Module):
             Must have length K+1. If None, uses uniform weights 1/(K+1). Default: None.
     """
 
+    @staticmethod
+    def _get_feature_key(node_type: Union[str, NodeType]) -> str:
+        """
+        Get the feature key for a node type's embedding table.
+
+        Args:
+            node_type: Node type as string or NodeType object.
+
+        Returns:
+            str: Feature key in format "{node_type}_id"
+        """
+        print("IM HERE")
+        return f"{node_type}_id"
+
     def __init__(
         self,
         node_type_to_num_nodes: Union[int, dict[NodeType, int]],
@@ -187,9 +201,8 @@ class LightGCN(nn.Module):
         )
 
         # Build TorchRec EBC (one table per node type)
-        # feature key naming convention: f"{node_type}_id"
         self._feature_keys: list[str] = [
-            f"{node_type}_id" for node_type in self._node_type_to_num_nodes.keys()
+            self._get_feature_key(node_type) for node_type in self._node_type_to_num_nodes.keys()
         ]
         tables: list[EmbeddingBagConfig] = []
         for node_type, num_nodes in self._node_type_to_num_nodes.items():
@@ -198,7 +211,7 @@ class LightGCN(nn.Module):
                     name=f"node_embedding_{node_type}",
                     embedding_dim=embedding_dim,
                     num_embeddings=num_nodes,
-                    feature_names=[f"{node_type}_id"],
+                    feature_names=[self._get_feature_key(node_type)],
                 )
             )
 
@@ -249,15 +262,27 @@ class LightGCN(nn.Module):
         )
 
         if is_bipartite:
+            # For bipartite graphs, anchor_node_ids must be a dict, not a Tensor
+            if anchor_node_ids is not None and not isinstance(anchor_node_ids, dict):
+                raise TypeError(
+                    f"For bipartite graphs, anchor_node_ids must be a dict or None, "
+                    f"got {type(anchor_node_ids)}"
+                )
             return self._forward_bipartite(data, device, output_node_types, anchor_node_ids)
         else:
+            # For homogeneous graphs, anchor_node_ids must be a Tensor, not a dict
+            if anchor_node_ids is not None and not isinstance(anchor_node_ids, torch.Tensor):
+                raise TypeError(
+                    f"For homogeneous graphs, anchor_node_ids must be a Tensor or None, "
+                    f"got {type(anchor_node_ids)}"
+                )
             return self._forward_homogeneous(data, device, anchor_node_ids)
 
     def _forward_homogeneous(
         self,
         data: Data,
         device: torch.device,
-        anchor_node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
+        anchor_node_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass for homogeneous graphs using LightGCN propagation.
@@ -276,7 +301,7 @@ class LightGCN(nn.Module):
         Args:
             data (Data): PyG Data object containing edge_index and node IDs.
             device (torch.device): Device to run computation on.
-            anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]): Local node indices to return
+            anchor_node_ids (Optional[torch.Tensor]): Local node indices to return
                 embeddings for. If None, returns embeddings for all nodes. Default: None.
 
         Returns:
@@ -323,10 +348,7 @@ class LightGCN(nn.Module):
 
         # If anchor node ids are provided, return the embeddings for the anchor nodes only
         if anchor_node_ids is not None:
-            if isinstance(anchor_node_ids, torch.Tensor):
-                anchors_local = anchor_node_ids.to(device).long()  # shape [num_anchors]
-            else:
-                anchors_local = anchor_node_ids[NodeType(key)].to(device).long()  # shape [num_anchors]
+            anchors_local = anchor_node_ids.to(device).long()  # shape [num_anchors]
             return final_embeddings[
                 anchors_local
             ]  # shape [num_anchors, D], embeddings for anchor nodes only
@@ -341,7 +363,7 @@ class LightGCN(nn.Module):
         data: HeteroData,
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-        anchor_node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
+        anchor_node_ids: Optional[dict[NodeType, torch.Tensor]] = None,
     ) -> dict[NodeType, torch.Tensor]:
         """
         Forward pass for bipartite graphs using LightGCN propagation.
@@ -354,7 +376,7 @@ class LightGCN(nn.Module):
             device (torch.device): Device to run computation on.
             output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
                 If None, returns all node types. Default: None.
-            anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]): Dict mapping node types
+            anchor_node_ids (Optional[Dict[NodeType, torch.Tensor]]): Dict mapping node types
                 to local anchor indices. If None, returns all nodes. Default: None.
 
         Returns:
@@ -370,7 +392,7 @@ class LightGCN(nn.Module):
 
         for node_type in output_node_types:
             node_type_str = str(node_type)
-            key = f"{node_type_str}_id"
+            key = self._get_feature_key(node_type_str)
 
             assert hasattr(data[node_type_str], "node"), (
                 f"Subgraph must include .node field for node type {node_type_str}"
@@ -452,7 +474,7 @@ class LightGCN(nn.Module):
         # Extract anchor nodes if specified
         if anchor_node_ids is not None:
             for node_type in all_node_types:
-                if isinstance(anchor_node_ids, dict) and node_type in anchor_node_ids:
+                if node_type in anchor_node_ids:
                     anchors = anchor_node_ids[node_type].to(device).long()
                     final_embeddings[node_type] = final_embeddings[node_type][anchors]
 

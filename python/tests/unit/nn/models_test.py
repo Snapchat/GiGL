@@ -432,6 +432,41 @@ class TestLightGCN(unittest.TestCase):
             torch.allclose(output[NodeType("item")], expected_item_embeddings, atol=1e-4, rtol=1e-4)
         )
 
+        # Test with anchor nodes - select specific nodes from each type
+        anchor_node_ids = {
+            NodeType("user"): torch.tensor([0], dtype=torch.long),  # Select user 0
+            NodeType("item"): torch.tensor([1], dtype=torch.long),  # Select item 1
+        }
+
+        output_with_anchors = model(
+            data,
+            self.device,
+            output_node_types=[NodeType("user"), NodeType("item")],
+            anchor_node_ids=anchor_node_ids,
+        )
+
+        # Check shapes - should only return embeddings for anchor nodes
+        self.assertEqual(output_with_anchors[NodeType("user")].shape, (1, self.embedding_dim))
+        self.assertEqual(output_with_anchors[NodeType("item")].shape, (1, self.embedding_dim))
+
+        # Check values - should match the corresponding rows from full output
+        self.assertTrue(
+            torch.allclose(
+                output_with_anchors[NodeType("user")],
+                expected_user_embeddings[0:1],  # User 0
+                atol=1e-4,
+                rtol=1e-4,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                output_with_anchors[NodeType("item")],
+                expected_item_embeddings[1:2],  # Item 1
+                atol=1e-4,
+                rtol=1e-4,
+            )
+        )
+
 def _run_dmp_multiprocess_test(
     rank: int,
     world_size: int,
