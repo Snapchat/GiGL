@@ -24,13 +24,22 @@ from gigl.distributed.utils import get_free_port
 from tests.test_assets.distributed.utils import assert_tensor_equality
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 
+def _run_client_process(
+    client_rank: int,
+    cluster_info: GraphStoreInfo,
+    node_type: NodeType,
+    expected_sampler_input: dict[int, list[torch.Tensor]],
+) -> None:
+    pass
 
 def _client_process(
     client_rank: int,
+    cluster_info: GraphStoreInfo,
     node_type: NodeType,
     expected_sampler_input: dict[int, list[torch.Tensor]]
 ) -> None:
     torch.distributed.init_process_group()
+
     cluster_info = get_graph_store_info()
     sampler_input = get_sampler_input_for_inference(
         client_rank,
@@ -54,6 +63,7 @@ class TestUtils(unittest.TestCase):
             gbml_config_uri=task_config_uri
         )
         resource_config_uri = get_resource_config().get_resource_config_uri
+        num_cora_nodes = 2708
         cluster_info = GraphStoreInfo(
             num_cluster_nodes=4,
             num_storage_nodes=2,
@@ -84,7 +94,8 @@ class TestUtils(unittest.TestCase):
                     cluster_info, # cluster_info
                     UriFactory.create_uri(task_config_uri), # task_config_uri
                     True, # is_inference
-                ]
+                ],
+                nprocs=cluster_info.num_compute_nodes,
             )
             assert server_processes is not None
 
@@ -102,6 +113,7 @@ class TestUtils(unittest.TestCase):
                 _client_process,
                 args=[
                     task_config.graph_metadata_pb_wrapper.homogeneous_node_type, # node_type
-                ]
+                ],
+                nprocs=cluster_info.num_compute_nodes,
             )
             assert client_processes is not None
