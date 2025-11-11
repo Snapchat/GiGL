@@ -4,7 +4,7 @@ This document outlines the steps required to add a new Python package as a depen
 
 ### 1. Package Addition
 
-Open `python/pyproject.toml` file --> Add the package to its correct location (dev, transform, etc.).
+Open `pyproject.toml` file --> Add the package to its correct location (dev, transform, etc.).
 
 ### 2. Hash Generation
 
