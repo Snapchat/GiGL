@@ -161,13 +161,8 @@ def get_internal_ip_from_node(
         f"Rank {rank} broadcasting internal IP list: {ip_list} to rank {node_rank}"
     )
     torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
-    logger.info(
-        f"Rank {rank} broadcasted internal IP list: {ip_list} to rank {node_rank}"
-    )
     node_ip = ip_list[0]
-    logger.info(
-        f"Rank {rank} received master internal IP: {node_ip} from rank {node_rank}"
-    )
+    logger.info(f"Rank {rank} received master node's internal IP: {node_ip}")
     assert node_ip is not None, "Could not retrieve master node's internal IP"
     return node_ip
 

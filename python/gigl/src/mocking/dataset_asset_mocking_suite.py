@@ -570,8 +570,8 @@ class DatasetAssetMockingSuite:
             for attr in dir(self)
             if callable(getattr(self, attr)) and attr.startswith("mock")
         ]
-        print(f"All mocking functions: {all_mocking_func_names}")
-        print(f"Selected datasets: {selected_datasets}")
+        # print(f"All mocking functions: {all_mocking_func_names}")
+        # print(f"Selected datasets: {selected_datasets}")
 
         mocking_func_names: list[str]
         if selected_datasets:
@@ -593,7 +593,9 @@ class DatasetAssetMockingSuite:
             mocked_dataset_info = mocking_func()
             mocked_datasets[mocked_dataset_info.name] = mocked_dataset_info
 
-        logger.info(f"Mocked datasets registered successfully: {list(mocked_datasets)}")
+        logger.debug(
+            f"Mocked datasets registered successfully: {list(mocked_datasets)}"
+        )
         return mocked_datasets
 
 

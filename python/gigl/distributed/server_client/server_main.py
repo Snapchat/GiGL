@@ -1,6 +1,9 @@
 import argparse
 import os
 
+# Suppress TensorFlow logs
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
+
 import graphlearn_torch as glt
 import torch
 
@@ -9,12 +12,8 @@ from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.server_client.remote_dataset import register_dataset
-from gigl.distributed.utils import get_free_ports_from_node, get_graph_store_info
+from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
-
-# Suppress TensorFlow logs
-# os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
-
 
 logger = Logger()
 
@@ -22,27 +21,20 @@ logger = Logger()
 def run_server(
     server_rank: int,
     cluster_info: GraphStoreInfo,
-    port: int,
-    task_config_uri: Uri,
-    is_inference: bool,
     dataset: DistDataset,
 ) -> None:
     logger.info(
-        f"Initializing server {server_rank} / {cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage}. Cluster rank: {os.environ.get('RANK')}"
+        f"Initializing server {server_rank} / {cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage}. on {cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}. Cluster rank: {os.environ.get('RANK')}, port: {cluster_info.cluster_master_port}"
     )
     register_dataset(dataset)
-    logger.info(
-        f"Initializing server {server_rank} / {cluster_info.num_storage_nodes * cluster_info.num_processes_per_storage}"
-    )
+    logger.info("registered dataset")
     glt.distributed.init_server(
-        num_servers=cluster_info.num_storage_nodes
-        * cluster_info.num_processes_per_storage,
+        num_servers=cluster_info.storage_world_size,
         server_rank=server_rank,
         dataset=dataset,
-        master_addr=cluster_info.storage_cluster_master_ip,
-        master_port=port,
-        num_clients=cluster_info.num_compute_nodes
-        * cluster_info.num_processes_per_compute,
+        master_addr=cluster_info.cluster_master_ip,
+        master_port=cluster_info.cluster_master_port,
+        num_clients=cluster_info.compute_world_size,
     )
 
     logger.info(
@@ -58,17 +50,18 @@ def run_servers(
     task_config_uri: Uri,
     is_inference: bool,
 ) -> list:
+    init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
+    logger.info(
+        f"Initializing server {server_rank} / {cluster_info.num_storage_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']} init method: {init_method}"
+    )
     torch.distributed.init_process_group(
         backend="gloo",
         world_size=cluster_info.num_storage_nodes,
         rank=server_rank,
-        init_method=f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}",
+        init_method=init_method,
         group_name="gigl_server_comms",
     )
-    glt_port = get_free_ports_from_node(
-        num_ports=1,
-        node_rank=cluster_info.num_compute_nodes,
-    )[0]
+    logger.info(f"Server {server_rank} / {cluster_info.num_storage_nodes} process group initialized")
     dataset = gd.build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
         is_inference=is_inference,
@@ -82,9 +75,6 @@ def run_servers(
             args=(
                 server_rank * cluster_info.num_processes_per_storage + i,  # server_rank
                 cluster_info,  # cluster_info
-                glt_port,  # port
-                task_config_uri,  # task_config_uri
-                is_inference,  # is_inference
                 dataset,  # dataset
             ),
         )

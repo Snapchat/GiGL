@@ -2,10 +2,13 @@ from typing import Optional, Union
 
 import torch
 
+from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureInfo
+
+logger = Logger()
 
 _dataset: Optional[DistDataset] = None
 
@@ -36,6 +39,9 @@ def get_edge_feature_info() -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], N
 def get_node_ids_for_rank(
     rank: int, world_size: int, node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE
 ) -> torch.Tensor:
+    logger.info(
+        f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
+    )
     if _dataset is None:
         raise ValueError(
             "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
@@ -48,4 +54,6 @@ def get_node_ids_for_rank(
         raise ValueError(
             f"Node ids must be a torch.Tensor or a dict[NodeType, torch.Tensor], got {type(_dataset.node_ids)}"
         )
+    logger.info(f"Sharding nodes {nodes.shape} for rank {rank} / {world_size}")
+    logger.info(f"Nodes: {nodes}")
     return shard_nodes_by_process(nodes, rank, world_size)
