@@ -35,7 +35,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
-from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
+from gigl.utils.data_splitters import DistHashedNodeAnchorLinkSplitter
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
@@ -566,7 +566,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
-        splitter = HashedNodeAnchorLinkSplitter(
+        splitter = DistHashedNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
 
@@ -612,7 +612,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
 
-        splitter = HashedNodeAnchorLinkSplitter(
+        splitter = DistHashedNodeAnchorLinkSplitter(
             sampling_direction="in",
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,
@@ -685,7 +685,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
 
-        splitter = HashedNodeAnchorLinkSplitter(
+        splitter = DistHashedNodeAnchorLinkSplitter(
             sampling_direction="in",
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,

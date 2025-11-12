@@ -160,7 +160,7 @@ def _fast_hash(x: torch.Tensor) -> torch.Tensor:
     return x
 
 
-class HashedNodeAnchorLinkSplitter:
+class DistHashedNodeAnchorLinkSplitter:
     """Selects train, val, and test nodes based on some provided edge index.
 
     NOTE: This splitter must be called when a Torch distributed process group is initialized.
@@ -192,7 +192,7 @@ class HashedNodeAnchorLinkSplitter:
         supervision_edge_types: Optional[list[EdgeType]] = None,
         should_convert_labels_to_edges: bool = True,
     ):
-        """Initializes the HashedNodeAnchorLinkSplitter.
+        """Initializes the DistHashedNodeAnchorLinkSplitter.
 
         Args:
             sampling_direction (Union[Literal["in", "out"], str]): The direction to sample the nodes. Either "in" or "out".
@@ -396,7 +396,7 @@ class HashedNodeAnchorLinkSplitter:
         return self._should_convert_labels_to_edges
 
 
-class HashedNodeSplitter:
+class DistHashedNodeSplitter:
     """Selects train, val, and test nodes based on provided node IDs directly.
 
     NOTE: This splitter must be called when a Torch distributed process group is initialized.
@@ -407,9 +407,9 @@ class HashedNodeSplitter:
     In node-based splitting, each node will be placed into exactly one split based on its hash value.
     This is simpler than edge-based splitting as it doesn't require extracting anchor nodes from edges.
 
-    Additionally, the HashedNodeSplitter does not de-dup repeated node ids. This means that if there are repeated node ids
+    Additionally, the DistHashedNodeSplitter does not de-dup repeated node ids. This means that if there are repeated node ids
     which are passed in, the same number of repeated node ids are included in the output, all of which are put into the same split.
-    This differs from the HashedNodeAnchorLinkSplitter, which does de-dup the repeated source or destination nodes that appear from the
+    This differs from the DistHashedNodeAnchorLinkSplitter, which does de-dup the repeated source or destination nodes that appear from the
     labeled edges.
 
 
@@ -426,7 +426,7 @@ class HashedNodeSplitter:
         num_test: float = 0.1,
         hash_function: Callable[[torch.Tensor], torch.Tensor] = _fast_hash,
     ):
-        """Initializes the HashedNodeSplitter.
+        """Initializes the DistHashedNodeSplitter.
 
         Args:
             num_val (float): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
@@ -498,6 +498,24 @@ class HashedNodeSplitter:
             return splits
         else:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+
+
+class HashedNodeAnchorLinkSplitter(DistHashedNodeAnchorLinkSplitter):
+    def __init__(self, *args, **kwargs):
+        logger.warning(
+            "gigl.utils.data_splitters.HashedNodeAnchorLinkSplitter is deprecated and will be removed in a future release. "
+            "Please use the `gigl.utils.data_splitters.DistHashedNodeAnchorLinkSplitter` class instead."
+        )
+        super(HashedNodeAnchorLinkSplitter, self).__init__(*args, **kwargs)
+
+
+class HashedNodeSplitter(DistHashedNodeSplitter):
+    def __init__(self, *args, **kwargs):
+        logger.warning(
+            "gigl.utils.data_splitters.HashedNodeSplitter is deprecated and will be removed in a future release. "
+            "Please use the `gigl.utils.data_splitters.DistHashedNodeSplitter` class instead."
+        )
+        super(HashedNodeSplitter, self).__init__(*args, **kwargs)
 
 
 def _create_distributed_splits_from_hash(
