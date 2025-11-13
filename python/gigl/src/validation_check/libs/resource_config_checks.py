@@ -143,6 +143,7 @@ def check_if_trainer_resource_config_valid(
         gigl_resource_config_pb2.LocalResourceConfig,
         gigl_resource_config_pb2.VertexAiResourceConfig,
         gigl_resource_config_pb2.KFPResourceConfig,
+        gigl_resource_config_pb2.VertexAiGraphStoreConfig,
     ] = wrapper.trainer_config
 
     if isinstance(trainer_config, gigl_resource_config_pb2.LocalResourceConfig):
@@ -152,9 +153,20 @@ def check_if_trainer_resource_config_valid(
     else:
         # Case where trainer config is gigl_resource_config_pb2.VertexAiResourceConfig or gigl_resource_config_pb2.KFPResourceConfig
         if isinstance(trainer_config, gigl_resource_config_pb2.VertexAiResourceConfig):
-            assert_proto_field_value_is_truthy(
-                proto=trainer_config, field_name="machine_type"
+            _validate_vertex_ai_resource_config(
+                vertex_ai_resource_config_pb=trainer_config
             )
+        elif isinstance(
+            trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
+        ):
+            _validate_vertex_ai_resource_config(
+                vertex_ai_resource_config_pb=trainer_config.graph_store_pool
+            )
+            _validate_accelerator_type(proto_config=trainer_config.graph_store_pool)
+            _validate_vertex_ai_resource_config(
+                vertex_ai_resource_config_pb=trainer_config.compute_pool
+            )
+            _validate_accelerator_type(proto_config=trainer_config.compute_pool)
         elif isinstance(trainer_config, gigl_resource_config_pb2.KFPResourceConfig):
             for field in [
                 "cpu_request",
@@ -165,28 +177,23 @@ def check_if_trainer_resource_config_valid(
                 )
         else:
             raise ValueError(
-                f"""Expected distributed trainer config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__}, 
-                {gigl_resource_config_pb2.VertexAiResourceConfig.__name__}, 
-                or {gigl_resource_config_pb2.KFPResourceConfig.__name__}. 
+                f"""Expected distributed trainer config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__},
+                {gigl_resource_config_pb2.VertexAiResourceConfig.__name__},
+                or {gigl_resource_config_pb2.KFPResourceConfig.__name__}.
                 Got {type(trainer_config)}"""
             )
 
-        for field in [
-            "gpu_type",
-            "num_replicas",
-        ]:
-            assert_proto_field_value_is_truthy(proto=trainer_config, field_name=field)
-
-        if trainer_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:  # type: ignore
-            assert (
-                trainer_config.gpu_limit == 0
-            ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {trainer_config.gpu_type}. 
-                Got gpu_limit {trainer_config.gpu_limit}"""
-        else:
-            assert (
-                trainer_config.gpu_limit > 0
-            ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {trainer_config.gpu_type}. 
-                Got gpu_limit {trainer_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""  # type: ignore
+        if not isinstance(
+            trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
+        ):
+            _validate_accelerator_type(proto_config=trainer_config)
+            for field in [
+                "gpu_type",
+                "num_replicas",
+            ]:
+                assert_proto_field_value_is_truthy(
+                    proto=trainer_config, field_name=field
+                )
 
 
 def check_if_inferencer_resource_config_valid(
@@ -216,12 +223,12 @@ def check_if_inferencer_resource_config_valid(
         if inferencer_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:  # type: ignore
             assert (
                 inferencer_config.gpu_limit == 0
-            ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {inferencer_config.gpu_type}. 
+            ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {inferencer_config.gpu_type}.
                 Got gpu_limit {inferencer_config.gpu_limit}"""
         else:
             assert (
                 inferencer_config.gpu_limit > 0
-            ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {inferencer_config.gpu_type}. 
+            ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {inferencer_config.gpu_type}.
                 Got gpu_limit {inferencer_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""  # type: ignore
     elif isinstance(inferencer_config, gigl_resource_config_pb2.LocalResourceConfig):
         assert_proto_field_value_is_truthy(
@@ -229,8 +236,40 @@ def check_if_inferencer_resource_config_valid(
         )
     else:
         raise ValueError(
-            f"""Expected inferencer config to be one of {gigl_resource_config_pb2.DataflowResourceConfig.__name__}, 
-            {gigl_resource_config_pb2.VertexAiResourceConfig.__name__}, 
-            or {gigl_resource_config_pb2.LocalResourceConfig.__name__}. 
+            f"""Expected inferencer config to be one of {gigl_resource_config_pb2.DataflowResourceConfig.__name__},
+            {gigl_resource_config_pb2.VertexAiResourceConfig.__name__},
+            or {gigl_resource_config_pb2.LocalResourceConfig.__name__}.
             Got {type(inferencer_config)}"""
         )
+
+
+def _validate_vertex_ai_resource_config(
+    vertex_ai_resource_config_pb: gigl_resource_config_pb2.VertexAiResourceConfig,
+) -> None:
+    """
+    Checks if the provided Vertex AI resource configuration is valid.
+    """
+    assert_proto_field_value_is_truthy(
+        proto=vertex_ai_resource_config_pb, field_name="machine_type"
+    )
+
+
+def _validate_accelerator_type(
+    proto_config: Union[
+        gigl_resource_config_pb2.VertexAiResourceConfig,
+        gigl_resource_config_pb2.KFPResourceConfig,
+    ],
+) -> None:
+    """
+    Checks if the provided accelerator type is valid.
+    """
+    if proto_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:  # type: ignore
+        assert (
+            proto_config.gpu_limit == 0
+        ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {proto_config.gpu_type}.
+            Got gpu_limit {proto_config.gpu_limit}"""
+    else:
+        assert (
+            proto_config.gpu_limit > 0
+        ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {proto_config.gpu_type}.
+            Got gpu_limit {proto_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""  # type: ignore
