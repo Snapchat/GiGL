@@ -19,6 +19,7 @@ Example usage:
 
 import argparse
 import json
+import os
 import tempfile
 from typing import Final, Iterator
 
@@ -187,35 +188,50 @@ def load_gowalla_to_bigquery(
     ) as tmp_jsonl:
         tmp_jsonl_path = tmp_jsonl.name
 
-    edge_count, user_count = convert_edges_to_jsonl(tmp_data_path, tmp_jsonl_path)
+    try:
+        edge_count, user_count = convert_edges_to_jsonl(tmp_data_path, tmp_jsonl_path)
 
-    logger.info(
-        f"Loading {edge_count} edges from {user_count} users to BigQuery table {bq_path}"
-    )
+        logger.info(
+            f"Loading {edge_count} edges from {user_count} users to BigQuery table {bq_path}"
+        )
 
-    # Load the JSONL file to BigQuery
-    job_config = bigquery.LoadJobConfig(
-        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        schema=schema,
-    )
+        # Load the JSONL file to BigQuery
+        job_config = bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            schema=schema,
+        )
 
-    bq_utils.load_file_to_bq(
-        source_path=UriFactory.create_uri(tmp_jsonl_path),
-        bq_path=bq_path,
-        job_config=job_config,
-        retry=True,
-    )
+        bq_utils.load_file_to_bq(
+            source_path=UriFactory.create_uri(tmp_jsonl_path),
+            bq_path=bq_path,
+            job_config=job_config,
+            retry=True,
+        )
 
-    logger.info(f"Successfully loaded Gowalla data to {bq_path}")
-    logger.info(f"Total edges: {edge_count}")
-    logger.info(f"Total unique users: {user_count}")
+        logger.info(f"Successfully loaded Gowalla data to {bq_path}")
+        logger.info(f"Total edges: {edge_count}")
+        logger.info(f"Total unique users: {user_count}")
 
-    # Verify the load
-    actual_row_count = bq_utils.count_number_of_rows_in_bq_table(
-        bq_table=bq_path, labels={}
-    )
-    logger.info(f"Verified row count in BigQuery: {actual_row_count}")
+        # Verify the load
+        actual_row_count = bq_utils.count_number_of_rows_in_bq_table(
+            bq_table=bq_path, labels={}
+        )
+        logger.info(f"Verified row count in BigQuery: {actual_row_count}")
+
+    finally:
+        # Clean up temporary files
+        try:
+            os.unlink(tmp_data_path)
+            logger.info(f"Cleaned up temporary file: {tmp_data_path}")
+        except Exception as e:
+            logger.warning(f"Failed to delete temp file {tmp_data_path}: {e}")
+
+        try:
+            os.unlink(tmp_jsonl_path)
+            logger.info(f"Cleaned up temporary file: {tmp_jsonl_path}")
+        except Exception as e:
+            logger.warning(f"Failed to delete temp file {tmp_jsonl_path}: {e}")
 
 
 def main():
