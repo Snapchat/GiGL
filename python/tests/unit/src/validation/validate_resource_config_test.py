@@ -54,6 +54,7 @@ class TestResourceConfigValidation(unittest.TestCase):
     )
     def test_resource_config_validation_with_real_configs(
         self,
+        _,
         resource_config_uri: Uri,
         task_config_uri: Uri,
         expected_exception: Optional[Type[Exception]] = None,
