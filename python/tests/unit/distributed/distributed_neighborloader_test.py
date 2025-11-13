@@ -32,10 +32,7 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_homogeneous,
 )
-from gigl.utils.data_splitters import (
-    DistHashedNodeAnchorLinkSplitter,
-    DistHashedNodeSplitter,
-)
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
@@ -421,7 +418,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
-        splitter = DistHashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
 
@@ -553,7 +550,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
-        splitter = DistHashedNodeSplitter()
+        splitter = DistNodeSplitter()
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,

@@ -11,8 +11,8 @@ from torch.testing import assert_close
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
 from gigl.utils.data_splitters import (
-    DistHashedNodeAnchorLinkSplitter,
-    DistHashedNodeSplitter,
+    DistNodeAnchorLinkSplitter,
+    DistNodeSplitter,
     _assert_valid_split_ratios,
     _check_edge_index,
     _fast_hash,
@@ -48,7 +48,7 @@ def _run_splitter_distributed(
     init_method: str,
     tensors: list[torch.Tensor],
     expected: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    splitter: Union[DistHashedNodeSplitter, DistHashedNodeAnchorLinkSplitter],
+    splitter: Union[DistNodeSplitter, DistNodeAnchorLinkSplitter],
 ):
     """Run the splitter in a distributed setting and check the results.
     Args:
@@ -57,7 +57,7 @@ def _run_splitter_distributed(
         init_method (str): The method to initialize the process group.
         tensors (list[torch.Tensor]): List of edge tensors for each process.
         expected (list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]): Expected train, val, test splits for each process.
-        splitter (Union[DistHashedNodeSplitter, DistHashedNodeAnchorLinkSplitter]): The splitter to use for the distributed test
+        splitter (Union[DistNodeSplitter, DistNodeAnchorLinkSplitter]): The splitter to use for the distributed test
     """
     torch.distributed.init_process_group(
         rank=process_num, world_size=world_size, init_method=init_method
@@ -200,7 +200,7 @@ class TestDataSplitters(unittest.TestCase):
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
-        splitter = DistHashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
             hash_function=_IdentityHash(),
             num_val=val_num,
@@ -419,7 +419,7 @@ class TestDataSplitters(unittest.TestCase):
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
 
-        splitter = DistHashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in",
             hash_function=_IdentityHash(),
             num_val=val_num,
@@ -443,7 +443,7 @@ class TestDataSplitters(unittest.TestCase):
 
     def test_node_based_link_splitter_parallelized(self):
         init_method = get_process_group_init_method()
-        splitter = DistHashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="out",
             should_convert_labels_to_edges=False,
             hash_function=_IdentityHash(),
@@ -470,7 +470,7 @@ class TestDataSplitters(unittest.TestCase):
         ]
         # We need to guarantee that a given node id is always selected into the same split, on every rank.
         # _run_splitter_distributed uses the identity hash function, so we can reason about hash values easily.
-        # The way DistHashedNodeAnchorLinkSplitter works here is that it hashes the source node ids for each edge, and then splits them into train, val, test based on the hash value.
+        # The way DistNodeAnchorLinkSplitter works here is that it hashes the source node ids for each edge, and then splits them into train, val, test based on the hash value.
         # The splitting is done by first normalizing the hash values to [0, 1], and then selecting the train, val, test splits based on the provided percentages.
         # e.g. test = normalized_hash_value >= (1 - test_percentage)
 
@@ -510,7 +510,7 @@ class TestDataSplitters(unittest.TestCase):
 
     def test_node_based_splitter_parallelized(self):
         init_method = get_process_group_init_method()
-        splitter = DistHashedNodeSplitter(hash_function=_IdentityHash())
+        splitter = DistNodeSplitter(hash_function=_IdentityHash())
         nodes = [
             torch.arange(0, 20, dtype=torch.int64),
             torch.arange(0, 10, dtype=torch.int64),
@@ -518,7 +518,7 @@ class TestDataSplitters(unittest.TestCase):
         ]
         # We need to guarantee that a given node id is always selected into the same split, on every rank.
         # _run_splitter_distributed uses the identity hash function, so we can reason about hash values easily.
-        # The way DistHashedNodeSplitter works is that it hashes the node ids, and then splits them into train, val, test based on the hash value.
+        # The way DistNodeSplitter works is that it hashes the node ids, and then splits them into train, val, test based on the hash value.
         # The splitting is done by first normalizing the hash values to [0, 1], and then selecting the train, val, test splits based on the provided percentages.
         # e.g. test = normalized_hash_value >= (1 - test_percentage)
 
@@ -585,7 +585,7 @@ class TestDataSplitters(unittest.TestCase):
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
         with self.assertRaises(ValueError):
-            splitter = DistHashedNodeAnchorLinkSplitter(
+            splitter = DistNodeAnchorLinkSplitter(
                 sampling_direction="in",
                 supervision_edge_types=edge_types_to_split,
                 should_convert_labels_to_edges=False,
@@ -626,7 +626,7 @@ class TestDataSplitters(unittest.TestCase):
                 torch.zeros(20, dtype=torch.int64),
             ]
         )
-        splitter = DistHashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="out",
             should_convert_labels_to_edges=False,
         )
@@ -824,7 +824,7 @@ class TestDataSplitters(unittest.TestCase):
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
-        splitter = DistHashedNodeSplitter(
+        splitter = DistNodeSplitter(
             hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
@@ -925,7 +925,7 @@ class TestDataSplitters(unittest.TestCase):
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
 
-        splitter = DistHashedNodeSplitter(
+        splitter = DistNodeSplitter(
             hash_function=_IdentityHash(),
             num_val=val_num,
             num_test=test_num,
@@ -946,7 +946,7 @@ class TestDataSplitters(unittest.TestCase):
 
     def test_hashed_node_splitter_requires_process_group(self):
         node_ids = torch.arange(10, dtype=torch.int64)
-        splitter = DistHashedNodeSplitter()
+        splitter = DistNodeSplitter()
         with self.assertRaises(RuntimeError):
             splitter(node_ids)
 
@@ -970,7 +970,7 @@ class TestDataSplitters(unittest.TestCase):
         torch.distributed.init_process_group(
             rank=0, world_size=1, init_method=get_process_group_init_method()
         )
-        splitter = DistHashedNodeSplitter()
+        splitter = DistNodeSplitter()
         with self.assertRaises(ValueError):
             splitter(node_ids)
 
