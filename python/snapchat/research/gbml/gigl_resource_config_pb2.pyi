@@ -321,18 +321,21 @@ class VertexAiGraphStoreConfig(google.protobuf.message.Message):
 
     GRAPH_STORE_POOL_FIELD_NUMBER: builtins.int
     COMPUTE_POOL_FIELD_NUMBER: builtins.int
+    NUM_PROCESSES_PER_COMPUTE_MACHINE_FIELD_NUMBER: builtins.int
     @property
     def graph_store_pool(self) -> global___VertexAiResourceConfig: ...
     @property
     def compute_pool(self) -> global___VertexAiResourceConfig: ...
+    num_processes_per_compute_machine: builtins.int
     def __init__(
         self,
         *,
         graph_store_pool: global___VertexAiResourceConfig | None = ...,
         compute_pool: global___VertexAiResourceConfig | None = ...,
+        num_processes_per_compute_machine: builtins.int = ...,
     ) -> None: ...
     def HasField(self, field_name: typing_extensions.Literal["compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing_extensions.Literal["compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool", "num_processes_per_compute_machine", b"num_processes_per_compute_machine"]) -> None: ...
 
 global___VertexAiGraphStoreConfig = VertexAiGraphStoreConfig
 

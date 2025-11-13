@@ -1,6 +1,11 @@
 """Information about distributed environments."""
 
 from dataclasses import dataclass
+from typing import Final
+
+GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME: Final[
+    str
+] = "GRAPH_STORE_PROCESSES_PER_COMPUTE"
 
 
 @dataclass(frozen=True)
@@ -25,8 +30,6 @@ class DistributedContext:
 class GraphStoreInfo:
     """Information about a graph store cluster."""
 
-    # Number of nodes in the whole cluster
-    num_cluster_nodes: int
     # Number of nodes in the storage cluster
     num_storage_nodes: int
     # Number of nodes in the compute cluster
@@ -45,3 +48,16 @@ class GraphStoreInfo:
     storage_cluster_master_port: int
     # Port of the master node for the compute cluster
     compute_cluster_master_port: int
+
+    # Number of processes per compute machine
+    # See documentation on the VertexAiGraphStoreConfig message for more details.
+    # https://snapchat.github.io/GiGL/docs/api/snapchat/research/gbml/gigl_resource_config_pb2/index.html#snapchat.research.gbml.gigl_resource_config_pb2.VertexAiGraphStoreConfig
+    num_processes_per_compute: int
+
+    @property
+    def num_cluster_nodes(self) -> int:
+        return self.num_storage_nodes + self.num_compute_nodes
+
+    @property
+    def compute_cluster_world_size(self) -> int:
+        return self.num_compute_nodes * self.num_processes_per_compute

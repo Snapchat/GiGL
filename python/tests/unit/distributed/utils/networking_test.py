@@ -18,7 +18,10 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_internal_ip_from_node,
 )
-from gigl.env.distributed import GraphStoreInfo
+from gigl.env.distributed import (
+    GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME,
+    GraphStoreInfo,
+)
 from tests.test_assets.distributed.utils import get_process_group_init_method
 
 
@@ -340,6 +343,7 @@ def _test_get_graph_store_info_in_dist_context(
             "CLUSTER_SPEC": json.dumps(
                 _get_cluster_spec_for_test(worker_pool_sizes, worker_pool, index)
             ),
+            GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME: str(4),
         },
         clear=False,
     ):
@@ -402,6 +406,14 @@ def _test_get_graph_store_info_in_dist_context(
                 graph_store_info.compute_cluster_master_port > 0
             ), "Compute cluster master port should be positive"
 
+            # Verify number of processes per compute
+            assert (
+                graph_store_info.num_processes_per_compute == 4
+            ), "Number of processes per compute should be 4"
+
+            assert (
+                graph_store_info.compute_cluster_world_size == compute_nodes * 4
+            ), "Compute cluster world size should be the number of compute nodes times the number of processes per compute"
             # Verify all ranks get the same result (since they should all get the same broadcasted values)
             gathered_info: list[Optional[GraphStoreInfo]] = [None] * world_size
             dist.all_gather_object(gathered_info, graph_store_info)
