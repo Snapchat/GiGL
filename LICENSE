@@ -39,3 +39,9 @@ Wang, K., Shen, Z., Huang, C., Wu, C. H., Dong, Y., & Kanakia, A. (2020). Micros
 License: Open Data Commons Attribution License (ODC-BY)
 Project Link:
 https://ogb.stanford.edu/docs/lsc/mag240m/
+Neural Graph Collaborative Filtering Dataset
+Collected in the paper "Neural Graph Collaborative Filtering"
+License: MIT
+Project Link:
+https://github.com/xiangwang1223/neural_graph_collaborative_filtering
+
