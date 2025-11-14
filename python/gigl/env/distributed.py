@@ -3,9 +3,9 @@
 from dataclasses import dataclass
 from typing import Final
 
-GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME: Final[
+COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: Final[
     str
-] = "GRAPH_STORE_PROCESSES_PER_COMPUTE"
+] = "COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"
 
 
 @dataclass(frozen=True)

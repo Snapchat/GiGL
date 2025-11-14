@@ -19,7 +19,7 @@ from gigl.distributed.utils import (
     get_internal_ip_from_node,
 )
 from gigl.env.distributed import (
-    GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME,
+    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
 )
 from tests.test_assets.distributed.utils import get_process_group_init_method
@@ -343,7 +343,7 @@ def _test_get_graph_store_info_in_dist_context(
             "CLUSTER_SPEC": json.dumps(
                 _get_cluster_spec_for_test(worker_pool_sizes, worker_pool, index)
             ),
-            GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME: str(4),
+            COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(4),
         },
         clear=False,
     ):

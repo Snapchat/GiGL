@@ -11,12 +11,17 @@ package snapchat.research.gbml.gigl_resource_config
   * This cluster setup should be used when you want store your graph on separate machines from the compute machines
   * e.g. you can get lots of big memory machines and separate gpu machines individually,
   * but getting lots of gpu machines with lots of memory is challenging.
+  *
+  * @param computeClusterLocalWorldSize
+  *   Number of sampling processes per compute machine
+  *   If unset, and accelerators are available, will use the number of accelerators per machine.
+  *   If unset, and no accelerators are available, will use 1.
   */
 @SerialVersionUID(0L)
 final case class VertexAiGraphStoreConfig(
     graphStorePool: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = _root_.scala.None,
     computePool: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = _root_.scala.None,
-    numProcessesPerComputeMachine: _root_.scala.Int = 0,
+    computeClusterLocalWorldSize: _root_.scala.Int = 0,
     unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
     ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[VertexAiGraphStoreConfig] {
     @transient
@@ -33,7 +38,7 @@ final case class VertexAiGraphStoreConfig(
       };
 
       {
-        val __value = numProcessesPerComputeMachine
+        val __value = computeClusterLocalWorldSize
         if (__value != 0) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeInt32Size(3, __value)
         }
@@ -64,7 +69,7 @@ final case class VertexAiGraphStoreConfig(
         __m.writeTo(_output__)
       };
       {
-        val __v = numProcessesPerComputeMachine
+        val __v = computeClusterLocalWorldSize
         if (__v != 0) {
           _output__.writeInt32(3, __v)
         }
@@ -77,7 +82,7 @@ final case class VertexAiGraphStoreConfig(
     def getComputePool: snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig = computePool.getOrElse(snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig.defaultInstance)
     def clearComputePool: VertexAiGraphStoreConfig = copy(computePool = _root_.scala.None)
     def withComputePool(__v: snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig): VertexAiGraphStoreConfig = copy(computePool = Option(__v))
-    def withNumProcessesPerComputeMachine(__v: _root_.scala.Int): VertexAiGraphStoreConfig = copy(numProcessesPerComputeMachine = __v)
+    def withComputeClusterLocalWorldSize(__v: _root_.scala.Int): VertexAiGraphStoreConfig = copy(computeClusterLocalWorldSize = __v)
     def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
     def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
     def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -85,7 +90,7 @@ final case class VertexAiGraphStoreConfig(
         case 1 => graphStorePool.orNull
         case 2 => computePool.orNull
         case 3 => {
-          val __t = numProcessesPerComputeMachine
+          val __t = computeClusterLocalWorldSize
           if (__t != 0) __t else null
         }
       }
@@ -95,7 +100,7 @@ final case class VertexAiGraphStoreConfig(
       (__field.number: @_root_.scala.unchecked) match {
         case 1 => graphStorePool.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
         case 2 => computePool.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
-        case 3 => _root_.scalapb.descriptors.PInt(numProcessesPerComputeMachine)
+        case 3 => _root_.scalapb.descriptors.PInt(computeClusterLocalWorldSize)
       }
     }
     def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -108,7 +113,7 @@ object VertexAiGraphStoreConfig extends scalapb.GeneratedMessageCompanion[snapch
   def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig = {
     var __graphStorePool: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = _root_.scala.None
     var __computePool: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = _root_.scala.None
-    var __numProcessesPerComputeMachine: _root_.scala.Int = 0
+    var __computeClusterLocalWorldSize: _root_.scala.Int = 0
     var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
     var _done__ = false
     while (!_done__) {
@@ -120,7 +125,7 @@ object VertexAiGraphStoreConfig extends scalapb.GeneratedMessageCompanion[snapch
         case 18 =>
           __computePool = Option(__computePool.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
         case 24 =>
-          __numProcessesPerComputeMachine = _input__.readInt32()
+          __computeClusterLocalWorldSize = _input__.readInt32()
         case tag =>
           if (_unknownFields__ == null) {
             _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -131,7 +136,7 @@ object VertexAiGraphStoreConfig extends scalapb.GeneratedMessageCompanion[snapch
     snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig(
         graphStorePool = __graphStorePool,
         computePool = __computePool,
-        numProcessesPerComputeMachine = __numProcessesPerComputeMachine,
+        computeClusterLocalWorldSize = __computeClusterLocalWorldSize,
         unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
     )
   }
@@ -141,7 +146,7 @@ object VertexAiGraphStoreConfig extends scalapb.GeneratedMessageCompanion[snapch
       snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig(
         graphStorePool = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig]]),
         computePool = __fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig]]),
-        numProcessesPerComputeMachine = __fieldsMap.get(scalaDescriptor.findFieldByNumber(3).get).map(_.as[_root_.scala.Int]).getOrElse(0)
+        computeClusterLocalWorldSize = __fieldsMap.get(scalaDescriptor.findFieldByNumber(3).get).map(_.as[_root_.scala.Int]).getOrElse(0)
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
@@ -160,26 +165,26 @@ object VertexAiGraphStoreConfig extends scalapb.GeneratedMessageCompanion[snapch
   lazy val defaultInstance = snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig(
     graphStorePool = _root_.scala.None,
     computePool = _root_.scala.None,
-    numProcessesPerComputeMachine = 0
+    computeClusterLocalWorldSize = 0
   )
   implicit class VertexAiGraphStoreConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig](_l) {
     def graphStorePool: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = field(_.getGraphStorePool)((c_, f_) => c_.copy(graphStorePool = Option(f_)))
     def optionalGraphStorePool: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig]] = field(_.graphStorePool)((c_, f_) => c_.copy(graphStorePool = f_))
     def computePool: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = field(_.getComputePool)((c_, f_) => c_.copy(computePool = Option(f_)))
     def optionalComputePool: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig]] = field(_.computePool)((c_, f_) => c_.copy(computePool = f_))
-    def numProcessesPerComputeMachine: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.numProcessesPerComputeMachine)((c_, f_) => c_.copy(numProcessesPerComputeMachine = f_))
+    def computeClusterLocalWorldSize: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.computeClusterLocalWorldSize)((c_, f_) => c_.copy(computeClusterLocalWorldSize = f_))
   }
   final val GRAPH_STORE_POOL_FIELD_NUMBER = 1
   final val COMPUTE_POOL_FIELD_NUMBER = 2
-  final val NUM_PROCESSES_PER_COMPUTE_MACHINE_FIELD_NUMBER = 3
+  final val COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_FIELD_NUMBER = 3
   def of(
     graphStorePool: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig],
     computePool: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig],
-    numProcessesPerComputeMachine: _root_.scala.Int
+    computeClusterLocalWorldSize: _root_.scala.Int
   ): _root_.snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig = _root_.snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig(
     graphStorePool,
     computePool,
-    numProcessesPerComputeMachine
+    computeClusterLocalWorldSize
   )
   // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.VertexAiGraphStoreConfig])
 }
