@@ -26,19 +26,19 @@ from typing import Final, Iterator
 import google.cloud.bigquery as bigquery
 import requests
 
-from gigl.common import LocalUri, UriFactory
+from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.src.common.utils.bq import BqUtils
 
 logger = Logger()
 
 # Default URLs for the gowalla dataset files
-DEFAULT_TRAIN_URL: Final[str] = (
-    "https://raw.githubusercontent.com/xiangwang1223/neural_graph_collaborative_filtering/master/Data/gowalla/train.txt"
-)
-DEFAULT_TEST_URL: Final[str] = (
-    "https://raw.githubusercontent.com/xiangwang1223/neural_graph_collaborative_filtering/master/Data/gowalla/test.txt"
-)
+DEFAULT_TRAIN_URL: Final[
+    str
+] = "https://raw.githubusercontent.com/xiangwang1223/neural_graph_collaborative_filtering/master/Data/gowalla/train.txt"
+DEFAULT_TEST_URL: Final[
+    str
+] = "https://raw.githubusercontent.com/xiangwang1223/neural_graph_collaborative_filtering/master/Data/gowalla/test.txt"
 
 # Default column names for the edge table
 DEFAULT_SRC_COLUMN: Final[str] = "from_user_id"
@@ -299,6 +299,7 @@ def main():
         dst_column=args.dst_column,
         recreate_table=not args.no_recreate_table,
     )
+
 
 if __name__ == "__main__":
     main()
