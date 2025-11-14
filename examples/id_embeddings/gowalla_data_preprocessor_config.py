@@ -299,9 +299,5 @@ def get_gowalla_preprocessor_config(edge_table: str, **kwargs: Any) -> GowallaDa
     Returns:
         GowallaDataPreprocessorConfig: Configured preprocessor instance
 
-    Example:
-        >>> config = get_gowalla_preprocessor_config(
-        ...     edge_table="snap-umap-dev.gigl_temp_assets.swong3_gowalla_user_to_item_edge_table"
-        ... )
     """
     return GowallaDataPreprocessorConfig(edge_table=edge_table, **kwargs)
