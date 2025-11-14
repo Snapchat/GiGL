@@ -156,6 +156,7 @@ def check_if_trainer_resource_config_valid(
             _validate_vertex_ai_resource_config(
                 vertex_ai_resource_config_pb=trainer_config
             )
+            _validate_accelerator_type(proto_config=trainer_config)
         elif isinstance(
             trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
         ):
@@ -239,6 +240,7 @@ def check_if_inferencer_resource_config_valid(
             f"""Expected inferencer config to be one of {gigl_resource_config_pb2.DataflowResourceConfig.__name__},
             {gigl_resource_config_pb2.VertexAiResourceConfig.__name__},
             or {gigl_resource_config_pb2.LocalResourceConfig.__name__}.
+            or {gigl_resource_config_pb2.VertexAiGraphStoreConfig.__name__}.
             Got {type(inferencer_config)}"""
         )
 
@@ -266,10 +268,10 @@ def _validate_accelerator_type(
     if proto_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:  # type: ignore
         assert (
             proto_config.gpu_limit == 0
-        ), f"""gpu_limit must be equal to 0 for cpu training, indicated by provided gpu_type {proto_config.gpu_type}.
+        ), f"""gpu_limit must be equal to 0 for cpu training/inference, indicated by provided gpu_type {proto_config.gpu_type}.
             Got gpu_limit {proto_config.gpu_limit}"""
     else:
         assert (
             proto_config.gpu_limit > 0
-        ), f"""gpu_limit must be greater than 0 for gpu training, indicated by provided gpu_type {proto_config.gpu_type}.
+        ), f"""gpu_limit must be greater than 0 for gpu training/inference, indicated by provided gpu_type {proto_config.gpu_type}.
             Got gpu_limit {proto_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""  # type: ignore
