@@ -363,6 +363,11 @@ class VertexAIService:
         if labels:
             logger.info(f"Associated run {job.resource_name} with labels: {labels}")
 
+        # For whatever reason VAI stopped logging run URLS...
+        logger.info(
+            f"See run at: {VertexAIService.get_pipeline_run_url(self._project, self._location, job.name)}"
+        )
+
         return job
 
     def get_pipeline_job_from_job_name(self, job_name: str) -> aiplatform.PipelineJob:
