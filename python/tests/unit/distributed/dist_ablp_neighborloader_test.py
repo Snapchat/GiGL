@@ -11,7 +11,6 @@ from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
-from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -36,9 +35,12 @@ from gigl.types.graph import (
     to_homogeneous,
 )
 from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
+from tests.test_assets.distributed.run_distributed_dataset import (
+    build_dataset_for_testing,
+)
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
-    get_process_group_init_method,
+    create_test_process_group,
 )
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -60,7 +62,6 @@ _A_LINK_B = EdgeType(_A, _LINK, _B)
 _B_TO_A = EdgeType(_B, _TO, _A)
 _C_TO_A = EdgeType(_C, _TO, _A)
 
-# TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
 
 # GLT requires subclasses of DistNeighborLoader to be run in a separate process. Otherwise, we may run into segmentation fault
 # or other memory issues. Calling these functions in separate proceses also allows us to use shutdown_rpc() to ensure cleanup of
@@ -126,9 +127,7 @@ def _run_distributed_ablp_neighbor_loader(
     input_nodes = torch.tensor([10, 15])
     batch_size = 2
 
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -176,9 +175,7 @@ def _run_cora_supervised(
     dataset: DistDataset,
     expected_data_count: int,
 ):
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -202,7 +199,6 @@ def _run_cora_supervised(
 def _run_dblp_supervised(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     supervision_edge_types: list[EdgeType],
 ):
     assert (
@@ -215,13 +211,11 @@ def _run_dblp_supervised(
     assert isinstance(dataset.graph, dict)
     fanout = [2, 2]
     num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
         input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         supervision_edge_type=supervision_edge_type,
         pin_memory_device=torch.device("cpu"),
     )
@@ -245,7 +239,6 @@ def _run_dblp_supervised(
 def _run_toy_heterogeneous_ablp(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     supervision_edge_types: list[EdgeType],
     fanout: Union[list[int], dict[EdgeType, list[int]]],
 ):
@@ -263,13 +256,11 @@ def _run_toy_heterogeneous_ablp(
     all_positive_supervision_nodes, all_anchor_nodes, _, _ = dataset.graph[
         labeled_edge_type
     ].topo.to_coo()
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=fanout,
         input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         supervision_edge_type=supervision_edge_type,
         # We set the batch size to the number of "user" nodes in the heterogeneous toy graph to guarantee that the dataloader completes an epoch in 1 batch
         batch_size=15,
@@ -330,9 +321,7 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 ):
     batch_size = 1
 
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -428,17 +417,6 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 
 
 class DistABLPLoaderTest(unittest.TestCase):
-    def setUp(self):
-        self._master_ip_address = "localhost"
-        self._world_size = 1
-        self._num_rpc_threads = 4
-
-        self._context = DistributedContext(
-            main_worker_ip_address=self._master_ip_address,
-            global_rank=0,
-            global_world_size=self._world_size,
-        )
-
     def tearDown(self):
         if torch.distributed.is_initialized():
             print("Destroying process group")
@@ -550,31 +528,37 @@ class DistABLPLoaderTest(unittest.TestCase):
         )
 
     def test_cora_supervised(self):
+        create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
 
-        gbml_config_pb_wrapper = (
-            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
-            )
-        )
+        # gbml_config_pb_wrapper = (
+        #     GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        #         gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+        #     )
+        # )
 
-        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
-        )
+        # serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+        #     preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+        #     graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        #     tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        # )
 
         splitter = HashedNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
 
-        dataset = build_dataset(
-            serialized_graph_metadata=serialized_graph_metadata,
-            distributed_context=self._context,
-            sample_edge_direction="in",
+        # dataset = build_dataset(
+        #     serialized_graph_metadata=serialized_graph_metadata,
+        #     sample_edge_direction="in",
+        #     splitter=splitter,
+        # )
+        dataset = build_dataset_for_testing(
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
+            edge_dir="in",
             splitter=splitter,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
         assert dataset.train_node_ids is not None, "Train node ids must exist."
@@ -592,6 +576,7 @@ class DistABLPLoaderTest(unittest.TestCase):
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_dblp_supervised(self):
+        create_test_process_group()
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -620,7 +605,6 @@ class DistABLPLoaderTest(unittest.TestCase):
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
-            distributed_context=self._context,
             sample_edge_direction="in",
             _ssl_positive_label_percentage=0.1,
             splitter=splitter,
@@ -628,7 +612,7 @@ class DistABLPLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_dblp_supervised,
-            args=(dataset, self._context, supervision_edge_types),
+            args=(dataset, supervision_edge_types),
         )
 
     @parameterized.expand(
@@ -665,6 +649,7 @@ class DistABLPLoaderTest(unittest.TestCase):
         partitioner_class: type[DistPartitioner],
         fanout: Union[list[int], dict[EdgeType, list[int]]],
     ):
+        create_test_process_group()
         toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[
             HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -675,11 +660,11 @@ class DistABLPLoaderTest(unittest.TestCase):
             )
         )
 
-        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
-        )
+        # serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+        #     preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+        #     graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        #     tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        # )
 
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
@@ -691,18 +676,25 @@ class DistABLPLoaderTest(unittest.TestCase):
             should_convert_labels_to_edges=True,
         )
 
-        dataset = build_dataset(
-            serialized_graph_metadata=serialized_graph_metadata,
-            distributed_context=self._context,
-            sample_edge_direction="in",
-            _ssl_positive_label_percentage=0.1,
+        # dataset = build_dataset(
+        #     serialized_graph_metadata=serialized_graph_metadata,
+        #     sample_edge_direction="in",
+        #     _ssl_positive_label_percentage=0.1,
+        #     splitter=splitter,
+        #     partitioner_class=partitioner_class,
+        # )
+
+        dataset = build_dataset_for_testing(
+            task_config_uri=toy_heterogeneous_supervised_info.frozen_gbml_config_uri,
+            edge_dir="in",
             splitter=splitter,
             partitioner_class=partitioner_class,
+            ssl_positive_label_percentage=0.1,
         )
 
         mp.spawn(
             fn=_run_toy_heterogeneous_ablp,
-            args=(dataset, self._context, supervision_edge_types, fanout),
+            args=(dataset, supervision_edge_types, fanout),
         )
 
     @parameterized.expand(
@@ -1007,9 +999,7 @@ class DistABLPLoaderTest(unittest.TestCase):
         expected_error_message: str,
         **kwargs,
     ):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         with self.assertRaises(expected_error, msg=expected_error_message):
             DistABLPLoader(**kwargs)
 

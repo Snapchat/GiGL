@@ -1,0 +1,59 @@
+from typing import Optional, Union
+
+import torch
+
+from gigl.common.logger import Logger
+from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.utils.neighborloader import shard_nodes_by_process
+from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureInfo
+
+logger = Logger()
+
+_dataset: Optional[DistDataset] = None
+
+
+def register_dataset(dataset: DistDataset) -> None:
+    global _dataset
+    if _dataset is not None:
+        raise ValueError("Dataset already registered! Cannot register a new dataset.")
+    _dataset = dataset
+
+
+def get_node_feature_info() -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
+    if _dataset is None:
+        raise ValueError(
+            "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
+        )
+    return _dataset.node_feature_info
+
+
+def get_edge_feature_info() -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:
+    if _dataset is None:
+        raise ValueError(
+            "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
+        )
+    return _dataset.edge_feature_info
+
+
+def get_node_ids_for_rank(
+    rank: int, world_size: int, node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE
+) -> torch.Tensor:
+    logger.info(
+        f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
+    )
+    if _dataset is None:
+        raise ValueError(
+            "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
+        )
+    if isinstance(_dataset.node_ids, torch.Tensor):
+        nodes = _dataset.node_ids
+    elif isinstance(_dataset.node_ids, dict):
+        nodes = _dataset.node_ids[node_type]
+    else:
+        raise ValueError(
+            f"Node ids must be a torch.Tensor or a dict[NodeType, torch.Tensor], got {type(_dataset.node_ids)}"
+        )
+    logger.info(f"Sharding nodes {nodes.shape} for rank {rank} / {world_size}")
+    logger.info(f"Nodes: {nodes}")
+    return shard_nodes_by_process(nodes, rank, world_size)

@@ -1,6 +1,7 @@
 """Information about distributed environments."""
 
 from dataclasses import dataclass
+from typing import Final
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,14 @@ class DistributedContext:
     global_world_size: int
 
 
+GRAPH_STORE_PROCESSES_PER_STORAGE_VAR_NAME: Final[
+    str
+] = "GRAPH_STORE_PROCESSES_PER_SERVER"
+GRAPH_STORE_PROCESSES_PER_COMPUTE_VAR_NAME: Final[
+    str
+] = "GRAPH_STORE_PROCESSES_PER_COMPUTE"
+
+
 @dataclass(frozen=True)
 class GraphStoreInfo:
     """Information about a graph store cluster."""
@@ -31,6 +40,11 @@ class GraphStoreInfo:
     num_storage_nodes: int
     # Number of nodes in the compute cluster
     num_compute_nodes: int
+
+    # Number of processes per storage machine
+    num_processes_per_storage: int
+    # Number of processes per compute machine
+    num_processes_per_compute: int
 
     # IP address of the master node for the whole cluster
     cluster_master_ip: str
@@ -45,3 +59,19 @@ class GraphStoreInfo:
     storage_cluster_master_port: int
     # Port of the master node for the compute cluster
     compute_cluster_master_port: int
+
+    @property
+    def storage_world_size(self) -> int:
+        return self.num_storage_nodes * self.num_processes_per_storage
+
+    @property
+    def compute_world_size(self) -> int:
+        return self.num_compute_nodes * self.num_processes_per_compute
+
+    @property
+    def cluster_world_size(self) -> int:
+        return (
+            self.num_cluster_nodes
+            * self.num_processes_per_storage
+            * self.num_processes_per_compute
+        )

@@ -520,6 +520,7 @@ def build_dataset_from_task_config_uri(
         )
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path
+    logger.info(f"Reading GbmlConfig from URI: {task_config_uri}")
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
