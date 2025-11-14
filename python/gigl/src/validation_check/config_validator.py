@@ -6,6 +6,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
@@ -178,6 +179,12 @@ START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP = {
     ],
 }
 
+# Resource config checks to skip when using glt backend
+RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_GLT_BACKEND = [
+    check_if_subgraph_sampler_resource_config_valid,
+    check_if_split_generator_resource_config_valid,
+]
+
 logger = Logger()
 
 
@@ -199,6 +206,10 @@ def kfp_validation_checks(
         uri=task_config_uri, proto_cls=gbml_config_pb2.GbmlConfig
     )
 
+    should_use_glt_backend = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        gbml_config_uri=task_config_uri
+    ).should_use_glt_backend
+
     resource_config_wrapper: GiglResourceConfigWrapper = get_resource_config(
         resource_config_uri=resource_config_uri
     )
@@ -217,6 +228,14 @@ def kfp_validation_checks(
     for asset_check in START_COMPONENT_TO_ASSET_CHECKS_MAP.get(start_at, []):
         asset_check(gbml_config_pb=gbml_config_pb)
     # check if user-provided resource config is valid
+
+    # Skip SGS and split resource config checks when using glt backend
+    resource_config_checks_to_skip = (
+        RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_GLT_BACKEND
+        if should_use_glt_backend
+        else []
+    )
+
     if (
         stop_after is not None
         and (start_at, stop_after) in START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP
@@ -224,12 +243,14 @@ def kfp_validation_checks(
         for resource_config_check in START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP[
             (start_at, stop_after)
         ]:
-            resource_config_check(resource_config_pb=resource_config_pb)
+            if resource_config_check not in resource_config_checks_to_skip:
+                resource_config_check(resource_config_pb=resource_config_pb)
     else:
         for resource_config_check in START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP.get(
             start_at, []
         ):
-            resource_config_check(resource_config_pb=resource_config_pb)
+            if resource_config_check not in resource_config_checks_to_skip:
+                resource_config_check(resource_config_pb=resource_config_pb)
     # check if trained model file exist when skipping training
     if gbml_config_pb.shared_config.should_skip_training == True:
         assert_trained_model_exists(gbml_config_pb=gbml_config_pb)
