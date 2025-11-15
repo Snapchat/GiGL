@@ -658,10 +658,6 @@ class TestInferencerResourceConfig(unittest.TestCase):
             check_if_inferencer_resource_config_valid(config)
 
 
-class TestVertexAiResourceConfigValidation(unittest.TestCase):
-    """Test suite for Vertex AI resource configuration validation helper."""
-
-
 class TestAcceleratorTypeValidation(unittest.TestCase):
     """Test suite for accelerator type validation helper."""
 

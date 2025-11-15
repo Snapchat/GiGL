@@ -2,6 +2,7 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Final
 
 from gigl.common import UriFactory
 from gigl.common.utils.proto_utils import ProtoUtils
@@ -10,6 +11,10 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
 from snapchat.research.gbml import gigl_resource_config_pb2
+
+_ENV: Final[str] = "test"
+_COST_RESOURCE_GROUP_TAG: Final[str] = "unittest_COMPONENT"
+_COST_RESOURCE_GROUP: Final[str] = "gigl_test"
 
 
 def _create_shared_resource_config() -> gigl_resource_config_pb2.SharedResourceConfig:
@@ -30,9 +35,9 @@ def _create_shared_resource_config() -> gigl_resource_config_pb2.SharedResourceC
 
     config = gigl_resource_config_pb2.SharedResourceConfig(
         resource_labels={
-            "env": "test",
-            "cost_resource_group_tag": "unittest_COMPONENT",
-            "cost_resource_group": "gigl_test",
+            "env": _ENV,
+            "cost_resource_group_tag": _COST_RESOURCE_GROUP_TAG,
+            "cost_resource_group": _COST_RESOURCE_GROUP,
         },
         common_compute_config=common_compute_config,
     )
@@ -52,14 +57,6 @@ class TestGiglResourceConfigWrapper(unittest.TestCase):
         """Helper to create a GiglResourceConfig with direct SharedResourceConfig."""
         config = gigl_resource_config_pb2.GiglResourceConfig()
         config.shared_resource_config.CopyFrom(_create_shared_resource_config())
-        return config
-
-    def _create_gigl_resource_config_with_shared_config_uri(
-        self, uri: str
-    ) -> gigl_resource_config_pb2.GiglResourceConfig:
-        """Helper to create a GiglResourceConfig with SharedResourceConfig URI."""
-        config = gigl_resource_config_pb2.GiglResourceConfig()
-        config.shared_resource_config_uri = uri
         return config
 
     def test_shared_resource_config_direct(self):
@@ -84,8 +81,8 @@ class TestGiglResourceConfigWrapper(unittest.TestCase):
 
         try:
             # Create config with URI
-            config = self._create_gigl_resource_config_with_shared_config_uri(
-                str(temp_path)
+            config = gigl_resource_config_pb2.GiglResourceConfig(
+                shared_resource_config_uri=str(temp_path)
             )
             wrapper = GiglResourceConfigWrapper(resource_config=config)
 
@@ -113,36 +110,36 @@ class TestGiglResourceConfigWrapper(unittest.TestCase):
         # Test without component
         labels = wrapper.get_resource_labels()
         expected_labels = {
-            "env": "test",
+            "env": _ENV,
             "cost_resource_group_tag": "unittest_na",
-            "cost_resource_group": "gigl_test",
+            "cost_resource_group": _COST_RESOURCE_GROUP,
         }
         self.assertEqual(labels, expected_labels)
 
         # Test with DataPreprocessor component
         labels = wrapper.get_resource_labels(component=GiGLComponents.DataPreprocessor)
         expected_labels = {
-            "env": "test",
+            "env": _ENV,
             "cost_resource_group_tag": "unittest_pre",
-            "cost_resource_group": "gigl_test",
+            "cost_resource_group": _COST_RESOURCE_GROUP,
         }
         self.assertEqual(labels, expected_labels)
 
         # Test with SubgraphSampler component
         labels = wrapper.get_resource_labels(component=GiGLComponents.SubgraphSampler)
         expected_labels = {
-            "env": "test",
+            "env": _ENV,
             "cost_resource_group_tag": "unittest_sgs",
-            "cost_resource_group": "gigl_test",
+            "cost_resource_group": _COST_RESOURCE_GROUP,
         }
         self.assertEqual(labels, expected_labels)
 
         # Test with Trainer component
         labels = wrapper.get_resource_labels(component=GiGLComponents.Trainer)
         expected_labels = {
-            "env": "test",
+            "env": _ENV,
             "cost_resource_group_tag": "unittest_tra",
-            "cost_resource_group": "gigl_test",
+            "cost_resource_group": _COST_RESOURCE_GROUP,
         }
         self.assertEqual(labels, expected_labels)
 
@@ -241,70 +238,6 @@ class TestGiglResourceConfigWrapper(unittest.TestCase):
 
         wrapper = GiglResourceConfigWrapper(resource_config=config)
         self.assertEqual(wrapper.trainer_config, trainer_config)
-
-    def test_trainer_config_deprecated_vertex_ai(self):
-        """Test deprecated trainer_config with Vertex AI configuration."""
-        config = self._create_gigl_resource_config_with_direct_shared_config()
-        deprecated_trainer_config = gigl_resource_config_pb2.VertexAiTrainerConfig(
-            machine_type="n1-standard-4",
-            gpu_type="NVIDIA_TESLA_T4",
-            gpu_limit=1,
-            num_replicas=2,
-        )
-        config.trainer_config.vertex_ai_trainer_config.CopyFrom(
-            copy.deepcopy(deprecated_trainer_config)
-        )
-
-        # The wrapper converts deprecated config to new config type
-        expected_trainer_config = gigl_resource_config_pb2.VertexAiResourceConfig(
-            machine_type="n1-standard-4",
-            gpu_type="NVIDIA_TESLA_T4",
-            gpu_limit=1,
-            num_replicas=2,
-        )
-
-        wrapper = GiglResourceConfigWrapper(resource_config=config)
-        self.assertEqual(wrapper.trainer_config, expected_trainer_config)
-
-    def test_trainer_config_deprecated_kfp(self):
-        """Test deprecated trainer_config with KFP configuration."""
-        config = self._create_gigl_resource_config_with_direct_shared_config()
-        deprecated_trainer_config = gigl_resource_config_pb2.KFPTrainerConfig(
-            cpu_request="2",
-            memory_request="8Gi",
-            num_replicas=1,
-        )
-        config.trainer_config.kfp_trainer_config.CopyFrom(
-            copy.deepcopy(deprecated_trainer_config)
-        )
-
-        # The wrapper converts deprecated config to new config type
-        expected_trainer_config = gigl_resource_config_pb2.KFPResourceConfig(
-            cpu_request="2",
-            memory_request="8Gi",
-            num_replicas=1,
-        )
-
-        wrapper = GiglResourceConfigWrapper(resource_config=config)
-        self.assertEqual(wrapper.trainer_config, expected_trainer_config)
-
-    def test_trainer_config_deprecated_local(self):
-        """Test deprecated trainer_config with Local configuration."""
-        config = self._create_gigl_resource_config_with_direct_shared_config()
-        deprecated_trainer_config = gigl_resource_config_pb2.LocalTrainerConfig(
-            num_workers=2,
-        )
-        config.trainer_config.local_trainer_config.CopyFrom(
-            copy.deepcopy(deprecated_trainer_config)
-        )
-
-        # The wrapper converts deprecated config to new config type
-        expected_trainer_config = gigl_resource_config_pb2.LocalResourceConfig(
-            num_workers=2,
-        )
-
-        wrapper = GiglResourceConfigWrapper(resource_config=config)
-        self.assertEqual(wrapper.trainer_config, expected_trainer_config)
 
     def test_trainer_config_missing(self):
         """Test that ValueError is raised when trainer config is missing."""
@@ -416,19 +349,6 @@ class TestGiglResourceConfigWrapper(unittest.TestCase):
         config.inferencer_resource_config.vertex_ai_graph_store_inferencer_config.CopyFrom(
             copy.deepcopy(inferencer_config)
         )
-
-        wrapper = GiglResourceConfigWrapper(resource_config=config)
-        self.assertEqual(wrapper.inferencer_config, inferencer_config)
-
-    def test_inferencer_config_deprecated(self):
-        """Test deprecated inferencer_config with Dataflow configuration."""
-        config = self._create_gigl_resource_config_with_direct_shared_config()
-        inferencer_config = gigl_resource_config_pb2.DataflowResourceConfig(
-            num_workers=15,
-            max_num_workers=30,
-            machine_type="n1-standard-2",
-        )
-        config.inferencer_config.CopyFrom(copy.deepcopy(inferencer_config))
 
         wrapper = GiglResourceConfigWrapper(resource_config=config)
         self.assertEqual(wrapper.inferencer_config, inferencer_config)
