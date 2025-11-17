@@ -460,7 +460,7 @@ class TestGetGraphStoreInfo(unittest.TestCase):
             get_graph_store_info()
 
         self.assertIn(
-            "Not running in a Vertex AI job",
+            "get_graph_store_info must be called in a Vertex AI job.",
             str(context.exception),
         )
 

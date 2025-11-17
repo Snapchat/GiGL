@@ -5,7 +5,11 @@ from typing import Optional
 import torch
 
 from gigl.common.logger import Logger
-from gigl.common.utils.vertex_ai_context import ClusterSpec, get_cluster_spec
+from gigl.common.utils.vertex_ai_context import (
+    ClusterSpec,
+    get_cluster_spec,
+    is_currently_running_in_vertex_ai_job,
+)
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
@@ -207,6 +211,8 @@ def get_graph_store_info() -> GraphStoreInfo:
     """
     # If we want to ever support other (non-VAI) environments,
     # we must switch here depending on the environment.
+    if not is_currently_running_in_vertex_ai_job():
+        raise ValueError("get_graph_store_info must be called in a Vertex AI job.")
     cluster_spec = get_cluster_spec()
     _validate_cluster_spec(cluster_spec)
 
