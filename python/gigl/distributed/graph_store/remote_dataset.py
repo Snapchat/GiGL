@@ -3,7 +3,7 @@
 These are intended to be used in the context of a server-client architecture,
 and with `graphlearn_torch.distributed.request_server`.
 
-`register_dataset` must be called once per process.
+`register_dataset` must be called once per process in the server.
 
 And then the client can do something like:
 
