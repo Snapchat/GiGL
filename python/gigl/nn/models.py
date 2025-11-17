@@ -202,7 +202,7 @@ class LightGCN(nn.Module):
         # Build TorchRec EBC (one table per node type)
         # Sort node types for deterministic ordering across machines
         self._feature_keys: list[str] = [
-            _get_feature_key(node_type) for node_type in sorted(self._node_type_to_num_nodes.keys(), key=str)
+            _get_feature_key(node_type) for node_type in sorted(self._node_type_to_num_nodes.keys())
         ]
 
         # Validate model configuration: restrict to homogeneous or bipartite graphs
@@ -216,7 +216,7 @@ class LightGCN(nn.Module):
 
         tables: list[EmbeddingBagConfig] = []
         # Sort node types for deterministic ordering across machines
-        for node_type, num_nodes in sorted(self._node_type_to_num_nodes.items(), key=lambda x: str(x[0])):
+        for node_type, num_nodes in sorted(self._node_type_to_num_nodes.items()):
             tables.append(
                 EmbeddingBagConfig(
                     name=f"node_embedding_{node_type}",
@@ -392,7 +392,7 @@ class LightGCN(nn.Module):
         # Determine which node types to process
         if output_node_types is None:
             # Sort node types for deterministic ordering across machines
-            output_node_types = sorted([NodeType(str(nt)) for nt in data.node_types], key=str)
+            output_node_types = [NodeType(nt) for nt in sorted(data.node_types)]
 
         # Lookup initial embeddings e^(0) for each node type
         node_type_to_embeddings_0: dict[NodeType, torch.Tensor] = {}
@@ -419,7 +419,7 @@ class LightGCN(nn.Module):
 
         # LightGCN propagation across node types
         # Sort node types for deterministic ordering across machines
-        all_node_types = sorted(node_type_to_embeddings_0.keys(), key=str)
+        all_node_types = sorted(node_type_to_embeddings_0.keys())
 
         # For heterogeneous graphs, we need to create a unified edge representation
         # Collect all edges and map node indices to a combined space
@@ -437,8 +437,9 @@ class LightGCN(nn.Module):
         )  # shape [total_nodes, D]
 
         # Combine all edges into a single edge_index
+        # Sort edge types for deterministic ordering across machines
         combined_edge_list: list[torch.Tensor] = []
-        for edge_type_tuple in data.edge_types:
+        for edge_type_tuple in sorted(data.edge_types):
             src_nt_str, _, dst_nt_str = edge_type_tuple
             src_node_type = NodeType(src_nt_str)
             dst_node_type = NodeType(dst_nt_str)
@@ -481,10 +482,13 @@ class LightGCN(nn.Module):
 
         # Extract anchor nodes if specified
         if anchor_node_ids is not None:
+            # Only return embeddings for node types specified in anchor_node_ids
+            filtered_embeddings: dict[NodeType, torch.Tensor] = {}
             for node_type in all_node_types:
                 if node_type in anchor_node_ids:
                     anchors = anchor_node_ids[node_type].to(device).long()
-                    final_embeddings[node_type] = final_embeddings[node_type][anchors]
+                    filtered_embeddings[node_type] = final_embeddings[node_type][anchors]
+            return filtered_embeddings
 
         return final_embeddings
 
