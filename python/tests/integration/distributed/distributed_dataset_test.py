@@ -22,10 +22,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
-from gigl.utils.data_splitters import (
-    HashedNodeAnchorLinkSplitter,
-    NodeAnchorLinkSplitter,
-)
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, NodeAnchorLinkSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -160,7 +157,7 @@ class DistDatasetTestCase(unittest.TestCase):
                 "Test GLT Dataset Split with homogeneous toy NABLP dataset",
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 is_heterogeneous=False,
-                split_fn=HashedNodeAnchorLinkSplitter(
+                split_fn=DistNodeAnchorLinkSplitter(
                     sampling_direction="out", should_convert_labels_to_edges=False
                 ),
             ),
@@ -168,7 +165,7 @@ class DistDatasetTestCase(unittest.TestCase):
                 "Test GLT Dataset Load in parallel with heterogeneous toy dataset",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 is_heterogeneous=True,
-                split_fn=HashedNodeAnchorLinkSplitter(
+                split_fn=DistNodeAnchorLinkSplitter(
                     sampling_direction="out",
                     supervision_edge_types=[
                         EdgeType(NodeType("story"), Relation("to"), NodeType("user"))
@@ -180,7 +177,7 @@ class DistDatasetTestCase(unittest.TestCase):
                 "Test GLT Dataset Load in parallel with heterogeneous toy NABLP dataset - two supervision edge types",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 is_heterogeneous=True,
-                split_fn=HashedNodeAnchorLinkSplitter(
+                split_fn=DistNodeAnchorLinkSplitter(
                     sampling_direction="out",
                     num_test=1,
                     num_val=1,

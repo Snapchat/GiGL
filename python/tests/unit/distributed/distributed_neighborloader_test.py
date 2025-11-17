@@ -6,9 +6,15 @@ import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.utils import get_free_port
+from gigl.distributed.utils.serialized_graph_metadata_translator import (
+    convert_pb_to_serialized_graph_metadata,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -25,10 +31,10 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_homogeneous,
 )
-from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter, HashedNodeSplitter
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
-    build_dataset_for_testing,
+    run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
@@ -296,6 +302,10 @@ def _run_cora_supervised_node_classification(
 
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self._world_size = 1
+
     def tearDown(self):
         if torch.distributed.is_initialized():
             print("Destroying process group")
@@ -305,32 +315,25 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         super().tearDown()
 
     def test_distributed_neighbor_loader(self):
-        create_test_process_group()
         expected_data_count = 2708
 
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-        dataset = build_dataset_for_testing(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            _port=get_free_port(),
         )
-
         mp.spawn(
             fn=_run_distributed_neighbor_loader,
             args=(dataset, expected_data_count),
         )
 
     def test_infinite_distributed_neighbor_loader(self):
-        create_test_process_group()
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-        dataset = build_dataset_for_testing(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            _port=get_free_port(),
         )
 
         assert isinstance(dataset.node_ids, torch.Tensor)
@@ -348,16 +351,12 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
-        create_test_process_group()
         expected_data_count = 4057
 
-        dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
-            DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-        dataset = build_dataset_for_testing(
-            task_config_uri=dblp_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
         )
 
         mp.spawn(
@@ -371,16 +370,27 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
 
-        splitter = HashedNodeAnchorLinkSplitter(
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
 
-        dataset = build_dataset_for_testing(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction="in",
             splitter=splitter,
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
+
         assert isinstance(dataset.node_ids, Mapping)
         mp.spawn(
             fn=_run_distributed_neighbor_loader_labeled_homogeneous,
@@ -388,18 +398,14 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     def test_multiple_neighbor_loader(self):
-        create_test_process_group()
         expected_data_count = 2708
 
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-        dataset = build_dataset_for_testing(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            _port=get_free_port(),
         )
-
         mp.spawn(
             fn=_run_multiple_neighbor_loader,
             args=(dataset, expected_data_count),
@@ -489,13 +495,24 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO.name
         ]
 
-        splitter = HashedNodeSplitter()
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+            )
+        )
 
-        dataset = build_dataset_for_testing(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
-            splitter=splitter,
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        splitter = DistNodeSplitter()
+
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction="in",
+            splitter=splitter,
         )
 
         mp.spawn(

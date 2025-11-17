@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.conv import LGConv
+from torchrec.distributed.types import Awaitable
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.modules.embedding_modules import EmbeddingBagCollection
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
@@ -292,6 +293,10 @@ class LightGCN(nn.Module):
         embeddings_0 = self._lookup_embeddings_for_single_node_type(
             key, global_ids
         )  # shape [N_sub, D], where N_sub is number of nodes in subgraph and D is embedding_dim
+
+        # When using DMP, EmbeddingBagCollection returns Awaitable that needs to be resolved
+        if isinstance(embeddings_0, Awaitable):
+            embeddings_0 = embeddings_0.wait()
 
         all_layer_embeddings: list[torch.Tensor] = [embeddings_0]
         embeddings_k = embeddings_0

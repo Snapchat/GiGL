@@ -34,10 +34,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
-from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter
-from tests.test_assets.distributed.run_distributed_dataset import (
-    build_dataset_for_testing,
-)
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
@@ -533,15 +530,26 @@ class DistABLPLoaderTest(unittest.TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
 
-        splitter = HashedNodeAnchorLinkSplitter(
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
+            )
+        )
+
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
+
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
 
-        dataset = build_dataset_for_testing(
-            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction="in",
             splitter=splitter,
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
         assert dataset.train_node_ids is not None, "Train node ids must exist."
@@ -580,7 +588,7 @@ class DistABLPLoaderTest(unittest.TestCase):
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
 
-        splitter = HashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in",
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,
@@ -642,23 +650,28 @@ class DistABLPLoaderTest(unittest.TestCase):
                 gbml_config_uri=toy_heterogeneous_supervised_info.frozen_gbml_config_uri
             )
         )
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
+        )
 
         supervision_edge_types = (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         )
 
-        splitter = HashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in",
             supervision_edge_types=supervision_edge_types,
             should_convert_labels_to_edges=True,
         )
 
-        dataset = build_dataset_for_testing(
-            task_config_uri=toy_heterogeneous_supervised_info.frozen_gbml_config_uri,
-            edge_dir="in",
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction="in",
+            _ssl_positive_label_percentage=0.1,
             splitter=splitter,
             partitioner_class=partitioner_class,
-            ssl_positive_label_percentage=0.1,
         )
 
         mp.spawn(
