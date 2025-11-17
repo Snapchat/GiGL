@@ -200,20 +200,23 @@ class LightGCN(nn.Module):
         )
 
         # Build TorchRec EBC (one table per node type)
+        # Sort node types for deterministic ordering across machines
         self._feature_keys: list[str] = [
-            _get_feature_key(node_type) for node_type in self._node_type_to_num_nodes.keys()
+            _get_feature_key(node_type) for node_type in sorted(self._node_type_to_num_nodes.keys(), key=str)
         ]
 
         # Validate model configuration: restrict to homogeneous or bipartite graphs
         num_node_types = len(self._feature_keys)
         if num_node_types not in [1, 2]:
+            # TODO(kmonte, swong3): We should loosen this restriction and allow fully heterogenous graphs in the future.
             raise ValueError(
                 f"LightGCN only supports homogeneous (1 node type) or bipartite (2 node types) graphs; "
                 f"got {num_node_types} node types: {self._feature_keys}"
             )
 
         tables: list[EmbeddingBagConfig] = []
-        for node_type, num_nodes in self._node_type_to_num_nodes.items():
+        # Sort node types for deterministic ordering across machines
+        for node_type, num_nodes in sorted(self._node_type_to_num_nodes.items(), key=lambda x: str(x[0])):
             tables.append(
                 EmbeddingBagConfig(
                     name=f"node_embedding_{node_type}",
@@ -248,7 +251,7 @@ class LightGCN(nn.Module):
                 - For heterogeneous: HeteroData with node types and edge_index_dict
             device (torch.device): Device to run the computation on.
             output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
-                Required for heterogeneous graphs. If None, returns embeddings for all node types. Default: None.
+                If None, returns embeddings for all node types. Default: None.
             anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]):
                 Local node indices to return embeddings for.
                 - For homogeneous: torch.Tensor of shape [num_anchors]
@@ -370,7 +373,7 @@ class LightGCN(nn.Module):
         Forward pass for heterogeneous graphs using LightGCN propagation.
 
         For heterogeneous graphs (e.g., user-item), we have
-        multiple node types. Note that we restrict to one edge type. LightGCN propagates embeddings across
+        multiple node types. LightGCN propagates embeddings across
         all node types by creating a unified node space, running propagation, then splitting
         back into per-type embeddings.
 
