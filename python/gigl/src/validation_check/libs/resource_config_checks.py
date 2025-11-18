@@ -223,36 +223,34 @@ def _validate_machine_config(
         assert_proto_field_value_is_truthy(proto=config, field_name="num_workers")
     elif isinstance(config, gigl_resource_config_pb2.DataflowResourceConfig):
         _check_if_dataflow_resource_config_valid(dataflow_resource_config_pb=config)
-    else:
-        # Case where trainer config is gigl_resource_config_pb2.VertexAiResourceConfig or gigl_resource_config_pb2.KFPResourceConfig
-        if isinstance(config, gigl_resource_config_pb2.VertexAiResourceConfig):
-            _validate_vertex_ai_resource_config(vertex_ai_resource_config_pb=config)
-            _validate_accelerator_type(proto_config=config)
-            _validate_cloud_machine_config(config=config)
-        elif isinstance(config, gigl_resource_config_pb2.VertexAiGraphStoreConfig):
-            _validate_vertex_ai_resource_config(
-                vertex_ai_resource_config_pb=config.graph_store_pool
-            )
-            _validate_accelerator_type(proto_config=config.graph_store_pool)
-            _validate_cloud_machine_config(config=config.graph_store_pool)
+    elif isinstance(config, gigl_resource_config_pb2.KFPResourceConfig):
+        for field in [
+            "cpu_request",
+            "memory_request",
+        ]:
+            assert_proto_field_value_is_truthy(proto=config, field_name=field)
+        _validate_cloud_machine_config(config=config)
+    elif isinstance(config, gigl_resource_config_pb2.VertexAiResourceConfig):
+        _validate_vertex_ai_resource_config(vertex_ai_resource_config_pb=config)
+        _validate_accelerator_type(proto_config=config)
+        _validate_cloud_machine_config(config=config)
+    elif isinstance(config, gigl_resource_config_pb2.VertexAiGraphStoreConfig):
+        _validate_vertex_ai_resource_config(
+            vertex_ai_resource_config_pb=config.graph_store_pool
+        )
+        _validate_accelerator_type(proto_config=config.graph_store_pool)
+        _validate_cloud_machine_config(config=config.graph_store_pool)
 
-            _validate_vertex_ai_resource_config(
-                vertex_ai_resource_config_pb=config.compute_pool
-            )
-            _validate_accelerator_type(proto_config=config.compute_pool)
-            _validate_cloud_machine_config(config=config.compute_pool)
-        elif isinstance(config, gigl_resource_config_pb2.KFPResourceConfig):
-            for field in [
-                "cpu_request",
-                "memory_request",
-            ]:
-                assert_proto_field_value_is_truthy(proto=config, field_name=field)
-            _validate_cloud_machine_config(config=config)
-        else:
-            raise ValueError(
-                f"""Expected distributed config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__},
-                {gigl_resource_config_pb2.VertexAiResourceConfig.__name__},
-                or {gigl_resource_config_pb2.KFPResourceConfig.__name__}.
-                or {gigl_resource_config_pb2.VertexAiGraphStoreConfig.__name__}.
-                Got {type(config)}"""
-            )
+        _validate_vertex_ai_resource_config(
+            vertex_ai_resource_config_pb=config.compute_pool
+        )
+        _validate_accelerator_type(proto_config=config.compute_pool)
+        _validate_cloud_machine_config(config=config.compute_pool)
+    else:
+        raise ValueError(
+            f"""Expected distributed config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__},
+            {gigl_resource_config_pb2.VertexAiResourceConfig.__name__},
+            or {gigl_resource_config_pb2.KFPResourceConfig.__name__}.
+            or {gigl_resource_config_pb2.VertexAiGraphStoreConfig.__name__}.
+            Got {type(config)}"""
+        )

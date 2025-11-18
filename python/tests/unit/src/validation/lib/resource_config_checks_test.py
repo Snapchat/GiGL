@@ -4,6 +4,7 @@ from gigl.src.validation_check.libs.resource_config_checks import (
     _check_if_dataflow_resource_config_valid,
     _check_if_spark_resource_config_valid,
     _validate_accelerator_type,
+    _validate_machine_config,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
     check_if_shared_resource_config_valid,
@@ -699,6 +700,54 @@ class TestAcceleratorTypeValidation(unittest.TestCase):
         config.gpu_limit = 0
         with self.assertRaises(AssertionError):
             _validate_accelerator_type(config)
+
+
+class TestValidateMachineConfig(unittest.TestCase):
+    """Test suite for _validate_machine_config error handling."""
+
+    def test_valid_local_config(self):
+        """Test that a valid LocalResourceConfig passes validation."""
+        gigl_config = _create_valid_local_trainer_config()
+        config = gigl_config.trainer_resource_config.local_trainer_config
+        # Should not raise any exception
+        _validate_machine_config(config)
+
+    def test_invalid_local_config_missing_num_workers(self):
+        """Test that LocalResourceConfig without num_workers raises an assertion error."""
+        gigl_config = _create_valid_local_trainer_config()
+        config = gigl_config.trainer_resource_config.local_trainer_config
+        config.num_workers = 0
+        with self.assertRaises(AssertionError):
+            _validate_machine_config(config)
+
+    def test_valid_dataflow_config(self):
+        """Test that a valid DataflowResourceConfig passes validation."""
+        config = _create_valid_dataflow_config()
+        # Should not raise any exception
+        _validate_machine_config(config)
+
+    def test_valid_kfp_config(self):
+        """Test that a valid KFPResourceConfig passes validation."""
+        gigl_config = _create_valid_kfp_trainer_config()
+        config = gigl_config.trainer_resource_config.kfp_trainer_config
+        # Should not raise any exception
+        _validate_machine_config(config)
+
+    def test_valid_vertex_ai_config(self):
+        """Test that a valid VertexAiResourceConfig passes validation."""
+        gigl_config = _create_valid_vertex_ai_trainer_config()
+        config = gigl_config.trainer_resource_config.vertex_ai_trainer_config
+        # Should not raise any exception
+        _validate_machine_config(config)
+
+    def test_valid_vertex_ai_graph_store_config(self):
+        """Test that a valid VertexAiGraphStoreConfig passes validation."""
+        gigl_config = _create_valid_vertex_ai_graph_store_trainer_config()
+        config = (
+            gigl_config.trainer_resource_config.vertex_ai_graph_store_trainer_config
+        )
+        # Should not raise any exception
+        _validate_machine_config(config)
 
 
 if __name__ == "__main__":
