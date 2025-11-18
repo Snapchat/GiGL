@@ -132,6 +132,11 @@ message VertexAiResourceConfig {
  message VertexAiGraphStoreConfig {
   VertexAiResourceConfig graph_store_pool = 1;
   VertexAiResourceConfig compute_pool = 2;
+
+  // Number of sampling processes per compute machine
+  // If unset, and accelerators are available, will use the number of accelerators per machine.
+  // If unset, and no accelerators are available, will use 1.
+  int32 compute_cluster_local_world_size = 3;
  }
 // (deprecated)
 // Configuration for distributed training resources
