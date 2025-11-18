@@ -28,7 +28,6 @@ import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
-from graphlearn_torch.distributed import shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -280,9 +279,6 @@ def _inference_process(
     logger.info(
         f"--- All machines local rank {local_rank} finished inference for node type {inference_node_type}. Deleted data loader"
     )
-
-    # Clean up for a graceful exit
-    shutdown_rpc()
 
 
 def _run_example_inference(
