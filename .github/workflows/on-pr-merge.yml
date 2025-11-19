@@ -6,7 +6,7 @@ on:
   # https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
   pull_request:
   merge_group:
-  push:
+  push: # TODO: REMOVE
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
