@@ -39,35 +39,11 @@ jobs:
         pr_number: ${{ github.event.issue.number }}
         message: ${{ steps.parse_commands.outputs.help_message }}
 
-  unit-test:
-    if: ${{ github.event.issue.pull_request && endsWith(github.event.comment.body, '/unit_test') }}
+  unit-test-python:
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test')) }}
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
-    steps:
-    - name: Run Unit Tests
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: ${{ github.event.issue.number }}
-        should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Unit Test"
-        setup_gcloud: "true"
-        # We use cloud run here instead of using github hosted runners because of limitation of tests
-        # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
-        # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
-        # https://github.com/tensorflow/tensorflow/issues/57104
-        use_cloud_run: "true"
-        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
-        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        command: |
-          make unit_test
-
-  unit-test-py:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test_py') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 55
     steps:
     - name: Run Python Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -89,9 +65,10 @@ jobs:
           make unit_test_py
 
   unit-test-scala:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/unit_test_scala') }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    # TODO(kmonte): Reduce this :(
+    timeout-minutes: 120
     steps:
     - name: Run Scala Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -101,10 +78,6 @@ jobs:
         should_leave_progress_comments: "true"
         descriptive_workflow_name: "Scala Unit Test"
         setup_gcloud: "true"
-        # We use cloud run here instead of using github hosted runners because of limitation of tests
-        # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
-        # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
-        # https://github.com/tensorflow/tensorflow/issues/57104
         use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
@@ -132,6 +105,7 @@ jobs:
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
             make integration_test
+
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/e2e_test') }}
     runs-on: ubuntu-latest
