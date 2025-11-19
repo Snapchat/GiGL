@@ -40,7 +40,7 @@ jobs:
         message: ${{ steps.parse_commands.outputs.help_message }}
 
   unit-test-python:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endswith(github.event.comment.body, '/unit_test')) }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test')) }}
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
@@ -65,7 +65,7 @@ jobs:
           make unit_test_py
 
   unit-test-scala:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endswith(github.event.comment.body, '/unit_test')) }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test')) }}
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
