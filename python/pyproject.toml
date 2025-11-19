@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name            = "gigl"
 description     = "GIgantic Graph Learning Library"
 readme          = "README.md"
-version         = "0.0.9"
+version         = "0.0.11"
 requires-python = ">=3.9,<3.10" # Currently we only support python 3.9 as per deps setup below
 classifiers     = [
     "Programming Language :: Python",
@@ -29,7 +29,7 @@ classifiers     = [
 dependencies = [
     "argo-workflows",
     "chardet",
-    "google-cloud-aiplatform~=1.44.0",
+    "google-cloud-aiplatform~=1.124.0",
     "google-cloud-dataproc",
     "google-cloud-logging",
     "google-cloud-pipeline-components",

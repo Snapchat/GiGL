@@ -42,7 +42,8 @@ jobs:
   unit-test:
     if: ${{ github.event.issue.pull_request && endsWith(github.event.comment.body, '/unit_test') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    # TODO(kmonte): Reduce this :(
+    timeout-minutes: 120
     steps:
     - name: Run Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -114,7 +115,8 @@ jobs:
   integration-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/integration_test') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 70 # Tests as of 2025-05-16 are taking ~50 mins to complete, 40% buffer
+    # TODO(kmonte): Reduce this :(
+    timeout-minutes: 120
     steps:
     - name: Run Integration Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main

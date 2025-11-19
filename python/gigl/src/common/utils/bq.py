@@ -434,6 +434,45 @@ class BqUtils:
         else:
             logger.info(f"All requisite fields found in table {bq_table}")
 
+    def copy_table(
+        self,
+        source_table: str,
+        destination_table: str,
+        overwrite: bool = True,
+    ) -> None:
+        """Copy a BigQuery table using the copy_table API (more efficient than SELECT).
+
+        This method copies the table at the storage level without processing data through
+        the query engine, making it faster and more cost-effective than using CREATE TABLE AS SELECT.
+
+        See https://cloud.google.com/bigquery/docs/managing-tables#copy-table for more info.
+        Args:
+            source_table (str): Fully qualified source table path (project.dataset.table)
+            destination_table (str): Fully qualified destination table path (project.dataset.table)
+            overwrite (bool, optional): Whether to overwrite if destination exists. Defaults to True.
+        """
+        source_table = self.format_bq_path(source_table)
+        destination_table = self.format_bq_path(destination_table)
+
+        job_config = bigquery.CopyJobConfig(
+            write_disposition="WRITE_TRUNCATE" if overwrite else "WRITE_EMPTY"
+        )
+
+        try:
+            logger.info(f"Copying table from {source_table} to {destination_table}")
+            copy_job = self.__bq_client.copy_table(
+                source_table, destination_table, job_config=job_config
+            )
+            copy_job.result()  # Wait for completion
+            logger.info(
+                f"Successfully copied table from {source_table} to {destination_table}"
+            )
+        except Exception as e:
+            logger.exception(
+                f"Failed to copy table from {source_table} to {destination_table}"
+            )
+            raise e
+
     def export_to_gcs(
         self,
         bq_table_path: str,

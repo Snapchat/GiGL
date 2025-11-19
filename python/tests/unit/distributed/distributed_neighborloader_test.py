@@ -6,11 +6,10 @@ import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
 from torch_geometric.data import Data, HeteroData
 
-import gigl.distributed.utils
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -32,14 +31,14 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     to_homogeneous,
 )
-from gigl.utils.data_splitters import HashedNodeAnchorLinkSplitter, HashedNodeSplitter
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
-    get_process_group_init_method,
+    create_test_process_group,
 )
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -50,8 +49,6 @@ _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
-# TODO(svij) - swap the DistNeighborLoader tests to not user context/local_process_rank/local_process_world_size.
-
 # GLT requires subclasses of DistNeighborLoader to be run in a separate process. Otherwise, we may run into segmentation fault
 # or other memory issues. Calling these functions in separate proceses also allows us to use shutdown_rpc() to ensure cleanup of
 # ports, providing stronger guarantees of isolation between tests.
@@ -61,15 +58,12 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 def _run_distributed_neighbor_loader(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     expected_data_count: int,
 ):
+    create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -88,17 +82,14 @@ def _run_distributed_neighbor_loader(
 def _run_distributed_neighbor_loader_labeled_homogeneous(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     expected_data_count: int,
 ):
+    create_test_process_group()
     assert isinstance(dataset.node_ids, Mapping)
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=to_homogeneous(dataset.node_ids),
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -117,15 +108,12 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
 def _run_infinite_distributed_neighbor_loader(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     max_num_batches: int,
 ):
+    create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -147,17 +135,14 @@ def _run_infinite_distributed_neighbor_loader(
 def _run_distributed_heterogeneous_neighbor_loader(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     expected_data_count: int,
 ):
+    create_test_process_group()
     assert isinstance(dataset.node_ids, Mapping)
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),
         num_neighbors=[2, 2],
-        context=context,
-        local_process_rank=0,
-        local_process_world_size=1,
         pin_memory_device=torch.device("cpu"),
     )
 
@@ -174,12 +159,9 @@ def _run_distributed_heterogeneous_neighbor_loader(
 def _run_multiple_neighbor_loader(
     _,
     dataset: DistDataset,
-    context: DistributedContext,
     expected_data_count: int,
 ):
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
     loader_one = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -223,9 +205,7 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
     dataset: DistDataset,
     batch_size: int,
 ):
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
 
     loader = DistNeighborLoader(
         dataset=dataset,
@@ -250,9 +230,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
     dataset: DistDataset,
     batch_size: int,
 ):
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
 
     assert isinstance(dataset.node_ids, Mapping)
 
@@ -299,9 +277,7 @@ def _run_cora_supervised_node_classification(
     batch_size: int,
 ):
     """Run CORA supervised node classification test using DistNeighborLoader."""
-    torch.distributed.init_process_group(
-        rank=0, world_size=1, init_method=get_process_group_init_method()
-    )
+    create_test_process_group()
 
     loader = DistNeighborLoader(
         dataset=dataset,
@@ -327,15 +303,8 @@ def _run_cora_supervised_node_classification(
 
 class DistributedNeighborLoaderTest(unittest.TestCase):
     def setUp(self):
-        self._master_ip_address = "localhost"
+        super().setUp()
         self._world_size = 1
-        self._num_rpc_threads = 4
-
-        self._context = DistributedContext(
-            main_worker_ip_address=self._master_ip_address,
-            global_rank=0,
-            global_world_size=self._world_size,
-        )
 
     def tearDown(self):
         if torch.distributed.is_initialized():
@@ -347,29 +316,24 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_distributed_neighbor_loader(self):
         expected_data_count = 2708
-        port = gigl.distributed.utils.get_free_port()
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            should_load_tensors_in_parallel=True,
-            _port=port,
+            _port=get_free_port(),
         )
-
         mp.spawn(
             fn=_run_distributed_neighbor_loader,
-            args=(dataset, self._context, expected_data_count),
+            args=(dataset, expected_data_count),
         )
 
     def test_infinite_distributed_neighbor_loader(self):
-        port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            should_load_tensors_in_parallel=True,
-            _port=port,
+            _port=get_free_port(),
         )
 
         assert isinstance(dataset.node_ids, torch.Tensor)
@@ -381,7 +345,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_infinite_distributed_neighbor_loader,
-            args=(dataset, self._context, max_num_batches),
+            args=(dataset, max_num_batches),
         )
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
@@ -393,15 +357,15 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            should_load_tensors_in_parallel=True,
         )
 
         mp.spawn(
             fn=_run_distributed_heterogeneous_neighbor_loader,
-            args=(dataset, self._context, expected_data_count),
+            args=(dataset, expected_data_count),
         )
 
     def test_random_loading_labeled_homogeneous(self):
+        create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -417,38 +381,34 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
-
-        splitter = HashedNodeAnchorLinkSplitter(
+        splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in", should_convert_labels_to_edges=True
         )
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
-            distributed_context=self._context,
             sample_edge_direction="in",
             splitter=splitter,
         )
+
         assert isinstance(dataset.node_ids, Mapping)
         mp.spawn(
             fn=_run_distributed_neighbor_loader_labeled_homogeneous,
-            args=(dataset, self._context, to_homogeneous(dataset.node_ids).size(0)),
+            args=(dataset, to_homogeneous(dataset.node_ids).size(0)),
         )
 
     def test_multiple_neighbor_loader(self):
-        port = gigl.distributed.utils.get_free_port()
         expected_data_count = 2708
 
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            should_load_tensors_in_parallel=True,
-            _port=port,
+            _port=get_free_port(),
         )
-
         mp.spawn(
             fn=_run_multiple_neighbor_loader,
-            args=(dataset, self._context, expected_data_count),
+            args=(dataset, expected_data_count),
         )
 
     def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
@@ -530,10 +490,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     def test_cora_supervised_node_classification(self):
         """Test CORA dataset for supervised node classification task."""
-
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO.name
         ]
@@ -550,7 +507,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
         )
 
-        splitter = HashedNodeSplitter()
+        splitter = DistNodeSplitter()
 
         dataset = build_dataset(
             serialized_graph_metadata=serialized_graph_metadata,
@@ -590,7 +547,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_distributed_heterogeneous_neighbor_loader,
-            args=(dataset, self._context, 18),
+            args=(dataset, 18),
         )
 
     def test_isolated_homogeneous_neighbor_loader(
@@ -613,7 +570,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
         mp.spawn(
             fn=_run_distributed_neighbor_loader,
-            args=(dataset, self._context, 18),
+            args=(dataset, 18),
         )
 
 

@@ -48,7 +48,7 @@ def run_distributed_dataset(
     rank: int,
     world_size: int,
     mocked_dataset_info: MockedDatasetInfo,
-    should_load_tensors_in_parallel: bool,
+    should_load_tensors_in_parallel: bool = True,
     output_dict: Optional[MutableMapping[int, DistDataset]] = None,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
@@ -61,8 +61,8 @@ def run_distributed_dataset(
         rank (int): Rank of the current process
         world_size (int): World size of the current process
         mocked_dataset_info (MockedDatasetInfo): Mocked Dataset Metadata for current run
-
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
+            Defaults to True.
         output_dict (Optional[MutableMapping[int, DistDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing

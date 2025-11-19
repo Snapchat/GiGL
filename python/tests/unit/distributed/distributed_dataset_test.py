@@ -42,7 +42,7 @@ from gigl.types.graph import (
     GraphPartitionData,
     PartitionOutput,
 )
-from gigl.utils.data_splitters import HashedNodeSplitter
+from gigl.utils.data_splitters import DistNodeSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
@@ -636,14 +636,14 @@ class DistributedDatasetTestCase(unittest.TestCase):
             ),
             param(
                 "Test building homogeneous dataset with splitter",
-                splitter=HashedNodeSplitter(num_val=0.1, num_test=0.1),
+                splitter=DistNodeSplitter(num_val=0.1, num_test=0.1),
             ),
         ]
     )
     def test_build_and_split_cora_dataset_with_node_labels(
         self,
         _,
-        splitter: Optional[HashedNodeSplitter],
+        splitter: Optional[DistNodeSplitter],
     ):
         """Test that node labels are properly loaded and accessible for datasets with node labels."""
         port = gigl.distributed.utils.get_free_port()

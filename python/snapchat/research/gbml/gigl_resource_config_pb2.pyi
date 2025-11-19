@@ -217,6 +217,7 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     NUM_REPLICAS_FIELD_NUMBER: builtins.int
     TIMEOUT_FIELD_NUMBER: builtins.int
     GCP_REGION_OVERRIDE_FIELD_NUMBER: builtins.int
+    SCHEDULING_STRATEGY_FIELD_NUMBER: builtins.int
     machine_type: builtins.str
     """Machine type for job"""
     gpu_type: builtins.str
@@ -236,6 +237,13 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     ex: "us-west1"
     NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
     """
+    scheduling_strategy: builtins.str
+    """Scheduling strategy for the job.
+    If unset, will use the Vertex AI default.
+    See https://cloud.google.com/vertex-ai/docs/training/schedule-jobs-dws for more info.
+    The available options are in the GCP docs:
+    https://docs.cloud.google.com/python/docs/reference/aiplatform/latest/google.cloud.aiplatform_v1.types.Scheduling.Strategy
+    """
     def __init__(
         self,
         *,
@@ -245,8 +253,9 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
         num_replicas: builtins.int = ...,
         timeout: builtins.int = ...,
         gcp_region_override: builtins.str = ...,
+        scheduling_strategy: builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing_extensions.Literal["gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "timeout", b"timeout"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "scheduling_strategy", b"scheduling_strategy", "timeout", b"timeout"]) -> None: ...
 
 global___VertexAiResourceConfig = VertexAiResourceConfig
 
@@ -312,18 +321,25 @@ class VertexAiGraphStoreConfig(google.protobuf.message.Message):
 
     GRAPH_STORE_POOL_FIELD_NUMBER: builtins.int
     COMPUTE_POOL_FIELD_NUMBER: builtins.int
+    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_FIELD_NUMBER: builtins.int
     @property
     def graph_store_pool(self) -> global___VertexAiResourceConfig: ...
     @property
     def compute_pool(self) -> global___VertexAiResourceConfig: ...
+    compute_cluster_local_world_size: builtins.int
+    """Number of sampling processes per compute machine
+    If unset, and accelerators are available, will use the number of accelerators per machine.
+    If unset, and no accelerators are available, will use 1.
+    """
     def __init__(
         self,
         *,
         graph_store_pool: global___VertexAiResourceConfig | None = ...,
         compute_pool: global___VertexAiResourceConfig | None = ...,
+        compute_cluster_local_world_size: builtins.int = ...,
     ) -> None: ...
     def HasField(self, field_name: typing_extensions.Literal["compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing_extensions.Literal["compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["compute_cluster_local_world_size", b"compute_cluster_local_world_size", "compute_pool", b"compute_pool", "graph_store_pool", b"graph_store_pool"]) -> None: ...
 
 global___VertexAiGraphStoreConfig = VertexAiGraphStoreConfig
 

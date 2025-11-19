@@ -95,6 +95,13 @@ message VertexAiResourceConfig {
   // ex: "us-west1"
   // NOTE: If set, then there may be data egress costs from CommonComputeConfig.region -> gcp_region_override
   string gcp_region_override = 6;
+
+  // Scheduling strategy for the job.
+  // If unset, will use the Vertex AI default.
+  // See https://cloud.google.com/vertex-ai/docs/training/schedule-jobs-dws for more info.
+  // The available options are in the GCP docs:
+  // https://docs.cloud.google.com/python/docs/reference/aiplatform/latest/google.cloud.aiplatform_v1.types.Scheduling.Strategy
+  string scheduling_strategy = 7;
  }
 
  // Configuration for KFP job resources
@@ -125,6 +132,11 @@ message VertexAiResourceConfig {
  message VertexAiGraphStoreConfig {
   VertexAiResourceConfig graph_store_pool = 1;
   VertexAiResourceConfig compute_pool = 2;
+
+  // Number of sampling processes per compute machine
+  // If unset, and accelerators are available, will use the number of accelerators per machine.
+  // If unset, and no accelerators are available, will use 1.
+  int32 compute_cluster_local_world_size = 3;
  }
 // (deprecated)
 // Configuration for distributed training resources

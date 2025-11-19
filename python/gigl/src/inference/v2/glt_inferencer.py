@@ -1,7 +1,7 @@
 import argparse
 from typing import Optional
 
-from google.cloud.aiplatform_v1.types import accelerator_type
+from google.cloud.aiplatform_v1.types import Scheduling, accelerator_type, env_var
 
 from gigl.common import Uri, UriFactory
 from gigl.common.constants import (
@@ -101,14 +101,15 @@ class GLTInferencer:
         command = inference_process_command.strip().split(" ")
         logger.info(f"Running inference with command: {command}")
         vai_job_name = f"gigl_infer_{applied_task_identifier}"
+        environment_variables: list[env_var.EnvVar] = [
+            env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
+        ]
         job_config = VertexAiJobConfig(
             job_name=vai_job_name,
             container_uri=container_uri,
             command=command,
             args=job_args,
-            environment_variables=[
-                {"name": "TF_CPP_MIN_LOG_LEVEL", "value": "3"},
-            ],
+            environment_variables=environment_variables,
             machine_type=inferencer_resource_config.machine_type,
             accelerator_type=inferencer_resource_config.gpu_type.upper().replace(
                 "-", "_"
@@ -120,6 +121,16 @@ class GLTInferencer:
             ),
             timeout_s=inferencer_resource_config.timeout
             if inferencer_resource_config.timeout
+            else None,
+            # This should be `aiplatform.gapic.Scheduling.Strategy[inferencer_resource_config.scheduling_strategy]`
+            # But mypy complains otherwise...
+            # python/gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
+            # TODO(kmonte): Fix this
+            scheduling_strategy=getattr(
+                Scheduling.Strategy,
+                inferencer_resource_config.scheduling_strategy,
+            )
+            if inferencer_resource_config.scheduling_strategy
             else None,
         )
 
