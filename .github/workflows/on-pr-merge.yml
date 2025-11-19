@@ -22,7 +22,7 @@ jobs:
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -49,7 +49,7 @@ jobs:
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
