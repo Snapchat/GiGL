@@ -67,8 +67,7 @@ jobs:
   unit-test-scala:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test')) }}
     runs-on: ubuntu-latest
-    # TODO(kmonte): Reduce this :(
-    timeout-minutes: 120
+    timeout-minutes: 20
     steps:
     - name: Run Scala Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
