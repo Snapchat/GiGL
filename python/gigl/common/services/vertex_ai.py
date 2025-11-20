@@ -61,6 +61,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 
 import datetime
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Optional, Union
 
@@ -69,12 +70,17 @@ from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
     DiskSpec,
     MachineSpec,
+    Scheduling,
     WorkerPoolSpec,
     env_var,
 )
 
 from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
+from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.constants.components import GiGLComponents
+from gigl.src.common.types import AppliedTaskIdentifier
+from snapchat.research.gbml.gigl_resource_config_pb2 import VertexAiResourceConfig
 
 logger = Logger()
 
@@ -106,6 +112,67 @@ class VertexAiJobConfig:
     ] = None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
+
+
+def get_job_config_from_vertex_ai_resource_config(
+    applied_task_identifier: AppliedTaskIdentifier,
+    is_inference: bool,
+    task_config_uri: Uri,
+    resource_config_uri: Uri,
+    command_str: str,
+    args: Mapping[str, str],
+    run_on_cpu: bool,
+    container_uri: str,
+    vertex_ai_resource_config: VertexAiResourceConfig,
+    env_vars: list[env_var.EnvVar],
+) -> VertexAiJobConfig:
+    job_args = (
+        [
+            f"--job_name={applied_task_identifier}",
+            f"--task_config_uri={task_config_uri}",
+            f"--resource_config_uri={resource_config_uri}",
+        ]
+        + ([] if run_on_cpu else ["--use_cuda"])
+        + ([f"--{k}={v}" for k, v in args.items()])
+    )
+
+    command = command_str.strip().split(" ")
+    if is_inference:
+        vai_job_name = f"gigl_infer_{applied_task_identifier}"
+    else:
+        vai_job_name = f"gigl_train_{applied_task_identifier}"
+    resource_config_wrapper = get_resource_config(
+        resource_config_uri=resource_config_uri
+    )
+    resource_config_labels = resource_config_wrapper.get_resource_labels(
+        component=GiGLComponents.Inferencer if is_inference else GiGLComponents.Trainer
+    )
+    job_config = VertexAiJobConfig(
+        job_name=vai_job_name,
+        container_uri=container_uri,
+        command=command,
+        args=job_args,
+        environment_variables=env_vars,
+        machine_type=vertex_ai_resource_config.machine_type,
+        accelerator_type=vertex_ai_resource_config.gpu_type.upper().replace("-", "_"),
+        accelerator_count=vertex_ai_resource_config.gpu_limit,
+        replica_count=vertex_ai_resource_config.num_replicas,
+        labels=resource_config_labels,
+        timeout_s=vertex_ai_resource_config.timeout
+        if vertex_ai_resource_config.timeout
+        else None,
+        # This should be `aiplatform.gapic.Scheduling.Strategy[inferencer_resource_config.scheduling_strategy]`
+        # But mypy complains otherwise...
+        # python/gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
+        # TODO(kmonte): Fix this
+        scheduling_strategy=getattr(
+            Scheduling.Strategy,
+            vertex_ai_resource_config.scheduling_strategy,
+        )
+        if vertex_ai_resource_config.scheduling_strategy
+        else None,
+    )
+    return job_config
 
 
 class VertexAIService:
