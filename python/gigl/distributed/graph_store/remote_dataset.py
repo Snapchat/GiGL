@@ -37,6 +37,17 @@ _dataset: Optional[DistDataset] = None
 
 
 def register_dataset(dataset: DistDataset) -> None:
+    """Register a dataset for remote access.
+
+    This function must be called once per process in the server before any remote
+    dataset operations can be performed.
+
+    Args:
+        dataset: The distributed dataset to register.
+
+    Raises:
+        ValueError: If a dataset has already been registered.
+    """
     global _dataset
     if _dataset is not None:
         raise ValueError("Dataset already registered! Cannot register a new dataset.")
@@ -44,12 +55,34 @@ def register_dataset(dataset: DistDataset) -> None:
 
 
 def get_node_feature_info() -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
+    """Get node feature information from the registered dataset.
+
+    Returns:
+        Node feature information, which can be:
+        - A single FeatureInfo object for homogeneous graphs
+        - A dict mapping NodeType to FeatureInfo for heterogeneous graphs
+        - None if no node features are available
+
+    Raises:
+        ValueError: If no dataset has been registered.
+    """
     if _dataset is None:
         raise _NO_DATASET_ERROR
     return _dataset.node_feature_info
 
 
 def get_edge_feature_info() -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:
+    """Get edge feature information from the registered dataset.
+
+    Returns:
+        Edge feature information, which can be:
+        - A single FeatureInfo object for homogeneous graphs
+        - A dict mapping EdgeType to FeatureInfo for heterogeneous graphs
+        - None if no edge features are available
+
+    Raises:
+        ValueError: If no dataset has been registered.
+    """
     if _dataset is None:
         raise _NO_DATASET_ERROR
     return _dataset.edge_feature_info
@@ -58,6 +91,21 @@ def get_edge_feature_info() -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], N
 def get_node_ids_for_rank(
     rank: int, world_size: int, node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE
 ) -> torch.Tensor:
+    """Get the node IDs assigned to a specific rank in distributed processing.
+
+    Shards the node IDs across processes based on the rank and world size.
+
+    Args:
+        rank: The rank of the process requesting node IDs.
+        world_size: The total number of processes in the distributed setup.
+        node_type: The type of nodes to retrieve. Defaults to the default homogeneous node type.
+
+    Returns:
+        A tensor containing the node IDs assigned to the specified rank.
+
+    Raises:
+        ValueError: If no dataset has been registered or if node_ids format is invalid.
+    """
     logger.info(
         f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
     )
