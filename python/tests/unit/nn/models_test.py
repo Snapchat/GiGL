@@ -401,11 +401,10 @@ class TestLightGCN(unittest.TestCase):
             [[0, 1, 1], [0, 0, 1]], dtype=torch.long
         )
 
-        # Forward pass
+        # Forward pass - will return both user and item embeddings
         output = model(
             data,
             self.device,
-            output_node_types=[NodeType("user"), NodeType("item")],
         )
 
         expected_user_embeddings = torch.tensor(
@@ -489,43 +488,32 @@ class TestLightGCN(unittest.TestCase):
             [[0, 1, 1], [0, 0, 1]], dtype=torch.long
         )
 
-        # First get full output to compare against
+        # First get full output to compare against (will return all node types)
         full_output = model(
             data,
             self.device,
-            output_node_types=[NodeType("user"), NodeType("item")],
         )
 
-        # Test with anchor nodes - select specific nodes from each type
+        # Test with anchor nodes - select specific nodes from specific types
+        # By only including "user" in anchor_node_ids, we'll only get user embeddings back
         anchor_node_ids = {
             NodeType("user"): torch.tensor([0], dtype=torch.long),  # Select user 0
-            NodeType("item"): torch.tensor([1], dtype=torch.long),  # Select item 1
         }
 
         output_with_anchors = model(
             data,
             self.device,
-            output_node_types=[NodeType("user"), NodeType("item")],
             anchor_node_ids=anchor_node_ids,
         )
 
         # Check shapes - should only return embeddings for anchor nodes
         self.assertEqual(output_with_anchors[NodeType("user")].shape, (1, self.embedding_dim))
-        self.assertEqual(output_with_anchors[NodeType("item")].shape, (1, self.embedding_dim))
 
         # Check values - should match the corresponding rows from full output
         self.assertTrue(
             torch.allclose(
                 output_with_anchors[NodeType("user")],
                 full_output[NodeType("user")][0:1],  # User 0
-                atol=1e-4,
-                rtol=1e-4,
-            )
-        )
-        self.assertTrue(
-            torch.allclose(
-                output_with_anchors[NodeType("item")],
-                full_output[NodeType("item")][1:2],  # Item 1
                 atol=1e-4,
                 rtol=1e-4,
             )

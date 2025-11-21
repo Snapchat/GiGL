@@ -239,7 +239,6 @@ class LightGCN(nn.Module):
         self,
         data: Union[Data, HeteroData],
         device: torch.device,
-        output_node_types: Optional[list[NodeType]] = None,
         anchor_node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
     ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
         """
@@ -250,8 +249,6 @@ class LightGCN(nn.Module):
                 - For homogeneous: Data object with edge_index and node field
                 - For heterogeneous: HeteroData with node types and edge_index_dict
             device (torch.device): Device to run the computation on.
-            output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
-                If None, returns embeddings for all node types. Default: None.
             anchor_node_ids (Optional[Union[torch.Tensor, Dict[NodeType, torch.Tensor]]]):
                 Local node indices to return embeddings for.
                 - For homogeneous: torch.Tensor of shape [num_anchors]
@@ -272,7 +269,7 @@ class LightGCN(nn.Module):
                     f"For heterogeneous graphs, anchor_node_ids must be a dict or None, "
                     f"got {type(anchor_node_ids)}"
                 )
-            return self._forward_heterogeneous(data, device, output_node_types, anchor_node_ids)
+            return self._forward_heterogeneous(data, device, anchor_node_ids)
         else:
             # For homogeneous graphs, anchor_node_ids must be a Tensor, not a dict
             if anchor_node_ids is not None and not isinstance(anchor_node_ids, torch.Tensor):
@@ -366,7 +363,6 @@ class LightGCN(nn.Module):
         self,
         data: HeteroData,
         device: torch.device,
-        output_node_types: Optional[list[NodeType]] = None,
         anchor_node_ids: Optional[dict[NodeType, torch.Tensor]] = None,
     ) -> dict[NodeType, torch.Tensor]:
         """
@@ -377,27 +373,30 @@ class LightGCN(nn.Module):
         all node types by creating a unified node space, running propagation, then splitting
         back into per-type embeddings.
 
+        Note: All node types in the graph are processed during message passing, as this is
+        required for correct GNN computation. Use anchor_node_ids to filter which node types
+        and specific nodes are returned in the output.
+
         Args:
             data (HeteroData): PyG HeteroData object with node types.
             device (torch.device): Device to run computation on.
-            output_node_types (Optional[List[NodeType]]): Node types to return embeddings for.
-                If None, returns all node types. Default: None.
             anchor_node_ids (Optional[Dict[NodeType, torch.Tensor]]): Dict mapping node types
-                to local anchor indices. If None, returns all nodes. Default: None.
+                to local anchor indices. If None, returns all nodes for all types.
+                If provided, only returns embeddings for the specified node types and indices.
 
         Returns:
             Dict[NodeType, torch.Tensor]: Dict mapping node types to their embeddings,
-                each of shape [num_nodes_of_type, embedding_dim].
+                each of shape [num_nodes_of_type, embedding_dim] (or [num_anchors, embedding_dim]
+                if anchor_node_ids is provided for that type).
         """
-        # Determine which node types to process
-        if output_node_types is None:
-            # Sort node types for deterministic ordering across machines
-            output_node_types = [NodeType(nt) for nt in sorted(data.node_types)]
+        # Process all node types - this is required for correct message passing in GNNs
+        # Sort node types for deterministic ordering across machines
+        all_node_types_in_data = [NodeType(nt) for nt in sorted(data.node_types)]
 
         # Lookup initial embeddings e^(0) for each node type
         node_type_to_embeddings_0: dict[NodeType, torch.Tensor] = {}
 
-        for node_type in output_node_types:
+        for node_type in all_node_types_in_data:
             node_type_str = str(node_type)
             key = _get_feature_key(node_type_str)
 
