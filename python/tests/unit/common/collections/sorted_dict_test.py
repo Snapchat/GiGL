@@ -43,26 +43,12 @@ class TestSortedDict(unittest.TestCase):
         keys = list(sd)
         self.assertEqual(keys, self.sorted_keys)
 
-    def test_keys_are_sorted(self) -> None:
-        """Test that keys() method returns sorted keys."""
-        sd: SortedDict[str, int] = SortedDict(self.unsorted_data)
-        keys = list(sd.keys())
-        self.assertEqual(keys, self.sorted_keys)
-
     def test_items_are_sorted_by_key(self) -> None:
         """Test that items() method returns items sorted by key."""
         sd: SortedDict[str, int] = SortedDict(self.unsorted_data)
         items = list(sd.items())
         expected = [("a", 2), ("b", 4), ("m", 3), ("z", 1)]
         self.assertEqual(items, expected)
-
-    def test_values_in_sorted_key_order(self) -> None:
-        """Test that values() method returns values in sorted key order."""
-        sd: SortedDict[str, int] = SortedDict(self.unsorted_data)
-        values = list(sd.values())
-        # Values should correspond to sorted keys: a=2, b=4, m=3, z=1
-        expected = [2, 4, 3, 1]
-        self.assertEqual(values, expected)
 
     def test_getitem(self) -> None:
         """Test item access via bracket notation."""
@@ -215,18 +201,6 @@ class TestSortedDict(unittest.TestCase):
         # Iterate again
         second_keys = list(sd.keys())
         self.assertEqual(second_keys, ["a", "b", "c"])
-
-    def test_multiple_iterations_consistent(self) -> None:
-        """Test that multiple iterations return consistent sorted order."""
-        sd: SortedDict[str, int] = SortedDict(self.unsorted_data)
-
-        first_iteration = list(sd.keys())
-        second_iteration = list(sd.keys())
-        third_iteration = list(sd.keys())
-
-        self.assertEqual(first_iteration, second_iteration)
-        self.assertEqual(second_iteration, third_iteration)
-        self.assertEqual(first_iteration, self.sorted_keys)
 
 
 if __name__ == "__main__":

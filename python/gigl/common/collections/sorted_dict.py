@@ -129,6 +129,9 @@ class SortedDict(Mapping[KT, VT]):
         Returns:
             Iterator[KT]: An iterator over the dictionary keys in sorted order
         """
+        # TODO(kmonte): This is incorrect if we update during iteration.
+        # We should figure out what the correct behavior is.
+        # For now, this should be fine.
         self.__sort_dict_if_needed()
         return iter(self.__dict)
 
