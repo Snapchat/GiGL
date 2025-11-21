@@ -30,6 +30,9 @@ from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureInfo
 
 logger = Logger()
 
+_NO_DATASET_ERROR = ValueError(
+    "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
+)
 _dataset: Optional[DistDataset] = None
 
 
@@ -42,17 +45,13 @@ def register_dataset(dataset: DistDataset) -> None:
 
 def get_node_feature_info() -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
     if _dataset is None:
-        raise ValueError(
-            "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
-        )
+        raise _NO_DATASET_ERROR
     return _dataset.node_feature_info
 
 
 def get_edge_feature_info() -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:
     if _dataset is None:
-        raise ValueError(
-            "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
-        )
+        raise _NO_DATASET_ERROR
     return _dataset.edge_feature_info
 
 
@@ -63,9 +62,7 @@ def get_node_ids_for_rank(
         f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
     )
     if _dataset is None:
-        raise ValueError(
-            "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
-        )
+        raise _NO_DATASET_ERROR
     if isinstance(_dataset.node_ids, torch.Tensor):
         nodes = _dataset.node_ids
     elif isinstance(_dataset.node_ids, dict):
