@@ -506,8 +506,8 @@ class TestLightGCN(unittest.TestCase):
             anchor_node_ids=anchor_node_ids,
         )
 
-        # Check shapes - should only return embeddings for anchor nodes
-        self.assertEqual(output_with_anchors[NodeType("user")].shape, (1, self.embedding_dim))
+        # Check that only user embeddings are returned
+        self.assertEqual(output_with_anchors.keys(), set([NodeType("user")]))
 
         # Check values - should match the corresponding rows from full output
         self.assertTrue(

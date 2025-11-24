@@ -416,23 +416,19 @@ class LightGCN(nn.Module):
 
             node_type_to_embeddings_0[node_type] = embeddings
 
-        # LightGCN propagation across node types
-        # Sort node types for deterministic ordering across machines
-        all_node_types = sorted(node_type_to_embeddings_0.keys())
-
         # For heterogeneous graphs, we need to create a unified edge representation
         # Collect all edges and map node indices to a combined space
         # E.g., node type 0 gets indices [0, num_type_0), node type 1 gets [num_type_0, num_type_0 + num_type_1)
         node_type_to_offset: dict[NodeType, int] = {}
         offset = 0
-        for node_type in all_node_types:
+        for node_type in all_node_types_in_data:
             node_type_to_offset[node_type] = offset
             node_type_str = str(node_type)
             offset += data[node_type_str].num_nodes
 
         # Combine all embeddings into a single tensor
         combined_embeddings_0 = torch.cat(
-            [node_type_to_embeddings_0[nt] for nt in all_node_types], dim=0
+            [node_type_to_embeddings_0[nt] for nt in all_node_types_in_data], dim=0
         )  # shape [total_nodes, D]
 
         # Combine all edges into a single edge_index
@@ -471,7 +467,7 @@ class LightGCN(nn.Module):
 
         # Split back into per-node-type embeddings
         final_embeddings: dict[NodeType, torch.Tensor] = {}
-        for node_type in all_node_types:
+        for node_type in all_node_types_in_data:
             start_idx = node_type_to_offset[node_type]
             node_type_str = str(node_type)
             num_nodes = data[node_type_str].num_nodes
@@ -483,7 +479,7 @@ class LightGCN(nn.Module):
         if anchor_node_ids is not None:
             # Only return embeddings for node types specified in anchor_node_ids
             filtered_embeddings: dict[NodeType, torch.Tensor] = {}
-            for node_type in all_node_types:
+            for node_type in all_node_types_in_data:
                 if node_type in anchor_node_ids:
                     anchors = anchor_node_ids[node_type].to(device).long()
                     filtered_embeddings[node_type] = final_embeddings[node_type][anchors]
