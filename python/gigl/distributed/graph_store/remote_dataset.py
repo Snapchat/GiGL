@@ -89,7 +89,9 @@ def get_edge_feature_info() -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], N
 
 
 def get_node_ids_for_rank(
-    rank: int, world_size: int, node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE
+    rank: int,
+    world_size: int,
+    node_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE,
 ) -> torch.Tensor:
     """Get the node IDs assigned to a specific rank in distributed processing.
 
@@ -112,8 +114,16 @@ def get_node_ids_for_rank(
     if _dataset is None:
         raise _NO_DATASET_ERROR
     if isinstance(_dataset.node_ids, torch.Tensor):
+        if node_type is not None:
+            raise ValueError(
+                f"node_type must be None for a homogeneous dataset. Got {node_type}. In GiGL, we usually do not have a truly homogeneous dataset, this is an odd error!"
+            )
         nodes = _dataset.node_ids
     elif isinstance(_dataset.node_ids, dict):
+        if node_type is None:
+            raise ValueError(
+                f"node_type must be not None for a heterogeneous dataset. Got {node_type}."
+            )
         nodes = _dataset.node_ids[node_type]
     else:
         raise ValueError(

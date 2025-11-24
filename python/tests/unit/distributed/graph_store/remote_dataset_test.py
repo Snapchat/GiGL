@@ -180,7 +180,9 @@ class TestRemoteDataset(unittest.TestCase):
         remote_dataset.register_dataset(dataset)
 
         # Test with world_size=1, rank=0 (should get all nodes)
-        node_ids = remote_dataset.get_node_ids_for_rank(rank=0, world_size=1)
+        node_ids = remote_dataset.get_node_ids_for_rank(
+            rank=0, world_size=1, node_type=None
+        )
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
         assert_tensor_equality(node_ids, torch.arange(10))
@@ -212,17 +214,27 @@ class TestRemoteDataset(unittest.TestCase):
         remote_dataset.register_dataset(dataset)
 
         # Test with world_size=2
-        rank_0_nodes = remote_dataset.get_node_ids_for_rank(rank=0, world_size=2)
-        rank_1_nodes = remote_dataset.get_node_ids_for_rank(rank=1, world_size=2)
+        rank_0_nodes = remote_dataset.get_node_ids_for_rank(
+            rank=0, world_size=2, node_type=None
+        )
+        rank_1_nodes = remote_dataset.get_node_ids_for_rank(
+            rank=1, world_size=2, node_type=None
+        )
 
         # Verify each rank gets different nodes
         assert_tensor_equality(rank_0_nodes, torch.arange(5))
         assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
         # Test with world_size=3 (uneven split)
-        rank_0_nodes = remote_dataset.get_node_ids_for_rank(rank=0, world_size=3)
-        rank_1_nodes = remote_dataset.get_node_ids_for_rank(rank=1, world_size=3)
-        rank_2_nodes = remote_dataset.get_node_ids_for_rank(rank=2, world_size=3)
+        rank_0_nodes = remote_dataset.get_node_ids_for_rank(
+            rank=0, world_size=3, node_type=None
+        )
+        rank_1_nodes = remote_dataset.get_node_ids_for_rank(
+            rank=1, world_size=3, node_type=None
+        )
+        rank_2_nodes = remote_dataset.get_node_ids_for_rank(
+            rank=2, world_size=3, node_type=None
+        )
 
         assert_tensor_equality(rank_0_nodes, torch.arange(3))
         assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
@@ -235,6 +247,30 @@ class TestRemoteDataset(unittest.TestCase):
 
         self.assertIn("Dataset not registered", str(context.exception))
         self.assertIn("register_dataset", str(context.exception))
+
+    def test_get_node_ids_for_rank_with_homogeneous_dataset_and_node_type(self) -> None:
+        """Test get_node_ids_for_rank with a homogeneous dataset and a node type."""
+        dataset = self._create_homogeneous_dataset()
+        remote_dataset.register_dataset(dataset)
+        with self.assertRaises(ValueError) as context:
+            remote_dataset.get_node_ids_for_rank(rank=0, world_size=1, node_type=_USER)
+        self.assertIn(
+            "node_type must be None for a homogeneous dataset. Got user.",
+            str(context.exception),
+        )
+
+    def test_get_node_ids_for_rank_with_heterogeneous_dataset_and_no_node_type(
+        self,
+    ) -> None:
+        """Test get_node_ids_for_rank with a heterogeneous dataset and no node type."""
+        dataset = self._create_heterogeneous_dataset()
+        remote_dataset.register_dataset(dataset)
+        with self.assertRaises(ValueError) as context:
+            remote_dataset.get_node_ids_for_rank(rank=0, world_size=1, node_type=None)
+        self.assertIn(
+            "node_type must be not None for a heterogeneous dataset. Got None.",
+            str(context.exception),
+        )
 
 
 if __name__ == "__main__":
