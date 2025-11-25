@@ -85,6 +85,7 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
+BOOT_DISK_PLACEHOLDER: Final[str] = "DISK_TYPE_UNSPECIFIED"
 
 
 @dataclass
@@ -98,7 +99,7 @@ class VertexAiJobConfig:
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
     replica_count: int = 1
-    boot_disk_type: str = None  # Persistent Disk SSD
+    boot_disk_type: str = BOOT_DISK_PLACEHOLDER  # Persistent Disk SSD
     boot_disk_size_gb: int = 100  # Default disk size in GB
     labels: Optional[dict[str, str]] = None
     timeout_s: Optional[
@@ -107,9 +108,8 @@ class VertexAiJobConfig:
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
 
-
     def __post_init__(self):
-        if self.boot_disk_type is None:
+        if self.boot_disk_type is BOOT_DISK_PLACEHOLDER:
             if self.machine_type.startswith("g4-"):
                 self.boot_disk_type = "hyperdisk-balanced"
             else:
