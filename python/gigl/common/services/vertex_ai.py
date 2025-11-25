@@ -111,7 +111,7 @@ class VertexAiJobConfig:
     def __post_init__(self):
         if self.boot_disk_type is BOOT_DISK_PLACEHOLDER:
             if self.machine_type.startswith("g4-"):
-                self.boot_disk_type = "hyperdisk-balanced"
+                self.boot_disk_type = "hyperdisk-balanced" # g4 machines require use of hyperdisk-balanced
             else:
                 self.boot_disk_type = "pd-ssd"
 
