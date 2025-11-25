@@ -102,7 +102,7 @@ def _run_server_processes(
 
 
 class TestUtils(unittest.TestCase):
-    def test_graph_store(self):
+    def test_graph_store_locally(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
