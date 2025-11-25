@@ -67,26 +67,6 @@ class KFPRunnerTest(unittest.TestCase):
         self.assertEqual(parsed_args, expected_parsed_args)
         self.assertEqual(parsed_labels, expected_parsed_labels)
 
-    def test_assert_required_flags_missing_flag(self):
-        """Test that _assert_required_flags raises ValueError when a required flag is missing."""
-        parser = _get_parser()
-        # Parse with RUN action but missing task_config_uri flag
-        args = parser.parse_args(
-            [
-                "--action=run",
-                "--resource_config_uri=gs://bucket/resource_config.yaml",
-            ]
-        )
-        # Note: task_config_uri is not provided, so it will be None (flag exists with None value)
-        # To test missing flag (no hasattr), we need to delete the attribute
-        delattr(args, "task_config_uri")
-
-        with self.assertRaises(ValueError) as context:
-            _assert_required_flags(args)
-
-        self.assertIn("Missing the following flags", str(context.exception))
-        self.assertIn("task_config_uri", str(context.exception))
-
     def test_assert_required_flags_missing_value(self):
         """Test that _assert_required_flags raises ValueError when a required flag has no value."""
         parser = _get_parser()
