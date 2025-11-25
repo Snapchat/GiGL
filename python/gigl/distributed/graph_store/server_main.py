@@ -105,6 +105,8 @@ if __name__ == "__main__":
     torch.distributed.init_process_group()
     cluster_info = get_graph_store_info()
     server_rank = int(os.environ["RANK"]) - cluster_info.num_compute_nodes
+    # Tear down the """"global""" process group so we can have a server-specific process group.
+    torch.distributed.destroy_process_group()
     run_servers(
         server_rank=server_rank,
         cluster_info=cluster_info,
