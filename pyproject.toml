@@ -1,5 +1,3 @@
-# TODO: Next PR will overwrite this file with new deps and leverage uv
-
 # Starting with PEP 621, the Python community selected pyproject.toml as a standard way of specifying project metadata.
 # https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html
 # A tutorial on packages: https://realpython.com/pypi-publish-python-package/#prepare-your-package-for-publication
