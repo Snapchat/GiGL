@@ -124,6 +124,29 @@ def build_job_config(
     env_vars: list[env_var.EnvVar],
     labels: Optional[dict[str, str]] = None,
 ) -> VertexAiJobConfig:
+    """Build a VertexAiJobConfig for training or inference jobs.
+
+    This function constructs a configuration object for running GiGL training or inference
+    jobs on Vertex AI. It assembles job arguments, sets appropriate job naming conventions,
+    and configures resource specifications based on the provided parameters.
+
+    Args:
+        job_name (str): The base name for the job. Will be prefixed with "gigl_train_" or "gigl_infer_".
+        is_inference (bool): Whether this is an inference job (True) or training job (False).
+        task_config_uri (Uri): URI to the task configuration file.
+        resource_config_uri (Uri): URI to the resource configuration file.
+        command_str (str): The command to run in the container (will be split on spaces).
+        args (Mapping[str, str]): Additional command-line arguments to pass to the job.
+        run_on_cpu (bool): Whether to run on CPU only. If False, adds --use_cuda flag.
+        container_uri (str): The URI of the container image to use.
+        vertex_ai_resource_config (VertexAiResourceConfig): Resource configuration including
+            machine type, GPU type, replica count, timeout, and scheduling strategy.
+        env_vars (list[env_var.EnvVar]): Environment variables to set in the container.
+        labels (Optional[dict[str, str]]): Labels to associate with the job. Defaults to None.
+
+    Returns:
+        VertexAiJobConfig: A configuration object ready to be used with VertexAIService.launch_job().
+    """
     job_args = (
         [
             f"--job_name={job_name}",
