@@ -221,6 +221,15 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
                     job.resource_name, timeout=60 * 30, polling_period_s=10
                 )
 
+    def default_boot_disk_for_g4_machine(self):
+        job_config = VertexAiJobConfig(
+            job_name="job_name",
+            container_uri="container_uri",
+            command=["command"],
+            machine_type="g4-standard-8",
+        )
+        self.assertEqual(job_config.boot_disk_type, "hyperdisk-balanced")
+
 
 if __name__ == "__main__":
     unittest.main()
