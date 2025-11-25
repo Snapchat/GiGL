@@ -2,6 +2,7 @@ import unittest
 
 from gigl.common.logger import Logger
 from gigl.orchestration.kubeflow.runner import (
+    _assert_required_flags,
     _get_parser,
     _parse_additional_job_args,
     _parse_labels,
@@ -65,6 +66,74 @@ class KFPRunnerTest(unittest.TestCase):
         expected_parsed_labels = {"gigl-integration-test": "true", "user": "me"}
         self.assertEqual(parsed_args, expected_parsed_args)
         self.assertEqual(parsed_labels, expected_parsed_labels)
+
+    def test_assert_required_flags_missing_flag(self):
+        """Test that _assert_required_flags raises ValueError when a required flag is missing."""
+        parser = _get_parser()
+        # Parse with RUN action but missing task_config_uri flag
+        args = parser.parse_args(
+            [
+                "--action=run",
+                "--resource_config_uri=gs://bucket/resource_config.yaml",
+            ]
+        )
+        # Note: task_config_uri is not provided, so it will be None (flag exists with None value)
+        # To test missing flag (no hasattr), we need to delete the attribute
+        delattr(args, "task_config_uri")
+
+        with self.assertRaises(ValueError) as context:
+            _assert_required_flags(args)
+
+        self.assertIn("Missing the following flags", str(context.exception))
+        self.assertIn("task_config_uri", str(context.exception))
+
+    def test_assert_required_flags_missing_value(self):
+        """Test that _assert_required_flags raises ValueError when a required flag has no value."""
+        parser = _get_parser()
+        # Parse with RUN action but task_config_uri not provided (will be None)
+        args = parser.parse_args(
+            [
+                "--action=run",
+                "--resource_config_uri=gs://bucket/resource_config.yaml",
+                "--task_config_uri=",
+            ]
+        )
+        with self.assertRaises(ValueError) as context:
+            _assert_required_flags(args)
+
+        self.assertIn("Missing values for the following flags", str(context.exception))
+        self.assertIn("task_config_uri", str(context.exception))
+
+    def test_assert_required_flags_none_value(self):
+        """Test that _assert_required_flags raises ValueError when a required flag has no value."""
+        parser = _get_parser()
+        # Parse with RUN action but task_config_uri not provided (will be None)
+        args = parser.parse_args(
+            [
+                "--action=run",
+                "--resource_config_uri=gs://bucket/resource_config.yaml",
+            ]
+        )
+        with self.assertRaises(ValueError) as context:
+            _assert_required_flags(args)
+
+        self.assertIn("Missing values for the following flags", str(context.exception))
+        self.assertIn("task_config_uri", str(context.exception))
+
+    def test_assert_required_flags_success(self):
+        """Test that _assert_required_flags succeeds when all required flags are present."""
+        parser = _get_parser()
+        # Parse with RUN action and all required flags
+        args = parser.parse_args(
+            [
+                "--action=run",
+                "--task_config_uri=gs://bucket/task_config.yaml",
+                "--resource_config_uri=gs://bucket/resource_config.yaml",
+            ]
+        )
+
+        # Should not raise any exception
+        _assert_required_flags(args)
 
 
 if __name__ == "__main__":

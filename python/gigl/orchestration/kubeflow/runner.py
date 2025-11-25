@@ -146,7 +146,7 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
     for flag in required_flags:
         if not hasattr(args, flag):
             missing_flags.append(flag)
-        elif len(getattr(args, flag)) == 0:
+        elif not getattr(args, flag):
             missing_values.append(flag)
 
     if missing_flags:
