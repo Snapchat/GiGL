@@ -77,9 +77,6 @@ from google.cloud.aiplatform_v1.types import (
 
 from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
-from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.constants.components import GiGLComponents
-from gigl.src.common.types import AppliedTaskIdentifier
 from snapchat.research.gbml.gigl_resource_config_pb2 import VertexAiResourceConfig
 
 logger = Logger()
@@ -114,8 +111,8 @@ class VertexAiJobConfig:
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
 
 
-def get_job_config_from_vertex_ai_resource_config(
-    applied_task_identifier: AppliedTaskIdentifier,
+def build_job_config(
+    job_name: str,
     is_inference: bool,
     task_config_uri: Uri,
     resource_config_uri: Uri,
@@ -125,10 +122,11 @@ def get_job_config_from_vertex_ai_resource_config(
     container_uri: str,
     vertex_ai_resource_config: VertexAiResourceConfig,
     env_vars: list[env_var.EnvVar],
+    labels: Optional[dict[str, str]] = None,
 ) -> VertexAiJobConfig:
     job_args = (
         [
-            f"--job_name={applied_task_identifier}",
+            f"--job_name={job_name}",
             f"--task_config_uri={task_config_uri}",
             f"--resource_config_uri={resource_config_uri}",
         ]
@@ -138,15 +136,10 @@ def get_job_config_from_vertex_ai_resource_config(
 
     command = command_str.strip().split(" ")
     if is_inference:
-        vai_job_name = f"gigl_infer_{applied_task_identifier}"
+        vai_job_name = f"gigl_infer_{job_name}"
     else:
-        vai_job_name = f"gigl_train_{applied_task_identifier}"
-    resource_config_wrapper = get_resource_config(
-        resource_config_uri=resource_config_uri
-    )
-    resource_config_labels = resource_config_wrapper.get_resource_labels(
-        component=GiGLComponents.Inferencer if is_inference else GiGLComponents.Trainer
-    )
+        vai_job_name = f"gigl_train_{job_name}"
+
     job_config = VertexAiJobConfig(
         job_name=vai_job_name,
         container_uri=container_uri,
@@ -157,7 +150,7 @@ def get_job_config_from_vertex_ai_resource_config(
         accelerator_type=vertex_ai_resource_config.gpu_type.upper().replace("-", "_"),
         accelerator_count=vertex_ai_resource_config.gpu_limit,
         replica_count=vertex_ai_resource_config.num_replicas,
-        labels=resource_config_labels,
+        labels=labels,
         timeout_s=vertex_ai_resource_config.timeout
         if vertex_ai_resource_config.timeout
         else None,

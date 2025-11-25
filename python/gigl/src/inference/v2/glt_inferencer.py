@@ -10,12 +10,10 @@ from gigl.common.constants import (
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
 )
 from gigl.common.logger import Logger
-from gigl.common.services.vertex_ai import (
-    VertexAIService,
-    get_job_config_from_vertex_ai_resource_config,
-)
+from gigl.common.services.vertex_ai import VertexAIService, build_job_config
 from gigl.env.distributed import COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY
 from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -74,8 +72,8 @@ class GLTInferencer:
         cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
         container_uri = cpu_docker_uri if is_cpu_inference else cuda_docker_uri
 
-        job_config = get_job_config_from_vertex_ai_resource_config(
-            applied_task_identifier=applied_task_identifier,
+        job_config = build_job_config(
+            job_name=str(applied_task_identifier),
             is_inference=True,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
@@ -85,6 +83,9 @@ class GLTInferencer:
             container_uri=container_uri,
             vertex_ai_resource_config=vertex_ai_resource_config,
             env_vars=[env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3")],
+            labels=resource_config_wrapper.get_resource_labels(
+                component=GiGLComponents.Inferencer
+            ),
         )
         logger.info(f"Launching inference job with config: {job_config}")
 
@@ -141,9 +142,12 @@ class GLTInferencer:
             ),
         ]
 
+        labels = resource_config_wrapper.get_resource_labels(
+            component=GiGLComponents.Inferencer
+        )
         # Create compute pool job config
-        compute_job_config = get_job_config_from_vertex_ai_resource_config(
-            applied_task_identifier=applied_task_identifier,
+        compute_job_config = build_job_config(
+            job_name=str(applied_task_identifier),
             is_inference=True,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
@@ -153,11 +157,12 @@ class GLTInferencer:
             container_uri=container_uri,
             vertex_ai_resource_config=compute_pool_config,
             env_vars=environment_variables,
+            labels=labels,
         )
 
         # Create storage pool job config
-        storage_job_config = get_job_config_from_vertex_ai_resource_config(
-            applied_task_identifier=applied_task_identifier,
+        storage_job_config = build_job_config(
+            job_name=str(applied_task_identifier),
             is_inference=True,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
@@ -167,6 +172,7 @@ class GLTInferencer:
             container_uri=container_uri,
             vertex_ai_resource_config=storage_pool_config,
             env_vars=environment_variables,
+            labels=labels,
         )
 
         # Determine region from compute pool or use default region

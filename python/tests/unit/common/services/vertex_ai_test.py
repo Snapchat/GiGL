@@ -14,11 +14,7 @@ from google.cloud.aiplatform_v1.types import Scheduling, env_var
 
 from gigl.common import UriFactory
 from gigl.common.constants import GIGL_ROOT_DIR
-from gigl.common.services.vertex_ai import (
-    VertexAiJobConfig,
-    get_job_config_from_vertex_ai_resource_config,
-)
-from gigl.src.common.types import AppliedTaskIdentifier
+from gigl.common.services.vertex_ai import VertexAiJobConfig, build_job_config
 from snapchat.research.gbml.gigl_resource_config_pb2 import VertexAiResourceConfig
 
 
@@ -27,7 +23,7 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
 
     def setUp(self) -> None:
         """Set up common test fixtures."""
-        self.applied_task_identifier = AppliedTaskIdentifier("test_task")
+        self.job_name = "test_task"
         self.task_config_uri = UriFactory.create_uri(
             "gs://test-bucket/task_config.yaml"
         )
@@ -56,8 +52,8 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             env_var.EnvVar(name="TEST_VAR", value="test_value"),
         ]
 
-        actual_config = get_job_config_from_vertex_ai_resource_config(
-            applied_task_identifier=self.applied_task_identifier,
+        actual_config = build_job_config(
+            job_name=self.job_name,
             is_inference=False,
             task_config_uri=self.task_config_uri,
             resource_config_uri=self.resource_config_uri,
@@ -67,15 +63,16 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             container_uri=self.container_uri,
             vertex_ai_resource_config=vertex_ai_resource_config,
             env_vars=test_env_vars,
+            labels={"test_label": "test_value"},
         )
 
         # Create expected config
         expected_config = VertexAiJobConfig(
-            job_name=f"gigl_train_{self.applied_task_identifier}",
+            job_name=f"gigl_train_{self.job_name}",
             container_uri=self.container_uri,
             command=["python", "-m", "gigl.train"],
             args=[
-                f"--job_name={self.applied_task_identifier}",
+                f"--job_name={self.job_name}",
                 f"--task_config_uri={self.task_config_uri}",
                 f"--resource_config_uri={self.resource_config_uri}",
                 "--use_cuda",
@@ -88,10 +85,10 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             replica_count=4,
             boot_disk_type="pd-ssd",
             boot_disk_size_gb=100,
-            labels=actual_config.labels,  # Labels are from resource config
             timeout_s=7200,
             enable_web_access=True,
             scheduling_strategy=Scheduling.Strategy.SPOT,  # type: ignore
+            labels={"test_label": "test_value"},
         )
 
         self.assertEqual(actual_config, expected_config)
@@ -106,8 +103,8 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             # No timeout or scheduling_strategy set
         )
 
-        actual_config = get_job_config_from_vertex_ai_resource_config(
-            applied_task_identifier=self.applied_task_identifier,
+        actual_config = build_job_config(
+            job_name=self.job_name,
             is_inference=True,
             task_config_uri=self.task_config_uri,
             resource_config_uri=self.resource_config_uri,
@@ -121,11 +118,11 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
 
         # Create expected config
         expected_config = VertexAiJobConfig(
-            job_name=f"gigl_infer_{self.applied_task_identifier}",
+            job_name=f"gigl_infer_{self.job_name}",
             container_uri=self.container_uri,
             command=["python", "-m", "gigl.infer"],
             args=[
-                f"--job_name={self.applied_task_identifier}",
+                f"--job_name={self.job_name}",
                 f"--task_config_uri={self.task_config_uri}",
                 f"--resource_config_uri={self.resource_config_uri}",
             ],
@@ -136,7 +133,7 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             replica_count=1,
             boot_disk_type="pd-ssd",
             boot_disk_size_gb=100,
-            labels=actual_config.labels,  # Labels are from resource config
+            labels=None,
             timeout_s=None,
             enable_web_access=True,
             scheduling_strategy=None,
