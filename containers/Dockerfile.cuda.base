@@ -20,6 +20,21 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    cmake \
+    iputils-ping \
+    curl \
+    gnupg \
+    telnet \
+    nano \
+    net-tools \
+    unzip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /gigl_deps
 
 # Copy necessary requirements files
