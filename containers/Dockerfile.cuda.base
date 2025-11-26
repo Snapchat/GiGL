@@ -21,10 +21,6 @@ RUN apt-get update && apt-get install -y \
     cmake \
     iputils-ping \
     curl \
-    gnupg \
-    telnet \
-    nano \
-    net-tools \
     unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
