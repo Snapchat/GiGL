@@ -58,7 +58,7 @@ COPY dep_vars.env gigl_deps/dep_vars.env
 COPY requirements gigl_deps/requirements
 COPY python/gigl/scripts gigl_deps/python/gigl/scripts
 RUN pip install --upgrade pip
-RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --no-pip-cache --dev
+RUN cd gigl_deps && bash ./requirements/install_py_deps.sh --dev
 RUN cd gigl_deps && bash ./requirements/install_scala_deps.sh
 
 CMD [ "/bin/bash" ]
