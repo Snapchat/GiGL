@@ -4,14 +4,13 @@ from typing import Optional
 
 import google.api_core.exceptions
 import google.cloud.dataproc_v1 as dataproc_v1
+from gigl.common import Uri
+from gigl.common.logger import Logger
+from gigl.common.utils.retry import retry
 from google.api_core.future.polling import POLLING_PREDICATE
 from google.api_core.retry import Retry
 from google.cloud.dataproc_v1.services.job_controller.pagers import ListJobsPager
 from google.cloud.dataproc_v1.types import JobStatus
-
-from gigl.common import Uri
-from gigl.common.logger import Logger
-from gigl.common.utils.retry import retry
 
 logger = Logger()
 

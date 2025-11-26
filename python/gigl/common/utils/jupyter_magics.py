@@ -12,9 +12,6 @@ import networkx as nx
 import tensorflow as tf
 import torch_geometric.utils
 import yaml
-from IPython.display import HTML, display
-from torch_geometric.data import HeteroData
-
 from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
@@ -22,7 +19,9 @@ from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTransla
 from gigl.src.common.types.graph_data import CondensedNodeType, EdgeType, Node, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
+from IPython.display import HTML, display
 from snapchat.research.gbml import training_samples_schema_pb2
+from torch_geometric.data import HeteroData
 
 gigl_root_dir = pathlib.Path(__file__).parent.parent.parent.parent.parent
 

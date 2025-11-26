@@ -1,7 +1,6 @@
 from typing import MutableMapping, Optional, Type, Union
 
 import torch.distributed as dist
-
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset

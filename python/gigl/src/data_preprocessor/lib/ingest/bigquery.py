@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Optional, cast
 
 import apache_beam as beam
-
 from gigl.common.beam.sharded_read import BigQueryShardedReadConfig, ShardedExportRead
 from gigl.common.logger import Logger
 from gigl.src.data_preprocessor.lib.ingest.reference import (

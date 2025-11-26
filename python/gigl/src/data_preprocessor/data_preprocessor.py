@@ -6,16 +6,15 @@ from collections import defaultdict
 from itertools import chain, repeat
 from typing import Callable, Iterable, NamedTuple, Optional, Tuple, Union
 
+import gigl.common.utils.dataflow
+import gigl.src.common.constants.gcs as gcs_constants
+import gigl.src.common.constants.local_fs as local_fs_constants
+import gigl.src.data_preprocessor.lib.transform.utils as transform_utils
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
 import tensorflow_transform as tft
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
-
-import gigl.common.utils.dataflow
-import gigl.src.common.constants.gcs as gcs_constants
-import gigl.src.common.constants.local_fs as local_fs_constants
-import gigl.src.data_preprocessor.lib.transform.utils as transform_utils
 from gigl.analytics.graph_validation import BQGraphValidator
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger

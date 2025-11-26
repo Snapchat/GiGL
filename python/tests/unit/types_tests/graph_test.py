@@ -2,8 +2,6 @@ import unittest
 from typing import Literal, Union
 
 import torch
-from parameterized import param, parameterized
-
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -18,6 +16,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from parameterized import param, parameterized
 
 
 class GraphTypesTyest(unittest.TestCase):

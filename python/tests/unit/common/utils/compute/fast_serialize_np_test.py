@@ -1,7 +1,6 @@
 import unittest
 
 import numpy as np
-
 from gigl.common.utils.compute.serialization.serialize_np import NumpyCoder
 
 

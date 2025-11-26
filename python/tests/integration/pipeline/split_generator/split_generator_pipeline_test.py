@@ -7,7 +7,6 @@ import unittest
 from typing import Set, Tuple, Type, TypeVar, cast
 
 import numpy as np
-
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.constants import SPARK_35_TFRECORD_JAR_LOCAL_PATH
 from gigl.common.logger import Logger

@@ -41,9 +41,6 @@ from typing import Literal
 
 import torch
 from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
-from torch.nn.parallel import DistributedDataParallel
-from torch_geometric.data import HeteroData
-
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed import (
@@ -56,6 +53,8 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import save_state_dict
 from gigl.utils.iterator import InfiniteIterator
+from torch.nn.parallel import DistributedDataParallel
+from torch_geometric.data import HeteroData
 
 logger = Logger()
 

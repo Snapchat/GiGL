@@ -2,7 +2,6 @@ import os
 from typing import Optional
 
 import torch.distributed
-
 from gigl.common.logger import Logger
 
 logger = Logger()

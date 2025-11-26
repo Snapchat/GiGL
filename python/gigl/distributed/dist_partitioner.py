@@ -5,11 +5,6 @@ from typing import Callable, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
-from graphlearn_torch.distributed.dist_context import get_context
-from graphlearn_torch.distributed.dist_random_partitioner import DistPartitionManager
-from graphlearn_torch.partition import PartitionBook
-from graphlearn_torch.utils import convert_to_tensor, index_select
-
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -22,6 +17,10 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from graphlearn_torch.distributed.dist_context import get_context
+from graphlearn_torch.distributed.dist_random_partitioner import DistPartitionManager
+from graphlearn_torch.partition import PartitionBook
+from graphlearn_torch.utils import convert_to_tensor, index_select
 
 logger = Logger()
 

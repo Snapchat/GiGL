@@ -1,7 +1,6 @@
 from typing import Iterable, Union
 
 import apache_beam as beam
-
 from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader import (
     RootedNodeNeighborhoodBatch,
 )

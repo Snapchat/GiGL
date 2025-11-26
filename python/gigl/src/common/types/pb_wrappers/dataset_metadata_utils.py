@@ -6,7 +6,6 @@ from typing import Optional, Type, TypeVar, Union, cast
 
 import google.protobuf.message
 import torch
-
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils

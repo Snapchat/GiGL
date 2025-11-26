@@ -12,8 +12,6 @@ from examples.MAG240M.queries import (
     query_template_generate_homogeneous_node_table,
     query_template_reindex_author_writes_paper_table,
 )
-from google.cloud.bigquery.job import WriteDisposition
-
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -43,6 +41,7 @@ from gigl.src.data_preprocessor.lib.types import (
     NodeOutputIdentifier,
     TFTensorDict,
 )
+from google.cloud.bigquery.job import WriteDisposition
 
 logger = Logger()
 

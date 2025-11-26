@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import omegaconf
-
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY

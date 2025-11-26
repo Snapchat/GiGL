@@ -2,7 +2,6 @@ import unittest
 
 import torch
 import torch.nn.functional as F
-
 from gigl.nn.loss import RetrievalLoss
 from tests.test_assets.distributed.utils import assert_tensor_equality
 

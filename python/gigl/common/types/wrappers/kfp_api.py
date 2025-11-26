@@ -5,12 +5,11 @@ import datetime
 from typing import Optional
 
 import kfp_server_api
+from gigl.common.logger import Logger
+from gigl.common.utils.func_tools import lru_cache
 from kfp_server_api.models.v2beta1_pipeline_task_detail import V2beta1PipelineTaskDetail
 from kfp_server_api.models.v2beta1_run_details import V2beta1RunDetails
 from kfp_server_api.models.v2beta1_runtime_config import V2beta1RuntimeConfig
-
-from gigl.common.logger import Logger
-from gigl.common.utils.func_tools import lru_cache
 
 logger = Logger()
 

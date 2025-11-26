@@ -1,10 +1,9 @@
 import unittest
 
-from parameterized import param, parameterized
-
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
+from parameterized import param, parameterized
 
 
 class TestStringChecks(unittest.TestCase):

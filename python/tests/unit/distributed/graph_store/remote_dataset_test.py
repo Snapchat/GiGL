@@ -1,7 +1,6 @@
 import unittest
 
 import torch
-
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store import remote_dataset
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation

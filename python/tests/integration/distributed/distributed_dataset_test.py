@@ -5,11 +5,6 @@ from typing import MutableMapping, Optional
 import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.data import Feature, Graph
-from parameterized import param, parameterized
-from torch.multiprocessing import Manager
-from torch.testing import assert_close
-
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
@@ -23,9 +18,13 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, NodeAnchorLinkSplitter
+from graphlearn_torch.data import Feature, Graph
+from parameterized import param, parameterized
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
+from torch.multiprocessing import Manager
+from torch.testing import assert_close
 
 
 class DistDatasetTestCase(unittest.TestCase):

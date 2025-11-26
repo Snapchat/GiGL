@@ -5,16 +5,15 @@ from typing import Iterable, Optional, Tuple, Union
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
-from google.api_core.exceptions import NotFound
-from google.cloud.bigquery._helpers import _record_field_to_json
-from google.cloud.bigquery.job import _AsyncJob
-from google.cloud.bigquery.table import RowIterator
-
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
 from gigl.src.common.constants.time import DEFAULT_DATE_FORMAT
 from gigl.src.common.utils.time import convert_days_to_ms, current_datetime
+from google.api_core.exceptions import NotFound
+from google.cloud.bigquery._helpers import _record_field_to_json
+from google.cloud.bigquery.job import _AsyncJob
+from google.cloud.bigquery.table import RowIterator
 
 logger = Logger()
 

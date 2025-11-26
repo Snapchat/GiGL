@@ -11,8 +11,6 @@ from typing import Any, Optional
 
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
-from google.cloud import bigquery
-
 from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.env_config import get_available_cpus
 from gigl.common.logger import Logger
@@ -39,6 +37,7 @@ from gigl.src.inference.v1.lib.inference_blueprint_factory import (
 from gigl.src.inference.v1.lib.utils import (
     get_inferencer_pipeline_component_for_single_node_type,
 )
+from google.cloud import bigquery
 from snapchat.research.gbml.inference_metadata_pb2 import InferenceOutput
 
 logger = Logger()

@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Tuple
 
 import pandas as pd
-
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.time import DEFAULT_DATE_FORMAT
 from gigl.src.common.utils.bq import BqUtils

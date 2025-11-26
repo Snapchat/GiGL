@@ -5,7 +5,6 @@ from functools import partial
 
 import torch
 import torchrec
-
 from gigl.experimental.knowledge_graph_embedding.common.graph_dataset import (
     CONDENSED_EDGE_TYPE_FIELD,
     DST_FIELD,

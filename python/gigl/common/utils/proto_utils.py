@@ -2,14 +2,13 @@ from tempfile import NamedTemporaryFile
 from typing import Optional, Type, TypeVar
 
 import yaml
-from google.protobuf import message
-from google.protobuf.json_format import MessageToDict, ParseDict
-from omegaconf import OmegaConf
-
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.omegaconf_resolvers import register_resolvers
 from gigl.src.common.utils.file_loader import FileLoader
+from google.protobuf import message
+from google.protobuf.json_format import MessageToDict, ParseDict
+from omegaconf import OmegaConf
 
 logger = Logger()
 

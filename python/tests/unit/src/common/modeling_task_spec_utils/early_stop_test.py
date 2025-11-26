@@ -3,9 +3,8 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from parameterized import param, parameterized
-
 from gigl.src.common.modeling_task_specs.utils.early_stop import EarlyStopper
+from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 _EARLY_STOP_PATIENCE = 3

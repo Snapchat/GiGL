@@ -3,7 +3,6 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-
 from gigl.common.logger import Logger
 
 logger = Logger()

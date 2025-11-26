@@ -3,10 +3,8 @@ import tempfile
 from functools import partial
 from typing import Tuple
 
-import tensorflow as tf
-from google.cloud import bigquery
-
 import gigl.src.common.utils.model as model_utils
+import tensorflow as tf
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.os_utils import import_obj
@@ -38,6 +36,7 @@ from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader 
 from gigl.src.training.v1.lib.data_loaders.supervised_node_classification_data_loader import (
     SupervisedNodeClassificationBatch,
 )
+from google.cloud import bigquery
 from snapchat.research.gbml import (
     flattened_graph_metadata_pb2,
     gbml_config_pb2,

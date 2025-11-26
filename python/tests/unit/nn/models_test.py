@@ -5,18 +5,17 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
-from torch_geometric.data import Data, HeteroData
-from torch_geometric.nn.models import LightGCN as PyGLightGCN
-from torchrec.distributed.model_parallel import (
-    DistributedModelParallel as DistributedModelParallel,
-)
-
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
+)
+from torch_geometric.data import Data, HeteroData
+from torch_geometric.nn.models import LightGCN as PyGLightGCN
+from torchrec.distributed.model_parallel import (
+    DistributedModelParallel as DistributedModelParallel,
 )
 
 # Embedding table name for default homogeneous node type

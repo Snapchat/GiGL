@@ -33,7 +33,6 @@ import pandas as pd
 import torch
 import torch.multiprocessing.spawn
 from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
-
 from gigl.common import Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter
 from gigl.common.logger import Logger

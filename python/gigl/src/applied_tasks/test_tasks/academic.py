@@ -1,7 +1,6 @@
-from torch_geometric.datasets.planetoid import Planetoid
-
 from gigl.common.logger import Logger
 from gigl.src.mocking.lib.pyg_datasets_forks import CoraFromGCS
+from torch_geometric.datasets.planetoid import Planetoid
 
 logger = Logger()
 

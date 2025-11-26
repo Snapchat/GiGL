@@ -21,7 +21,6 @@ TOOD(kmonte): If we ever fork GLT, we should look into expanding DistServer inst
 from typing import Optional, Union
 
 import torch
-
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process

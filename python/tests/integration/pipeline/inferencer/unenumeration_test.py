@@ -3,7 +3,6 @@ import unittest
 import apache_beam as beam
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
-
 from gigl.common.logger import Logger
 from gigl.src.data_preprocessor.lib.enumerate.queries import (
     DEFAULT_ENUMERATED_NODE_ID_FIELD,

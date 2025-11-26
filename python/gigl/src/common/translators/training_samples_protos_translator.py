@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import NamedTuple, Optional, Tuple
 
 import torch
-
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder
 from gigl.src.common.graph_builder.gbml_graph_protocol import GbmlGraphDataProtocol

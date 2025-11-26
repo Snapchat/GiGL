@@ -4,11 +4,10 @@ from copy import deepcopy
 from typing import Optional, TypeVar, Union
 
 import torch
-from torch_geometric.data import Data, HeteroData
-from torch_geometric.typing import EdgeType, NodeType
-
 from gigl.common.logger import Logger
 from gigl.types.graph import FeatureInfo, is_label_edge_type
+from torch_geometric.data import Data, HeteroData
+from torch_geometric.typing import EdgeType, NodeType
 
 logger = Logger()
 

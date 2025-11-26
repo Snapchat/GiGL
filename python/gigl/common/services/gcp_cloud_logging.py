@@ -1,13 +1,12 @@
 from datetime import datetime
 from typing import Iterable, Iterator
 
+from gigl.common.logger import Logger
 from google.cloud.logging_v2.services.logging_service_v2 import (
     LoggingServiceV2Client,
     pagers,
 )
 from google.cloud.logging_v2.types import ListLogEntriesRequest, log_entry
-
-from gigl.common.logger import Logger
 
 logger = Logger()
 

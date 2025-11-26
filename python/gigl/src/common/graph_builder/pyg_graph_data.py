@@ -3,12 +3,11 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import torch
-from torch_geometric.data.hetero_data import HeteroData
-from torch_geometric.data.storage import EdgeStorage
-
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.graph_builder.gbml_graph_protocol import GbmlGraphDataProtocol
 from gigl.src.common.types.graph_data import Edge, EdgeType, Node, NodeId, NodeType
+from torch_geometric.data.hetero_data import HeteroData
+from torch_geometric.data.storage import EdgeStorage
 
 
 class PygGraphData(HeteroData, GbmlGraphDataProtocol):
