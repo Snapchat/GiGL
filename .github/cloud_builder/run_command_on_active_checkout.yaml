@@ -3,7 +3,7 @@ substitutions:
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
-  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:6a94ae7cad3ec0c633246b0c9340a5095527deb9.63.2
+  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:4698dabd13dbf7a4bb66c02186e69311f9583714.70.1
     entrypoint: /bin/bash
     args:
       - -c
@@ -18,6 +18,8 @@ steps:
 
         echo "Setting up environment..."
         # gcloud runner will run as a non-root user, but all paths/profiles, etc are set up for root
+        mkdir -p /builder/home/.local/bin
+        cp -r /root/.local/bin/ /builder/home/.local/
         echo "source /root/.bashrc" >> ~/.bashrc
         echo "source /root/.profile" >> ~/.profile
 
@@ -26,7 +28,7 @@ steps:
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Install GiGL
-        pip install -e ./python/
+        uv pip install -e .
         # The builder operates in its own user dir, usually /workspace,
         # so we need to copy the gigl tools dir to the current cloud_builder's user dir.
         # See: containers/Dockerfile.builder.
