@@ -8,7 +8,7 @@ from graphlearn_torch.distributed import init_client, shutdown_client
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
-from gigl.distributed.graph_store.server_main import run_servers
+from gigl.distributed.graph_store.storage_main import storage_node_process
 from gigl.distributed.utils import get_free_port
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
@@ -27,7 +27,8 @@ def _run_client_process(
     cluster_info: GraphStoreInfo,
 ) -> None:
     client_global_rank = (
-        int(os.environ["RANK"]) * cluster_info.num_processes_per_compute + client_rank
+        cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
+        + client_rank
     )
     logger.info(
         f"Initializing client process {client_global_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.cluster_master_ip}:{cluster_info.cluster_master_port}. OS rank: {os.environ['RANK']}, local client rank: {client_rank} on port: {cluster_info.cluster_master_port}"
@@ -93,7 +94,7 @@ def _run_server_processes(
     logger.info(
         f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
     )
-    run_servers(
+    storage_node_process(
         server_rank=int(os.environ["RANK"]) - cluster_info.num_compute_nodes,
         cluster_info=cluster_info,
         task_config_uri=task_config_uri,

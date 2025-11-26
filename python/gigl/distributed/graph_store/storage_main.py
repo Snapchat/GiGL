@@ -3,19 +3,15 @@
 Derivved from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/examples/distributed/server_client_mode/sage_supervised_server.py
 
 """
-import os
-
-# Suppress TensorFlow logs
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # isort: skip
-
 import argparse
+import os
 
 import graphlearn_torch as glt
 import torch
 
-import gigl.distributed as gd
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.distributed import build_dataset_from_task_config_uri
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.remote_dataset import register_dataset
 from gigl.distributed.utils import get_graph_store_info
@@ -24,7 +20,7 @@ from gigl.env.distributed import GraphStoreInfo
 logger = Logger()
 
 
-def _run_server(
+def _run_storage_process(
     server_rank: int,
     cluster_info: GraphStoreInfo,
     dataset: DistDataset,
@@ -49,13 +45,24 @@ def _run_server(
     logger.info(f"Server rank {server_rank} exited")
 
 
-def run_servers(
+def storage_node_process(
     server_rank: int,
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
     is_inference: bool,
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
-) -> list:
+) -> None:
+    """Run a storage node process
+
+    Should be called *once* per storage node (machine).
+
+    Args:
+        server_rank (int): The rank of the server.
+        cluster_info (GraphStoreInfo): The cluster information.
+        task_config_uri (Uri): The task config URI.
+        is_inference (bool): Whether the process is an inference process.
+        tf_record_uri_pattern (str): The TF Record URI pattern.
+    """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
         f"Initializing server {server_rank} / {cluster_info.num_storage_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']} init method: {init_method}"
@@ -70,7 +77,7 @@ def run_servers(
     logger.info(
         f"Server {server_rank} / {cluster_info.num_storage_nodes} process group initialized"
     )
-    dataset = gd.build_dataset_from_task_config_uri(
+    dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
         is_inference=is_inference,
         _tfrecord_uri_pattern=tf_record_uri_pattern,
@@ -80,7 +87,7 @@ def run_servers(
     # TODO(kmonte): Enable more than one server process per machine
     for i in range(1):
         server_process = mp_context.Process(
-            target=_run_server,
+            target=_run_storage_process,
             args=(
                 server_rank + i,  # server_rank
                 cluster_info,  # cluster_info
@@ -90,7 +97,8 @@ def run_servers(
         server_processes.append(server_process)
     for server_process in server_processes:
         server_process.start()
-    return server_processes
+    for server_process in server_processes:
+        server_process.join()
 
 
 if __name__ == "__main__":
@@ -104,11 +112,10 @@ if __name__ == "__main__":
     is_inference = args.is_inference
     torch.distributed.init_process_group()
     cluster_info = get_graph_store_info()
-    server_rank = int(os.environ["RANK"]) - cluster_info.num_compute_nodes
     # Tear down the """"global""" process group so we can have a server-specific process group.
     torch.distributed.destroy_process_group()
-    run_servers(
-        server_rank=server_rank,
+    storage_node_process(
+        server_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,
         task_config_uri=UriFactory.create_uri(args.task_config_uri),
         is_inference=is_inference,
