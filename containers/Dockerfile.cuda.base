@@ -22,6 +22,7 @@ RUN apt-get update \
 
 WORKDIR /gigl_deps
 
+# Copy necessary requirements files
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY requirements requirements
