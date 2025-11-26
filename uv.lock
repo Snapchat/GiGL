@@ -902,7 +902,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "scikit-learn" },
     { name = "tensorflow", specifier = "~=2.16" },
-    { name = "tensorflow-data-validation", marker = "sys_platform != 'darwin' and extra == 'transform'" },
+    { name = "tensorflow-data-validation", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.1" },
     { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.1" },
     { name = "tensorflow-transform", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.0" },
     { name = "tfx-bsl", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.16.1" },
