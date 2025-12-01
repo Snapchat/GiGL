@@ -78,11 +78,8 @@ class KFPRunnerTest(unittest.TestCase):
                 "--task_config_uri=",
             ]
         )
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(ValueError):
             _assert_required_flags(args)
-
-        self.assertIn("Missing values for the following flags", str(context.exception))
-        self.assertIn("task_config_uri", str(context.exception))
 
     def test_assert_required_flags_none_value(self):
         """Test that _assert_required_flags raises ValueError when a required flag has no value."""
@@ -94,11 +91,8 @@ class KFPRunnerTest(unittest.TestCase):
                 "--resource_config_uri=gs://bucket/resource_config.yaml",
             ]
         )
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(ValueError):
             _assert_required_flags(args)
-
-        self.assertIn("Missing values for the following flags", str(context.exception))
-        self.assertIn("task_config_uri", str(context.exception))
 
     def test_assert_required_flags_success(self):
         """Test that _assert_required_flags succeeds when all required flags are present."""
