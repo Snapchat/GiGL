@@ -1,20 +1,11 @@
-"""Unit tests for vertex_ai.py.
-
-Note: Tests for VertexAIService class methods (launch_job, run_pipeline, etc.)
-are located in python/tests/integration/common/services/vertex_ai_test.py since
-they require actual GCP resources and network calls.
-
-This file contains unit tests for standalone utility functions that can be tested
-in isolation.
-"""
-
 import unittest
 
 from google.cloud.aiplatform_v1.types import Scheduling, env_var
 
 from gigl.common import UriFactory
 from gigl.common.constants import GIGL_ROOT_DIR
-from gigl.common.services.vertex_ai import VertexAiJobConfig, build_job_config
+from gigl.common.services.vertex_ai import VertexAiJobConfig
+from gigl.src.common.translators.vertex_ai_job_translator import build_job_config
 from snapchat.research.gbml.gigl_resource_config_pb2 import VertexAiResourceConfig
 
 
@@ -59,7 +50,7 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             resource_config_uri=self.resource_config_uri,
             command_str=self.command_str,
             args={"custom_arg": "custom_value"},
-            run_on_cpu=False,
+            use_cuda=True,
             container_uri=self.container_uri,
             vertex_ai_resource_config=vertex_ai_resource_config,
             env_vars=test_env_vars,
@@ -110,7 +101,7 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             resource_config_uri=self.resource_config_uri,
             command_str="  python -m gigl.infer  ",  # Test whitespace handling
             args={},
-            run_on_cpu=True,
+            use_cuda=False,
             container_uri=self.container_uri,
             vertex_ai_resource_config=vertex_ai_resource_config,
             env_vars=[],

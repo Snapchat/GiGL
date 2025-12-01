@@ -61,3 +61,6 @@ class GraphStoreInfo:
     @property
     def compute_cluster_world_size(self) -> int:
         return self.num_compute_nodes * self.num_processes_per_compute
+
+
+GRAPH_STORE_MAIN_FQDN: Final[str] = "gigl.distributed.graph_store.storage_main"

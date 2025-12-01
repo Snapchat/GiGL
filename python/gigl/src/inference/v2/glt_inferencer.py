@@ -10,10 +10,14 @@ from gigl.common.constants import (
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
 )
 from gigl.common.logger import Logger
-from gigl.common.services.vertex_ai import VertexAIService, build_job_config
-from gigl.env.distributed import COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY
+from gigl.common.services.vertex_ai import VertexAIService
+from gigl.env.distributed import (
+    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
+    GRAPH_STORE_MAIN_FQDN,
+)
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
+from gigl.src.common.translators.vertex_ai_job_translator import build_job_config
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -79,7 +83,7 @@ class GLTInferencer:
             resource_config_uri=resource_config_uri,
             command_str=inference_process_command,
             args=inference_process_runtime_args,
-            run_on_cpu=is_cpu_inference,
+            use_cuda=is_cpu_inference,
             container_uri=container_uri,
             vertex_ai_resource_config=vertex_ai_resource_config,
             env_vars=[env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3")],
@@ -153,7 +157,7 @@ class GLTInferencer:
             resource_config_uri=resource_config_uri,
             command_str=inference_process_command,
             args=inference_process_runtime_args,
-            run_on_cpu=is_cpu_inference,
+            use_cuda=is_cpu_inference,
             container_uri=container_uri,
             vertex_ai_resource_config=compute_pool_config,
             env_vars=environment_variables,
@@ -166,9 +170,9 @@ class GLTInferencer:
             is_inference=True,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
-            command_str="python -m gigl.distributed.server_client.server_main",
+            command_str=f"python -m {GRAPH_STORE_MAIN_FQDN}",
             args={},  # No extra args for storage pool
-            run_on_cpu=is_cpu_inference,
+            use_cuda=is_cpu_inference,
             container_uri=container_uri,
             vertex_ai_resource_config=storage_pool_config,
             env_vars=environment_variables,

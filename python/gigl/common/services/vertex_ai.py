@@ -118,7 +118,7 @@ def build_job_config(
     resource_config_uri: Uri,
     command_str: str,
     args: Mapping[str, str],
-    run_on_cpu: bool,
+    use_cuda: bool,
     container_uri: str,
     vertex_ai_resource_config: VertexAiResourceConfig,
     env_vars: list[env_var.EnvVar],
@@ -137,7 +137,7 @@ def build_job_config(
         resource_config_uri (Uri): URI to the resource configuration file.
         command_str (str): The command to run in the container (will be split on spaces).
         args (Mapping[str, str]): Additional command-line arguments to pass to the job.
-        run_on_cpu (bool): Whether to run on CPU only. If False, adds --use_cuda flag.
+        use_cuda (bool): Whether to use CUDA. If True, adds --use_cuda flag.
         container_uri (str): The URI of the container image to use.
         vertex_ai_resource_config (VertexAiResourceConfig): Resource configuration including
             machine type, GPU type, replica count, timeout, and scheduling strategy.
@@ -153,7 +153,7 @@ def build_job_config(
             f"--task_config_uri={task_config_uri}",
             f"--resource_config_uri={resource_config_uri}",
         ]
-        + ([] if run_on_cpu else ["--use_cuda"])
+        + (["--use_cuda"] if use_cuda else [])
         + ([f"--{k}={v}" for k, v in args.items()])
     )
 
