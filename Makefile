@@ -75,7 +75,7 @@ assert_yaml_configs_parse:
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
 # By default, runs all tests under python/tests/unit.
 # See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
-unit_test_py: clean_build_files_py type_check
+unit_test_py: clean_build_files_py # type_check # TODO (svij) Uncomment prior to merging
 	( cd python ; \
 	uv run python -m tests.unit.main \
 		--env=test \

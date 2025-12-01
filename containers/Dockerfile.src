@@ -18,5 +18,3 @@ COPY python python
 COPY examples examples
 
 RUN uv pip install -e .
-
-WORKDIR /
