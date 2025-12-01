@@ -179,8 +179,8 @@ START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP = {
     ],
 }
 
-# Resource config checks to skip when using glt backend
-RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_GLT_BACKEND = [
+# Resource config checks to skip when using live subgraph sampling backend
+RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_LIVE_SGS_BACKEND = [
     check_if_subgraph_sampler_resource_config_valid,
     check_if_split_generator_resource_config_valid,
 ]
@@ -197,7 +197,7 @@ def kfp_validation_checks(
 ) -> None:
     # check if job_name is valid
     check_if_kfp_pipeline_job_name_valid(job_name=job_name)
-    # check if start_at and stop_after aligns with glt backend use
+    # check if start_at and stop_after aligns with live subgraph sampling backend use
     check_pipeline_has_valid_start_and_stop_flags(
         start_at=start_at, stop_after=stop_after, task_config_uri=task_config_uri.uri
     )
@@ -206,9 +206,11 @@ def kfp_validation_checks(
         uri=task_config_uri, proto_cls=gbml_config_pb2.GbmlConfig
     )
 
-    should_use_glt_backend = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-        gbml_config_uri=task_config_uri
-    ).should_use_glt_backend
+    should_use_live_sgs_backend = (
+        GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+            gbml_config_uri=task_config_uri
+        ).should_use_glt_backend
+    )
 
     resource_config_wrapper: GiglResourceConfigWrapper = get_resource_config(
         resource_config_uri=resource_config_uri
@@ -229,10 +231,10 @@ def kfp_validation_checks(
         asset_check(gbml_config_pb=gbml_config_pb)
     # check if user-provided resource config is valid
 
-    # Skip SGS and split resource config checks when using glt backend
+    # Skip SGS and split resource config checks when using live subgraph sampling backend
     resource_config_checks_to_skip = (
-        RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_GLT_BACKEND
-        if should_use_glt_backend
+        RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_LIVE_SGS_BACKEND
+        if should_use_live_sgs_backend
         else []
     )
 
@@ -245,12 +247,20 @@ def kfp_validation_checks(
         ]:
             if resource_config_check not in resource_config_checks_to_skip:
                 resource_config_check(resource_config_pb=resource_config_pb)
+            else:
+                logger.info(
+                    f"Skipping resource config check {resource_config_check.__name__} because we are using live subgraph sampling backend."
+                )
     else:
         for resource_config_check in START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP.get(
             start_at, []
         ):
             if resource_config_check not in resource_config_checks_to_skip:
                 resource_config_check(resource_config_pb=resource_config_pb)
+            else:
+                logger.info(
+                    f"Skipping resource config check {resource_config_check.__name__} because we are using live subgraph sampling backend."
+                )
     # check if trained model file exist when skipping training
     if gbml_config_pb.shared_config.should_skip_training == True:
         assert_trained_model_exists(gbml_config_pb=gbml_config_pb)
