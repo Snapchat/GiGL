@@ -33,9 +33,6 @@ def _run_client_process(
         cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
         + client_rank
     )
-    logger.info(
-        f"Initializing client process {client_global_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.cluster_master_ip}:{cluster_info.cluster_master_port}. OS rank: {os.environ['RANK']}, local client rank: {client_rank} on port: {cluster_info.cluster_master_port}"
-    )
     init_compute_proccess(client_rank, cluster_info)
     torch.distributed.barrier()
     logger.info(
