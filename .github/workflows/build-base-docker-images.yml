@@ -7,7 +7,7 @@ on:
         description: 'PR to run the workflow on'
         required: true
 
-  # Strictly for testing purposes
+  # Uncomment strictly for testing purposes
   push:
 
 env:

@@ -25,8 +25,16 @@ RUN apt-get update && apt-get install && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# As of Dec 1, 2025:
+# GCP Cloud build agents run an older version of docker deamon
+# with max Docker API version support of 1.41. https://docs.cloud.google.com/build/docs/overview#docker
+# At the time of writing Docker Client > v28 has deprecated support for < v1.44.
+# https://docs.docker.com/engine/release-notes/29/#breaking-changes
+# Thus we use v28.5.2, and also manually set the API version to 1.41 to ensure compatibility.
+ENV DOCKER_CLIENT_VERSION=28.5.2
+ENV DOCKER_API_VERSION=1.41
 RUN curl -fsSL https://get.docker.com -o get-docker.sh && \
-    sh get-docker.sh && \
+    sh get-docker.sh --version ${DOCKER_CLIENT_VERSION} && \
     rm get-docker.sh
 
 # Install Google Cloud CLI
