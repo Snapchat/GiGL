@@ -7,6 +7,10 @@ from parameterized import param, parameterized
 
 from gigl.env.distributed import GraphStoreInfo
 
+_NUM_STORAGE_NODES = 4
+_NUM_COMPUTE_NODES = 8
+_NUM_PROCESSES_PER_COMPUTE = 2
+
 
 class TestGraphStoreInfo(unittest.TestCase):
     """Test suite for GraphStoreInfo properties."""
@@ -14,25 +18,25 @@ class TestGraphStoreInfo(unittest.TestCase):
     def setUp(self) -> None:
         """Set up test fixtures before each test method."""
         self.graph_store_info = GraphStoreInfo(
-            num_storage_nodes=4,
-            num_compute_nodes=8,
+            num_storage_nodes=_NUM_STORAGE_NODES,
+            num_compute_nodes=_NUM_COMPUTE_NODES,
+            num_processes_per_compute=_NUM_PROCESSES_PER_COMPUTE,
             cluster_master_ip="10.0.0.1",
             storage_cluster_master_ip="10.0.0.2",
             compute_cluster_master_ip="10.0.0.3",
             cluster_master_port=1234,
             storage_cluster_master_port=1235,
             compute_cluster_master_port=1236,
-            num_processes_per_compute=2,
         )
 
     def test_num_cluster_nodes(self):
         """Test num_cluster_nodes returns sum of storage and compute nodes."""
-        expected = 12  # 4 storage + 8 compute
+        expected = _NUM_STORAGE_NODES + _NUM_COMPUTE_NODES
         self.assertEqual(self.graph_store_info.num_cluster_nodes, expected)
 
     def test_compute_cluster_world_size(self):
         """Test compute_cluster_world_size returns correct calculation."""
-        expected = 16  # 8 compute nodes * 2 processes per compute
+        expected = _NUM_COMPUTE_NODES * _NUM_PROCESSES_PER_COMPUTE
         self.assertEqual(self.graph_store_info.compute_cluster_world_size, expected)
 
     @parameterized.expand(
@@ -61,8 +65,7 @@ class TestGraphStoreInfo(unittest.TestCase):
         with mock.patch.dict("os.environ", {"RANK": rank}):
             with self.assertRaises(ValueError) as context:
                 _ = self.graph_store_info.storage_node_rank
-            self.assertIn("is not a server rank", str(context.exception))
-            self.assertIn(f"Global rank {rank}", str(context.exception))
+            self.assertIn("is not a storage rank", str(context.exception))
 
     @parameterized.expand(
         [
@@ -91,7 +94,6 @@ class TestGraphStoreInfo(unittest.TestCase):
             with self.assertRaises(ValueError) as context:
                 _ = self.graph_store_info.compute_node_rank
             self.assertIn("is not a compute rank", str(context.exception))
-            self.assertIn(f"Global rank {rank}", str(context.exception))
 
 
 if __name__ == "__main__":

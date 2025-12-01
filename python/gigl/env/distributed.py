@@ -71,12 +71,15 @@ class GraphStoreInfo:
             ValueError: If the node is not in the storage cluster.
         """
         global_rank = int(os.environ["RANK"])
-        maybe_storage_rank = global_rank - self.num_compute_nodes
-        if maybe_storage_rank < 0:
+        if (
+            not self.num_compute_nodes
+            <= global_rank
+            < self.num_compute_nodes + self.num_storage_nodes
+        ):
             raise ValueError(
                 f"Global rank {global_rank} is not a storage rank. Expected storage rank to be in [{self.num_compute_nodes}, {self.num_compute_nodes + self.num_storage_nodes})"
             )
-        return maybe_storage_rank
+        return global_rank - self.num_compute_nodes
 
     @property
     def compute_node_rank(self) -> int:
@@ -86,9 +89,8 @@ class GraphStoreInfo:
             ValueError: If the node is not in the compute cluster.
         """
         global_rank = int(os.environ["RANK"])
-        maybe_compute_rank = global_rank
-        if maybe_compute_rank >= self.num_compute_nodes:
+        if not 0 <= global_rank < self.num_compute_nodes:
             raise ValueError(
                 f"Global rank {global_rank} is not a compute rank. Expected compute rank to be in [0, {self.num_compute_nodes})"
             )
-        return maybe_compute_rank
+        return global_rank
