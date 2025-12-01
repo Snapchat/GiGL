@@ -143,6 +143,11 @@ START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP = {
 START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP = {
     GiGLComponents.ConfigPopulator.value: [
         check_if_shared_resource_config_valid,
+        check_if_preprocessor_resource_config_valid,
+        check_if_subgraph_sampler_resource_config_valid,
+        check_if_split_generator_resource_config_valid,
+        check_if_trainer_resource_config_valid,
+        check_if_inferencer_resource_config_valid,
     ],
     GiGLComponents.DataPreprocessor.value: [
         check_if_shared_resource_config_valid,

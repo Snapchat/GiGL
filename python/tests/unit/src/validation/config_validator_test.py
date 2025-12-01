@@ -6,19 +6,82 @@ from typing import Optional, Type
 
 from parameterized import param, parameterized
 
-from gigl.common import Uri, UriFactory
+from gigl.common import UriFactory
 from gigl.src.validation_check.config_validator import kfp_validation_checks
 
-# Task config URIs (using real configs from the codebase)
-OFFLINE_SUBGRAPH_SAMPLING_TASK_CONFIG_URI = UriFactory.create_uri(
-    "gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml"
-)
-LIVE_SUBGRAPH_SAMPLING_TASK_CONFIG_URI = UriFactory.create_uri(
-    "examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml"
-)
+# Helper functions for creating mock config YAML strings
 
 
-# Helper functions for creating mock resource config YAML strings
+def _create_valid_offline_subgraph_sampling_task_config() -> str:
+    """Create a task config YAML for offline subgraph sampling (without live SGS backend flag)."""
+    return """
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: paper
+    relation: cites
+    srcNodeType: paper
+  nodeTypes:
+  - paper
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+      - srcNodeType: paper
+        relation: cites
+        dstNodeType: paper
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
+    dataPreprocessorArgs:
+      mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features'
+  subgraphSamplerConfig:
+    numHops: 2
+    numNeighborsToSample: 10
+    numPositiveSamples: 1
+  splitGeneratorConfig:
+    assignerArgs:
+      seed: '42'
+      test_split: '0.2'
+      train_split: '0.7'
+      val_split: '0.1'
+    assignerClsPath: splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner
+    splitStrategyClsPath: splitgenerator.lib.split_strategies.TransductiveNodeAnchorBasedLinkPredictionSplitStrategy
+inferencerConfig:
+  inferencerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
+trainerConfig:
+  trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
+"""
+
+
+def _create_valid_live_subgraph_sampling_task_config() -> str:
+    """Create a task config YAML for live subgraph sampling (with GLT backend flag enabled)."""
+    return """
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: paper
+    relation: cites
+    srcNodeType: paper
+  nodeTypes:
+  - paper
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
+    dataPreprocessorArgs:
+      mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
+trainerConfig:
+  command: python -m examples.link_prediction.homogeneous_training
+inferencerConfig:
+  command: python -m examples.link_prediction.homogeneous_inference
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+    - dstNodeType: paper
+      relation: cites
+      srcNodeType: paper
+featureFlags:
+  should_run_glt_backend: 'True'
+"""
+
+
 def _create_valid_live_subgraph_sampling_resource_config() -> str:
     """Create a resource config YAML for GLT/live backend (without subgraph sampler and split generator configs)."""
     return """
@@ -114,14 +177,32 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
         """Set up temporary directory for test config files."""
         self.temp_dir = tempfile.mkdtemp()
 
-        # Create resource config files
-        self._live_resource_config_path = self._write_temp_file(
-            _create_valid_live_subgraph_sampling_resource_config(),
-            "live_resource_config.yaml",
+        # Create task config files
+        self._live_task_config_uri = UriFactory.create_uri(
+            self._write_temp_file(
+                _create_valid_live_subgraph_sampling_task_config(),
+                "live_task_config.yaml",
+            )
         )
-        self._offline_resource_config_path = self._write_temp_file(
-            _create_valid_offline_subgraph_sampling_resource_config(),
-            "offline_resource_config.yaml",
+        self._offline_task_config_uri = UriFactory.create_uri(
+            self._write_temp_file(
+                _create_valid_offline_subgraph_sampling_task_config(),
+                "offline_task_config.yaml",
+            )
+        )
+
+        # Create resource config files
+        self._live_resource_config_uri = UriFactory.create_uri(
+            self._write_temp_file(
+                _create_valid_live_subgraph_sampling_resource_config(),
+                "live_resource_config.yaml",
+            )
+        )
+        self._offline_resource_config_uri = UriFactory.create_uri(
+            self._write_temp_file(
+                _create_valid_offline_subgraph_sampling_resource_config(),
+                "offline_resource_config.yaml",
+            )
         )
 
     def tearDown(self):
@@ -139,28 +220,28 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
         [
             param(
                 "Test that live subgraph sampling resource config passes when we are doing live subgraph sampling",
-                use_live_resource_config=True,
-                task_config_uri=LIVE_SUBGRAPH_SAMPLING_TASK_CONFIG_URI,
+                should_use_live_sgs_backend=True,
+                should_use_live_sgs_resource_config=True,
                 expected_exception=None,
             ),
             param(
                 "Test that live subgraph sampling resource config fails when we are doing offline subgraph sampling",
                 # This test is expected to fail since we are missing required fields to specify how to do offline subgraph sampling.
-                use_live_resource_config=True,
-                task_config_uri=OFFLINE_SUBGRAPH_SAMPLING_TASK_CONFIG_URI,
+                should_use_live_sgs_backend=False,
+                should_use_live_sgs_resource_config=True,
                 expected_exception=AssertionError,
             ),
             param(
                 "Test that offline subgraph sampling resource config passes when we are doing offline subgraph sampling",
-                use_live_resource_config=False,
-                task_config_uri=OFFLINE_SUBGRAPH_SAMPLING_TASK_CONFIG_URI,
+                should_use_live_sgs_backend=False,
+                should_use_live_sgs_resource_config=False,
                 expected_exception=None,
             ),
             param(
                 "Test that offline subgraph sampling resource config passes when we are doing live subgraph sampling",
                 # This test is expected to pass because an offline SGS resource config is still valid when live SGS is enabled.
-                use_live_resource_config=False,
-                task_config_uri=LIVE_SUBGRAPH_SAMPLING_TASK_CONFIG_URI,
+                should_use_live_sgs_backend=True,
+                should_use_live_sgs_resource_config=False,
                 expected_exception=None,
             ),
         ]
@@ -168,34 +249,35 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
     def test_resource_config_validation_with_mock_configs(
         self,
         _,
-        use_live_resource_config: bool,
-        task_config_uri: Uri,
+        should_use_live_sgs_backend: bool,
+        should_use_live_sgs_resource_config: bool,
         expected_exception: Optional[Type[Exception]] = None,
     ) -> None:
-        # Select the appropriate resource config based on the parameter
-        resource_config_path = (
-            self._live_resource_config_path
-            if use_live_resource_config
-            else self._offline_resource_config_path
+        task_config_uri = (
+            self._live_task_config_uri
+            if should_use_live_sgs_backend
+            else self._offline_task_config_uri
+        )
+        resource_config_uri = (
+            self._live_resource_config_uri
+            if should_use_live_sgs_resource_config
+            else self._offline_resource_config_uri
         )
 
-        # Act & Assert
         if expected_exception is None:
             kfp_validation_checks(
                 job_name="resource_config_validation_test",
                 task_config_uri=task_config_uri,
-                # Start at config populator since the task configs are template configs
                 start_at="config_populator",
-                resource_config_uri=UriFactory.create_uri(resource_config_path),
+                resource_config_uri=resource_config_uri,
             )
         else:
             with self.assertRaises(expected_exception):
                 kfp_validation_checks(
                     job_name="resource_config_validation_test",
                     task_config_uri=task_config_uri,
-                    # Start at config populator since the task configs are template configs
                     start_at="config_populator",
-                    resource_config_uri=UriFactory.create_uri(resource_config_path),
+                    resource_config_uri=resource_config_uri,
                 )
 
 
