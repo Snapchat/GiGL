@@ -86,7 +86,6 @@ def _client_process(
 
 
 def _run_server_processes(
-    server_rank: int,
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
     is_inference: bool,
@@ -95,7 +94,7 @@ def _run_server_processes(
         f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
     )
     storage_node_process(
-        server_rank=int(os.environ["RANK"]) - cluster_info.num_compute_nodes,
+        storage_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,
         task_config_uri=task_config_uri,
         is_inference=is_inference,
@@ -168,7 +167,6 @@ class TestUtils(unittest.TestCase):
                 server_process = ctx.Process(
                     target=_run_server_processes,
                     args=[
-                        i,  # server_rank
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
                         True,  # is_inference

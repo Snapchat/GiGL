@@ -21,17 +21,17 @@ logger = Logger()
 
 
 def _run_storage_process(
-    server_rank: int,
+    storage_rank: int,
     cluster_info: GraphStoreInfo,
     dataset: DistDataset,
 ) -> None:
     logger.info(
-        f"Initializing server {server_rank} / {cluster_info.num_storage_nodes } on {cluster_info.cluster_master_ip}:{cluster_info.cluster_master_port}. Cluster rank: {os.environ.get('RANK')}"
+        f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes } on {cluster_info.cluster_master_ip}:{cluster_info.cluster_master_port}. Cluster rank: {os.environ.get('RANK')}"
     )
     register_dataset(dataset)
     glt.distributed.init_server(
         num_servers=cluster_info.num_storage_nodes,
-        server_rank=server_rank,
+        server_rank=storage_rank,
         dataset=dataset,
         master_addr=cluster_info.cluster_master_ip,
         master_port=cluster_info.cluster_master_port,
@@ -39,14 +39,14 @@ def _run_storage_process(
     )
 
     logger.info(
-        f"Waiting for server rank {server_rank} / {cluster_info.num_storage_nodes} to exit"
+        f"Waiting for storage node {storage_rank} / {cluster_info.num_storage_nodes} to exit"
     )
     glt.distributed.wait_and_shutdown_server()
-    logger.info(f"Server rank {server_rank} exited")
+    logger.info(f"Storage node {storage_rank} exited")
 
 
 def storage_node_process(
-    server_rank: int,
+    storage_rank: int,
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
     is_inference: bool,
@@ -57,7 +57,7 @@ def storage_node_process(
     Should be called *once* per storage node (machine).
 
     Args:
-        server_rank (int): The rank of the server.
+        storage_rank (int): The rank of the storage node.
         cluster_info (GraphStoreInfo): The cluster information.
         task_config_uri (Uri): The task config URI.
         is_inference (bool): Whether the process is an inference process.
@@ -65,17 +65,17 @@ def storage_node_process(
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
-        f"Initializing server {server_rank} / {cluster_info.num_storage_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']} init method: {init_method}"
+        f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']} init method: {init_method}"
     )
     torch.distributed.init_process_group(
         backend="gloo",
         world_size=cluster_info.num_storage_nodes,
-        rank=server_rank,
+        rank=storage_rank,
         init_method=init_method,
         group_name="gigl_server_comms",
     )
     logger.info(
-        f"Server {server_rank} / {cluster_info.num_storage_nodes} process group initialized"
+        f"Storage node {storage_rank} / {cluster_info.num_storage_nodes} process group initialized"
     )
     dataset = build_dataset_from_task_config_uri(
         task_config_uri=task_config_uri,
@@ -89,7 +89,7 @@ def storage_node_process(
         server_process = mp_context.Process(
             target=_run_storage_process,
             args=(
-                server_rank + i,  # server_rank
+                storage_rank + i,  # storage_rank
                 cluster_info,  # cluster_info
                 dataset,  # dataset
             ),
@@ -107,7 +107,7 @@ if __name__ == "__main__":
     parser.add_argument("--resource_config_uri", type=str, required=True)
     parser.add_argument("--is_inference", action="store_true")
     args = parser.parse_args()
-    logger.info(f"Arguments: {args}")
+    logger.info(f"Running storage node with arguments: {args}")
 
     is_inference = args.is_inference
     torch.distributed.init_process_group()
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     # Tear down the """"global""" process group so we can have a server-specific process group.
     torch.distributed.destroy_process_group()
     storage_node_process(
-        server_rank=cluster_info.storage_node_rank,
+        storage_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,
         task_config_uri=UriFactory.create_uri(args.task_config_uri),
         is_inference=is_inference,

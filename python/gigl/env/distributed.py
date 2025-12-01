@@ -71,8 +71,8 @@ class GraphStoreInfo:
             ValueError: If the node is not in the storage cluster.
         """
         global_rank = int(os.environ["RANK"])
-        if (
-            not self.num_compute_nodes
+        if not (
+            self.num_compute_nodes
             <= global_rank
             < self.num_compute_nodes + self.num_storage_nodes
         ):
