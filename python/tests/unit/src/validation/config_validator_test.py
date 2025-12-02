@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import unittest
 
+import google.protobuf.message
 from parameterized import param, parameterized
 
 import gigl.env.pipelines_config
@@ -15,36 +16,52 @@ from snapchat.research.gbml import (
     graph_schema_pb2,
 )
 
-# Shared constants for task configs between offline and live subgraph sampling tests
+# Shared helper functions for creating proto components
 
-_PAPER_CITES_EDGE_TYPE = graph_schema_pb2.EdgeType(
-    src_node_type="paper",
-    relation="cites",
-    dst_node_type="paper",
-)
 
-_TEST_GRAPH_METADATA = graph_schema_pb2.GraphMetadata(
-    node_types=["paper"],
-    edge_types=[_PAPER_CITES_EDGE_TYPE],
-)
-
-_TEST_TASK_METADATA = gbml_config_pb2.GbmlConfig.TaskMetadata(
-    node_anchor_based_link_prediction_task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata(
-        supervision_edge_types=[_PAPER_CITES_EDGE_TYPE]
+def _create_paper_cites_paper_edge_type() -> graph_schema_pb2.EdgeType:
+    """Create an EdgeType proto for paper-cites-paper edges."""
+    return graph_schema_pb2.EdgeType(
+        src_node_type="paper",
+        relation="cites",
+        dst_node_type="paper",
     )
-)
 
-_DATA_PREPROCESSOR_CONFIG = gbml_config_pb2.GbmlConfig.DatasetConfig.DataPreprocessorConfig(
-    data_preprocessor_config_cls_path="gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets",
-    data_preprocessor_args={
-        "mocked_dataset_name": "cora_homogeneous_node_anchor_edge_features"
-    },
-)
 
-# Shared constants for resource configs between offline and live subgraph sampling tests
+def _create_test_graph_metadata() -> graph_schema_pb2.GraphMetadata:
+    """Create a GraphMetadata proto for testing."""
+    return graph_schema_pb2.GraphMetadata(
+        node_types=["paper"],
+        edge_types=[_create_paper_cites_paper_edge_type()],
+    )
 
-_TEST_COMMON_COMPUTE_CONFIG = (
-    gigl_resource_config_pb2.SharedResourceConfig.CommonComputeConfig(
+
+def _create_test_task_metadata() -> gbml_config_pb2.GbmlConfig.TaskMetadata:
+    """Create a TaskMetadata proto for node anchor based link prediction."""
+    return gbml_config_pb2.GbmlConfig.TaskMetadata(
+        node_anchor_based_link_prediction_task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata(
+            supervision_edge_types=[_create_paper_cites_paper_edge_type()]
+        )
+    )
+
+
+def _create_data_preprocessor_config() -> (
+    gbml_config_pb2.GbmlConfig.DatasetConfig.DataPreprocessorConfig
+):
+    """Create a DataPreprocessorConfig proto for testing."""
+    return gbml_config_pb2.GbmlConfig.DatasetConfig.DataPreprocessorConfig(
+        data_preprocessor_config_cls_path="gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets",
+        data_preprocessor_args={
+            "mocked_dataset_name": "cora_homogeneous_node_anchor_edge_features"
+        },
+    )
+
+
+def _create_test_common_compute_config() -> (
+    gigl_resource_config_pb2.SharedResourceConfig.CommonComputeConfig
+):
+    """Create a CommonComputeConfig proto for testing."""
+    return gigl_resource_config_pb2.SharedResourceConfig.CommonComputeConfig(
         project="test-project",
         region="us-central1",
         temp_assets_bucket="gs://test-temp",
@@ -55,35 +72,50 @@ _TEST_COMMON_COMPUTE_CONFIG = (
         gcp_service_account_email="test@test-project.iam.gserviceaccount.com",
         dataflow_runner="DataflowRunner",
     )
-)
 
-_TEST_SHARED_RESOURCE_CONFIG = gigl_resource_config_pb2.SharedResourceConfig(
-    common_compute_config=_TEST_COMMON_COMPUTE_CONFIG,
-)
 
-_TEST_PREPROCESSOR_CONFIG = gigl_resource_config_pb2.DataPreprocessorConfig(
-    node_preprocessor_config=gigl_resource_config_pb2.DataflowResourceConfig(
-        num_workers=10,
-        max_num_workers=20,
-        disk_size_gb=100,
-        machine_type="n1-standard-4",
-    ),
-    edge_preprocessor_config=gigl_resource_config_pb2.DataflowResourceConfig(
-        num_workers=15,
-        max_num_workers=25,
-        disk_size_gb=150,
-        machine_type="n1-standard-8",
-    ),
-)
+def _create_test_shared_resource_config() -> (
+    gigl_resource_config_pb2.SharedResourceConfig
+):
+    """Create a SharedResourceConfig proto for testing."""
+    return gigl_resource_config_pb2.SharedResourceConfig(
+        common_compute_config=_create_test_common_compute_config(),
+    )
 
-_TEST_TRAINER_RESOURCE_CONFIG = gigl_resource_config_pb2.TrainerResourceConfig(
-    vertex_ai_trainer_config=gigl_resource_config_pb2.VertexAiResourceConfig(
-        machine_type="n1-standard-16",
-        gpu_type="NVIDIA_TESLA_T4",
-        gpu_limit=2,
-        num_replicas=3,
-    ),
-)
+
+def _create_test_preprocessor_config() -> (
+    gigl_resource_config_pb2.DataPreprocessorConfig
+):
+    """Create a DataPreprocessorConfig proto for testing."""
+    return gigl_resource_config_pb2.DataPreprocessorConfig(
+        node_preprocessor_config=gigl_resource_config_pb2.DataflowResourceConfig(
+            num_workers=10,
+            max_num_workers=20,
+            disk_size_gb=100,
+            machine_type="n1-standard-4",
+        ),
+        edge_preprocessor_config=gigl_resource_config_pb2.DataflowResourceConfig(
+            num_workers=15,
+            max_num_workers=25,
+            disk_size_gb=150,
+            machine_type="n1-standard-8",
+        ),
+    )
+
+
+def _create_test_trainer_resource_config() -> (
+    gigl_resource_config_pb2.TrainerResourceConfig
+):
+    """Create a TrainerResourceConfig proto for testing."""
+    return gigl_resource_config_pb2.TrainerResourceConfig(
+        vertex_ai_trainer_config=gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-16",
+            gpu_type="NVIDIA_TESLA_T4",
+            gpu_limit=2,
+            num_replicas=3,
+        ),
+    )
+
 
 # Helper functions for creating mock config protos
 
@@ -92,7 +124,7 @@ def _create_valid_offline_subgraph_sampling_task_config() -> gbml_config_pb2.Gbm
     """Create a task config proto for offline subgraph sampling (without live SGS backend flag)."""
     # Dataset config
     dataset_config = gbml_config_pb2.GbmlConfig.DatasetConfig(
-        data_preprocessor_config=_DATA_PREPROCESSOR_CONFIG,
+        data_preprocessor_config=_create_data_preprocessor_config(),
         subgraph_sampler_config=gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig(
             num_hops=2,
             num_neighbors_to_sample=10,
@@ -121,8 +153,8 @@ def _create_valid_offline_subgraph_sampling_task_config() -> gbml_config_pb2.Gbm
     )
 
     return gbml_config_pb2.GbmlConfig(
-        graph_metadata=_TEST_GRAPH_METADATA,
-        task_metadata=_TEST_TASK_METADATA,
+        graph_metadata=_create_test_graph_metadata(),
+        task_metadata=_create_test_task_metadata(),
         dataset_config=dataset_config,
         trainer_config=trainer_config,
         inferencer_config=inferencer_config,
@@ -133,7 +165,7 @@ def _create_valid_live_subgraph_sampling_task_config() -> gbml_config_pb2.GbmlCo
     """Create a task config proto for live subgraph sampling (with GLT backend flag enabled)."""
     # Dataset config
     dataset_config = gbml_config_pb2.GbmlConfig.DatasetConfig(
-        data_preprocessor_config=_DATA_PREPROCESSOR_CONFIG,
+        data_preprocessor_config=_create_data_preprocessor_config(),
     )
     # Trainer config
     trainer_config = gbml_config_pb2.GbmlConfig.TrainerConfig(
@@ -146,8 +178,8 @@ def _create_valid_live_subgraph_sampling_task_config() -> gbml_config_pb2.GbmlCo
     )
 
     return gbml_config_pb2.GbmlConfig(
-        graph_metadata=_TEST_GRAPH_METADATA,
-        task_metadata=_TEST_TASK_METADATA,
+        graph_metadata=_create_test_graph_metadata(),
+        task_metadata=_create_test_task_metadata(),
         dataset_config=dataset_config,
         trainer_config=trainer_config,
         inferencer_config=inferencer_config,
@@ -170,9 +202,9 @@ def _create_valid_live_subgraph_sampling_resource_config() -> (
     )
 
     return gigl_resource_config_pb2.GiglResourceConfig(
-        shared_resource_config=_TEST_SHARED_RESOURCE_CONFIG,
-        preprocessor_config=_TEST_PREPROCESSOR_CONFIG,
-        trainer_resource_config=_TEST_TRAINER_RESOURCE_CONFIG,
+        shared_resource_config=_create_test_shared_resource_config(),
+        preprocessor_config=_create_test_preprocessor_config(),
+        trainer_resource_config=_create_test_trainer_resource_config(),
         inferencer_resource_config=inferencer_resource_config,
     )
 
@@ -206,11 +238,11 @@ def _create_valid_offline_subgraph_sampling_resource_config() -> (
     )
 
     return gigl_resource_config_pb2.GiglResourceConfig(
-        shared_resource_config=_TEST_SHARED_RESOURCE_CONFIG,
-        preprocessor_config=_TEST_PREPROCESSOR_CONFIG,
+        shared_resource_config=_create_test_shared_resource_config(),
+        preprocessor_config=_create_test_preprocessor_config(),
         subgraph_sampler_config=subgraph_sampler_config,
         split_generator_config=split_generator_config,
-        trainer_resource_config=_TEST_TRAINER_RESOURCE_CONFIG,
+        trainer_resource_config=_create_test_trainer_resource_config(),
         inferencer_resource_config=inferencer_resource_config,
     )
 
@@ -250,7 +282,9 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
         # incorrect resource configs being used for tests (i.e. live SGS resource config being used for offline SGS tests).
         gigl.env.pipelines_config._resource_config = None
 
-    def _write_proto_to_file(self, proto, filename: str) -> Uri:
+    def _write_proto_to_file(
+        self, proto: google.protobuf.message.Message, filename: str
+    ) -> Uri:
         """Write proto to a temporary file and return its URI."""
         filepath = os.path.join(self._temp_dir, filename)
         uri = UriFactory.create_uri(filepath)
@@ -277,7 +311,7 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
             ),
         ]
     )
-    def test_resource_config_validation_with_mock_configs(
+    def test_resource_config_validation_success_with_mock_configs(
         self,
         _,
         should_use_live_sgs_backend: bool,
@@ -301,7 +335,7 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
             resource_config_uri=resource_config_uri,
         )
 
-    def test_resource_config_validation_fails_when_doing_live_subgraph_sampling_with_offline_resource_config(
+    def test_resource_config_validation_failure_with_mock_configs(
         self,
     ) -> None:
         # For this setting, we should expect failure since the live SGS resource config does not have
