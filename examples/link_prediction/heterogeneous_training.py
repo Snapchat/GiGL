@@ -36,10 +36,10 @@ from typing import Literal, Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from torch_geometric.data import HeteroData
 
 import gigl.distributed.utils
+from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized

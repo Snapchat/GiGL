@@ -203,8 +203,11 @@ exclude = ".*_pb2.pyi?"
 [tool.isort]
 profile = "black"
 src_paths = [
+    "../examples",
     "../python",
     "../scripts",
+    "../testing",
+    "../.github",
 ]
 # Skip generated proto files.
 skip_glob = [

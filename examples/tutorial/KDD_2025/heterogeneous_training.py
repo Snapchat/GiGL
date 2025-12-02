@@ -40,10 +40,10 @@ from distutils.util import strtobool
 from typing import Literal
 
 import torch
-from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
+from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed import (

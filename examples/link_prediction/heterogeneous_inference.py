@@ -27,10 +27,10 @@ from typing import Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
+from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
