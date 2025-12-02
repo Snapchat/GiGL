@@ -6,6 +6,7 @@ from typing import Optional, Type
 
 from parameterized import param, parameterized
 
+import gigl.env.pipelines_config
 from gigl.common import UriFactory
 from gigl.src.validation_check.config_validator import kfp_validation_checks
 
@@ -114,11 +115,11 @@ trainerResourceConfig:
     gpuLimit: 2
     numReplicas: 3
 inferencerResourceConfig:
-  dataflowInferencerConfig:
-    numWorkers: 10
-    maxNumWorkers: 20
-    diskSizeGb: 100
+  vertexAiInferencerConfig:
     machineType: "n1-standard-4"
+    gpuType: "NVIDIA_TESLA_T4"
+    gpuLimit: 2
+    numReplicas: 3
 """
 
 
@@ -148,25 +149,25 @@ preprocessorConfig:
     diskSizeGb: 150
     machineType: "n1-standard-8"
 subgraphSamplerConfig:
-  machineType: "n1-standard-8"
+  machineType: "n2d-highmem-16"
   numLocalSsds: 2
-  numReplicas: 5
+  numReplicas: 4
 splitGeneratorConfig:
-  machineType: "n1-standard-8"
+  machineType: "n2d-standard-16"
   numLocalSsds: 2
-  numReplicas: 5
+  numReplicas: 4
 trainerResourceConfig:
   vertexAiTrainerConfig:
-    machineType: "n1-standard-16"
-    gpuType: "NVIDIA_TESLA_T4"
-    gpuLimit: 2
-    numReplicas: 3
+    machineType: "n1-highmem-8"
+    gpuType: "NVIDIA_TESLA_P100"
+    gpuLimit: 1
+    numReplicas: 2
 inferencerResourceConfig:
   dataflowInferencerConfig:
-    numWorkers: 10
-    maxNumWorkers: 20
+    numWorkers: 1
+    maxNumWorkers: 256
+    machineType: "c2d-highmem-32"
     diskSizeGb: 100
-    machineType: "n1-standard-4"
 """
 
 
@@ -175,7 +176,7 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
 
     def setUp(self):
         """Set up temporary directory for test config files."""
-        self.temp_dir = tempfile.mkdtemp()
+        self._temp_dir = tempfile.mkdtemp()
 
         # Create task config files
         self._live_task_config_uri = UriFactory.create_uri(
@@ -207,11 +208,14 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
 
     def tearDown(self):
         """Clean up temporary directory."""
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+        # Clear the cached resource config to ensure each test loads its own config. Otherwise, the resource config will be cached, leading to
+        # incorrect resource configs being used for tests (i.e. live SGS resource config being used for offline SGS tests).
+        gigl.env.pipelines_config._resource_config = None
 
     def _write_temp_file(self, content: str, filename: str) -> str:
         """Write content to a temporary file and return its path."""
-        filepath = os.path.join(self.temp_dir, filename)
+        filepath = os.path.join(self._temp_dir, filename)
         with open(filepath, "w") as f:
             f.write(content)
         return filepath
