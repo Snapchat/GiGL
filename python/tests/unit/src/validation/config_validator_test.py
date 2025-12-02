@@ -7,167 +7,212 @@ from parameterized import param, parameterized
 
 import gigl.env.pipelines_config
 from gigl.common import Uri, UriFactory
+from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.validation_check.config_validator import kfp_validation_checks
+from snapchat.research.gbml import (
+    gbml_config_pb2,
+    gigl_resource_config_pb2,
+    graph_schema_pb2,
+)
 
-# Helper functions for creating mock config YAML strings
+# Shared constants for task configs between offline and live subgraph sampling tests
 
+_PAPER_CITES_EDGE_TYPE = graph_schema_pb2.EdgeType(
+    src_node_type="paper",
+    relation="cites",
+    dst_node_type="paper",
+)
 
-def _create_valid_offline_subgraph_sampling_task_config() -> str:
-    """Create a task config YAML for offline subgraph sampling (without live SGS backend flag)."""
-    return """
-graphMetadata:
-  edgeTypes:
-  - dstNodeType: paper
-    relation: cites
-    srcNodeType: paper
-  nodeTypes:
-  - paper
-taskMetadata:
-  nodeAnchorBasedLinkPredictionTaskMetadata:
-    supervisionEdgeTypes:
-      - srcNodeType: paper
-        relation: cites
-        dstNodeType: paper
-datasetConfig:
-  dataPreprocessorConfig:
-    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
-    dataPreprocessorArgs:
-      mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features'
-  subgraphSamplerConfig:
-    numHops: 2
-    numNeighborsToSample: 10
-    numPositiveSamples: 1
-  splitGeneratorConfig:
-    assignerArgs:
-      seed: '42'
-      test_split: '0.2'
-      train_split: '0.7'
-      val_split: '0.1'
-    assignerClsPath: splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner
-    splitStrategyClsPath: splitgenerator.lib.split_strategies.TransductiveNodeAnchorBasedLinkPredictionSplitStrategy
-inferencerConfig:
-  inferencerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
-trainerConfig:
-  trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
-"""
+_TEST_GRAPH_METADATA = graph_schema_pb2.GraphMetadata(
+    node_types=["paper"],
+    edge_types=[_PAPER_CITES_EDGE_TYPE],
+)
 
+_TEST_TASK_METADATA = gbml_config_pb2.GbmlConfig.TaskMetadata(
+    node_anchor_based_link_prediction_task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata(
+        supervision_edge_types=[_PAPER_CITES_EDGE_TYPE]
+    )
+)
 
-def _create_valid_live_subgraph_sampling_task_config() -> str:
-    """Create a task config YAML for live subgraph sampling (with GLT backend flag enabled)."""
-    return """
-graphMetadata:
-  edgeTypes:
-  - dstNodeType: paper
-    relation: cites
-    srcNodeType: paper
-  nodeTypes:
-  - paper
-datasetConfig:
-  dataPreprocessorConfig:
-    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
-    dataPreprocessorArgs:
-      mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
-trainerConfig:
-  command: python -m examples.link_prediction.homogeneous_training
-inferencerConfig:
-  command: python -m examples.link_prediction.homogeneous_inference
-taskMetadata:
-  nodeAnchorBasedLinkPredictionTaskMetadata:
-    supervisionEdgeTypes:
-    - dstNodeType: paper
-      relation: cites
-      srcNodeType: paper
-featureFlags:
-  should_run_glt_backend: 'True'
-"""
+_DATA_PREPROCESSOR_CONFIG = gbml_config_pb2.GbmlConfig.DatasetConfig.DataPreprocessorConfig(
+    data_preprocessor_config_cls_path="gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets",
+    data_preprocessor_args={
+        "mocked_dataset_name": "cora_homogeneous_node_anchor_edge_features"
+    },
+)
 
+# Shared constants for resource configs between offline and live subgraph sampling tests
 
-def _create_valid_live_subgraph_sampling_resource_config() -> str:
-    """Create a resource config YAML for GLT/live backend (without subgraph sampler and split generator configs)."""
-    return """
-sharedResourceConfig:
-  commonComputeConfig:
-    project: "test-project"
-    region: "us-central1"
-    tempAssetsBucket: "gs://test-temp"
-    tempRegionalAssetsBucket: "gs://test-temp-regional"
-    permAssetsBucket: "gs://test-perm"
-    tempAssetsBqDatasetName: "test_dataset"
-    embeddingBqDatasetName: "test_embeddings"
-    gcpServiceAccountEmail: "test@test-project.iam.gserviceaccount.com"
-    dataflowRunner: "DataflowRunner"
-preprocessorConfig:
-  nodePreprocessorConfig:
-    numWorkers: 10
-    maxNumWorkers: 20
-    diskSizeGb: 100
-    machineType: "n1-standard-4"
-  edgePreprocessorConfig:
-    numWorkers: 15
-    maxNumWorkers: 25
-    diskSizeGb: 150
-    machineType: "n1-standard-8"
-trainerResourceConfig:
-  vertexAiTrainerConfig:
-    machineType: "n1-standard-16"
-    gpuType: "NVIDIA_TESLA_T4"
-    gpuLimit: 2
-    numReplicas: 3
-inferencerResourceConfig:
-  vertexAiInferencerConfig:
-    machineType: "n1-standard-4"
-    gpuType: "NVIDIA_TESLA_T4"
-    gpuLimit: 2
-    numReplicas: 3
-"""
+_TEST_COMMON_COMPUTE_CONFIG = (
+    gigl_resource_config_pb2.SharedResourceConfig.CommonComputeConfig(
+        project="test-project",
+        region="us-central1",
+        temp_assets_bucket="gs://test-temp",
+        temp_regional_assets_bucket="gs://test-temp-regional",
+        perm_assets_bucket="gs://test-perm",
+        temp_assets_bq_dataset_name="test_dataset",
+        embedding_bq_dataset_name="test_embeddings",
+        gcp_service_account_email="test@test-project.iam.gserviceaccount.com",
+        dataflow_runner="DataflowRunner",
+    )
+)
+
+_TEST_SHARED_RESOURCE_CONFIG = gigl_resource_config_pb2.SharedResourceConfig(
+    common_compute_config=_TEST_COMMON_COMPUTE_CONFIG,
+)
+
+_TEST_PREPROCESSOR_CONFIG = gigl_resource_config_pb2.DataPreprocessorConfig(
+    node_preprocessor_config=gigl_resource_config_pb2.DataflowResourceConfig(
+        num_workers=10,
+        max_num_workers=20,
+        disk_size_gb=100,
+        machine_type="n1-standard-4",
+    ),
+    edge_preprocessor_config=gigl_resource_config_pb2.DataflowResourceConfig(
+        num_workers=15,
+        max_num_workers=25,
+        disk_size_gb=150,
+        machine_type="n1-standard-8",
+    ),
+)
+
+_TEST_TRAINER_RESOURCE_CONFIG = gigl_resource_config_pb2.TrainerResourceConfig(
+    vertex_ai_trainer_config=gigl_resource_config_pb2.VertexAiResourceConfig(
+        machine_type="n1-standard-16",
+        gpu_type="NVIDIA_TESLA_T4",
+        gpu_limit=2,
+        num_replicas=3,
+    ),
+)
+
+# Helper functions for creating mock config protos
 
 
-def _create_valid_offline_subgraph_sampling_resource_config() -> str:
-    """Create a resource config YAML for offline subgraph sampling (with all component configs)."""
-    return """
-sharedResourceConfig:
-  commonComputeConfig:
-    project: "test-project"
-    region: "us-central1"
-    tempAssetsBucket: "gs://test-temp"
-    tempRegionalAssetsBucket: "gs://test-temp-regional"
-    permAssetsBucket: "gs://test-perm"
-    tempAssetsBqDatasetName: "test_dataset"
-    embeddingBqDatasetName: "test_embeddings"
-    gcpServiceAccountEmail: "test@test-project.iam.gserviceaccount.com"
-    dataflowRunner: "DataflowRunner"
-preprocessorConfig:
-  nodePreprocessorConfig:
-    numWorkers: 10
-    maxNumWorkers: 20
-    diskSizeGb: 100
-    machineType: "n1-standard-4"
-  edgePreprocessorConfig:
-    numWorkers: 15
-    maxNumWorkers: 25
-    diskSizeGb: 150
-    machineType: "n1-standard-8"
-subgraphSamplerConfig:
-  machineType: "n2d-highmem-16"
-  numLocalSsds: 2
-  numReplicas: 4
-splitGeneratorConfig:
-  machineType: "n2d-standard-16"
-  numLocalSsds: 2
-  numReplicas: 4
-trainerResourceConfig:
-  vertexAiTrainerConfig:
-    machineType: "n1-highmem-8"
-    gpuType: "NVIDIA_TESLA_P100"
-    gpuLimit: 1
-    numReplicas: 2
-inferencerResourceConfig:
-  dataflowInferencerConfig:
-    numWorkers: 1
-    maxNumWorkers: 256
-    machineType: "c2d-highmem-32"
-    diskSizeGb: 100
-"""
+def _create_valid_offline_subgraph_sampling_task_config() -> gbml_config_pb2.GbmlConfig:
+    """Create a task config proto for offline subgraph sampling (without live SGS backend flag)."""
+    # Dataset config
+    dataset_config = gbml_config_pb2.GbmlConfig.DatasetConfig(
+        data_preprocessor_config=_DATA_PREPROCESSOR_CONFIG,
+        subgraph_sampler_config=gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig(
+            num_hops=2,
+            num_neighbors_to_sample=10,
+            num_positive_samples=1,
+        ),
+        split_generator_config=gbml_config_pb2.GbmlConfig.DatasetConfig.SplitGeneratorConfig(
+            assigner_cls_path="splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner",
+            split_strategy_cls_path="splitgenerator.lib.split_strategies.TransductiveNodeAnchorBasedLinkPredictionSplitStrategy",
+            assigner_args={
+                "seed": "42",
+                "test_split": "0.2",
+                "train_split": "0.7",
+                "val_split": "0.1",
+            },
+        ),
+    )
+
+    # Trainer config
+    trainer_config = gbml_config_pb2.GbmlConfig.TrainerConfig(
+        trainer_cls_path="gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec",
+    )
+
+    # Inferencer config
+    inferencer_config = gbml_config_pb2.GbmlConfig.InferencerConfig(
+        inferencer_cls_path="gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec",
+    )
+
+    return gbml_config_pb2.GbmlConfig(
+        graph_metadata=_TEST_GRAPH_METADATA,
+        task_metadata=_TEST_TASK_METADATA,
+        dataset_config=dataset_config,
+        trainer_config=trainer_config,
+        inferencer_config=inferencer_config,
+    )
+
+
+def _create_valid_live_subgraph_sampling_task_config() -> gbml_config_pb2.GbmlConfig:
+    """Create a task config proto for live subgraph sampling (with GLT backend flag enabled)."""
+    # Dataset config
+    dataset_config = gbml_config_pb2.GbmlConfig.DatasetConfig(
+        data_preprocessor_config=_DATA_PREPROCESSOR_CONFIG,
+    )
+    # Trainer config
+    trainer_config = gbml_config_pb2.GbmlConfig.TrainerConfig(
+        command="python -m examples.link_prediction.homogeneous_training",
+    )
+
+    # Inferencer config
+    inferencer_config = gbml_config_pb2.GbmlConfig.InferencerConfig(
+        command="python -m examples.link_prediction.homogeneous_inference",
+    )
+
+    return gbml_config_pb2.GbmlConfig(
+        graph_metadata=_TEST_GRAPH_METADATA,
+        task_metadata=_TEST_TASK_METADATA,
+        dataset_config=dataset_config,
+        trainer_config=trainer_config,
+        inferencer_config=inferencer_config,
+        feature_flags={"should_run_glt_backend": "True"},
+    )
+
+
+def _create_valid_live_subgraph_sampling_resource_config() -> (
+    gigl_resource_config_pb2.GiglResourceConfig
+):
+    """Create a resource config proto for GLT/live backend (without subgraph sampler and split generator configs)."""
+    # Inferencer resource config
+    inferencer_resource_config = gigl_resource_config_pb2.InferencerResourceConfig(
+        vertex_ai_inferencer_config=gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="NVIDIA_TESLA_T4",
+            gpu_limit=2,
+            num_replicas=3,
+        ),
+    )
+
+    return gigl_resource_config_pb2.GiglResourceConfig(
+        shared_resource_config=_TEST_SHARED_RESOURCE_CONFIG,
+        preprocessor_config=_TEST_PREPROCESSOR_CONFIG,
+        trainer_resource_config=_TEST_TRAINER_RESOURCE_CONFIG,
+        inferencer_resource_config=inferencer_resource_config,
+    )
+
+
+def _create_valid_offline_subgraph_sampling_resource_config() -> (
+    gigl_resource_config_pb2.GiglResourceConfig
+):
+    """Create a resource config proto for offline subgraph sampling (with all component configs)."""
+    # Subgraph sampler config
+    subgraph_sampler_config = gigl_resource_config_pb2.SparkResourceConfig(
+        machine_type="n2d-highmem-16",
+        num_local_ssds=2,
+        num_replicas=4,
+    )
+
+    # Split generator config
+    split_generator_config = gigl_resource_config_pb2.SparkResourceConfig(
+        machine_type="n2d-standard-16",
+        num_local_ssds=2,
+        num_replicas=4,
+    )
+
+    # Inferencer resource config
+    inferencer_resource_config = gigl_resource_config_pb2.InferencerResourceConfig(
+        dataflow_inferencer_config=gigl_resource_config_pb2.DataflowResourceConfig(
+            num_workers=1,
+            max_num_workers=256,
+            machine_type="c2d-highmem-32",
+            disk_size_gb=100,
+        ),
+    )
+
+    return gigl_resource_config_pb2.GiglResourceConfig(
+        shared_resource_config=_TEST_SHARED_RESOURCE_CONFIG,
+        preprocessor_config=_TEST_PREPROCESSOR_CONFIG,
+        subgraph_sampler_config=subgraph_sampler_config,
+        split_generator_config=split_generator_config,
+        trainer_resource_config=_TEST_TRAINER_RESOURCE_CONFIG,
+        inferencer_resource_config=inferencer_resource_config,
+    )
 
 
 class TestConfigValidationPerSGSBackends(unittest.TestCase):
@@ -176,23 +221,24 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
     def setUp(self):
         """Set up temporary directory for test config files."""
         self._temp_dir = tempfile.mkdtemp()
+        self._proto_utils = ProtoUtils()
 
         # Create task config files
-        self._live_task_config_uri = self._write_temp_file(
+        self._live_task_config_uri = self._write_proto_to_file(
             _create_valid_live_subgraph_sampling_task_config(),
             "live_task_config.yaml",
         )
-        self._offline_task_config_uri = self._write_temp_file(
+        self._offline_task_config_uri = self._write_proto_to_file(
             _create_valid_offline_subgraph_sampling_task_config(),
             "offline_task_config.yaml",
         )
 
         # Create resource config files
-        self._live_resource_config_uri = self._write_temp_file(
+        self._live_resource_config_uri = self._write_proto_to_file(
             _create_valid_live_subgraph_sampling_resource_config(),
             "live_resource_config.yaml",
         )
-        self._offline_resource_config_uri = self._write_temp_file(
+        self._offline_resource_config_uri = self._write_proto_to_file(
             _create_valid_offline_subgraph_sampling_resource_config(),
             "offline_resource_config.yaml",
         )
@@ -204,12 +250,12 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
         # incorrect resource configs being used for tests (i.e. live SGS resource config being used for offline SGS tests).
         gigl.env.pipelines_config._resource_config = None
 
-    def _write_temp_file(self, content: str, filename: str) -> Uri:
-        """Write content to a temporary file and return its path."""
+    def _write_proto_to_file(self, proto, filename: str) -> Uri:
+        """Write proto to a temporary file and return its URI."""
         filepath = os.path.join(self._temp_dir, filename)
-        with open(filepath, "w") as f:
-            f.write(content)
-        return UriFactory.create_uri(filepath)
+        uri = UriFactory.create_uri(filepath)
+        self._proto_utils.write_proto_to_yaml(proto, uri)
+        return uri
 
     @parameterized.expand(
         [

@@ -218,15 +218,17 @@ def kfp_validation_checks(
     )
     resource_config_pb: GiglResourceConfig = resource_config_wrapper.resource_config
     # check user defined classes and their runtime args
+
     if (
         stop_after is not None
         and (start_at, stop_after) in START_STOP_COMPONENT_TO_CLS_CHECKS_MAP
     ):
-        for cls_check in START_STOP_COMPONENT_TO_CLS_CHECKS_MAP[(start_at, stop_after)]:
-            cls_check(gbml_config_pb=gbml_config_pb)
+        cls_checks = START_STOP_COMPONENT_TO_CLS_CHECKS_MAP[(start_at, stop_after)]
     else:
-        for cls_check in START_COMPONENT_TO_CLS_CHECKS_MAP.get(start_at, []):
-            cls_check(gbml_config_pb=gbml_config_pb)
+        cls_checks = START_COMPONENT_TO_CLS_CHECKS_MAP.get(start_at, [])
+    for cls_check in cls_checks:
+        cls_check(gbml_config_pb=gbml_config_pb)
+
     # check the existence of needed assets
     for asset_check in START_COMPONENT_TO_ASSET_CHECKS_MAP.get(start_at, []):
         asset_check(gbml_config_pb=gbml_config_pb)
@@ -243,25 +245,22 @@ def kfp_validation_checks(
         stop_after is not None
         and (start_at, stop_after) in START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP
     ):
-        for resource_config_check in START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP[
+        resource_config_checks = START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP[
             (start_at, stop_after)
-        ]:
-            if resource_config_check not in resource_config_checks_to_skip:
-                resource_config_check(resource_config_pb=resource_config_pb)
-            else:
-                logger.info(
-                    f"Skipping resource config check {resource_config_check.__name__} because we are using live subgraph sampling backend."
-                )
+        ]
     else:
-        for resource_config_check in START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP.get(
+        resource_config_checks = START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP.get(
             start_at, []
-        ):
-            if resource_config_check not in resource_config_checks_to_skip:
-                resource_config_check(resource_config_pb=resource_config_pb)
-            else:
-                logger.info(
-                    f"Skipping resource config check {resource_config_check.__name__} because we are using live subgraph sampling backend."
-                )
+        )
+
+    for resource_config_check in resource_config_checks:
+        if resource_config_check not in resource_config_checks_to_skip:
+            resource_config_check(resource_config_pb=resource_config_pb)
+        else:
+            logger.info(
+                f"Skipping resource config check {resource_config_check.__name__} because we are using live subgraph sampling backend."
+            )
+
     # check if trained model file exist when skipping training
     if gbml_config_pb.shared_config.should_skip_training == True:
         assert_trained_model_exists(gbml_config_pb=gbml_config_pb)
