@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# As of Dec 1, 2025:
+# Dec 1, 2025 (svij-sc):
 # GCP Cloud build agents run an older version of docker deamon
 # with max Docker API version support of 1.41. https://docs.cloud.google.com/build/docs/overview#docker
 # At the time of writing Docker Client > v28 has deprecated support for < v1.44.
@@ -57,7 +57,7 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY dep_vars.env dep_vars.env
 COPY requirements requirements
-# Needed to install glt dependencies - which is done.
+# Needed to install GLT
 COPY python/gigl/scripts python/gigl/scripts
 
 
