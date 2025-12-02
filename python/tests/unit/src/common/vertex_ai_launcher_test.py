@@ -127,10 +127,13 @@ class TestVertexAILauncher(unittest.TestCase):
             resource_config=gigl_resource_config_proto
         )
 
-        # Get the graph store config for the launcher
+        # Get the graph store config and its sub-configs for the launcher
         graph_store_config = (
             gigl_resource_config_proto.trainer_resource_config.vertex_ai_graph_store_trainer_config
         )
+        compute_pool = graph_store_config.compute_pool
+        storage_pool = graph_store_config.graph_store_pool
+        shared_config = gigl_resource_config_proto.shared_resource_config
 
         # Setup mock service
         mock_service_instance = Mock()
@@ -152,10 +155,10 @@ class TestVertexAILauncher(unittest.TestCase):
 
         # Assert - verify VertexAIService was instantiated correctly
         mock_vertex_ai_service_class.assert_called_once_with(
-            project="test-project",
-            location="us-west1",
-            service_account="test-sa@test-project.iam.gserviceaccount.com",
-            staging_bucket="gs://test-temp-regional-bucket",
+            project=shared_config.common_compute_config.project,
+            location=compute_pool.gcp_region_override,
+            service_account=shared_config.common_compute_config.gcp_service_account_email,
+            staging_bucket=shared_config.common_compute_config.temp_regional_assets_bucket,
         )
 
         # Verify launch_graph_store_job was called
@@ -168,24 +171,29 @@ class TestVertexAILauncher(unittest.TestCase):
 
         # Verify compute pool config uses CUDA
         self.assertEqual(compute_job_config.container_uri, cuda_docker_uri)
-        self.assertEqual(compute_job_config.machine_type, "n1-standard-16")
-        self.assertEqual(compute_job_config.accelerator_type, "NVIDIA_TESLA_V100")
-        self.assertEqual(compute_job_config.accelerator_count, 4)
+        self.assertEqual(compute_job_config.machine_type, compute_pool.machine_type)
+        self.assertEqual(compute_job_config.accelerator_type, compute_pool.gpu_type)
+        self.assertEqual(compute_job_config.accelerator_count, compute_pool.gpu_limit)
         self.assertEqual(compute_job_config.job_name, job_name)
 
         # Verify compute pool command and args
         self.assertEqual(
             compute_job_config.command,
-            ["python", "-m", "gigl.src.training.v2.glt_trainer"],
+            process_command.split(),
         )
         self.assertIsNotNone(compute_job_config.args)
         assert compute_job_config.args is not None  # Type narrowing for mypy
         self.assertIn(f"--job_name={job_name}", compute_job_config.args)
-        self.assertIn("--learning_rate=0.001", compute_job_config.args)
-        self.assertIn("--epochs=10", compute_job_config.args)
+        self.assertIn(
+            f"--learning_rate={process_runtime_args['learning_rate']}",
+            compute_job_config.args,
+        )
+        self.assertIn(
+            f"--epochs={process_runtime_args['epochs']}", compute_job_config.args
+        )
 
         # Verify storage pool config
-        self.assertEqual(storage_job_config.machine_type, "n1-highmem-32")
+        self.assertEqual(storage_job_config.machine_type, storage_pool.machine_type)
         self.assertIn(
             "gigl.distributed.graph_store.storage_main",
             " ".join(storage_job_config.command),
@@ -195,7 +203,10 @@ class TestVertexAILauncher(unittest.TestCase):
         compute_env_vars = {
             ev.name: ev.value for ev in compute_job_config.environment_variables
         }
-        self.assertEqual(compute_env_vars["COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"], "4")
+        self.assertEqual(
+            compute_env_vars["COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"],
+            str(graph_store_config.compute_cluster_local_world_size),
+        )
 
         # Verify resource labels
         expected_labels = {
@@ -236,6 +247,7 @@ class TestVertexAILauncher(unittest.TestCase):
         vertex_ai_config = (
             gigl_resource_config_proto.inferencer_resource_config.vertex_ai_inferencer_config
         )
+        shared_config = gigl_resource_config_proto.shared_resource_config
 
         # Setup mock service
         mock_service_instance = Mock()
@@ -258,10 +270,10 @@ class TestVertexAILauncher(unittest.TestCase):
 
         # Assert - verify VertexAIService was instantiated correctly
         mock_vertex_ai_service_class.assert_called_once_with(
-            project="test-project",
+            project=shared_config.common_compute_config.project,
             location=vertex_ai_region,
-            service_account="test-sa@test-project.iam.gserviceaccount.com",
-            staging_bucket="gs://test-temp-regional-bucket",
+            service_account=shared_config.common_compute_config.gcp_service_account_email,
+            staging_bucket=shared_config.common_compute_config.temp_regional_assets_bucket,
         )
 
         # Verify launch_job was called (not launch_graph_store_job)
@@ -274,24 +286,26 @@ class TestVertexAILauncher(unittest.TestCase):
 
         # Verify CPU execution settings
         self.assertEqual(job_config.container_uri, cpu_docker_uri)
-        self.assertEqual(job_config.machine_type, "n1-standard-8")
+        self.assertEqual(job_config.machine_type, vertex_ai_config.machine_type)
         self.assertEqual(job_config.job_name, job_name)
         self.assertEqual(job_config.accelerator_count, 0)
         self.assertEqual(job_config.accelerator_type, "")
-        self.assertEqual(job_config.timeout_s, 7200)
-        self.assertEqual(job_config.replica_count, 1)
+        self.assertEqual(job_config.timeout_s, vertex_ai_config.timeout)
+        self.assertEqual(job_config.replica_count, vertex_ai_config.num_replicas)
 
         # Verify command and args
-        self.assertEqual(
-            job_config.command, ["python", "-m", "gigl.src.inference.v2.glt_inferencer"]
-        )
+        self.assertEqual(job_config.command, process_command.split())
         self.assertIsNotNone(job_config.args)
         assert job_config.args is not None  # Type narrowing for mypy
         self.assertIn(f"--job_name={job_name}", job_config.args)
         self.assertIn(f"--task_config_uri={task_config_uri}", job_config.args)
         self.assertIn(f"--resource_config_uri={resource_config_uri}", job_config.args)
-        self.assertIn("--batch_size=128", job_config.args)
-        self.assertIn("--output_path=gs://bucket/output", job_config.args)
+        self.assertIn(
+            f"--batch_size={process_runtime_args['batch_size']}", job_config.args
+        )
+        self.assertIn(
+            f"--output_path={process_runtime_args['output_path']}", job_config.args
+        )
 
         # Verify resource labels
         expected_labels = {
