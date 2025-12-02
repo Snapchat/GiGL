@@ -14,9 +14,14 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/conda/
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
-RUN apt-get update \
-    && apt-get upgrade -y \
-    && apt-get install -y build-essential git wget cmake iputils-ping curl \
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    cmake \
+    iputils-ping \
+    curl \
+    unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
