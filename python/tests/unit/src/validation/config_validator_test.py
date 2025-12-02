@@ -2,12 +2,11 @@ import os
 import shutil
 import tempfile
 import unittest
-from typing import Optional, Type
 
 from parameterized import param, parameterized
 
 import gigl.env.pipelines_config
-from gigl.common import UriFactory
+from gigl.common import Uri, UriFactory
 from gigl.src.validation_check.config_validator import kfp_validation_checks
 
 # Helper functions for creating mock config YAML strings
@@ -179,31 +178,23 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
         self._temp_dir = tempfile.mkdtemp()
 
         # Create task config files
-        self._live_task_config_uri = UriFactory.create_uri(
-            self._write_temp_file(
-                _create_valid_live_subgraph_sampling_task_config(),
-                "live_task_config.yaml",
-            )
+        self._live_task_config_uri = self._write_temp_file(
+            _create_valid_live_subgraph_sampling_task_config(),
+            "live_task_config.yaml",
         )
-        self._offline_task_config_uri = UriFactory.create_uri(
-            self._write_temp_file(
-                _create_valid_offline_subgraph_sampling_task_config(),
-                "offline_task_config.yaml",
-            )
+        self._offline_task_config_uri = self._write_temp_file(
+            _create_valid_offline_subgraph_sampling_task_config(),
+            "offline_task_config.yaml",
         )
 
         # Create resource config files
-        self._live_resource_config_uri = UriFactory.create_uri(
-            self._write_temp_file(
-                _create_valid_live_subgraph_sampling_resource_config(),
-                "live_resource_config.yaml",
-            )
+        self._live_resource_config_uri = self._write_temp_file(
+            _create_valid_live_subgraph_sampling_resource_config(),
+            "live_resource_config.yaml",
         )
-        self._offline_resource_config_uri = UriFactory.create_uri(
-            self._write_temp_file(
-                _create_valid_offline_subgraph_sampling_resource_config(),
-                "offline_resource_config.yaml",
-            )
+        self._offline_resource_config_uri = self._write_temp_file(
+            _create_valid_offline_subgraph_sampling_resource_config(),
+            "offline_resource_config.yaml",
         )
 
     def tearDown(self):
@@ -213,12 +204,12 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
         # incorrect resource configs being used for tests (i.e. live SGS resource config being used for offline SGS tests).
         gigl.env.pipelines_config._resource_config = None
 
-    def _write_temp_file(self, content: str, filename: str) -> str:
+    def _write_temp_file(self, content: str, filename: str) -> Uri:
         """Write content to a temporary file and return its path."""
         filepath = os.path.join(self._temp_dir, filename)
         with open(filepath, "w") as f:
             f.write(content)
-        return filepath
+        return UriFactory.create_uri(filepath)
 
     @parameterized.expand(
         [
@@ -226,27 +217,17 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
                 "Test that live subgraph sampling resource config passes when we are doing live subgraph sampling",
                 should_use_live_sgs_backend=True,
                 should_use_live_sgs_resource_config=True,
-                expected_exception=None,
-            ),
-            param(
-                "Test that live subgraph sampling resource config fails when we are doing offline subgraph sampling",
-                # This test is expected to fail since we are missing required fields to specify how to do offline subgraph sampling.
-                should_use_live_sgs_backend=False,
-                should_use_live_sgs_resource_config=True,
-                expected_exception=AssertionError,
             ),
             param(
                 "Test that offline subgraph sampling resource config passes when we are doing offline subgraph sampling",
                 should_use_live_sgs_backend=False,
                 should_use_live_sgs_resource_config=False,
-                expected_exception=None,
             ),
             param(
                 "Test that offline subgraph sampling resource config passes when we are doing live subgraph sampling",
                 # This test is expected to pass because an offline SGS resource config is still valid when live SGS is enabled.
                 should_use_live_sgs_backend=True,
                 should_use_live_sgs_resource_config=False,
-                expected_exception=None,
             ),
         ]
     )
@@ -255,7 +236,6 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
         _,
         should_use_live_sgs_backend: bool,
         should_use_live_sgs_resource_config: bool,
-        expected_exception: Optional[Type[Exception]] = None,
     ) -> None:
         task_config_uri = (
             self._live_task_config_uri
@@ -268,21 +248,25 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
             else self._offline_resource_config_uri
         )
 
-        if expected_exception is None:
+        kfp_validation_checks(
+            job_name="resource_config_validation_test",
+            task_config_uri=task_config_uri,
+            start_at="config_populator",
+            resource_config_uri=resource_config_uri,
+        )
+
+    def test_resource_config_validation_fails_when_doing_live_subgraph_sampling_with_offline_resource_config(
+        self,
+    ) -> None:
+        # For this setting, we should expect failure since the live SGS resource config does not have
+        # sufficient fields to specify how to do offline subgraph sampling.
+        with self.assertRaises(AssertionError):
             kfp_validation_checks(
                 job_name="resource_config_validation_test",
-                task_config_uri=task_config_uri,
+                task_config_uri=self._offline_task_config_uri,
                 start_at="config_populator",
-                resource_config_uri=resource_config_uri,
+                resource_config_uri=self._live_resource_config_uri,
             )
-        else:
-            with self.assertRaises(expected_exception):
-                kfp_validation_checks(
-                    job_name="resource_config_validation_test",
-                    task_config_uri=task_config_uri,
-                    start_at="config_populator",
-                    resource_config_uri=resource_config_uri,
-                )
 
 
 if __name__ == "__main__":

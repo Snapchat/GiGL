@@ -3,7 +3,6 @@ from typing import Optional
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
-from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -206,16 +205,13 @@ def kfp_validation_checks(
     check_pipeline_has_valid_start_and_stop_flags(
         start_at=start_at, stop_after=stop_after, task_config_uri=task_config_uri.uri
     )
-    proto_utils = ProtoUtils()
-    gbml_config_pb: gbml_config_pb2.GbmlConfig = proto_utils.read_proto_from_yaml(
-        uri=task_config_uri, proto_cls=gbml_config_pb2.GbmlConfig
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        gbml_config_uri=task_config_uri
     )
 
-    should_use_live_sgs_backend = (
-        GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-            gbml_config_uri=task_config_uri
-        ).should_use_glt_backend
-    )
+    gbml_config_pb: gbml_config_pb2.GbmlConfig = gbml_config_pb_wrapper.gbml_config_pb
+
+    should_use_live_sgs_backend = gbml_config_pb_wrapper.should_use_glt_backend
 
     resource_config_wrapper: GiglResourceConfigWrapper = get_resource_config(
         resource_config_uri=resource_config_uri
