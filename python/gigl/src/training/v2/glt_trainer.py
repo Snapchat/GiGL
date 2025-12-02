@@ -11,10 +11,7 @@ from gigl.common.constants import (
 )
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
-from gigl.env.distributed import (
-    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
-    GRAPH_STORE_MAIN_FQDN,
-)
+from gigl.env.distributed import COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.translators.vertex_ai_job_translator import build_job_config
@@ -79,8 +76,7 @@ class GLTTrainer:
         container_uri = cpu_docker_uri if is_cpu_training else cuda_docker_uri
 
         job_config = build_job_config(
-            job_name=applied_task_identifier,
-            is_inference=False,
+            job_name=f"gigl_train_{applied_task_identifier}",
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             command_str=training_process_command,
@@ -103,7 +99,7 @@ class GLTTrainer:
         )
         vertex_ai_service.launch_job(job_config=job_config)
 
-    def _launch_server_client_training(
+    def _launch_graph_store_enabled_pool(
         self,
         vertex_ai_graph_store_config: VertexAiGraphStoreConfig,
         applied_task_identifier: AppliedTaskIdentifier,
@@ -150,10 +146,10 @@ class GLTTrainer:
         labels = resource_config_wrapper.get_resource_labels(
             component=GiGLComponents.Trainer
         )
+        job_name = f"gigl_train_{applied_task_identifier}"
         # Create compute pool job config
         compute_job_config = build_job_config(
-            job_name=str(applied_task_identifier),
-            is_inference=False,
+            job_name=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             command_str=training_process_command,
@@ -167,11 +163,10 @@ class GLTTrainer:
 
         # Create storage pool job config
         storage_job_config = build_job_config(
-            job_name=str(applied_task_identifier),
-            is_inference=False,
+            job_name=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
-            command_str=f"python -m {GRAPH_STORE_MAIN_FQDN}",
+            command_str=f"python -m gigl.distributed.graph_store.storage_main",
             args={},  # No extra args for storage pool
             use_cuda=is_cpu_training,
             container_uri=container_uri,
@@ -237,7 +232,7 @@ class GLTTrainer:
                 cuda_docker_uri=cuda_docker_uri,
             )
         elif isinstance(resource_config.trainer_config, VertexAiGraphStoreConfig):
-            self._launch_server_client_training(
+            self._launch_graph_store_enabled_pool(
                 vertex_ai_graph_store_config=resource_config.trainer_config,
                 applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,

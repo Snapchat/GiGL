@@ -10,7 +10,6 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import VertexAiResourceConf
 
 def build_job_config(
     job_name: str,
-    is_inference: bool,
     task_config_uri: Uri,
     resource_config_uri: Uri,
     command_str: str,
@@ -55,13 +54,9 @@ def build_job_config(
     )
 
     command = command_str.strip().split(" ")
-    if is_inference:
-        vai_job_name = f"gigl_infer_{job_name}"
-    else:
-        vai_job_name = f"gigl_train_{job_name}"
 
     job_config = VertexAiJobConfig(
-        job_name=vai_job_name,
+        job_name=job_name,
         container_uri=container_uri,
         command=command,
         args=job_args,

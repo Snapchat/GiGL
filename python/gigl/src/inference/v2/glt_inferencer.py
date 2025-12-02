@@ -11,10 +11,7 @@ from gigl.common.constants import (
 )
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
-from gigl.env.distributed import (
-    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
-    GRAPH_STORE_MAIN_FQDN,
-)
+from gigl.env.distributed import COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.translators.vertex_ai_job_translator import build_job_config
@@ -77,8 +74,7 @@ class GLTInferencer:
         container_uri = cpu_docker_uri if is_cpu_inference else cuda_docker_uri
 
         job_config = build_job_config(
-            job_name=str(applied_task_identifier),
-            is_inference=True,
+            job_name=f"gigl_infer_{applied_task_identifier}",
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             command_str=inference_process_command,
@@ -101,7 +97,7 @@ class GLTInferencer:
         )
         vertex_ai_service.launch_job(job_config=job_config)
 
-    def _launch_server_client(
+    def _launch_graph_store_enabled_pool(
         self,
         vertex_ai_graph_store_config: VertexAiGraphStoreConfig,
         applied_task_identifier: AppliedTaskIdentifier,
@@ -113,7 +109,7 @@ class GLTInferencer:
         cpu_docker_uri: Optional[str],
         cuda_docker_uri: Optional[str],
     ) -> None:
-        """Launch a server/client inference job on Vertex AI using graph store config."""
+        """Launch a graph store enabled pool inference job on Vertex AI using graph store config."""
         storage_pool_config = vertex_ai_graph_store_config.graph_store_pool
         compute_pool_config = vertex_ai_graph_store_config.compute_pool
 
@@ -149,10 +145,10 @@ class GLTInferencer:
         labels = resource_config_wrapper.get_resource_labels(
             component=GiGLComponents.Inferencer
         )
+        job_name = f"gigl_infer_{applied_task_identifier}"
         # Create compute pool job config
         compute_job_config = build_job_config(
-            job_name=str(applied_task_identifier),
-            is_inference=True,
+            job_name=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             command_str=inference_process_command,
@@ -166,11 +162,10 @@ class GLTInferencer:
 
         # Create storage pool job config
         storage_job_config = build_job_config(
-            job_name=str(applied_task_identifier),
-            is_inference=True,
+            job_name=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
-            command_str=f"python -m {GRAPH_STORE_MAIN_FQDN}",
+            command_str=f"python -m gigl.distributed.graph_store.storage_main",
             args={},  # No extra args for storage pool
             use_cuda=is_cpu_inference,
             container_uri=container_uri,
@@ -240,7 +235,7 @@ class GLTInferencer:
         elif isinstance(
             resource_config_wrapper.inferencer_config, VertexAiGraphStoreConfig
         ):
-            self._launch_server_client(
+            self._launch_graph_store_enabled_pool(
                 vertex_ai_graph_store_config=resource_config_wrapper.inferencer_config,
                 applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,

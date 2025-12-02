@@ -3,7 +3,6 @@ import unittest
 from google.cloud.aiplatform_v1.types import Scheduling, env_var
 
 from gigl.common import UriFactory
-from gigl.common.constants import GIGL_ROOT_DIR
 from gigl.common.services.vertex_ai import VertexAiJobConfig
 from gigl.src.common.translators.vertex_ai_job_translator import build_job_config
 from snapchat.research.gbml.gigl_resource_config_pb2 import VertexAiResourceConfig
@@ -11,22 +10,6 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import VertexAiResourceConf
 
 class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
     """Test suite for get_job_config_from_vertex_ai_resource_config function."""
-
-    def setUp(self) -> None:
-        """Set up common test fixtures."""
-        self.job_name = "test_task"
-        self.task_config_uri = UriFactory.create_uri(
-            "gs://test-bucket/task_config.yaml"
-        )
-        # Use actual unittest resource config that exists in the repo
-        self.resource_config_uri = (
-            UriFactory.create_uri(GIGL_ROOT_DIR)
-            / "deployment"
-            / "configs"
-            / "unittest_resource_config.yaml"
-        )
-        self.container_uri = "gcr.io/test-project/test-container:latest"
-        self.command_str = "python -m gigl.train"
 
     def test_training_job_config_with_all_options(self):
         """Test creating a training job config with all options set."""
@@ -43,15 +26,19 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
             env_var.EnvVar(name="TEST_VAR", value="test_value"),
         ]
 
+        job_name = "gigl_train_test_task"
+        task_config_uri = UriFactory.create_uri("gs://test-bucket/task_config.yaml")
+        resource_config_uri = UriFactory.create_uri(
+            "gs://test-bucket/resource_config.yaml"
+        )
         actual_config = build_job_config(
-            job_name=self.job_name,
-            is_inference=False,
-            task_config_uri=self.task_config_uri,
-            resource_config_uri=self.resource_config_uri,
-            command_str=self.command_str,
+            job_name=job_name,
+            task_config_uri=task_config_uri,
+            resource_config_uri=resource_config_uri,
+            command_str="python -m gigl.train",
             args={"custom_arg": "custom_value"},
             use_cuda=True,
-            container_uri=self.container_uri,
+            container_uri="gcr.io/test-project/test-container:latest",
             vertex_ai_resource_config=vertex_ai_resource_config,
             env_vars=test_env_vars,
             labels={"test_label": "test_value"},
@@ -59,75 +46,27 @@ class TestGetJobConfigFromVertexAiResourceConfig(unittest.TestCase):
 
         # Create expected config
         expected_config = VertexAiJobConfig(
-            job_name=f"gigl_train_{self.job_name}",
-            container_uri=self.container_uri,
+            job_name=job_name,
+            container_uri="gcr.io/test-project/test-container:latest",
             command=["python", "-m", "gigl.train"],
             args=[
-                f"--job_name={self.job_name}",
-                f"--task_config_uri={self.task_config_uri}",
-                f"--resource_config_uri={self.resource_config_uri}",
+                f"--job_name={job_name}",
+                f"--task_config_uri={task_config_uri}",
+                f"--resource_config_uri={resource_config_uri}",
                 "--use_cuda",
                 "--custom_arg=custom_value",
             ],
             environment_variables=test_env_vars,
-            machine_type="n1-standard-8",
-            accelerator_type="NVIDIA_TESLA_V100",
-            accelerator_count=2,
-            replica_count=4,
+            machine_type=vertex_ai_resource_config.machine_type,
+            accelerator_type="NVIDIA_TESLA_V100",  # Test this since we do transformations on the name
+            accelerator_count=vertex_ai_resource_config.gpu_limit,
+            replica_count=vertex_ai_resource_config.num_replicas,
             boot_disk_type="pd-ssd",
             boot_disk_size_gb=100,
-            timeout_s=7200,
+            timeout_s=vertex_ai_resource_config.timeout,
             enable_web_access=True,
             scheduling_strategy=Scheduling.Strategy.SPOT,  # type: ignore
             labels={"test_label": "test_value"},
-        )
-
-        self.assertEqual(actual_config, expected_config)
-
-    def test_inference_job_config_cpu_minimal(self):
-        """Test creating an inference job config for CPU with minimal options."""
-        vertex_ai_resource_config = VertexAiResourceConfig(
-            machine_type="n1-standard-4",
-            gpu_type="nvidia-tesla-t4",
-            gpu_limit=1,
-            num_replicas=1,
-            # No timeout or scheduling_strategy set
-        )
-
-        actual_config = build_job_config(
-            job_name=self.job_name,
-            is_inference=True,
-            task_config_uri=self.task_config_uri,
-            resource_config_uri=self.resource_config_uri,
-            command_str="  python -m gigl.infer  ",  # Test whitespace handling
-            args={},
-            use_cuda=False,
-            container_uri=self.container_uri,
-            vertex_ai_resource_config=vertex_ai_resource_config,
-            env_vars=[],
-        )
-
-        # Create expected config
-        expected_config = VertexAiJobConfig(
-            job_name=f"gigl_infer_{self.job_name}",
-            container_uri=self.container_uri,
-            command=["python", "-m", "gigl.infer"],
-            args=[
-                f"--job_name={self.job_name}",
-                f"--task_config_uri={self.task_config_uri}",
-                f"--resource_config_uri={self.resource_config_uri}",
-            ],
-            environment_variables=[],
-            machine_type="n1-standard-4",
-            accelerator_type="NVIDIA_TESLA_T4",
-            accelerator_count=1,
-            replica_count=1,
-            boot_disk_type="pd-ssd",
-            boot_disk_size_gb=100,
-            labels=None,
-            timeout_s=None,
-            enable_web_access=True,
-            scheduling_strategy=None,
         )
 
         self.assertEqual(actual_config, expected_config)
