@@ -3,8 +3,9 @@ set -e
 set -x
 
 DEV=0  # Flag to install dev dependencies.
-SKIP_GIGL_LIB_INSTALL=0 # Flag to skip GiGL lib install i.e. only install deps for GiGL
-SKIP_GLT_POST_INSTALL=0 # Flag to skip GLT post install. if SKIP_GIGL_LIB_INSTALL=1, overrides SKIP_GLT_POST_INSTALL to =1.
+# Flag to skip installing GiGL lib dependencies, i.e. onlydev tools will be installed if DEV=1.
+SKIP_GIGL_LIB_DEPS_INSTALL=0
+SKIP_GLT_POST_INSTALL=0 # Flag to skip GLT post install. if SKIP_GIGL_LIB_DEPS_INSTALL=1, overrides SKIP_GLT_POST_INSTALL to =1.
 
 
 for arg in "$@"
@@ -14,8 +15,8 @@ do
         DEV=1
         shift
         ;;
-    --skip-gigl-lib-install)
-        SKIP_GIGL_LIB_INSTALL=1
+    --skip-gigl-lib-deps-install)
+        SKIP_GIGL_LIB_DEPS_INSTALL=1
         shift
         ;;
     --skip-glt-post-install)
@@ -81,7 +82,7 @@ install_dev_tools() {
     echo "Installing tooling for python protobuf"
     # https://github.com/protocolbuffers/protobuf/releases/tag/v3.19.6
     # This version should be smaller than the one used by client i.e. the protobuf client version specified in
-    # common-requirements.txt file should be >= v3.19.6
+    # pyproject.toml file should be >= v3.19.6
     # TODO (svij-sc): update protoc + protobuff
     if is_running_on_mac;
     then
@@ -95,23 +96,20 @@ install_dev_tools() {
     echo "Finished setting up required dev tooling"
 }
 
-install_gigl_lib() {
+install_gigl_lib_deps() {
     echo "Installing GiGL lib"
     extra_deps=("experimental" "transform")
     if is_running_on_mac;
     then
         echo "Setting up Mac CPU environment"
-        req_file="requirements/${REQ_FILE_PREFIX}darwin_arm64_requirements_unified.txt"
         extra_deps+=("pyg27-torch28-cpu")
     else
         if has_cuda_driver;
         then
             echo "Setting up Linux CUDA environment"
-            # req_file="requirements/${REQ_FILE_PREFIX}linux_cuda_requirements_unified.txt"
             extra_deps+=("pyg27-torch28-cu128")
         else
             echo "Setting up Linux CPU environment"
-            # req_file="requirements/${REQ_FILE_PREFIX}linux_cpu_requirements_unified.txt"
             extra_deps+=("pyg27-torch28-cpu")
         fi
     fi
@@ -126,6 +124,10 @@ install_gigl_lib() {
     then
         echo "Recognized using system python."
         echo "Will use inexact match for dependencies so we don't override system packages."
+        # Syncing is "exact" by default, which means it will remove any packages that are not present in the lockfile.
+        # To retain extraneous packages, use the --inexact option:
+        # https://docs.astral.sh/uv/concepts/projects/sync/#retaining-extraneous-packages
+        # This is useful for example when we might have packages pre-installed i.e. torch, pyg, etc.
         flag_use_inexact_match="--inexact"
     fi
 
@@ -155,9 +157,9 @@ main() {
         install_dev_tools
     fi
 
-    if [[ $SKIP_GIGL_LIB_INSTALL -eq 0 ]]
+    if [[ $SKIP_GIGL_LIB_DEPS_INSTALL -eq 0 ]]
     then
-        install_gigl_lib
+        install_gigl_lib_deps
     fi
 }
 
