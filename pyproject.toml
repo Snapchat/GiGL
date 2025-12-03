@@ -1,8 +1,12 @@
 [project]
-name = "gigl"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+name            = "gigl"
+description     = "GIgantic Graph Learning Library"
+readme          = "README.md"
+version         = "0.1.0"
+classifiers     = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
 requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available for newer python versions.
 
 dependencies = [
@@ -82,7 +86,9 @@ experimental = [
 
 # Declares what deps are conflicting so they are not resolved together.
 # In the case below, we cannot have both pyg27-torch28-cpu and pyg27-torch28-cu128
-# installed at the same time. Thus, they are resolved separately.
+# installed at the same time (one is cuda and one is cpu and pull from seperate indexes).
+# Thus, they are treated as conflicting and `uv.lock` will be generated in a way that
+# transitive dependencies between them are resolved separately.
 [tool.uv]
 conflicts = [
   [{ extra = "pyg27-torch28-cpu" },{ extra = "pyg27-torch28-cu128" }],
@@ -144,8 +150,9 @@ lint = [
 name = "torch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 # Setting this to true prevents packages from being installed from this index
-# unless explicitlypinned to it in [tool.uv.sources]
+# unless explicitly pinned to it in [tool.uv.sources]
 explicit = true
+
 [[tool.uv.index]]
 name = "torch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
@@ -235,8 +242,8 @@ exclude = ".*_pb2.pyi?"
 [tool.isort]
 profile = "black"
 src_paths = [
-    "../python",
-    "../scripts",
+    "python",
+    "scripts",
 ]
 # Skip generated proto files.
 skip_glob = [

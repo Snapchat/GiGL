@@ -8,7 +8,6 @@ WORKDIR /gigl
 # Note: main package files must live in root of the repo for the python package to be built correctly for Dataflow workers.
 # See https://beam.apache.org/documentation/sdks/python-pipxeline-dependencies/#create-reproducible-environments.
 WORKDIR /gigl
-RUN touch __init__.py
 
 COPY MANIFEST.in MANIFEST.in
 COPY pyproject.toml pyproject.toml
@@ -19,5 +18,3 @@ COPY python python
 COPY examples examples
 
 RUN uv pip install -e .
-
-WORKDIR /

@@ -7,8 +7,8 @@ on:
         description: 'PR to run the workflow on'
         required: true
 
-  # Strictly for testing purposes
-  push:
+  # Uncomment strictly for testing purposes
+  # push:
 
 env:
   DOCKER_BUILDKIT: 1
@@ -34,7 +34,7 @@ jobs:
           Once done, the workflow will update the `dep_vars.env` file with the new image names.
 
   build-cuda-base-image:
-    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -65,8 +65,9 @@ jobs:
         docker push ${GIGL_BASE_CUDA_IMAGE}
         echo "Pushed CUDA base image to ${GIGL_BASE_CUDA_IMAGE}"
 
-  build-cpu-base-images:
-    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+  build-cpu-base-image:
+    runs-on: ubuntu-latest
+    # runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -89,7 +90,6 @@ jobs:
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
     - name: Build and Push CPU Base Image and Docker CPU Image
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -98,8 +98,36 @@ jobs:
         docker push ${GIGL_BASE_CPU_IMAGE}
         echo "Pushed CPU base image to ${GIGL_BASE_CPU_IMAGE}"
 
-        echo "Will use CPU image ${GIGL_BASE_CPU_IMAGE} as base image for Dataflow image."
-        docker build -f ./containers/Dockerfile.dataflow.base --build-arg BASE_IMAGE=${GIGL_BASE_CPU_IMAGE} -t ${GIGL_BASE_DATAFLOW_IMAGE} .
+  build-dataflow-base-image:
+    runs-on: ubuntu-latest
+    # runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
+    permissions:
+      # Needed for gcloud auth: https://github.com/google-github-actions/auth
+      contents: 'read'
+      id-token: 'write'
+    steps:
+    - name: Checkout PR Branch (on-dispatch)
+      if: ${{ github.event_name == 'workflow_dispatch' }}
+      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ inputs.pr_number }}
+    - name: Checkout repository (on-push)
+      if: ${{ github.event_name == 'push' }}
+      uses: actions/checkout@v4
+    - name: Setup Machine for building Docker images
+      uses: ./.github/actions/setup-python-tools
+      with:
+        setup_gcloud: "true"
+        try_cleaning_disk_space: "true"
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+    - name: Build and Push Dataflow Base Image
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev
+
+        docker build -f ./containers/Dockerfile.dataflow.base -t ${GIGL_BASE_DATAFLOW_IMAGE} .
         docker push ${GIGL_BASE_DATAFLOW_IMAGE}
         echo "Pushed Dataflow base image to ${GIGL_BASE_DATAFLOW_IMAGE}"
 
@@ -141,7 +169,8 @@ jobs:
   build-and-commit-base-images:
     needs:
       - build-cuda-base-image
-      - build-cpu-base-images
+      - build-cpu-base-image
+      - build-dataflow-base-image
       - build-builder-image
     runs-on: ubuntu-latest
     steps:
