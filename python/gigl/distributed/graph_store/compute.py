@@ -9,7 +9,7 @@ from gigl.env.distributed import GraphStoreInfo
 logger = Logger()
 
 
-def init_compute_proccess(local_rank: int, cluster_info: GraphStoreInfo) -> None:
+def init_compute_process(local_rank: int, cluster_info: GraphStoreInfo) -> None:
     """
     Initializes distributed setup for a compute node in a Graph Store cluster.
 
@@ -18,7 +18,14 @@ def init_compute_proccess(local_rank: int, cluster_info: GraphStoreInfo) -> None
     Args:
         local_rank (int): The local (process) rank on the compute node.
         cluster_info (GraphStoreInfo): The cluster information.
+
+    Raises:
+        ValueError: If the process group is already initialized.
     """
+    if torch.distributed.is_initialized():
+        raise ValueError(
+            "Process group already initialized! When using the Graph Store, you should not call `torch.distributed.init_process_group` directly."
+        )
     compute_cluster_rank = (
         cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
         + local_rank
@@ -28,7 +35,7 @@ def init_compute_proccess(local_rank: int, cluster_info: GraphStoreInfo) -> None
         f" OS rank: {os.environ['RANK']}, local client rank: {local_rank}"
     )
     torch.distributed.init_process_group(
-        backend="gloo",
+        backend="nccl" if torch.cuda.is_available() else "gloo",
         world_size=cluster_info.compute_cluster_world_size,
         rank=compute_cluster_rank,
         init_method=f"tcp://{cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}",

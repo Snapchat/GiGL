@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.compute import (
-    init_compute_proccess,
+    init_compute_process,
     shutdown_compute_proccess,
 )
 from gigl.distributed.graph_store.storage_main import storage_node_process
@@ -33,7 +33,7 @@ def _run_client_process(
         cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
         + client_rank
     )
-    init_compute_proccess(client_rank, cluster_info)
+    init_compute_process(client_rank, cluster_info)
     torch.distributed.barrier()
     logger.info(
         f"{client_global_rank} / {cluster_info.compute_cluster_world_size} Shutting down client"
