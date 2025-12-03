@@ -4,10 +4,13 @@ from unittest import mock
 
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.distributed import init_client, shutdown_client
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.distributed.graph_store.compute import (
+    init_compute_process,
+    shutdown_compute_proccess,
+)
 from gigl.distributed.graph_store.storage_main import storage_node_process
 from gigl.distributed.utils import get_free_port
 from gigl.env.distributed import (
@@ -30,34 +33,12 @@ def _run_client_process(
         cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
         + client_rank
     )
-    logger.info(
-        f"Initializing client process {client_global_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.cluster_master_ip}:{cluster_info.cluster_master_port}. OS rank: {os.environ['RANK']}, local client rank: {client_rank} on port: {cluster_info.cluster_master_port}"
-    )
-    # TODO(kmonte): Add gigl.*.init_client as a helper function to do this.
-    torch.distributed.init_process_group(
-        backend="gloo",
-        world_size=cluster_info.compute_cluster_world_size,
-        rank=client_global_rank,
-        init_method=f"tcp://{cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}",
-        group_name="gigl_client_comms",
-    )
-    logger.info(
-        f"Client {client_global_rank} / {cluster_info.compute_cluster_world_size} process group initialized"
-    )
-    init_client(
-        num_servers=cluster_info.num_storage_nodes,
-        num_clients=cluster_info.compute_cluster_world_size,
-        client_rank=client_global_rank,
-        master_addr=cluster_info.cluster_master_ip,
-        master_port=cluster_info.cluster_master_port,
-        client_group_name="gigl_client_rpc",
-    )
-
+    init_compute_process(client_rank, cluster_info)
     torch.distributed.barrier()
     logger.info(
         f"{client_global_rank} / {cluster_info.compute_cluster_world_size} Shutting down client"
     )
-    shutdown_client()
+    shutdown_compute_proccess()
 
 
 def _client_process(
