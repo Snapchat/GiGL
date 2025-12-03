@@ -3,6 +3,9 @@ from typing import Set, Union
 
 import torch
 import torch.nn as nn
+from torch_geometric.data import Data
+from torch_geometric.data.hetero_data import HeteroData
+
 from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.loss import ModelResultType
 from gigl.src.common.types.graph_data import (
@@ -25,8 +28,6 @@ from gigl.src.training.v1.lib.data_loaders.node_anchor_based_link_prediction_dat
 from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader import (
     RootedNodeNeighborhoodBatch,
 )
-from torch_geometric.data import Data
-from torch_geometric.data.hetero_data import HeteroData
 
 # TODO (mkolodner-sc) Move PyG Logic to PyG-specific location
 

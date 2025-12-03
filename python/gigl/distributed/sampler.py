@@ -1,8 +1,9 @@
 from typing import Any, Final, Optional, Union
 
 import torch
-from gigl.src.common.types.graph_data import EdgeType, NodeType
 from graphlearn_torch.sampler import NodeSamplerInput
+
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 POSITIVE_LABEL_METADATA_KEY: Final[str] = "gigl_positive_labels."
 NEGATIVE_LABEL_METADATA_KEY: Final[str] = "gigl_negative_labels."

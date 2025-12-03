@@ -15,6 +15,9 @@ from typing import (
 )
 
 import torch
+from graphlearn_torch.data import Dataset, Topology
+from torch_geometric.typing import EdgeType as PyGEdgeType
+
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -24,8 +27,6 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     reverse_edge_type,
 )
-from graphlearn_torch.data import Dataset, Topology
-from torch_geometric.typing import EdgeType as PyGEdgeType
 
 logger = Logger()
 

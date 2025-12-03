@@ -7,6 +7,8 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 import yaml
+from torch_geometric.data import HeteroData
+
 from gigl.common.constants import GIGL_ROOT_DIR, PYTHON_ROOT_DIR
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
@@ -20,7 +22,6 @@ from gigl.src.mocking.lib.versioning import (
     update_mocked_dataset_artifact_metadata,
 )
 from gigl.src.mocking.toy_asset_mocker import load_toy_graph
-from torch_geometric.data import HeteroData
 
 logger = Logger()
 

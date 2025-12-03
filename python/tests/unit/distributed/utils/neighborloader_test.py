@@ -2,6 +2,10 @@ import unittest
 from typing import Optional, Union
 
 import torch
+from parameterized import param, parameterized
+from torch_geometric.data import Data, HeteroData
+from torch_geometric.typing import EdgeType
+
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -10,10 +14,7 @@ from gigl.distributed.utils.neighborloader import (
     strip_label_edges,
 )
 from gigl.types.graph import FeatureInfo, message_passing_to_positive_label
-from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import assert_tensor_equality
-from torch_geometric.data import Data, HeteroData
-from torch_geometric.typing import EdgeType
 
 _U2U_EDGE_TYPE = ("user", "to", "user")
 _U2I_EDGE_TYPE = ("user", "to", "item")

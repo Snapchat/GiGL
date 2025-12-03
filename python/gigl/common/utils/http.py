@@ -2,6 +2,7 @@ import pathlib
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+
 from gigl.common import HttpUri, LocalUri
 from gigl.common.logger import Logger
 

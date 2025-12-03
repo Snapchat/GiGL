@@ -3,6 +3,7 @@ from typing import Callable, Type
 
 import torch
 import torch.nn.functional as F
+
 from gigl.experimental.knowledge_graph_embedding.lib.model.operators import (
     ComplexDiagonalOperator,
     DiagonalOperator,

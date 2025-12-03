@@ -8,6 +8,8 @@ from unittest.mock import patch
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from parameterized import param, parameterized
+
 from gigl.distributed.utils import (
     GraphStoreInfo,
     get_free_ports_from_master_node,
@@ -20,7 +22,6 @@ from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
 )
-from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import get_process_group_init_method
 
 

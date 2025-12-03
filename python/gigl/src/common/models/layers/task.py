@@ -4,6 +4,8 @@ from typing import Optional, Set, Tuple
 
 import torch
 import torch.nn as nn
+from torch_geometric.nn import GraphConv
+
 from gigl.common.logger import Logger
 from gigl.src.common.modeling_task_specs.utils.infer import (  # type: ignore
     infer_root_embeddings,
@@ -32,7 +34,6 @@ from gigl.src.common.models.pyg.graph.augmentations import (  # type: ignore
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.task_inputs import NodeAnchorBasedLinkPredictionTaskInputs
-from torch_geometric.nn import GraphConv
 
 logger = Logger()
 

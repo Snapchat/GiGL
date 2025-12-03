@@ -2,9 +2,10 @@ import time
 import unittest
 import uuid
 
+from parameterized import param, parameterized
+
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.bq import BqUtils
-from parameterized import param, parameterized
 
 
 class BqUtilsIntegrationTest(unittest.TestCase):

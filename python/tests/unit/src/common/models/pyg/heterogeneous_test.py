@@ -2,9 +2,10 @@ import unittest
 
 import torch
 import torch_geometric
+from torch_geometric.data import HeteroData
+
 from gigl.src.common.models.pyg.heterogeneous import HGT
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
-from torch_geometric.data import HeteroData
 
 
 class TestHGT(unittest.TestCase):

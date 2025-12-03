@@ -9,6 +9,7 @@ import unittest
 
 import torch
 import torch.nn.functional as F
+
 from gigl.experimental.knowledge_graph_embedding.lib.model.loss_utils import (
     average_pos_neg_scores,
     bpr_loss,

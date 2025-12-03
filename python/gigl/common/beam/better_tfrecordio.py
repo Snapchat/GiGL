@@ -18,6 +18,7 @@ from apache_beam.io.filesystem import CompressionTypes
 from apache_beam.io.iobase import Write
 from apache_beam.io.tfrecordio import _TFRecordUtil
 from apache_beam.transforms import PTransform
+
 from gigl.common.beam.coders import PassthroughCoder, RecordBatchToTFExampleCoderFn
 from gigl.common.logger import Logger
 

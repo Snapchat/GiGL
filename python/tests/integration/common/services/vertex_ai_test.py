@@ -4,12 +4,13 @@ import unittest
 import uuid
 
 import kfp
+from google.cloud.aiplatform_v1.types import env_var
+from parameterized import param, parameterized
+
 from gigl.common import UriFactory
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
-from google.cloud.aiplatform_v1.types import env_var
-from parameterized import param, parameterized
 
 
 @kfp.dsl.component

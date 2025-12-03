@@ -1,5 +1,7 @@
 from typing import Union
 
+from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
+
 from gigl.common.logger import Logger
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
@@ -8,7 +10,6 @@ from gigl.src.validation_check.libs.utils import (
     assert_proto_field_value_is_truthy,
     assert_proto_has_field,
 )
-from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
 from snapchat.research.gbml import gigl_resource_config_pb2
 
 logger = Logger()

@@ -4,6 +4,7 @@ from typing import Generic, Optional, Protocol, TypeVar, runtime_checkable
 
 import torch
 import torch.utils.data
+
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.src.common.types.model import BaseModelOperationsProtocol

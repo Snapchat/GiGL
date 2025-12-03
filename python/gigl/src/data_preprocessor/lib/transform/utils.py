@@ -6,6 +6,11 @@ import tensorflow_data_validation as tfdv
 import tensorflow_transform
 import tfx_bsl
 from apache_beam.pvalue import PBegin, PCollection, PDone
+from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
+from tensorflow_transform import beam as tft_beam
+from tensorflow_transform.tf_metadata import schema_utils
+from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
+
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord  # type: ignore
 from gigl.common.logger import Logger
@@ -30,10 +35,6 @@ from gigl.src.data_preprocessor.lib.types import (
     NodeDataPreprocessingSpec,
     TFTensorDict,
 )
-from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
-from tensorflow_transform import beam as tft_beam
-from tensorflow_transform.tf_metadata import schema_utils
-from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
 
 logger = Logger()
 

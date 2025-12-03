@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
+
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
 from gigl.src.common.types.graph_data import (
     CondensedEdgeType,

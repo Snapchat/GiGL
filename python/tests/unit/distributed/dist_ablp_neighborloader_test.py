@@ -4,6 +4,11 @@ from typing import Literal, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
+from graphlearn_torch.distributed import shutdown_rpc
+from graphlearn_torch.utils import reverse_edge_type
+from parameterized import param, parameterized
+from torch_geometric.data import Data, HeteroData
+
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
@@ -30,14 +35,10 @@ from gigl.types.graph import (
     to_homogeneous,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
-from graphlearn_torch.distributed import shutdown_rpc
-from graphlearn_torch.utils import reverse_edge_type
-from parameterized import param, parameterized
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
 )
-from torch_geometric.data import Data, HeteroData
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)

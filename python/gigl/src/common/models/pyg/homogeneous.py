@@ -4,6 +4,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.data
+from torch_geometric.nn import (
+    GATConv,
+    GATv2Conv,
+    GCNConv,
+    GINConv,
+    SAGEConv,
+    TransformerConv,
+)
+from torch_geometric.nn.models import MLP
+
 from gigl.common.logger import Logger
 from gigl.src.common.constants.training import DEFAULT_NUM_GNN_HOPS
 from gigl.src.common.models.layers.normalization import l2_normalize_embeddings
@@ -14,15 +24,6 @@ from gigl.src.common.models.pyg.nn.models.feature_embedding import FeatureEmbedd
 from gigl.src.common.models.pyg.nn.models.feature_interaction import FeatureInteraction
 from gigl.src.common.models.pyg.nn.models.jumping_knowledge import JumpingKnowledge
 from gigl.src.common.types.model import GnnModel, GraphBackend
-from torch_geometric.nn import (
-    GATConv,
-    GATv2Conv,
-    GCNConv,
-    GINConv,
-    SAGEConv,
-    TransformerConv,
-)
-from torch_geometric.nn.models import MLP
 
 logger = Logger()
 

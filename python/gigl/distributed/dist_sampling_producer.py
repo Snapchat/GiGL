@@ -8,7 +8,6 @@ from typing import Optional, Union, cast
 
 import torch
 import torch.multiprocessing as mp
-from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
 from graphlearn_torch.channel import ChannelBase
 from graphlearn_torch.distributed import (
     DistDataset,
@@ -32,6 +31,8 @@ from graphlearn_torch.utils import seed_everything
 from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
+
+from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
 
 
 def _sampling_worker_loop(

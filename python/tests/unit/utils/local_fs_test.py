@@ -3,9 +3,10 @@ import unittest
 from pathlib import Path
 from typing import Optional
 
+from parameterized import param, parameterized
+
 import gigl.common.utils.local_fs as local_fs_utils
 from gigl.common import LocalUri
-from parameterized import param, parameterized
 
 
 class LocalFsUtilsTest(unittest.TestCase):

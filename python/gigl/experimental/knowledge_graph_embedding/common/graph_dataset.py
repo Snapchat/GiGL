@@ -7,6 +7,10 @@ import numpy as np
 import orjson
 import pyarrow.parquet as pq
 import torch
+from google.cloud.bigquery_storage import BigQueryReadClient
+from google.cloud.bigquery_storage_v1.types import DataFormat, ReadSession
+from torch.utils.data._utils.worker import WorkerInfo
+
 from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.common.utils.torch_training import get_rank, get_world_size
@@ -14,9 +18,6 @@ from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.training.v1.lib.data_loaders.utils import (
     get_data_split_for_current_worker,
 )
-from google.cloud.bigquery_storage import BigQueryReadClient
-from google.cloud.bigquery_storage_v1.types import DataFormat, ReadSession
-from torch.utils.data._utils.worker import WorkerInfo
 
 SRC_FIELD: Literal["src"] = "src"
 DST_FIELD: Literal["dst"] = "dst"

@@ -1,4 +1,5 @@
 import torch
+
 from gigl.src.common.types.graph_data import NodeType
 
 

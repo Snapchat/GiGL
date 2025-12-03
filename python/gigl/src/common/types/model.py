@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
 import torch
+
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 
 

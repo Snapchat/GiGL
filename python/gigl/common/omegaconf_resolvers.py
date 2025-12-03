@@ -7,8 +7,9 @@ files to provide dynamic values during configuration loading.
 import subprocess
 from datetime import datetime, timedelta
 
-from gigl.common.logger import Logger
 from omegaconf import OmegaConf
+
+from gigl.common.logger import Logger
 
 logger = Logger()
 

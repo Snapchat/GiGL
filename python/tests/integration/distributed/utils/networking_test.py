@@ -2,10 +2,11 @@ import unittest
 import uuid
 from textwrap import dedent
 
+from parameterized import param, parameterized
+
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
-from parameterized import param, parameterized
 
 
 class NetworkingUtlsIntegrationTest(unittest.TestCase):

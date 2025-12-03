@@ -2,8 +2,12 @@ import unittest
 from collections.abc import Mapping
 from typing import Any, Optional, Type, Union
 
-import gigl.distributed.utils
 import torch
+from graphlearn_torch.data import Feature
+from parameterized import param, parameterized
+from torch.testing import assert_close
+
+import gigl.distributed.utils
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     SerializedTFRecordInfo,
@@ -39,13 +43,10 @@ from gigl.types.graph import (
     PartitionOutput,
 )
 from gigl.utils.data_splitters import DistNodeSplitter
-from graphlearn_torch.data import Feature
-from parameterized import param, parameterized
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
-from torch.testing import assert_close
 
 
 class _PassthroughSplitter:

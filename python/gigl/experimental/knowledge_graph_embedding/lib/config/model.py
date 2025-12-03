@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import torchrec
+
 from gigl.experimental.knowledge_graph_embedding.lib.config.sampling import (
     SamplingConfig,
 )

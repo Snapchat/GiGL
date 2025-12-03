@@ -2,9 +2,10 @@ from typing import Iterable, Optional, Sequence, TypeVar
 from uuid import uuid4
 
 import tensorflow as tf
+from google.protobuf import message
+
 from gigl.common import Uri
 from gigl.common.logger import Logger
-from google.protobuf import message
 
 logger = Logger()
 

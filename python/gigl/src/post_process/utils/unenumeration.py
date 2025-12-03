@@ -1,6 +1,8 @@
 import concurrent
 from typing import List
 
+from google.cloud import bigquery
+
 import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
 import gigl.src.inference.v1.lib.queries as inference_queries
 from gigl.common.env_config import get_available_cpus
@@ -15,7 +17,6 @@ from gigl.src.inference.v1.lib.inference_output_schema import (
     DEFAULT_EMBEDDINGS_TABLE_SCHEMA,
     DEFAULT_PREDICTIONS_TABLE_SCHEMA,
 )
-from google.cloud import bigquery
 from snapchat.research.gbml import preprocessed_metadata_pb2
 
 logger = Logger()

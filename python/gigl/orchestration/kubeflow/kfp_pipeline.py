@@ -3,9 +3,14 @@ import os
 # KFP doesn't support list[str] for runtime parameters, so we need to use List instead.
 from typing import Final, List, Optional
 
-import gigl.src.common.constants.local_fs as local_fs_constants
 import kfp
 import kfp.dsl.pipeline_channel
+from google_cloud_pipeline_components.v1.vertex_notification_email import (
+    VertexNotificationEmailOp,
+)
+from kfp.dsl import PipelineTask
+
+import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
@@ -15,10 +20,6 @@ from gigl.orchestration.kubeflow.utils.glt_backend import (
 from gigl.orchestration.kubeflow.utils.log_metrics import log_metrics_to_ui
 from gigl.orchestration.kubeflow.utils.resource import add_task_resource_requirements
 from gigl.src.common.constants.components import GiGLComponents
-from google_cloud_pipeline_components.v1.vertex_notification_email import (
-    VertexNotificationEmailOp,
-)
-from kfp.dsl import PipelineTask
 
 _COMPONENTS_BASE_PATH: Final[str] = os.path.join(
     local_fs_constants.get_gigl_root_directory(),

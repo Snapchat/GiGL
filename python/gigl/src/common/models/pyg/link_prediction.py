@@ -3,6 +3,7 @@ from typing import Optional, Union
 import torch
 import torch.nn as nn
 import torch_geometric
+
 from gigl.common.logger import Logger
 from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.task import NodeAnchorBasedLinkPredictionTasks

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Final
 
 import torch
+
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 
 MOCKED_NUM_PARTITIONS: Final[int] = 2

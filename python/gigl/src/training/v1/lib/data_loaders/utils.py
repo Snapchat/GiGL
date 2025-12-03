@@ -4,6 +4,10 @@ from typing import Optional, Union
 import numpy as np
 import torch
 import torch.utils.data
+from torch.utils.data._utils.worker import WorkerInfo
+from torch_geometric.data import Data
+from torch_geometric.data.hetero_data import HeteroData
+
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import get_rank, get_world_size
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
@@ -12,9 +16,6 @@ from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrap
 from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
 )
-from torch.utils.data._utils.worker import WorkerInfo
-from torch_geometric.data import Data
-from torch_geometric.data.hetero_data import HeteroData
 
 logger = Logger()
 

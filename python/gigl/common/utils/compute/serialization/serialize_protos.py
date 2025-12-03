@@ -1,4 +1,5 @@
 from apache_beam import coders
+
 from gigl.src.common.types.pb_wrappers.graph_data_types import (
     EdgePbWrapper,
     GraphPbWrapper,

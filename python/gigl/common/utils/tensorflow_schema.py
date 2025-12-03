@@ -2,11 +2,12 @@ from typing import Tuple
 
 import absl
 import tensorflow as tf
-from gigl.common import GcsUri, LocalUri, Uri
-from gigl.src.data_preprocessor.lib.types import FeatureIndexDict, FeatureSpecDict
 from tensorflow_data_validation import load_schema_text
 from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 from tensorflow_transform.tf_metadata import schema_utils
+
+from gigl.common import GcsUri, LocalUri, Uri
+from gigl.src.data_preprocessor.lib.types import FeatureIndexDict, FeatureSpecDict
 
 # We suppress noisy tensorflow logs to minimize unintentional clutter in logging:
 # https://stackoverflow.com/questions/69485127/disabling-useless-logs-ouputs-from-tfx-setuptools

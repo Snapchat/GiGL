@@ -2,10 +2,11 @@ from enum import Enum
 from typing import Type, Union
 
 import torch
+from graphlearn_torch.distributed import init_rpc, init_worker_group
+
 from gigl.distributed import DistPartitioner
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import PartitionOutput
-from graphlearn_torch.distributed import init_rpc, init_worker_group
 from tests.test_assets.distributed.constants import (
     MOCKED_NUM_PARTITIONS,
     USER_NODE_TYPE,

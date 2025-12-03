@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from typing import cast
 
 import torch
+from google.protobuf.json_format import ParseDict
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
+
 from gigl.common.logger import Logger
 from gigl.experimental.knowledge_graph_embedding.lib.config.evaluation import (
     EvaluationPhaseConfig,
@@ -17,9 +21,6 @@ from gigl.experimental.knowledge_graph_embedding.lib.config.model import ModelCo
 from gigl.experimental.knowledge_graph_embedding.lib.config.run import RunConfig
 from gigl.experimental.knowledge_graph_embedding.lib.config.training import TrainConfig
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
-from google.protobuf.json_format import ParseDict
-from hydra.utils import instantiate
-from omegaconf import DictConfig, OmegaConf
 from snapchat.research.gbml import graph_schema_pb2
 
 logger = Logger()

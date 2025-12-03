@@ -4,8 +4,9 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import yaml
-from gigl.common.omegaconf_resolvers import register_resolvers
 from omegaconf import OmegaConf
+
+from gigl.common.omegaconf_resolvers import register_resolvers
 
 
 class TestNowResolver(unittest.TestCase):

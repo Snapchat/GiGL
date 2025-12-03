@@ -1,6 +1,7 @@
 import unittest
 
 import torch
+
 from gigl.common.logger import Logger
 from gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec import (
     NodeAnchorBasedLinkPredictionModelingTaskSpec,

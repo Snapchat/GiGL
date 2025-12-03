@@ -9,6 +9,7 @@ import unittest
 
 import torch
 import torchrec
+
 from gigl.experimental.knowledge_graph_embedding.lib.data.node_batch import NodeBatch
 from gigl.src.common.types.graph_data import CondensedNodeType, NodeType
 

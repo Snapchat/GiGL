@@ -2,6 +2,7 @@ import tempfile
 from collections import OrderedDict
 
 import torch
+
 from gigl.common import LocalUri, Uri
 from gigl.src.common.utils.file_loader import FileLoader
 

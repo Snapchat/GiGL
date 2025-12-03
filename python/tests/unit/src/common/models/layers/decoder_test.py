@@ -2,6 +2,7 @@ import unittest
 
 import torch
 import torch.nn.functional as F
+
 from gigl.src.common.models.layers.decoder import DecoderType, LinkPredictionDecoder
 
 

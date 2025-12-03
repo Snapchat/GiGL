@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 import apache_beam as beam
 import tensorflow as tf
 from apache_beam.pvalue import PCollection
+
 from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config

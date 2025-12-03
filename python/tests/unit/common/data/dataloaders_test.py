@@ -6,6 +6,9 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import tensorflow as tf
 import torch
+from parameterized import param, parameterized
+from torch.testing import assert_close
+
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import (
     SerializedTFRecordInfo,
@@ -22,8 +25,6 @@ from gigl.src.mocking.lib.versioning import (
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
-from parameterized import param, parameterized
-from torch.testing import assert_close
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
     "node_id": tf.io.FixedLenFeature([], tf.int64),

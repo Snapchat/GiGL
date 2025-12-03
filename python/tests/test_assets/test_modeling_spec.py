@@ -2,6 +2,7 @@ from collections import OrderedDict
 from typing import Optional
 
 import torch.utils.data
+
 from gigl.src.common.modeling_task_specs.utils.profiler_wrapper import TorchProfiler
 from gigl.src.common.types.model_eval_metrics import (
     EvalMetric,

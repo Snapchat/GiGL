@@ -2,8 +2,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Protocol
 
-import gigl.experimental.knowledge_graph_embedding.lib.constants.gcs as gcs_constants
 import torch.distributed as dist
+from torch.utils.data import IterableDataset
+
+import gigl.experimental.knowledge_graph_embedding.lib.constants.gcs as gcs_constants
 from gigl.common.logger import Logger
 from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.utils.gcs import GcsUtils
@@ -25,7 +27,6 @@ from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrap
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.data_preprocessor.lib.enumerate.utils import EnumeratorEdgeTypeMetadata
 from gigl.src.data_preprocessor.lib.ingest.bigquery import BigqueryEdgeDataReference
-from torch.utils.data import IterableDataset
 
 logger = Logger()
 

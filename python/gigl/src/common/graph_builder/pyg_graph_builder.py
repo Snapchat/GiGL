@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder

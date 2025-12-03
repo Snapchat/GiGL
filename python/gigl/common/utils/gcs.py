@@ -8,6 +8,7 @@ from typing import IO, AnyStr, Iterable, Optional, Tuple, Union
 
 import google.cloud.exceptions as google_exceptions
 import google.cloud.storage as storage
+
 from gigl.common import GcsUri, LocalUri
 from gigl.common.collections.itertools import batch
 from gigl.common.logger import Logger

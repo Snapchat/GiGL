@@ -1,8 +1,9 @@
 from typing import Optional
 
+from google.cloud.bigquery.table import RowIterator
+
 from gigl.common.logger import Logger
 from gigl.src.common.utils.bq import BqUtils
-from google.cloud.bigquery.table import RowIterator
 
 logger = Logger()
 

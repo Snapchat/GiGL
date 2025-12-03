@@ -5,6 +5,9 @@ import torch
 import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributed.algorithms.join import Join, Joinable
+from torch_geometric.nn import GraphSAGE
+
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import (
     get_rank,
@@ -39,8 +42,6 @@ from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader 
     RootedNodeNeighborhoodBatch,
 )
 from gigl.src.training.v1.lib.eval_metrics import KS_FOR_EVAL as ks
-from torch.distributed.algorithms.join import Join, Joinable
-from torch_geometric.nn import GraphSAGE
 
 logger = Logger()
 

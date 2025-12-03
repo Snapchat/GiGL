@@ -6,6 +6,7 @@ from typing import Iterable
 
 import torch
 import torchrec
+
 from gigl.experimental.knowledge_graph_embedding.common.torchrec.batch import (
     DataclassBatch,
 )

@@ -2,11 +2,12 @@ import unittest
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
-from gigl.common import GcsUri
-from gigl.common.utils.gcs import GcsUtils
 from google.cloud.storage.blob import Blob
 from google.cloud.storage.bucket import Bucket
 from google.cloud.storage.client import Client
+
+from gigl.common import GcsUri
+from gigl.common.utils.gcs import GcsUtils
 
 
 class TestGcsUtils(unittest.TestCase):

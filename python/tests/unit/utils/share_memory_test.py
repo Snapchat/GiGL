@@ -3,10 +3,11 @@ from collections import abc
 from typing import Optional, Union
 
 import torch
-from gigl.src.common.types.graph_data import NodeType
-from gigl.utils.share_memory import share_memory
 from graphlearn_torch.partition import RangePartitionBook
 from parameterized import param, parameterized
+
+from gigl.src.common.types.graph_data import NodeType
+from gigl.utils.share_memory import share_memory
 
 
 class ShareMemoryTest(unittest.TestCase):

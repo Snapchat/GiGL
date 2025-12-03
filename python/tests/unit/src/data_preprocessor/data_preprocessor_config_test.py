@@ -1,13 +1,14 @@
 from copy import deepcopy
 
 import tensorflow_transform.beam as tft_beam
+from tensorflow_transform.beam import tft_unit
+from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
+
 from gigl.src.data_preprocessor.lib.data_preprocessor_config import (
     build_ingestion_feature_spec_fn,
     build_passthrough_transform_preprocessing_fn,
 )
 from gigl.src.data_preprocessor.lib.types import InstanceDict
-from tensorflow_transform.beam import tft_unit
-from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 
 
 class DataPreprocessorConfigTest(tft_unit.TransformTestCase):

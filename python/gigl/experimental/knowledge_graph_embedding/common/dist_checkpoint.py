@@ -10,12 +10,13 @@ from typing import Optional, Union
 import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 import torch.optim as optim
+from torch.distributed.checkpoint.metadata import STATE_DICT_TYPE
+from torch.distributed.checkpoint.stateful import Stateful
+
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.local_fs import delete_local_directory
 from gigl.src.common.utils.file_loader import FileLoader
-from torch.distributed.checkpoint.metadata import STATE_DICT_TYPE
-from torch.distributed.checkpoint.stateful import Stateful
 
 logger = Logger()
 

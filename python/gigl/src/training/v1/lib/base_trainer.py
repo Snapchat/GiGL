@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 import torch
+
 from gigl.common.logger import Logger
 from gigl.src.common.modeling_task_specs.utils.profiler_wrapper import TorchProfiler
 from gigl.src.common.types.model import BaseModelOperationsProtocol

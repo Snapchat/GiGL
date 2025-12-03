@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import yaml
+from omegaconf import DictConfig, OmegaConf
+
 from gigl.experimental.knowledge_graph_embedding.lib.config.hydra_utils import (
     build_hydra_dict_from_object,
 )
@@ -14,7 +16,6 @@ from gigl.src.data_preprocessor.lib.ingest.bigquery import (
     BigqueryEdgeDataReference,
     BigqueryNodeDataReference,
 )
-from omegaconf import DictConfig, OmegaConf
 
 
 @dataclass

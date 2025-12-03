@@ -2,8 +2,19 @@ import ast
 from collections import Counter, abc, defaultdict
 from typing import Optional, Union
 
-import gigl.distributed.utils
 import torch
+from graphlearn_torch.channel import SampleMessage, ShmChannel
+from graphlearn_torch.distributed import (
+    DistLoader,
+    MpDistSamplingWorkerOptions,
+    get_context,
+)
+from graphlearn_torch.sampler import SamplingConfig, SamplingType
+from graphlearn_torch.utils import reverse_edge_type
+from torch_geometric.data import Data, HeteroData
+from torch_geometric.typing import EdgeType
+
+import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
@@ -34,16 +45,6 @@ from gigl.types.graph import (
     select_label_edge_types,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
-from graphlearn_torch.channel import SampleMessage, ShmChannel
-from graphlearn_torch.distributed import (
-    DistLoader,
-    MpDistSamplingWorkerOptions,
-    get_context,
-)
-from graphlearn_torch.sampler import SamplingConfig, SamplingType
-from graphlearn_torch.utils import reverse_edge_type
-from torch_geometric.data import Data, HeteroData
-from torch_geometric.typing import EdgeType
 
 logger = Logger()
 

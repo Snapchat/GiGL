@@ -7,14 +7,16 @@ from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Uni
 import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
+from graphlearn_torch.distributed import init_rpc, init_worker_group
+from graphlearn_torch.partition import PartitionBook
+from parameterized import param, parameterized
+from torch.multiprocessing import Manager
+
 from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
-from graphlearn_torch.distributed import init_rpc, init_worker_group
-from graphlearn_torch.partition import PartitionBook
-from parameterized import param, parameterized
 from tests.test_assets.distributed.constants import (
     EDGE_TYPE_TO_FEATURE_DIMENSION_MAP,
     ITEM_NODE_TYPE,
@@ -33,7 +35,6 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
     run_distributed_partitioner,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
-from torch.multiprocessing import Manager
 
 
 class DistRandomPartitionerTestCase(unittest.TestCase):

@@ -7,6 +7,9 @@ from typing import Any, Optional, Type
 import torch
 import torch.distributed
 import torch.nn as nn
+from torch.distributed.algorithms.join import Join, Joinable
+from torch.optim.lr_scheduler import LRScheduler
+
 from gigl.common.logger import Logger
 from gigl.common.utils import os_utils
 from gigl.common.utils.torch_training import (
@@ -57,8 +60,6 @@ from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader 
     RootedNodeNeighborhoodBatch,
 )
 from gigl.src.training.v1.lib.eval_metrics import KS_FOR_EVAL
-from torch.distributed.algorithms.join import Join, Joinable
-from torch.optim.lr_scheduler import LRScheduler
 
 logger = Logger()
 

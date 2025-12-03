@@ -23,11 +23,12 @@ import argparse
 import gc
 import time
 
-import gigl.distributed
-import gigl.distributed.utils
 import torch
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
+
+import gigl.distributed
+import gigl.distributed.utils
 from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger

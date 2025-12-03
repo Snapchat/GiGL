@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from functools import partial
 
+from tensorflow_metadata.proto.v0.schema_pb2 import Schema
+
 import gigl.common.utils.local_fs as LocalFsUtils
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.collections.sorted_dict import SortedDict
@@ -18,7 +20,6 @@ from gigl.src.data_preprocessor.lib.types import (
     FeatureVocabDict,
 )
 from snapchat.research.gbml import preprocessed_metadata_pb2
-from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 
 logger = Logger()
 

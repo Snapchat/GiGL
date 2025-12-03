@@ -1,6 +1,7 @@
 import unittest
 
 import torch
+
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder

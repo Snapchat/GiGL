@@ -4,8 +4,9 @@ from typing import Any, Callable, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from gigl.src.common.models.layers.feature_interaction import DCNv2
 from torch_geometric.nn.models import MLP
+
+from gigl.src.common.models.layers.feature_interaction import DCNv2
 
 
 class CombinationMode(Enum):

@@ -4,12 +4,6 @@ from collections import defaultdict
 from typing import Optional, Union
 
 import torch
-from gigl.distributed.sampler import (
-    NEGATIVE_LABEL_METADATA_KEY,
-    POSITIVE_LABEL_METADATA_KEY,
-    ABLPNodeSamplerInput,
-)
-from gigl.utils.data_splitters import PADDING_NODE
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler
 from graphlearn_torch.sampler import (
@@ -20,6 +14,13 @@ from graphlearn_torch.sampler import (
 )
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
+
+from gigl.distributed.sampler import (
+    NEGATIVE_LABEL_METADATA_KEY,
+    POSITIVE_LABEL_METADATA_KEY,
+    ABLPNodeSamplerInput,
+)
+from gigl.utils.data_splitters import PADDING_NODE
 
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
 

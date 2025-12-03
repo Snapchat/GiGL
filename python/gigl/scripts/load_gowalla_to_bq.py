@@ -25,6 +25,7 @@ from typing import Final, Iterator
 
 import google.cloud.bigquery as bigquery
 import requests
+
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.src.common.utils.bq import BqUtils

@@ -4,8 +4,9 @@ from typing import Optional
 
 import psutil
 import torch
-from gigl.common.logger import Logger
 from graphlearn_torch.distributed import init_rpc, init_worker_group
+
+from gigl.common.logger import Logger
 
 logger = Logger()
 

@@ -4,12 +4,13 @@ downloaded from public sources which may not be available or rate-limit us.  We 
 override the dataset classes to download the datasets from GCS buckets to avoid issues.
 """
 
+from torch_geometric.data import extract_zip
+from torch_geometric.datasets import DBLP, Planetoid
+
 import gigl.env.dep_constants as dep_constants
 from gigl.common import GcsUri, LocalUri
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
-from torch_geometric.data import extract_zip
-from torch_geometric.datasets import DBLP, Planetoid
 
 unprocessed_datasets_gcs_uri = GcsUri(
     f"gs://{dep_constants.GIGL_PUBLIC_BUCKET_NAME}/unprocessed_datasets/"

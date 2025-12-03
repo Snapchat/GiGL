@@ -2,15 +2,16 @@ from typing import Optional
 
 import torch
 import torch_geometric.data
+from torch import nn
+from torch.nn import functional as F
+from torch_geometric.nn import Linear
+
 from gigl.src.common.models.layers.normalization import l2_normalize_embeddings
 from gigl.src.common.models.pyg.nn.conv.hgt_conv import HGTConv
 from gigl.src.common.models.pyg.nn.conv.simplehgn_conv import SimpleHGNConv
 from gigl.src.common.models.pyg.nn.models.feature_embedding import FeatureEmbeddingLayer
 from gigl.src.common.models.utils.torch import to_hetero_feat
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from torch import nn
-from torch.nn import functional as F
-from torch_geometric.nn import Linear
 
 
 # HGT acts as a soft template for future Heterogeneous GNN model init and forwarding implementation.

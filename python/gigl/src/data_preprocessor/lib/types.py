@@ -4,9 +4,10 @@ from typing import Any, Callable, NamedTuple, Optional, Tuple
 import apache_beam as beam
 import tensorflow as tf
 from apache_beam import PCollection
-from gigl.common import Uri
 from tensorflow_metadata.proto.v0.schema_pb2 import Feature
 from tensorflow_transform import common_types
+
+from gigl.common import Uri
 
 # TODO (mkolodner-sc): Move these variables to a more general location, as they are used even outside of context of data preprocessor
 

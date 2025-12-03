@@ -1,9 +1,10 @@
 import numpy as np
 import torch
+from google.protobuf.json_format import ParseDict
+
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.types.graph_data import Edge, Node, NodeId, NodeType, Relation
 from gigl.src.common.utils.data.feature_serialization import FeatureSerializationUtils
-from google.protobuf.json_format import ParseDict
 from snapchat.research.gbml import (
     graph_schema_pb2,
     preprocessed_metadata_pb2,

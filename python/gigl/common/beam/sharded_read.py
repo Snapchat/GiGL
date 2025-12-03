@@ -4,8 +4,9 @@ import apache_beam as beam
 from apache_beam.io.gcp.bigquery import BigQueryQueryPriority
 from apache_beam.io.gcp.internal.clients.bigquery import DatasetReference
 from apache_beam.pvalue import PBegin
-from gigl.common.logger import Logger
 from google.cloud import bigquery
+
+from gigl.common.logger import Logger
 
 logger = Logger()
 

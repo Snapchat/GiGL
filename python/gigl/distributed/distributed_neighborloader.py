@@ -1,8 +1,14 @@
 from collections import Counter, abc
 from typing import Optional, Tuple, Union
 
-import gigl.distributed.utils
 import torch
+from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
+from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+from torch_geometric.data import Data, HeteroData
+from torch_geometric.typing import EdgeType
+
+import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
@@ -21,11 +27,6 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
-from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
-from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
-from torch_geometric.data import Data, HeteroData
-from torch_geometric.typing import EdgeType
 
 logger = Logger()
 

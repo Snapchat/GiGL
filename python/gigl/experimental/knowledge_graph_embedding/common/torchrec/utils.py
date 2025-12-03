@@ -2,7 +2,6 @@ from typing import Any, Dict, Iterable, Optional, Type
 
 import torch
 import torch.nn as nn
-from gigl.common.logger import Logger
 from torch.distributed.optim import (
     _apply_optimizer_in_backward as apply_optimizer_in_backward,
 )
@@ -22,6 +21,8 @@ from torchrec.distributed.types import ShardingPlan
 from torchrec.optim.keyed import KeyedOptimizerWrapper
 from torchrec.optim.optimizers import in_backward_optimizer_filter
 from torchrec.optim.rowwise_adagrad import RowWiseAdagrad
+
+from gigl.common.logger import Logger
 
 logger = Logger()
 

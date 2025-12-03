@@ -4,12 +4,13 @@ import tempfile
 import unittest
 import uuid
 
+from parameterized import param, parameterized
+
 import gigl.common.utils.local_fs as local_fs
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
-from parameterized import param, parameterized
 
 
 class FileLoaderTest(unittest.TestCase):
