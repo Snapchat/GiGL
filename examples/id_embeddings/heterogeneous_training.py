@@ -585,9 +585,9 @@ def _training_process(
             optimizer.zero_grad()
             logger.info(f"Zeroing gradients")
             main_data = next(train_main_iter)
-            logger.info(f"Main data: {main_data}")
+            # logger.info(f"Main data: {main_data}")
             random_negative_data = next(train_random_neg_iter)
-            logger.info(f"Random negative data: {random_negative_data}")
+            # logger.info(f"Random negative data: {random_negative_data}")
             # Log sample data for debugging
             if debug_this_batch and rank == 0:
                 logger.info(f"\n{'='*60}")
@@ -788,11 +788,11 @@ def _run_example_training(
     # sampling, which would slow down training, while a value which is too large may slow down each sampling process due to competing resources, which would also
     # then slow down training.
     sampling_workers_per_process: int = int(
-        trainer_args.get("sampling_workers_per_process", "4")
+        trainer_args.get("sampling_workers_per_process", "8")
     )
 
-    main_batch_size = int(trainer_args.get("main_batch_size", "16"))
-    random_batch_size = int(trainer_args.get("random_batch_size", "16"))
+    main_batch_size = int(trainer_args.get("main_batch_size", "512"))
+    random_batch_size = int(trainer_args.get("random_batch_size", "512"))
 
     # LightGCN Hyperparameters
     embedding_dim = int(trainer_args.get("embedding_dim", "64"))
