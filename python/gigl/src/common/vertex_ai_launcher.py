@@ -24,6 +24,10 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import (
 
 logger = Logger()
 
+_LAUNCHABLE_COMPONENTS: frozenset[GiGLComponents] = frozenset(
+    [GiGLComponents.Trainer, GiGLComponents.Inferencer]
+)
+
 
 def launch_single_pool_job(
     vertex_ai_resource_config: VertexAiResourceConfig,
@@ -53,6 +57,10 @@ def launch_single_pool_job(
         component: The GiGL component (Trainer or Inferencer)
         vertex_ai_region: The Vertex AI region to launch the job in
     """
+    if component not in _LAUNCHABLE_COMPONENTS:
+        raise ValueError(
+            f"Invalid component: {component}. Expected one of: {_LAUNCHABLE_COMPONENTS}"
+        )
     is_cpu_execution = _determine_if_cpu_execution(
         vertex_ai_resource_config=vertex_ai_resource_config
     )
@@ -109,6 +117,10 @@ def launch_graph_store_enabled_job(
         cuda_docker_uri: Docker image URI for GPU execution
         component: The GiGL component (Trainer or Inferencer)
     """
+    if component not in _LAUNCHABLE_COMPONENTS:
+        raise ValueError(
+            f"Invalid component: {component}. Expected one of: {_LAUNCHABLE_COMPONENTS}"
+        )
     storage_pool_config = vertex_ai_graph_store_config.graph_store_pool
     compute_pool_config = vertex_ai_graph_store_config.compute_pool
 

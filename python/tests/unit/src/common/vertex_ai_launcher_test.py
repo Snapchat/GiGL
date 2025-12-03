@@ -139,7 +139,6 @@ class TestVertexAILauncher(unittest.TestCase):
         mock_service_instance = Mock()
         mock_vertex_ai_service_class.return_value = mock_service_instance
 
-        # Act
         launch_graph_store_enabled_job(
             vertex_ai_graph_store_config=graph_store_config,
             job_name=job_name,
@@ -253,7 +252,6 @@ class TestVertexAILauncher(unittest.TestCase):
         mock_service_instance = Mock()
         mock_vertex_ai_service_class.return_value = mock_service_instance
 
-        # Act
         launch_single_pool_job(
             vertex_ai_resource_config=vertex_ai_config,
             job_name=job_name,
