@@ -483,13 +483,12 @@ def _training_process(
     )
     logger.info(f"model: {model}")
 
-    # Initialize embeddings AFTER DMP wrapping (DMP reinitializes them, so doing it before is useless!)
-    # NOTE: Use small scale - toy test showed 50x causes saturation, 0.1x works well
+    # Initialize embeddings AFTER DMP wrapping (DMP reinitializes them, so doing it before is useless)
     logger.info(f"---Rank {rank} initializing embeddings with scaled Xavier uniform (AFTER DMP)")
     unwrapped_model = unwrap_from_dmp(model)
     logger.info(f"EmbeddingBagCollection parameters:")
     init_count = 0
-    EMBEDDING_SCALE = 0.1  # Small scale to avoid saturation (toy test confirmed this works!)
+    EMBEDDING_SCALE = 0.1  # Small scale to avoid saturation
     for name, param in unwrapped_model._embedding_bag_collection.named_parameters():
         logger.info(f"  Found parameter: {name}, shape: {param.shape}, device: {param.device}")
         logger.info(f"    BEFORE init - mean={param.mean().item():.6f}, std={param.std().item():.6f}, norm={param.norm().item():.6f}")
