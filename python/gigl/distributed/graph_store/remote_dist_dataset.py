@@ -56,7 +56,21 @@ class RemoteDistDataset:
         self,
         node_type: Optional[NodeType] = None,
     ) -> list[torch.Tensor]:
-        """Get the node IDs for a given node type.
+        """
+        Fetches node ids from the storage nodes for the current compute rank.
+
+        The returned list are the node ids for each storage rank, by storage rank.
+
+        For example, if there are two storage ranks, and four compute ranks, and 16 total nodes,
+        In this scenario, the node ids are sharded as follows:
+        Storage rank 0: [0, 1, 2, 3, 4, 5, 6, 7]
+        Storage rank 1: [8, 9, 10, 11, 12, 13, 14, 15]
+
+        Then, for compute rank 0 (node 0, process 0), the returned list will be:
+            [
+                [0, 1], # From storage rank 0
+                [8, 9] # From storage rank 1
+            ]
 
         Args:
             node_type (Optional[NodeType]): The type of nodes to get.
