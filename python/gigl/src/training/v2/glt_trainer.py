@@ -23,9 +23,6 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import (
 
 logger = Logger()
 
-# TODO: (svij) We should parameterize this in the future
-DEFAULT_VERTEX_AI_TIMEOUT_S = 60 * 60 * 3  # 3 hours
-
 
 class GLTTrainer:
     """
