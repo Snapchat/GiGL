@@ -276,7 +276,7 @@ def _build_job_config(
     return job_config
 
 
-# TODO: (svij) This function may need some work cc @zfan3, @xgao4
+# TODO(svij): This function may need some work cc @zfan3, @xgao4
 # i.e. dataloading may happen on gpu instead of inference. Curretly, there is no
 # great support for gpu data loading, thus we assume inference is done on gpu and
 # data loading is done on cpu. This will need to be revisited.
