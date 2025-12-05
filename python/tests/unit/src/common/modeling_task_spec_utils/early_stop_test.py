@@ -94,7 +94,7 @@ class EarlyStopTests(unittest.TestCase):
         for step_num, value in enumerate(mocked_criteria_values):
             has_metric_improved, should_early_stop = early_stopper.step(value=value)
             if model is not None:
-                model.foo += 1
+                model.foo += 1  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
             if step_num in improvement_steps:
                 self.assertTrue(has_metric_improved)
             else:
