@@ -54,7 +54,7 @@ split_generator_config:
 trainer_config:
   vertex_ai_trainer_config:
     machine_type: "" # e.g. n1-highmem-16
-    gpu_type: "" # e.g. nvidia-tesla-p100
+    gpu_type: "" # e.g. NVIDIA_TESLA_T4
     gpu_limit: 1
     num_replicas: 1
 inferencer_config:

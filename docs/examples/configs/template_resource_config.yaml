@@ -31,7 +31,7 @@ split_generator_config:  # Dataproc config
 trainer_config:
   vertex_ai_trainer_config:  # or local_trainer_config
     machine_type: "n1-highmem-8"
-    gpu_type: nvidia-tesla-p100
+    gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 1
     num_replicas: 2
 inferencer_config:
