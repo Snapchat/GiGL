@@ -96,7 +96,7 @@ def update_dep_vars_env(
 
 
 def update_pyproject(version: str) -> None:
-    path = f"{GIGL_ROOT_DIR}/python/pyproject.toml"
+    path = f"{GIGL_ROOT_DIR}/pyproject.toml"
     with open(path, "r") as f:
         content = f.read()
     content = re.sub(r'(version\s*)=\s*"[\d\.]+"', f'\\1= "{version}"', content)

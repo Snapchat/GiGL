@@ -4,6 +4,9 @@ SHELL := /bin/bash
 CONDA_ENV_NAME=gnn
 # Ensure that python, pip, and pip-tools versions are consistent with the ones in:
 # .github/actions/setup-python-tools/action.yml
+
+# TODO(svij): Remove python version as it is now managed by uv. Subsequently update all references in
+# Makfile to work w/ uv.
 PYTHON_VERSION=3.9
 PIP_VERSION=25.0.1
 PIP_TOOLS_VERSION=7.4.1

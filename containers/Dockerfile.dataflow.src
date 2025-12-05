@@ -10,9 +10,9 @@ RUN touch __init__.py
 
 # Note: main package files must live in root of the repo for the python package to be built correctly for Dataflow workers.
 # See https://beam.apache.org/documentation/sdks/python-pipeline-dependencies/#create-reproducible-environments.
-COPY python/MANIFEST.in MANIFEST.in
+COPY MANIFEST.in MANIFEST.in
 COPY python/setup.py setup.py
-COPY python/pyproject.toml pyproject.toml
+COPY pyproject.toml pyproject.toml
 COPY dep_vars.env dep_vars.env
 COPY deployment deployment
 COPY python/snapchat snapchat

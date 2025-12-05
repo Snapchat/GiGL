@@ -13,7 +13,6 @@ logs/
 .devcontainer/
 gigl.egg-info/
 gigl_dataflow_setup.egg-info/
-.python-version
 dist/
 *.egg-info/
 miniconda/
