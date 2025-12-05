@@ -326,6 +326,198 @@ class TestLightGCN(unittest.TestCase):
             nprocs=world_size,
         )
 
+    def test_compare_bipartite_with_math(self):
+        """Test that bipartite implementation matches the mathematical formulation of LightGCN.
+
+        This test converts the homogeneous 4-node graph into a bipartite graph to verify
+        that the bipartite implementation produces identical results. The same initial
+        embeddings and edge structure are used, just split by node type.
+
+        Graph structure:
+        - Homogeneous: nodes [0, 1, 2, 3] with edges 0->2, 0->3, 1->3, 2->0, 3->0, 3->1
+        - Bipartite: users [0, 1] and items [0, 1] with equivalent cross-type edges
+
+        Expected behavior: Bipartite embeddings should match the homogeneous embeddings
+        for the corresponding nodes (user 0 = node 0, user 1 = node 1, etc.)
+        """
+        # Create bipartite graph
+        num_users = 2
+        num_items = 2
+
+        node_type_to_num_nodes = {
+            NodeType("user"): num_users,
+            NodeType("item"): num_items,
+        }
+
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        # Use same embeddings as homogeneous test, split by node type
+        user_embeddings = torch.tensor(
+            [
+                [0.2, 0.5, 0.1, 0.4],  # User 0 (was Node 0)
+                [0.6, 0.1, 0.2, 0.5],  # User 1 (was Node 1)
+            ],
+            dtype=torch.float32,
+        )
+
+        item_embeddings = torch.tensor(
+            [
+                [0.9, 0.4, 0.1, 0.4],  # Item 0 (was Node 2)
+                [0.3, 0.8, 0.3, 0.6],  # Item 1 (was Node 3)
+            ],
+            dtype=torch.float32,
+        )
+
+        with torch.no_grad():
+            user_table = model._embedding_bag_collection.embedding_bags[
+                "node_embedding_user"
+            ]
+            user_table.weight[:] = user_embeddings
+
+            item_table = model._embedding_bag_collection.embedding_bags[
+                "node_embedding_item"
+            ]
+            item_table.weight[:] = item_embeddings
+
+        data = HeteroData()
+
+        # User nodes (local IDs 0, 1 map to global IDs 0, 1)
+        data["user"].node = torch.tensor([0, 1], dtype=torch.long)
+        data["user"].num_nodes = num_users
+
+        # Item nodes (local IDs 0, 1 map to global IDs 0, 1)
+        data["item"].node = torch.tensor([0, 1], dtype=torch.long)
+        data["item"].num_nodes = num_items
+
+        # User to item edges (converting from original homogeneous edges)
+        # Original: 0->2, 0->3, 1->3 becomes user 0->item 0, user 0->item 1, user 1->item 1
+        data["user", "to", "item"].edge_index = torch.tensor(
+            [[0, 0, 1], [0, 1, 1]], dtype=torch.long
+        )
+
+        # Item to user edges (reverse direction)
+        # Original: 2->0, 3->0, 3->1 becomes item 0->user 0, item 1->user 0, item 1->user 1
+        data["item", "to", "user"].edge_index = torch.tensor(
+            [[0, 1, 1], [0, 0, 1]], dtype=torch.long
+        )
+
+        # Forward pass - will return both user and item embeddings
+        output = model(
+            data,
+            self.device,
+        )
+
+        expected_user_embeddings = torch.tensor(
+            [
+                [0.4495, 0.5311, 0.1555, 0.4865],  # User 0
+                [0.3943, 0.2975, 0.1825, 0.4386],  # User 1
+            ],
+            dtype=torch.float32,
+        )
+
+        expected_item_embeddings = torch.tensor(
+            [
+                [0.5325, 0.4121, 0.1089, 0.3650],  # Item 0
+                [0.4558, 0.6207, 0.2506, 0.5817],  # Item 1
+            ],
+            dtype=torch.float32,
+        )
+
+        # Check that bipartite output matches expected
+        self.assertTrue(
+            torch.allclose(output[NodeType("user")], expected_user_embeddings, atol=1e-4, rtol=1e-4)
+        )
+        self.assertTrue(
+            torch.allclose(output[NodeType("item")], expected_item_embeddings, atol=1e-4, rtol=1e-4)
+        )
+
+    def test_bipartite_with_anchor_nodes(self):
+        """Test anchor node selection in bipartite/heterogeneous graphs."""
+        # Create bipartite graph
+        num_users = 2
+        num_items = 2
+
+        node_type_to_num_nodes = {
+            NodeType("user"): num_users,
+            NodeType("item"): num_items,
+        }
+
+        model = self._create_lightgcn_model(node_type_to_num_nodes)
+
+        # Set embeddings
+        user_embeddings = torch.tensor(
+            [
+                [0.2, 0.5, 0.1, 0.4],  # User 0
+                [0.6, 0.1, 0.2, 0.5],  # User 1
+            ],
+            dtype=torch.float32,
+        )
+
+        item_embeddings = torch.tensor(
+            [
+                [0.9, 0.4, 0.1, 0.4],  # Item 0
+                [0.3, 0.8, 0.3, 0.6],  # Item 1
+            ],
+            dtype=torch.float32,
+        )
+
+        with torch.no_grad():
+            user_table = model._embedding_bag_collection.embedding_bags[
+                "node_embedding_user"
+            ]
+            user_table.weight[:] = user_embeddings
+
+            item_table = model._embedding_bag_collection.embedding_bags[
+                "node_embedding_item"
+            ]
+            item_table.weight[:] = item_embeddings
+
+        data = HeteroData()
+
+        # Set up nodes
+        data["user"].node = torch.tensor([0, 1], dtype=torch.long)
+        data["user"].num_nodes = num_users
+        data["item"].node = torch.tensor([0, 1], dtype=torch.long)
+        data["item"].num_nodes = num_items
+
+        # Set up edges
+        data["user", "to", "item"].edge_index = torch.tensor(
+            [[0, 0, 1], [0, 1, 1]], dtype=torch.long
+        )
+        data["item", "to", "user"].edge_index = torch.tensor(
+            [[0, 1, 1], [0, 0, 1]], dtype=torch.long
+        )
+
+        # First get full output to compare against (will return all node types)
+        full_output = model(
+            data,
+            self.device,
+        )
+
+        # Test with anchor nodes - select specific nodes from specific types
+        # By only including "user" in anchor_node_ids, we'll only get user embeddings back
+        anchor_node_ids = {
+            NodeType("user"): torch.tensor([0], dtype=torch.long),  # Select user 0
+        }
+
+        output_with_anchors = model(
+            data,
+            self.device,
+            anchor_node_ids=anchor_node_ids,
+        )
+
+        # Check that only user embeddings are returned
+        self.assertEqual(output_with_anchors.keys(), set([NodeType("user")]))
+
+        # Check values - should match the corresponding rows from full output
+        self.assertTrue(
+            torch.allclose(
+                output_with_anchors[NodeType("user")],
+                full_output[NodeType("user")][0:1],  # User 0
+                atol=1e-4,
+                rtol=1e-4,
+            )
+        )
 
 def _run_dmp_multiprocess_test(
     rank: int,
