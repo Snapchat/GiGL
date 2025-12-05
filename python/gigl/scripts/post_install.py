@@ -53,10 +53,7 @@ def main():
     try:
         print(f"Executing {cmd}...")
         result = run_command_and_stream_stdout(cmd)
-        if result != 0:
-            raise RuntimeError(
-                f"Post-install script finished running, with return code: {result}"
-            )
+        print("Post-install script finished running, with return code: ", result)
         return result
 
     except subprocess.CalledProcessError as e:
