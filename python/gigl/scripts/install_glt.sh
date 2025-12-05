@@ -62,7 +62,8 @@ then
         # 8.9 = Ada Lovelace support i.e. L4 - CUDA 11.8 or later
         # 9.0 = Hopper support i.e. H100 , H200 - CUDA 12.0 or later
         # 10.0 = Blackwell support i.e. B200 - CUDA 12.6 or later
-        # 12.0 = Blackwell support i.e. B200 - CUDA 12.8 or later
+        # 12.0 = Blackwell support i.e. RTX6000 - CUDA 12.8 or later
+        # List of Nvidia GPUS: https://developer.nvidia.com/cuda-gpus
         TORCH_CUDA_ARCH_LIST="7.5" WITH_CUDA="ON" python setup.py bdist_wheel
     else
         echo "Will use CPU for GLT..."
