@@ -6,6 +6,7 @@ version         = "0.1.0"
 classifiers     = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
 ]
 requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available for newer python versions.
 
@@ -34,7 +35,7 @@ dependencies = [
   "python-dotenv",
   "pyyaml",
   "scikit-learn",
-  "pip", # Used by KFP Python components - need to install pip as a package
+  "pip~=25.3", # Used by KFP Python components - need to install pip as a package
   # When updating to a new tensorflow version, please ensure that the version changes align with
   # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
   "tensorflow~=2.16",
