@@ -73,8 +73,6 @@ ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
-RUN uv tool install pip==25.3
-
 RUN bash ./requirements/install_scala_deps.sh
 
 WORKDIR /
