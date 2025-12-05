@@ -3,7 +3,7 @@ set -e
 set -x
 
 DEV=0  # Flag to install dev dependencies.
-# Flag to skip installing GiGL lib dependencies, i.e. onlydev tools will be installed if DEV=1.
+# Flag to skip installing GiGL lib dependencies, i.e. only dev tools will be installed if DEV=1.
 SKIP_GIGL_LIB_DEPS_INSTALL=0
 SKIP_GLT_POST_INSTALL=0 # Flag to skip GLT post install. if SKIP_GIGL_LIB_DEPS_INSTALL=1, overrides SKIP_GLT_POST_INSTALL to =1.
 
