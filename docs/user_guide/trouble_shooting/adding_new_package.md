@@ -16,7 +16,7 @@ Run `uv lock` to generate a new `uv.lock` file, and create a PR with the changes
 
 ### 3. Push new base docker images
 
-- Navigate to GiGL's Actions tab and find the
+- Navigate to GiGL's [Actions tab](https://github.com/Snapchat/GiGL/actions) and find the
   [build-base-docker-images workflow](https://github.com/Snapchat/GiGL/actions/workflows/build-base-docker-images.yml).
 - Run the workflow with the PR# (You may need to ask a repo maintainer to do this). You can leave the branch name as
   `main`.
