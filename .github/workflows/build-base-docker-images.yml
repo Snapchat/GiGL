@@ -17,7 +17,7 @@ env:
 
 jobs:
   comment-workflow-started:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+
     runs-on: ubuntu-latest
     steps:
     - name: Comment on PR
@@ -38,7 +38,7 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -67,7 +67,7 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -96,7 +96,7 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -125,7 +125,7 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -159,7 +159,7 @@ jobs:
     steps:
 
     - name: Commit and Push Base Images
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -175,7 +175,7 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
 
     - uses: snapchat/gigl/.github/actions/comment-on-pr@main
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
