@@ -38,7 +38,6 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -67,7 +66,6 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -96,7 +94,6 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -112,7 +109,6 @@ jobs:
     - name: Build and Push Dataflow Base Image
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
-
         docker build -f ./containers/Dockerfile.dataflow.base -t ${GIGL_BASE_DATAFLOW_IMAGE} .
         docker push ${GIGL_BASE_DATAFLOW_IMAGE}
         echo "Pushed Dataflow base image to ${GIGL_BASE_DATAFLOW_IMAGE}"
@@ -125,7 +121,6 @@ jobs:
       id-token: 'write'
     steps:
     - name: Checkout PR Branch
-
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -157,25 +152,19 @@ jobs:
       - build-builder-image
     runs-on: ubuntu-latest
     steps:
-
     - name: Commit and Push Base Images
-
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
         should_leave_progress_comments: "false"
         command: bash .github/scripts/update_docker_image_refs.sh
-
-
     - name: Commit and Push Dep Vars
       uses: snapchat/gigl/.github/actions/commit-and-push@main
       with:
         commit_message: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
         github_token: ${{ secrets.GITHUB_TOKEN }}
-
     - uses: snapchat/gigl/.github/actions/comment-on-pr@main
-
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |

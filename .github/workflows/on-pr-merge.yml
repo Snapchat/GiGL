@@ -42,6 +42,7 @@ jobs:
         cmd: "make unit_test_py"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+
   ci-unit-test-scala:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
