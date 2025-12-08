@@ -7,9 +7,6 @@ on:
   pull_request:
   merge_group:
 
-  # Strictly for testing purposes
-  push:
-
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
   id-token: 'write'
@@ -24,7 +21,7 @@ jobs:
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
-    # if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -45,12 +42,13 @@ jobs:
         cmd: "make unit_test_py"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+
   ci-unit-test-scala:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
-    # if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -73,7 +71,7 @@ jobs:
         project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-test:
-    # if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -92,7 +90,7 @@ jobs:
         project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-e2e-test:
-    # if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -131,7 +129,7 @@ jobs:
   #       project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-lint-test:
-    # if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4

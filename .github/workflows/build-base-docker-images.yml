@@ -7,9 +7,6 @@ on:
         description: 'PR to run the workflow on'
         required: true
 
-  # Uncomment strictly for testing purposes
-  push:
-
 env:
   DOCKER_BUILDKIT: 1
   GIGL_BASE_CUDA_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cuda-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
@@ -20,7 +17,7 @@ env:
 
 jobs:
   comment-workflow-started:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+
     runs-on: ubuntu-latest
     steps:
     - name: Comment on PR
@@ -40,15 +37,11 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-    - name: Checkout PR Branch (on-dispatch)
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+    - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
-    - name: Checkout repository (on-push)
-      if: ${{ github.event_name == 'push' }}
-      uses: actions/checkout@v4
     - name: Setup Machine for building Docker images
       uses: ./.github/actions/setup-python-tools
       with:
@@ -67,21 +60,16 @@ jobs:
 
   build-cpu-base-image:
     runs-on: ubuntu-latest
-    # runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
     steps:
-    - name: Checkout PR Branch (on-dispatch)
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+    - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
-    - name: Checkout repository (on-push)
-      if: ${{ github.event_name == 'push' }}
-      uses: actions/checkout@v4
     - name: Setup Machine for building Docker images
       uses: ./.github/actions/setup-python-tools
       with:
@@ -100,21 +88,16 @@ jobs:
 
   build-dataflow-base-image:
     runs-on: ubuntu-latest
-    # runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
     steps:
-    - name: Checkout PR Branch (on-dispatch)
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+    - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
-    - name: Checkout repository (on-push)
-      if: ${{ github.event_name == 'push' }}
-      uses: actions/checkout@v4
     - name: Setup Machine for building Docker images
       uses: ./.github/actions/setup-python-tools
       with:
@@ -126,7 +109,6 @@ jobs:
     - name: Build and Push Dataflow Base Image
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
-
         docker build -f ./containers/Dockerfile.dataflow.base -t ${GIGL_BASE_DATAFLOW_IMAGE} .
         docker push ${GIGL_BASE_DATAFLOW_IMAGE}
         echo "Pushed Dataflow base image to ${GIGL_BASE_DATAFLOW_IMAGE}"
@@ -138,15 +120,11 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-    - name: Checkout PR Branch (on-dispatch)
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+    - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
-    - name: Checkout repository (on-push)
-      if: ${{ github.event_name == 'push' }}
-      uses: actions/checkout@v4
     - name: Setup Machine for building Docker images
       uses: ./.github/actions/setup-python-tools
       with:
@@ -174,32 +152,19 @@ jobs:
       - build-builder-image
     runs-on: ubuntu-latest
     steps:
-
-    - name: Commit and Push Base Images (on-dispatch)
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+    - name: Commit and Push Base Images
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
         should_leave_progress_comments: "false"
         command: bash .github/scripts/update_docker_image_refs.sh
-
-    - name: Checkout repository (on-push)
-      if: ${{ github.event_name == 'push' }}
-      uses: actions/checkout@v4
-
-    - name: Commit and Push Base Images (on-push)
-      if: ${{ github.event_name == 'push' }}
-      run: bash .github/scripts/update_docker_image_refs.sh
-
     - name: Commit and Push Dep Vars
       uses: snapchat/gigl/.github/actions/commit-and-push@main
       with:
         commit_message: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
         github_token: ${{ secrets.GITHUB_TOKEN }}
-
     - uses: snapchat/gigl/.github/actions/comment-on-pr@main
-      if: ${{ github.event_name == 'workflow_dispatch' }}
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
