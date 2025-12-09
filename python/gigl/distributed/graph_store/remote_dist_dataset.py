@@ -1,38 +1,21 @@
-import abc
-from typing import Optional
+from typing import Literal, Optional, Union
 
 import torch
-from graphlearn_torch.distributed import async_request_server
+from graphlearn_torch.distributed import async_request_server, request_server
 
 from gigl.common.logger import Logger
-from gigl.distributed.graph_store.remote_dataset import get_node_ids_for_rank
+from gigl.distributed.graph_store.remote_dataset import (
+    get_edge_dir,
+    get_edge_feature_info,
+    get_node_feature_info,
+    get_node_ids_for_rank,
+)
+from gigl.distributed.utils.networking import get_free_ports_from_master_node
 from gigl.env.distributed import GraphStoreInfo
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.types.graph import FeatureInfo
 
 logger = Logger()
-
-
-class RemoteDataset(abc.ABC):
-    """
-    Base class for remote datasets.
-    """
-
-    @property
-    @abc.abstractmethod
-    def cluster_info(self) -> GraphStoreInfo:
-        """Get the cluster information.
-
-        Returns:
-            GraphStoreInfo: The cluster information.
-        """
-
-    @abc.abstractmethod
-    def get_node_ids(self, node_type: Optional[NodeType] = None) -> list[torch.Tensor]:
-        """Get the node IDs for a given node type.
-
-        Args:
-            node_type (Optional[NodeType]): The type of nodes to get.
-        """
 
 
 class RemoteDistDataset:
@@ -48,9 +31,69 @@ class RemoteDistDataset:
         self._local_rank = local_rank
         self._cluster_info = cluster_info
 
+    def _get_storage_shard(self) -> int:
+        """
+        Sharded server rank for the current process.
+        We do this so we don't overload a specific server.
+
+        Returns:
+            int: The sharded server rank.
+        """
+        return (
+            self._cluster_info.compute_cluster_rank(self._local_rank)
+            % self._cluster_info.num_storage_nodes
+        )
+
     @property
     def cluster_info(self) -> GraphStoreInfo:
         return self._cluster_info
+
+    @property
+    def local_rank(self) -> int:
+        return self._local_rank
+
+    def get_node_feature_info(
+        self,
+    ) -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
+        """Get node feature information from the registered dataset.
+
+        Returns:
+            Node feature information, which can be:
+            - A single FeatureInfo object for homogeneous graphs
+            - A dict mapping NodeType to FeatureInfo for heterogeneous graphs
+            - None if no node features are available
+        """
+        return request_server(
+            self._get_storage_shard(),
+            get_node_feature_info,
+        )
+
+    def get_edge_feature_info(
+        self,
+    ) -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:
+        """Get edge feature information from the registered dataset.
+
+        Returns:
+            Edge feature information, which can be:
+            - A single FeatureInfo object for homogeneous graphs
+            - A dict mapping EdgeType to FeatureInfo for heterogeneous graphs
+            - None if no edge features are available
+        """
+        return request_server(
+            self._get_storage_shard(),
+            get_edge_feature_info,
+        )
+
+    def get_edge_dir(self) -> Union[str, Literal["in", "out"]]:
+        """Get the edge direction from the registered dataset.
+
+        Returns:
+            The edge direction.
+        """
+        return request_server(
+            self._get_storage_shard(),
+            get_edge_dir,
+        )
 
     def get_node_ids(
         self,
@@ -99,3 +142,16 @@ class RemoteDistDataset:
             )
         node_ids = torch.futures.wait_all(futures)
         return node_ids
+
+    def get_free_ports(self, num_ports: int) -> list[int]:
+        """
+        Get free ports from the storage master node for the current compute rank.
+
+        Args:
+            num_ports (int): Number of free ports to get.
+        """
+        return request_server(
+            0,  # We use the master node for the free ports
+            get_free_ports_from_master_node,
+            num_ports=num_ports,
+        )
