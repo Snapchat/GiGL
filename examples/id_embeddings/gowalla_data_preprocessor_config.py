@@ -61,31 +61,52 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
     Data preprocessor configuration for the Gowalla bipartite graph dataset.
 
     This config handles:
-    1. Creating node tables (users and items) with degree features from edge data
+    1. Creating node tables (users and items) with degree features from both train and test edges
     2. Defining preprocessing specs for user and item nodes
-    3. Defining preprocessing specs for user-item edges
+    3. Defining preprocessing specs for train and test edges (as separate edge types)
 
     Args:
-        edge_table (str): Full BigQuery path to the edge table (e.g., "project.dataset.train_edges")
+        train_edge_table (str): Full BigQuery path to the training edge table
+        test_edge_table (str): Full BigQuery path to the test edge table
         **kwargs: Additional configuration arguments (currently unused but maintained for extensibility)
     """
 
-    def __init__(self, edge_table: str, **kwargs: Any) -> None:
+    def __init__(self, train_edge_table: str, test_edge_table: str, **kwargs: Any) -> None:
         super().__init__()
 
-        # Store the edge table path
-        self._edge_table = edge_table
-        logger.info(f"Initializing Gowalla config with edge table: {self._edge_table}")
+        # Store the edge table paths
+        self._train_edge_table = train_edge_table
+        self._test_edge_table = test_edge_table
+        logger.info(f"Initializing Gowalla config with train edge table: {self._train_edge_table}")
+        logger.info(f"Initializing Gowalla config with test edge table: {self._test_edge_table}")
 
         # Define node types
         self._user_node_type = NodeType(USER_NODE_TYPE_NAME)
         self._item_node_type = NodeType(ITEM_NODE_TYPE_NAME)
 
-        # Define edge type (user -> item)
-        self._user_item_edge_type = EdgeType(
+        # Define edge types (bidirectional: user->item and item->user for both train and test)
+        # Forward edges: user -> item
+        self._user_to_train_item_edge_type = EdgeType(
             src_node_type=self._user_node_type,
             dst_node_type=self._item_node_type,
-            relation=Relation("to"),
+            relation=Relation("to_train"),
+        )
+        self._user_to_test_item_edge_type = EdgeType(
+            src_node_type=self._user_node_type,
+            dst_node_type=self._item_node_type,
+            relation=Relation("to_test"),
+        )
+
+        # Reverse edges: item -> user
+        self._item_to_train_user_edge_type = EdgeType(
+            src_node_type=self._item_node_type,
+            dst_node_type=self._user_node_type,
+            relation=Relation("to_train"),
+        )
+        self._item_to_test_user_edge_type = EdgeType(
+            src_node_type=self._item_node_type,
+            dst_node_type=self._user_node_type,
+            relation=Relation("to_test"),
         )
 
         # Get resource config
@@ -101,13 +122,13 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
         """
         Prepare node tables before running the preprocessing pipeline.
 
-        This method creates user and item node tables from the edge table,
-        with node degree as a simple feature.
+        This method creates user and item node tables from BOTH train and test edge tables,
+        with node degree as a simple feature (aggregated across both train and test).
 
         Args:
             applied_task_identifier (AppliedTaskIdentifier): Unique identifier for this pipeline run
         """
-        logger.info("Preparing node tables for Gowalla dataset...")
+        logger.info("Preparing node tables for Gowalla dataset (combining train and test edges)...")
 
         bq_utils = BqUtils(project=self._resource_config.project)
 
@@ -118,19 +139,36 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             f"{applied_task_identifier}"
         )
 
+        logger.info(f"Table prefix: {table_prefix}")
+
         self._user_node_table = f"{table_prefix}_user_nodes"
         self._item_node_table = f"{table_prefix}_item_nodes"
 
-        # Create user node table with degree feature
+        # Create user node table with degree feature (combining train and test edges)
         logger.info(f"Creating user node table: {self._user_node_table}")
         user_node_query = f"""
+        SELECT
+            {NODE_ID_COLUMN},
+            SUM({DEGREE_COLUMN}) AS {DEGREE_COLUMN}
+        FROM (
+            SELECT
+                {SRC_COLUMN} AS {NODE_ID_COLUMN},
+                COUNT(*) AS {DEGREE_COLUMN}
+            FROM
+                `{self._train_edge_table}`
+            GROUP BY
+                {SRC_COLUMN}
+            UNION ALL
         SELECT
             {SRC_COLUMN} AS {NODE_ID_COLUMN},
             COUNT(*) AS {DEGREE_COLUMN}
         FROM
-            `{self._edge_table}`
+                `{self._test_edge_table}`
+            GROUP BY
+                {SRC_COLUMN}
+        )
         GROUP BY
-            {SRC_COLUMN}
+            {NODE_ID_COLUMN}
         """
 
         bq_utils.run_query(
@@ -139,18 +177,33 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             destination=self._user_node_table,
             write_disposition=WriteDisposition.WRITE_TRUNCATE,
         )
-        logger.info(f"Created user node table with degree features")
+        logger.info(f"Created user node table with degree features from train and test edges")
 
-        # Create item node table with degree feature
+        # Create item node table with degree feature (combining train and test edges)
         logger.info(f"Creating item node table: {self._item_node_table}")
         item_node_query = f"""
+        SELECT
+            {NODE_ID_COLUMN},
+            SUM({DEGREE_COLUMN}) AS {DEGREE_COLUMN}
+        FROM (
+            SELECT
+                {DST_COLUMN} AS {NODE_ID_COLUMN},
+                COUNT(*) AS {DEGREE_COLUMN}
+            FROM
+                `{self._train_edge_table}`
+            GROUP BY
+                {DST_COLUMN}
+            UNION ALL
         SELECT
             {DST_COLUMN} AS {NODE_ID_COLUMN},
             COUNT(*) AS {DEGREE_COLUMN}
         FROM
-            `{self._edge_table}`
+                `{self._test_edge_table}`
+            GROUP BY
+                {DST_COLUMN}
+        )
         GROUP BY
-            {DST_COLUMN}
+            {NODE_ID_COLUMN}
         """
 
         bq_utils.run_query(
@@ -159,7 +212,7 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             destination=self._item_node_table,
             write_disposition=WriteDisposition.WRITE_TRUNCATE,
         )
-        logger.info(f"Created item node table with degree features")
+        logger.info(f"Created item node table with degree features from train and test edges")
 
         # Log statistics
         user_count = bq_utils.count_number_of_rows_in_bq_table(
@@ -241,7 +294,13 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
         self,
     ) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
         """
-        Define preprocessing specifications for user-item edges.
+        Define preprocessing specifications for bidirectional train and test edges.
+
+        Returns four separate edge specs:
+        1. Training edges: user -> to_train -> item
+        2. Test edges: user -> to_test -> item
+        3. Reverse training edges: item -> to_train -> user
+        4. Reverse test edges: item -> to_test -> user
 
         Returns:
             dict[EdgeDataReference, EdgeDataPreprocessingSpec]: Mapping of edge data
@@ -251,53 +310,147 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             EdgeDataReference, EdgeDataPreprocessingSpec
         ] = {}
 
-        logger.info("Defining edge preprocessing spec...")
+        logger.info("Defining edge preprocessing specs for bidirectional train and test edges...")
 
-        # Main edge data reference (user -> item interactions)
-        main_edge_data_ref = BigqueryEdgeDataReference(
-            reference_uri=self._edge_table,
-            edge_type=self._user_item_edge_type,
+        # ========== Forward Training Edges: user -> to_train -> item ==========
+        user_to_train_item_edge_ref = BigqueryEdgeDataReference(
+            reference_uri=self._train_edge_table,
+            edge_type=self._user_to_train_item_edge_type,
             edge_usage_type=EdgeUsageType.MAIN,
         )
 
-        # Edge output identifier
-        edge_output_id = EdgeOutputIdentifier(
+        user_to_train_item_output_id = EdgeOutputIdentifier(
             src_node=NodeOutputIdentifier(SRC_COLUMN),
             dst_node=NodeOutputIdentifier(DST_COLUMN),
         )
 
-        # Feature spec (just src and dst, no edge features)
-        edge_feature_spec_fn = build_ingestion_feature_spec_fn(
+        user_to_train_item_feature_spec_fn = build_ingestion_feature_spec_fn(
             fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
         )
 
-        # Passthrough preprocessing (no transformations needed)
-        edge_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+        user_to_train_item_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
 
         edge_data_ref_to_preprocessing_specs[
-            main_edge_data_ref
+            user_to_train_item_edge_ref
         ] = EdgeDataPreprocessingSpec(
-            identifier_output=edge_output_id,
-            features_outputs=[],  # No edge features in raw data
-            labels_outputs=[],  # No edge labels
-            feature_spec_fn=edge_feature_spec_fn,
-            preprocessing_fn=edge_preprocessing_fn,
+            identifier_output=user_to_train_item_output_id,
+            features_outputs=[],
+            labels_outputs=[],
+            feature_spec_fn=user_to_train_item_feature_spec_fn,
+            preprocessing_fn=user_to_train_item_preprocessing_fn,
+        )
+        logger.info("Forward training edge spec defined (user -> to_train -> item)")
+
+        # ========== Forward Test Edges: user -> to_test -> item ==========
+        user_to_test_item_edge_ref = BigqueryEdgeDataReference(
+            reference_uri=self._test_edge_table,
+            edge_type=self._user_to_test_item_edge_type,
+            edge_usage_type=EdgeUsageType.MAIN,
         )
 
-        logger.info("Edge preprocessing spec defined")
+        user_to_test_item_output_id = EdgeOutputIdentifier(
+            src_node=NodeOutputIdentifier(SRC_COLUMN),
+            dst_node=NodeOutputIdentifier(DST_COLUMN),
+        )
+
+        user_to_test_item_feature_spec_fn = build_ingestion_feature_spec_fn(
+            fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
+        )
+
+        user_to_test_item_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+
+        edge_data_ref_to_preprocessing_specs[
+            user_to_test_item_edge_ref
+        ] = EdgeDataPreprocessingSpec(
+            identifier_output=user_to_test_item_output_id,
+            features_outputs=[],
+            labels_outputs=[],
+            feature_spec_fn=user_to_test_item_feature_spec_fn,
+            preprocessing_fn=user_to_test_item_preprocessing_fn,
+        )
+        logger.info("Forward test edge spec defined (user -> to_test -> item)")
+
+        # ========== Reverse Training Edges: item -> to_train -> user ==========
+        # Same BigQuery table, but swap src and dst
+        item_to_train_user_edge_ref = BigqueryEdgeDataReference(
+            reference_uri=self._train_edge_table,
+            edge_type=self._item_to_train_user_edge_type,
+            edge_usage_type=EdgeUsageType.MAIN,
+        )
+
+        # Swap src and dst for reverse direction
+        item_to_train_user_output_id = EdgeOutputIdentifier(
+            src_node=NodeOutputIdentifier(DST_COLUMN),  # item (was dst)
+            dst_node=NodeOutputIdentifier(SRC_COLUMN),  # user (was src)
+        )
+
+        item_to_train_user_feature_spec_fn = build_ingestion_feature_spec_fn(
+            fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
+        )
+
+        item_to_train_user_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+
+        edge_data_ref_to_preprocessing_specs[
+            item_to_train_user_edge_ref
+        ] = EdgeDataPreprocessingSpec(
+            identifier_output=item_to_train_user_output_id,
+            features_outputs=[],
+            labels_outputs=[],
+            feature_spec_fn=item_to_train_user_feature_spec_fn,
+            preprocessing_fn=item_to_train_user_preprocessing_fn,
+        )
+        logger.info("Reverse training edge spec defined (item -> to_train -> user)")
+
+        # ========== Reverse Test Edges: item -> to_test -> user ==========
+        # Same BigQuery table, but swap src and dst
+        item_to_test_user_edge_ref = BigqueryEdgeDataReference(
+            reference_uri=self._test_edge_table,
+            edge_type=self._item_to_test_user_edge_type,
+            edge_usage_type=EdgeUsageType.MAIN,
+        )
+
+        # Swap src and dst for reverse direction
+        item_to_test_user_output_id = EdgeOutputIdentifier(
+            src_node=NodeOutputIdentifier(DST_COLUMN),  # item (was dst)
+            dst_node=NodeOutputIdentifier(SRC_COLUMN),  # user (was src)
+        )
+
+        item_to_test_user_feature_spec_fn = build_ingestion_feature_spec_fn(
+            fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
+        )
+
+        item_to_test_user_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+
+        edge_data_ref_to_preprocessing_specs[
+            item_to_test_user_edge_ref
+        ] = EdgeDataPreprocessingSpec(
+            identifier_output=item_to_test_user_output_id,
+            features_outputs=[],
+            labels_outputs=[],
+            feature_spec_fn=item_to_test_user_feature_spec_fn,
+            preprocessing_fn=item_to_test_user_preprocessing_fn,
+        )
+        logger.info("Reverse test edge spec defined (item -> to_test -> user)")
+
+        logger.info("All edge preprocessing specs defined (4 edge types: forward and reverse for train and test)")
         return edge_data_ref_to_preprocessing_specs
 
 
-def get_gowalla_preprocessor_config(edge_table: str, **kwargs: Any) -> GowallaDataPreprocessorConfig:
+def get_gowalla_preprocessor_config(
+    train_edge_table: str, test_edge_table: str, **kwargs: Any
+) -> GowallaDataPreprocessorConfig:
     """
     Factory function to create a GowallaDataPreprocessorConfig instance.
 
     Args:
-        edge_table (str): Full BigQuery path to the edge table
+        train_edge_table (str): Full BigQuery path to the training edge table
+        test_edge_table (str): Full BigQuery path to the test edge table
         **kwargs: Additional configuration arguments
 
     Returns:
         GowallaDataPreprocessorConfig: Configured preprocessor instance
 
     """
-    return GowallaDataPreprocessorConfig(edge_table=edge_table, **kwargs)
+    return GowallaDataPreprocessorConfig(
+        train_edge_table=train_edge_table, test_edge_table=test_edge_table, **kwargs
+    )
