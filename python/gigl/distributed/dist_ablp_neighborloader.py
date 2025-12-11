@@ -343,7 +343,7 @@ class DistABLPLoader(DistLoader):
 
             positive_labels, negative_labels = get_labels_for_anchor_nodes(
                 dataset=dataset,
-                node_ids=anchor_node_ids,
+                node_ids=curr_process_nodes,
                 positive_label_edge_type=positive_label_edge_type,
                 negative_label_edge_type=negative_label_edge_type,
             )
