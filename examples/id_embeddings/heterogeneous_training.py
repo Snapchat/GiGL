@@ -105,6 +105,139 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
     return loss_tensor.item() / torch.distributed.get_world_size()
 
 
+# ============================================================================
+# Evaluation Metrics: Recall@K and NDCG@K (LightGCN paper metrics)
+# ============================================================================
+
+
+def recall_at_k(
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+    k_values: list[int],
+) -> dict[int, float]:
+    """
+    Computes Recall@K for collaborative filtering.
+
+    Recall@K = (# of relevant items in top-K) / (# of relevant items)
+
+    For link prediction with 1 positive per query, this simplifies to:
+    Recall@K = 1 if positive is in top-K, else 0
+
+    Args:
+        scores: Score tensor of shape [B, 1 + N], where B is batch size, N is number of negatives.
+            First column contains positive scores, rest are negative scores.
+        labels: Label tensor of shape [B, 1 + N], where 1 indicates positive, 0 indicates negative.
+            First column should contain 1 (positive label).
+        k_values: List of K values to compute Recall@K for (e.g., [10, 20, 50, 100])
+
+    Returns:
+        Dictionary mapping K -> Recall@K value
+    """
+    batch_size = scores.size(0)
+    max_k = max(k_values)
+
+    # Get top-K indices (shape: B x max_k)
+    topk_indices = torch.topk(scores, k=max_k, dim=1).indices
+
+    # Gather labels for top-K items (shape: B x max_k)
+    topk_labels = torch.gather(labels, dim=1, index=topk_indices)
+
+    # For each K, check if positive appears in top-K
+    recalls = {}
+    for k in k_values:
+        # Check if any of the top-K items is positive (label == 1)
+        hits = (topk_labels[:, :k].sum(dim=1) > 0).float()  # (B,)
+        recalls[k] = hits.mean().item()
+
+    return recalls
+
+
+def ndcg_at_k(
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+    k_values: list[int],
+) -> dict[int, float]:
+    """
+    Computes Normalized Discounted Cumulative Gain (NDCG@K) for collaborative filtering.
+
+    DCG@K = sum_{i=1}^{K} (2^{rel_i} - 1) / log2(i + 1)
+    NDCG@K = DCG@K / IDCG@K
+
+    For binary relevance (0 or 1), this simplifies to:
+    DCG@K = sum_{i=1}^{K} rel_i / log2(i + 1)
+
+    Args:
+        scores: Score tensor of shape [B, 1 + N], where B is batch size, N is number of negatives.
+            First column contains positive scores, rest are negative scores.
+        labels: Label tensor of shape [B, 1 + N], where 1 indicates positive, 0 indicates negative.
+            First column should contain 1 (positive label).
+        k_values: List of K values to compute NDCG@K for (e.g., [10, 20, 50, 100])
+
+    Returns:
+        Dictionary mapping K -> NDCG@K value
+    """
+    batch_size = scores.size(0)
+    max_k = max(k_values)
+
+    # Get top-K indices (shape: B x max_k)
+    topk_indices = torch.topk(scores, k=max_k, dim=1).indices
+
+    # Gather labels for top-K items (shape: B x max_k)
+    topk_labels = torch.gather(labels, dim=1, index=topk_indices).float()  # (B, max_k)
+
+    # Compute position weights: 1 / log2(i + 1) for i in [1, 2, ..., max_k]
+    positions = torch.arange(1, max_k + 1, device=scores.device).float()
+    weights = 1.0 / torch.log2(positions + 1.0)  # (max_k,)
+
+    ndcgs = {}
+    for k in k_values:
+        # DCG@K: sum of (relevance * weight) for top-K
+        dcg = (topk_labels[:, :k] * weights[:k]).sum(dim=1)  # (B,)
+
+        # IDCG@K: ideal DCG (assumes we have 1 relevant item, so IDCG@K = 1 / log2(2) = 1.0)
+        # Since we have exactly 1 positive per query, the ideal ranking puts it at position 1
+        idcg = 1.0 / torch.log2(torch.tensor(2.0, device=scores.device))  # 1.0
+
+        # NDCG@K = DCG@K / IDCG@K
+        ndcg = dcg / idcg
+        ndcgs[k] = ndcg.mean().item()
+
+    return ndcgs
+
+
+def compute_metrics_from_scores(
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+    k_values: list[int] = [10, 20, 50, 100],
+) -> dict[str, float]:
+    """
+    Compute all evaluation metrics (Recall@K, NDCG@K) from score and label tensors.
+
+    Args:
+        scores: Score tensor of shape [B, 1 + N]
+        labels: Label tensor of shape [B, 1 + N]
+        k_values: List of K values for evaluation (default: [10, 20, 50, 100] as in LightGCN paper)
+
+    Returns:
+        Dictionary with metric names and values, e.g.:
+        {
+            'recall@10': 0.123,
+            'recall@20': 0.234,
+            'ndcg@10': 0.456,
+            'ndcg@20': 0.567,
+        }
+    """
+    recalls = recall_at_k(scores, labels, k_values)
+    ndcgs = ndcg_at_k(scores, labels, k_values)
+
+    metrics = {}
+    for k in k_values:
+        metrics[f'recall@{k}'] = recalls[k]
+        metrics[f'ndcg@{k}'] = ndcgs[k]
+
+    return metrics
+
+
 def _setup_dataloaders(
     dataset: DistDataset,
     split: Literal["train", "val", "test"],
@@ -137,25 +270,36 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
+    logger.info(f"Rank {rank} setting up main loader for split {split}")
+
+    logger.info(dataset.graph)
     if split == "train":
-        main_input_nodes = dataset.train_node_ids
+        dsts, srcs, _, _ = dataset.graph[("item", "to_train_gigl_positive", "user")].topo.to_coo()
+        main_input_nodes = srcs.unique()
+        logger.info(f"source: {srcs.shape}, destination: {dsts.shape}")
+        logger.info(main_input_nodes.shape)
+        logger.info(f"Rank {rank} train_node_ids: {main_input_nodes}")
         shuffle = True
     elif split == "val":
         main_input_nodes = dataset.val_node_ids
         shuffle = False
     else:
-        main_input_nodes = dataset.test_node_ids
+        dsts, srcs, _, _ = dataset.graph[("item", "to_test_gigl_positive", "user")].topo.to_coo()
+        main_input_nodes = srcs.unique()
+        logger.info(f"source: {srcs.shape}, destination: {dsts.shape}")
+        logger.info(main_input_nodes.shape)
+        logger.info(f"Rank {rank} test_node_ids: {main_input_nodes}")
         shuffle = False
 
     query_node_type = supervision_edge_type.src_node_type
     labeled_node_type = supervision_edge_type.dst_node_type
 
-    assert isinstance(main_input_nodes, Mapping)
+    # assert isinstance(main_input_nodes, Mapping)
 
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(query_node_type, main_input_nodes[query_node_type]),
+        input_nodes=(query_node_type, main_input_nodes),
         supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
@@ -249,12 +393,12 @@ def _compute_bpr_batch(
         loss: The BPR loss
         debug_info: Dictionary with debug statistics (scores, embedding stats, etc.)
     """
-    logger.info(f"Computing BPR batch")
+    # logger.info(f"Computing BPR batch")
     # Extract relevant node types from the supervision edge
     query_node_type = supervision_edge_type.src_node_type
     labeled_node_type = supervision_edge_type.dst_node_type
 
-    logger.info(f"Encoding main data")
+    # logger.info(f"Encoding main data")
     # Encode - LightGCN returns dict[NodeType, Tensor] for heterogeneous graphs
     main_emb = model(data=main_data, device=device)
     rand_emb = model(data=random_negative_data, device=device)
@@ -262,19 +406,19 @@ def _compute_bpr_batch(
     # Debug: collect statistics
     debug_info = {}
 
-    logger.info(f"Query indices and positives from the main batch")
+    # logger.info(f"Query indices and positives from the main batch")
     # Query indices and positives from the main batch
     B = int(main_data[query_node_type].batch_size)
     query_idx = torch.arange(B, device=device)  # [B]
 
-    logger.info(f"Positives from the main batch")
+    # logger.info(f"Positives from the main batch")
     pos_idx = torch.cat(list(main_data.y_positive.values())).to(device)  # [M]
     # Repeat queries to align with positives
     rep_query_idx = query_idx.repeat_interleave(
         torch.tensor([len(v) for v in main_data.y_positive.values()], device=device)
     )  # [M]
 
-    logger.info(f"Hard negatives from the main batch")
+    # logger.info(f"Hard negatives from the main batch")
     # Optional hard negatives from the main batch
     if use_hard_negs and hasattr(main_data, "y_negative"):
         hard_neg_idx = torch.cat(list(main_data.y_negative.values())).to(device)
@@ -285,7 +429,7 @@ def _compute_bpr_batch(
             0, main_emb[labeled_node_type].size(1), device=device
         )
 
-    logger.info(f"Random negatives: take the first K*M rows from rand_emb for simplicity")
+    # logger.info(f"Random negatives: take the first K*M rows from rand_emb for simplicity")
     # Random negatives: take the first K*M rows from rand_emb for simplicity
     M = rep_query_idx.numel()
     D = main_emb[labeled_node_type].size(1)
@@ -301,13 +445,13 @@ def _compute_bpr_batch(
     else:
         rand_pool = rand_emb[labeled_node_type][:total_needed]
 
-    logger.info(f"Positive and query embeddings")
+    # logger.info(f"Positive and query embeddings")
     if num_random_negs_per_pos == 1:
         rand_neg_emb = rand_pool  # [M, D]
     else:
         rand_neg_emb = rand_pool.view(M, num_random_negs_per_pos, D)  # [M, K, D]
 
-    logger.info(f"Computing scores for debugging")
+    # logger.info(f"Computing scores for debugging")
     # Positive and query embeddings
     q = main_emb[query_node_type][rep_query_idx]  # [M, D]
     pos = main_emb[labeled_node_type][pos_idx]  # [M, D]
@@ -363,13 +507,124 @@ def _compute_bpr_batch(
     return loss, debug_info
 
 
+def _evaluate_with_metrics(
+    model: nn.Module,
+    main_data_loader: Iterator,
+    random_negative_data_loader: Iterator,
+    supervision_edge_type: EdgeType,
+    device: torch.device,
+    num_batches: int,
+    num_random_negs_per_pos: int = 1,
+    use_hard_negs: bool = True,
+    k_values: list[int] = [10, 20, 50, 100],
+) -> dict[str, float]:
+    """
+    Evaluate the model using Recall@K and NDCG@K metrics (as used in LightGCN paper).
+
+    Args:
+        model: The trained model
+        main_data_loader: Iterator for main data (positives + hard negatives)
+        random_negative_data_loader: Iterator for random negatives
+        supervision_edge_type: The edge type for supervision
+        device: Device to run evaluation on
+        num_batches: Number of batches to evaluate on
+        num_random_negs_per_pos: Number of random negatives per positive
+        use_hard_negs: Whether to include hard negatives
+        k_values: List of K values for Recall@K and NDCG@K
+
+    Returns:
+        Dictionary with metric names and values averaged across all batches
+    """
+    model.eval()
+
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
+
+    # Accumulate metrics across batches
+    all_metrics = {f'recall@{k}': [] for k in k_values}
+    all_metrics.update({f'ndcg@{k}': [] for k in k_values})
+
+    with torch.no_grad():
+        for batch_idx in range(num_batches):
+            main_data = next(main_data_loader)
+            random_negative_data = next(random_negative_data_loader)
+
+            # Get embeddings
+            main_emb = model(data=main_data, device=device)
+            rand_emb = model(data=random_negative_data, device=device)
+
+            # Get query indices and positives
+            B = int(main_data[query_node_type].batch_size)
+            query_idx = torch.arange(B, device=device)
+
+            pos_idx = torch.cat(list(main_data.y_positive.values())).to(device)
+            rep_query_idx = query_idx.repeat_interleave(
+                torch.tensor([len(v) for v in main_data.y_positive.values()], device=device)
+            )
+
+            # Get embeddings
+            query_emb = main_emb[query_node_type][rep_query_idx]  # [M, D]
+            pos_emb = main_emb[labeled_node_type][pos_idx]  # [M, D]
+
+            # Random negatives
+            M = pos_idx.size(0)
+            rand_B = int(random_negative_data[labeled_node_type].batch_size)
+            rand_neg_idx = torch.randint(0, rand_B, (M * num_random_negs_per_pos,), device=device)
+            rand_neg_emb = rand_emb[labeled_node_type][rand_neg_idx].view(M, num_random_negs_per_pos, -1)  # [M, K, D]
+
+            # Hard negatives (if available)
+            if use_hard_negs and hasattr(main_data, "y_negative"):
+                hard_neg_idx = torch.cat(list(main_data.y_negative.values())).to(device)
+                hard_neg_emb = main_emb[labeled_node_type][hard_neg_idx]  # [H, D]
+            else:
+                hard_neg_emb = torch.empty(0, main_emb[labeled_node_type].size(1), device=device)
+
+            # Compute scores
+            # Positive scores: [M, 1]
+            pos_scores = (query_emb * pos_emb).sum(dim=-1, keepdim=True)
+
+            # Random negative scores: [M, K]
+            rand_neg_scores = torch.bmm(
+                query_emb.unsqueeze(1),  # [M, 1, D]
+                rand_neg_emb.transpose(1, 2),  # [M, D, K]
+            ).squeeze(1)  # [M, K]
+
+            # Hard negative scores: [M, H]
+            if hard_neg_emb.size(0) > 0:
+                hard_neg_scores = torch.matmul(query_emb, hard_neg_emb.T)  # [M, H]
+                # Concatenate all negative scores
+                all_neg_scores = torch.cat([rand_neg_scores, hard_neg_scores], dim=1)  # [M, K+H]
+            else:
+                all_neg_scores = rand_neg_scores  # [M, K]
+
+            # Concatenate positive and negative scores: [M, 1+K+H]
+            scores = torch.cat([pos_scores, all_neg_scores], dim=1)
+
+            # Create labels: first column is 1 (positive), rest are 0 (negatives)
+            labels = torch.zeros_like(scores)
+            labels[:, 0] = 1.0
+
+            # Compute metrics for this batch
+            batch_metrics = compute_metrics_from_scores(scores, labels, k_values)
+
+            # Accumulate
+            for metric_name, metric_value in batch_metrics.items():
+                all_metrics[metric_name].append(metric_value)
+
+    # Average across batches
+    avg_metrics = {name: sum(values) / len(values) for name, values in all_metrics.items()}
+
+    return avg_metrics
+
+
 def _training_process(
     local_rank: int,
     local_world_size: int,
     machine_rank: int,
     machine_world_size: int,
     dataset: DistDataset,
-    supervision_edge_type: EdgeType,
+    train_supervision_edge_type: EdgeType,
+    test_supervision_edge_type: EdgeType,
     node_type_to_num_nodes: dict[NodeType, int],
     master_ip_address: str,
     master_default_process_group_port: int,
@@ -400,7 +655,8 @@ def _training_process(
         machine_rank (int): Rank of the current machine
         machine_world_size (int): Total number of machines
         dataset (DistDataset): Loaded Distributed Dataset for training
-        supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
+        train_supervision_edge_type (EdgeType): The supervision edge type to use for training (e.g., user -> to_train -> item)
+        test_supervision_edge_type (EdgeType): The supervision edge type to use for testing (e.g., user -> to_test -> item)
         node_type_to_num_nodes (dict[NodeType, int]): Map from node types to node counts for LightGCN
         master_ip_address (str): IP Address of the master worker for distributed communication
         master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
@@ -483,26 +739,26 @@ def _training_process(
     )
     logger.info(f"model: {model}")
 
-    # Initialize embeddings AFTER DMP wrapping (DMP reinitializes them, so doing it before is useless)
-    logger.info(f"---Rank {rank} initializing embeddings with scaled Xavier uniform (AFTER DMP)")
-    unwrapped_model = unwrap_from_dmp(model)
-    logger.info(f"EmbeddingBagCollection parameters:")
-    init_count = 0
-    EMBEDDING_SCALE = 0.1  # Small scale to avoid saturation
-    for name, param in unwrapped_model._embedding_bag_collection.named_parameters():
-        logger.info(f"  Found parameter: {name}, shape: {param.shape}, device: {param.device}")
-        logger.info(f"    BEFORE init - mean={param.mean().item():.6f}, std={param.std().item():.6f}, norm={param.norm().item():.6f}")
+    # # Initialize embeddings AFTER DMP wrapping (DMP reinitializes them, so doing it before is useless)
+    # logger.info(f"---Rank {rank} initializing embeddings with scaled Xavier uniform (AFTER DMP)")
+    # unwrapped_model = unwrap_from_dmp(model)
+    # logger.info(f"EmbeddingBagCollection parameters:")
+    # init_count = 0
+    # EMBEDDING_SCALE = 0.1  # Small scale to avoid saturation
+    # for name, param in unwrapped_model._embedding_bag_collection.named_parameters():
+    #     logger.info(f"  Found parameter: {name}, shape: {param.shape}, device: {param.device}")
+    #     logger.info(f"    BEFORE init - mean={param.mean().item():.6f}, std={param.std().item():.6f}, norm={param.norm().item():.6f}")
 
-        # Xavier uniform: U(-sqrt(6/(fan_in + fan_out)), sqrt(6/(fan_in + fan_out)))
-        # For embeddings: fan_in = 1, fan_out = embedding_dim
-        # Then scale up to combat LightGCN's aggressive neighbor averaging
-        torch.nn.init.xavier_uniform_(param)
-        param.data *= EMBEDDING_SCALE
-        init_count += 1
+    #     # Xavier uniform: U(-sqrt(6/(fan_in + fan_out)), sqrt(6/(fan_in + fan_out)))
+    #     # For embeddings: fan_in = 1, fan_out = embedding_dim
+    #     # Then scale up to combat LightGCN's aggressive neighbor averaging
+    #     torch.nn.init.xavier_uniform_(param)
+    #     param.data *= EMBEDDING_SCALE
+    #     init_count += 1
 
-        logger.info(f"    AFTER init (scaled {EMBEDDING_SCALE}x) - mean={param.mean().item():.6f}, std={param.std().item():.6f}, norm={param.norm().item():.6f}")
+    #     logger.info(f"    AFTER init (scaled {EMBEDDING_SCALE}x) - mean={param.mean().item():.6f}, std={param.std().item():.6f}, norm={param.norm().item():.6f}")
 
-    logger.info(f"Initialized {init_count} embedding parameters after DMP wrapping with {EMBEDDING_SCALE}x scaling")
+    # logger.info(f"Initialized {init_count} embedding parameters after DMP wrapping with {EMBEDDING_SCALE}x scaling")
 
     # After DMP, create dense optimizer for non-embedding parameters (e.g., LGConv layers)
     logger.info(f"---Rank {rank} creating dense optimizer for non-embedding parameters")
@@ -534,7 +790,7 @@ def _training_process(
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
             dataset=dataset,
             split="train",
-            supervision_edge_type=supervision_edge_type,
+            supervision_edge_type=train_supervision_edge_type,  # Use TRAIN edges for training
             num_neighbors=num_neighbors,
             sampling_workers_per_process=sampling_workers_per_process,
             main_batch_size=main_batch_size,
@@ -545,18 +801,18 @@ def _training_process(
         )
 
         logger.info(f"Rank {rank}: Setting up validation dataloaders")
-        val_main_loader, val_random_negative_loader = _setup_dataloaders(
-            dataset=dataset,
-            split="val",
-            supervision_edge_type=supervision_edge_type,
-            num_neighbors=num_neighbors,
-            sampling_workers_per_process=sampling_workers_per_process,
-            main_batch_size=main_batch_size,
-            random_batch_size=random_batch_size,
-            device=device,
-            sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-            process_start_gap_seconds=process_start_gap_seconds,
-        )
+        # val_main_loader, val_random_negative_loader = _setup_dataloaders(
+        #     dataset=dataset,
+        #     split="val",
+        #     supervision_edge_type=train_supervision_edge_type,  # Use TRAIN edges for validation
+        #     num_neighbors=num_neighbors,
+        #     sampling_workers_per_process=sampling_workers_per_process,
+        #     main_batch_size=main_batch_size,
+        #     random_batch_size=random_batch_size,
+        #     device=device,
+        #     sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+        #     process_start_gap_seconds=process_start_gap_seconds,
+        # )
 
         logger.info(f"Rank {rank}: Starting training loop")
         model.train()
@@ -565,8 +821,8 @@ def _training_process(
         train_main_iter = InfiniteIterator(train_main_loader)
         train_random_neg_iter = InfiniteIterator(train_random_negative_loader)
 
-        val_main_iter = InfiniteIterator(val_main_loader)
-        val_random_neg_iter = InfiniteIterator(val_random_negative_loader)
+        # val_main_iter = InfiniteIterator(val_main_loader)
+        # val_random_neg_iter = InfiniteIterator(val_random_negative_loader)
 
         batch_losses = []
         val_losses = []
@@ -583,7 +839,7 @@ def _training_process(
             debug_this_batch = (batch_num == 0) or ((batch_num + 1) % log_every_n_batch == 0)
 
             optimizer.zero_grad()
-            logger.info(f"Zeroing gradients")
+            # logger.info(f"Zeroing gradients")
             main_data = next(train_main_iter)
             # logger.info(f"Main data: {main_data}")
             random_negative_data = next(train_random_neg_iter)
@@ -601,16 +857,16 @@ def _training_process(
                     n_id_shape = node_store.n_id.shape if hasattr(node_store, 'n_id') else 'N/A'
                     num_nodes = node_store.num_nodes if hasattr(node_store, 'num_nodes') else 'N/A'
                     logger.info(f"  {node_type}: batch_size={batch_size}, n_id shape={n_id_shape}, num_nodes={num_nodes}")
-                if hasattr(main_data, 'y_positive'):
-                    logger.info(f"y_positive keys: {list(main_data.y_positive.keys())}")
-                    for k, v in main_data.y_positive.items():
-                        logger.info(f"  {k}: {len(v)} positives, sample IDs: {v[:5].tolist() if len(v) > 0 else []}")
+                # if hasattr(main_data, 'y_positive'):
+                #     logger.info(f"y_positive keys: {list(main_data.y_positive.keys())}")
+                #     for k, v in main_data.y_positive.items():
+                #         logger.info(f"  {k}: {len(v)} positives, sample IDs: {v[:5].tolist() if len(v) > 0 else []}")
 
             loss, debug_info = _compute_bpr_batch(
                 model=model,
                 main_data=main_data,
                 random_negative_data=random_negative_data,
-                supervision_edge_type=supervision_edge_type,
+                supervision_edge_type=train_supervision_edge_type,  # Use TRAIN edges during training
                 device=device,
                 num_random_negs_per_pos=num_random_negs_per_pos,
                 use_hard_negs=True,
@@ -644,8 +900,6 @@ def _training_process(
                     logger.info("  Note: No .grad found on params (expected with TorchRec fused optimizer for embeddings)")
 
             optimizer.step()
-
-            logger.info(f"Stepped optimizer")
 
             batch_loss = _sync_metric_across_processes(loss)
             batch_losses.append(batch_loss)
@@ -692,15 +946,15 @@ def _training_process(
             #     model.train()
 
         logger.info(f"Rank {rank}: Training completed. Saving model to {model_uri}")
-        if rank == 0:
-            save_state_dict(model.state_dict(), model_uri)
+        # if rank == 0:
+        #     save_state_dict(model.state_dict(), model_uri)
 
-    # Final testing
+    # Final testing with Recall@K and NDCG@K metrics
     logger.info(f"Rank {rank}: Setting up test dataloaders")
     test_main_loader, test_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
         split="test",
-        supervision_edge_type=supervision_edge_type,
+        supervision_edge_type=test_supervision_edge_type,  # Use TEST edges for evaluation!
         num_neighbors=num_neighbors,
         sampling_workers_per_process=sampling_workers_per_process,
         main_batch_size=main_batch_size,
@@ -710,35 +964,35 @@ def _training_process(
         process_start_gap_seconds=process_start_gap_seconds,
     )
 
-    logger.info(f"Rank {rank}: Running test evaluation")
-    model.eval()
-    with torch.no_grad():
-        test_losses = []
-        test_main_iter = InfiniteIterator(test_main_loader)
-        test_random_neg_iter = InfiniteIterator(test_random_negative_loader)
+    logger.info(f"Rank {rank}: Running test evaluation with Recall@K and NDCG@K metrics")
+    logger.info(f"  Evaluating on TEST edges: {test_supervision_edge_type}")
 
-        num_test_batches = min(100, num_val_batches)
-        for _ in range(num_test_batches):
-            test_main_data = next(test_main_iter)
-            test_random_negative_data = next(test_random_neg_iter)
+    # K values to evaluate (as in LightGCN paper, Table 2)
+    # Paper uses: Recall@20, NDCG@20 for Gowalla
+    eval_k_values = [10, 20, 50, 100]
 
-            test_loss, _ = _compute_bpr_batch(
-                model=model,
-                main_data=test_main_data,
-                random_negative_data=test_random_negative_data,
-                supervision_edge_type=supervision_edge_type,
-                device=device,
-                num_random_negs_per_pos=num_random_negs_per_pos,
-                use_hard_negs=True,
-                l2_lambda=l2_lambda,
-                debug_log=False,
-            )
+    test_metrics = _evaluate_with_metrics(
+        model=model,
+        main_data_loader=InfiniteIterator(test_main_loader),
+        random_negative_data_loader=InfiniteIterator(test_random_negative_loader),
+        supervision_edge_type=test_supervision_edge_type,  # Use TEST edges for metric computation
+        device=device,
+        num_batches=min(100, num_val_batches),
+        num_random_negs_per_pos=num_random_negs_per_pos,
+        use_hard_negs=True,
+        k_values=eval_k_values,
+    )
 
-            test_batch_loss = _sync_metric_across_processes(test_loss)
-            test_losses.append(test_batch_loss)
-
-        avg_test_loss = statistics.mean(test_losses)
-        logger.info(f"Rank {rank} | Test Loss: {avg_test_loss:.4f}")
+    # Log test metrics
+    if rank == 0:
+        logger.info(f"\n{'='*80}")
+        logger.info("TEST EVALUATION RESULTS (LightGCN Paper Metrics)")
+        logger.info(f"{'='*80}")
+        for k in eval_k_values:
+            recall = test_metrics[f'recall@{k}']
+            ndcg = test_metrics[f'ndcg@{k}']
+            logger.info(f"  Recall@{k:3d}: {recall:.4f}  |  NDCG@{k:3d}: {ndcg:.4f}")
+        logger.info(f"{'='*80}\n")
 
     torch.distributed.destroy_process_group()
 
@@ -769,19 +1023,55 @@ def _run_example_training(
                 f"Specified a local world_size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
             )
 
-    # Parse supervision edge type
+    # Parse supervision edge types - expecting 2: one for training, one for testing
     supervision_edge_types = gbml_config_pb_wrapper.gbml_config_pb.task_metadata.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
-    assert len(supervision_edge_types) == 1, "Expected exactly one supervision edge type"
-    supervision_edge_type_pb = supervision_edge_types[0]
-    supervision_edge_type = EdgeType(
-        src_node_type=NodeType(supervision_edge_type_pb.src_node_type),
-        relation=Relation(supervision_edge_type_pb.relation),
-        dst_node_type=NodeType(supervision_edge_type_pb.dst_node_type),
-    )
+
+    if len(supervision_edge_types) == 1:
+        # Legacy behavior: only one edge type specified (for training)
+        # Create test edge type by replacing "to_train" with "to_test"
+        supervision_edge_type_pb = supervision_edge_types[0]
+        train_supervision_edge_type = EdgeType(
+            src_node_type=NodeType(supervision_edge_type_pb.src_node_type),
+            relation=Relation(supervision_edge_type_pb.relation),
+            dst_node_type=NodeType(supervision_edge_type_pb.dst_node_type),
+        )
+        test_relation = supervision_edge_type_pb.relation.replace("to_train", "to_test")
+        test_supervision_edge_type = EdgeType(
+            src_node_type=NodeType(supervision_edge_type_pb.src_node_type),
+            relation=Relation(test_relation),
+            dst_node_type=NodeType(supervision_edge_type_pb.dst_node_type),
+        )
+        logger.info("Using single supervision edge type (legacy mode)")
+    elif len(supervision_edge_types) == 2:
+        # New behavior: two edge types specified (training and testing)
+        train_edge_type_pb = supervision_edge_types[0]
+        test_edge_type_pb = supervision_edge_types[1]
+
+        train_supervision_edge_type = EdgeType(
+            src_node_type=NodeType(train_edge_type_pb.src_node_type),
+            relation=Relation(train_edge_type_pb.relation),
+            dst_node_type=NodeType(train_edge_type_pb.dst_node_type),
+        )
+        test_supervision_edge_type = EdgeType(
+            src_node_type=NodeType(test_edge_type_pb.src_node_type),
+            relation=Relation(test_edge_type_pb.relation),
+            dst_node_type=NodeType(test_edge_type_pb.dst_node_type),
+        )
+        logger.info("Using explicit train and test supervision edge types")
+    else:
+        raise ValueError(f"Expected 1 or 2 supervision edge types, got {len(supervision_edge_types)}")
+
+    logger.info(f"Train supervision edge type: {train_supervision_edge_type}")
+    logger.info(f"Test supervision edge type: {test_supervision_edge_type}")
 
     # Parses the fanout as a string. For heterogeneous case, fanouts should be specified as a string of a list of integers, such as "[10, 10]".
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
+    # for debugging:
+    # fanout = "{('user', 'to_train', 'item'): [10, 10, 10, 10], ('user', 'to_test', 'item'): [0, 0, 0, 0], ('item', 'to_train', 'user'): [15, 15, 15, 15], ('item', 'to_test', 'user'): [0, 0, 0, 0]}"
+    logger.info(f"fanout: {fanout}")
     num_neighbors = parse_fanout(fanout)
+    logger.info(f"num_neighbors: {num_neighbors}")
+
 
     # While the ideal value for `sampling_workers_per_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
     # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
@@ -791,8 +1081,8 @@ def _run_example_training(
         trainer_args.get("sampling_workers_per_process", "8")
     )
 
-    main_batch_size = int(trainer_args.get("main_batch_size", "512"))
-    random_batch_size = int(trainer_args.get("random_batch_size", "512"))
+    main_batch_size = int(trainer_args.get("main_batch_size", "2048"))
+    random_batch_size = int(trainer_args.get("random_batch_size", "2048"))
 
     # LightGCN Hyperparameters
     embedding_dim = int(trainer_args.get("embedding_dim", "64"))
@@ -812,10 +1102,12 @@ def _run_example_training(
 
     process_start_gap_seconds = int(trainer_args.get("process_start_gap_seconds", "0"))
     log_every_n_batch = int(trainer_args.get("log_every_n_batch", "25"))
+    log_every_n_batch = 25
 
     learning_rate = float(trainer_args.get("learning_rate", "0.01"))
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
     num_max_train_batches = int(trainer_args.get("num_max_train_batches", "1000"))
+    num_max_train_batches = 10
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
@@ -860,6 +1152,11 @@ def _run_example_training(
         task_config_uri=UriFactory.create_uri(task_config_uri),
         is_inference=False,
     )
+    logger.info(f"Dataset: {dataset}")
+    logger.info(dir(dataset))
+    logger.info(f"Dataset.train_node_ids: {dataset.train_node_ids}")
+    logger.info(f"Dataset.val_node_ids: {dataset.val_node_ids}")
+    logger.info(f"Dataset.test_node_ids: {dataset.test_node_ids}")
 
     # Calculate node_type_to_num_nodes from dataset
     node_type_to_num_nodes: dict[NodeType, int] = {}
@@ -889,7 +1186,8 @@ def _run_example_training(
             machine_rank,  # machine_rank
             machine_world_size,  # machine_world_size
             dataset,  # dataset
-            supervision_edge_type,  # supervision_edge_type
+            train_supervision_edge_type,  # train_supervision_edge_type (user -> to_train -> item)
+            test_supervision_edge_type,  # test_supervision_edge_type (user -> to_test -> item)
             node_type_to_num_nodes,  # node_type_to_num_nodes
             master_ip_address,  # master_ip_address
             master_default_process_group_port,  # master_default_process_group_port
