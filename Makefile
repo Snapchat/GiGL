@@ -75,7 +75,7 @@ assert_yaml_configs_parse:
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
 # By default, runs all tests under python/tests/unit.
 # See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
-unit_test_py: clean_build_files_py # type_check # TODO (svij-sc) Fixed in https://github.com/Snapchat/GiGL/pull/401
+unit_test_py: clean_build_files_py type_check
 	( cd python ; \
 	uv run python -m tests.unit.main \
 		--env=test \
@@ -151,7 +151,7 @@ format: format_py format_scala format_md
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
-lint_test: check_format assert_yaml_config_parse
+lint_test: check_format assert_yaml_configs_parse
 	@echo "Lint checks pass!"
 
 # compiles current working state of scala projects to local jars
