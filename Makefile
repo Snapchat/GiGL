@@ -151,7 +151,7 @@ format: format_py format_scala format_md
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
-lint_test: check_format assert_yaml_config_parse
+lint_test: check_format assert_yaml_configs_parse
 	@echo "Lint checks pass!"
 
 # compiles current working state of scala projects to local jars

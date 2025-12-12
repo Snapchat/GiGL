@@ -893,7 +893,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "omegaconf", specifier = ">=2.3.0,<3.0.0" },
     { name = "pandas" },
-    { name = "pip" },
+    { name = "pip", specifier = "~=25.3" },
     { name = "protobuf" },
     { name = "pyarrow", marker = "extra == 'transform'", specifier = "==10.0.1" },
     { name = "pyg-lib", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
