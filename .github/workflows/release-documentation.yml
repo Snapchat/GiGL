@@ -44,7 +44,7 @@ jobs:
       # We also make gigl available w/ editable install `-e` so that autodoc can find it.
       - name: Install necessary doc dependencies
         run: |
-          pip install -e "./python[docs]"
+          uv sync --extra docs
       - name: Sphinx build
         run: |
           make build_docs
