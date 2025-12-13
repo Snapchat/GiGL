@@ -49,7 +49,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup Machine for bumping version
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         install_dev_deps: "true"
@@ -61,7 +61,7 @@ jobs:
     - name: Get current version
       id: get_version
       run: |
-        CURRENT_VERSION=$(python -m scripts.bump_version --get_current_version)
+        CURRENT_VERSION=$(uv run python -m scripts.bump_version --get_current_version)
         echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         echo "Current version: $CURRENT_VERSION"
 
@@ -70,7 +70,7 @@ jobs:
       id: set_vars
       run: |
         if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          echo "bump_type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+          echo "bump_type=${{ inputs.bump_type }}" >> $GITHUB_OUTPUT
         else
           echo "bump_type=nightly" >> $GITHUB_OUTPUT
         fi
@@ -78,7 +78,7 @@ jobs:
     # Perform the version bump
     - name: Bump version
       run: |
-        python -m scripts.bump_version \
+        uv run python -m scripts.bump_version \
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
           --project ${{ vars.GCP_PROJECT_ID }}
 
@@ -86,7 +86,7 @@ jobs:
     - name: Get new version
       id: get_new_version
       run: |
-        NEW_VERSION=$(python -m scripts.bump_version --get_current_version)
+        NEW_VERSION=$(uv run python -m scripts.bump_version --get_current_version)
         RELEASE_BRANCH_NAME="release/v${NEW_VERSION}"
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "release_branch_name=$RELEASE_BRANCH_NAME" >> $GITHUB_OUTPUT
@@ -118,7 +118,7 @@ jobs:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
     - name: Setup Machine for release
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         install_dev_deps: "false"
@@ -139,37 +139,38 @@ jobs:
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
-  release_dev_workbench_image:
-    needs: bump_version
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      id-token: write
+  # TODO: (svij) Let's deprecate this as no one uses it beyond it being used for the TUT.
+  # release_dev_workbench_image:
+  #   needs: bump_version
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: write
+  #     pull-requests: write
+  #     id-token: write
 
-    steps:
-    - name: Checkout release branch
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ needs.bump_version.outputs.release_branch_name }}
+  #   steps:
+  #   - name: Checkout release branch
+  #     uses: actions/checkout@v4
+  #     with:
+  #       ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
-    - name: Setup Machine for workbench image release
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
-      with:
-        setup_gcloud: "true"
-        install_dev_deps: "false"
-        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
-        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+  #   - name: Setup Machine for workbench image release
+  #     uses: ./.github/actions/setup-python-tools
+  #     with:
+  #       setup_gcloud: "true"
+  #       install_dev_deps: "false"
+  #       gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+  #       workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+  #       gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
-    - name: Release Dev Workbench Image
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
-      with:
-        cmd: |
-          bash ./requirements/install_scala_deps.sh --download-only
-          make push_dev_workbench_docker_image
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
+    # - name: Release Dev Workbench Image
+    #   uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+    #   with:
+    #     cmd: |
+    #       bash ./requirements/install_scala_deps.sh --download-only
+    #       make push_dev_workbench_docker_image
+    #     service_account:  ${{ secrets.gcp_service_account_email }}
+    #     project:  ${{ vars.GCP_PROJECT_ID }}
 
 
   # TODO: (svij) Also release the dev image
@@ -179,7 +180,7 @@ jobs:
     needs:
       - bump_version
       - release_gigl_kfp_pipeline
-      - release_dev_workbench_image
+      # - release_dev_workbench_image
     runs-on: ubuntu-latest
     permissions:
       contents: write
