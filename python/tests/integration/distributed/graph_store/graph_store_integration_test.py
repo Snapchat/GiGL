@@ -58,6 +58,7 @@ def _run_client_process(
     logger.info(f"All ports: {all_ports}")
 
     if torch.distributed.get_rank() == 0:
+        assert isinstance(all_ports, list)
         for i, received_ports in enumerate(all_ports):
             assert (
                 received_ports == ports
