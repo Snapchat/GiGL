@@ -5,6 +5,7 @@ Derivved from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/exampl
 """
 import argparse
 import os
+from typing import Optional
 
 import graphlearn_torch as glt
 import torch
@@ -15,6 +16,7 @@ from gigl.distributed import build_dataset_from_task_config_uri
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.remote_dataset import register_dataset
 from gigl.distributed.utils import get_graph_store_info
+from gigl.distributed.utils.networking import get_free_ports_from_master_node
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
@@ -24,11 +26,24 @@ def _run_storage_process(
     storage_rank: int,
     cluster_info: GraphStoreInfo,
     dataset: DistDataset,
+    torch_process_port: int,
+    storage_world_backend: Optional[str],
 ) -> None:
     logger.info(
         f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes } on {cluster_info.cluster_master_ip}:{cluster_info.cluster_master_port}. Cluster rank: {os.environ.get('RANK')}"
     )
     register_dataset(dataset)
+    if storage_world_backend is None:
+        storage_world_backend = "nccl" if torch.cuda.is_available() else "gloo"
+    logger.info(
+        f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes} with backend {storage_world_backend} on {cluster_info.cluster_master_ip}:{torch_process_port}"
+    )
+    torch.distributed.init_process_group(
+        backend=storage_world_backend,
+        world_size=cluster_info.num_storage_nodes,
+        rank=storage_rank,
+        init_method=f"tcp://{cluster_info.cluster_master_ip}:{torch_process_port}",
+    )
     glt.distributed.init_server(
         num_servers=cluster_info.num_storage_nodes,
         server_rank=storage_rank,
@@ -51,6 +66,7 @@ def storage_node_process(
     task_config_uri: Uri,
     is_inference: bool,
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
+    storage_world_backend: Optional[str] = None,
 ) -> None:
     """Run a storage node process
 
@@ -82,6 +98,7 @@ def storage_node_process(
         is_inference=is_inference,
         _tfrecord_uri_pattern=tf_record_uri_pattern,
     )
+    torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
     # TODO(kmonte): Enable more than one server process per machine
@@ -92,6 +109,8 @@ def storage_node_process(
                 storage_rank + i,  # storage_rank
                 cluster_info,  # cluster_info
                 dataset,  # dataset
+                torch_process_port,  # torch_process_port
+                storage_world_backend,  # storage_world_backend
             ),
         )
         server_processes.append(server_process)

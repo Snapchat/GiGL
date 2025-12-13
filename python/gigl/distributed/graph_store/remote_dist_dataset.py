@@ -10,7 +10,7 @@ from gigl.distributed.graph_store.remote_dataset import (
     get_node_feature_info,
     get_node_ids_for_rank,
 )
-from gigl.distributed.utils.networking import get_free_ports_from_master_node
+from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo
@@ -19,38 +19,23 @@ logger = Logger()
 
 
 class RemoteDistDataset:
-    def __init__(self, local_rank: int, cluster_info: GraphStoreInfo):
+    def __init__(self, cluster_info: GraphStoreInfo, local_rank: int):
         """
         Represents a dataset that is stored on a difference storage cluster.
         *Must* be used in the GiGL graph-store distributed setup.
 
+        This class *must* be used on the compute (client) side of the graph-store distributed setup.
+
         Args:
-            local_rank (int): The local rank of the process.
             cluster_info (GraphStoreInfo): The cluster information.
+            local_rank (int): The local rank of the process on the compute node.
         """
-        self._local_rank = local_rank
         self._cluster_info = cluster_info
-
-    def _get_storage_shard(self) -> int:
-        """
-        Sharded server rank for the current process.
-        We do this so we don't overload a specific server.
-
-        Returns:
-            int: The sharded server rank.
-        """
-        return (
-            self._cluster_info.compute_cluster_rank(self._local_rank)
-            % self._cluster_info.num_storage_nodes
-        )
+        self._local_rank = local_rank
 
     @property
     def cluster_info(self) -> GraphStoreInfo:
         return self._cluster_info
-
-    @property
-    def local_rank(self) -> int:
-        return self._local_rank
 
     def get_node_feature_info(
         self,
@@ -64,7 +49,7 @@ class RemoteDistDataset:
             - None if no node features are available
         """
         return request_server(
-            self._get_storage_shard(),
+            0,
             get_node_feature_info,
         )
 
@@ -80,7 +65,7 @@ class RemoteDistDataset:
             - None if no edge features are available
         """
         return request_server(
-            self._get_storage_shard(),
+            0,
             get_edge_feature_info,
         )
 
@@ -91,7 +76,7 @@ class RemoteDistDataset:
             The edge direction.
         """
         return request_server(
-            self._get_storage_shard(),
+            0,
             get_edge_dir,
         )
 
@@ -100,58 +85,84 @@ class RemoteDistDataset:
         node_type: Optional[NodeType] = None,
     ) -> list[torch.Tensor]:
         """
-        Fetches node ids from the storage nodes for the current compute rank.
+        Fetches node ids from the storage nodes for the current compute node (machine).
 
-        The returned list are the node ids for each storage rank, by storage rank.
+        The returned list are the node ids for the current compute node, by storage rank.
 
-        For example, if there are two storage ranks, and four compute ranks, and 16 total nodes,
+        For example, if there are two storage ranks, and two compute ranks, and 16 total nodes,
         In this scenario, the node ids are sharded as follows:
         Storage rank 0: [0, 1, 2, 3, 4, 5, 6, 7]
         Storage rank 1: [8, 9, 10, 11, 12, 13, 14, 15]
 
+        NOTE: The GLT sampling enginer expects that all processes on a given compute machine
+        to have the same sampling input (node ids).
+        As such, the input tensors will be duplicated across all processes on a given compute machine.
+        TODO(kmonte): Come up with a solution to avoid this duplication.
+
         Then, for compute rank 0 (node 0, process 0), the returned list will be:
             [
-                [0, 1], # From storage rank 0
-                [8, 9] # From storage rank 1
+                [0, 1, 3, 4], # From storage rank 0
+                [8, 9, 10, 11] # From storage rank 1
             ]
 
         Args:
             node_type (Optional[NodeType]): The type of nodes to get.
+            Must be provided for heterogeneous datasets.
 
         Returns:
             list[torch.Tensor]: A list of node IDs for the given node type.
         """
         futures: list[torch.futures.Future[torch.Tensor]] = []
-        rank = (
-            self.cluster_info.compute_node_rank
-            * self.cluster_info.num_processes_per_compute
-            + self._local_rank
-        )
+        rank = self.cluster_info.compute_node_rank
+        world_size = self.cluster_info.num_storage_nodes
         logger.info(
-            f"Getting node ids for rank {rank} / {self.cluster_info.compute_cluster_world_size} with node type {node_type}"
+            f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
         )
+
         for server_rank in range(self.cluster_info.num_storage_nodes):
             futures.append(
                 async_request_server(
                     server_rank,
                     get_node_ids_for_rank,
                     rank=rank,
-                    world_size=self.cluster_info.compute_cluster_world_size,
+                    world_size=world_size,
                     node_type=node_type,
                 )
             )
-        node_ids = torch.futures.wait_all(futures)
+            node_ids = torch.futures.wait_all(futures)
         return node_ids
 
     def get_free_ports(self, num_ports: int) -> list[int]:
         """
-        Get free ports from the storage master node for the current compute rank.
+        Get free ports from the storage master node.
+
+        This *must* be used with a torch.distributed process group initialized, for the *entire* training cluster.
+
+        All compute ranks will recieve the same free ports.
 
         Args:
             num_ports (int): Number of free ports to get.
         """
-        return request_server(
-            0,  # We use the master node for the free ports
-            get_free_ports_from_master_node,
-            num_ports=num_ports,
+        if not torch.distributed.is_initialized():
+            raise ValueError(
+                "torch.distributed process group must be initialized for the entire training cluster"
+            )
+        compute_cluster_rank = (
+            self.cluster_info.compute_node_rank
+            * self.cluster_info.num_processes_per_compute
+            + self._local_rank
         )
+        if compute_cluster_rank == 0:
+            ports = request_server(
+                0,
+                get_free_ports,
+                num_ports=num_ports,
+            )
+            logger.info(
+                f"Compute rank {compute_cluster_rank} found free ports: {ports}"
+            )
+        else:
+            ports = [None] * num_ports
+        torch.distributed.broadcast_object_list(ports, src=0)
+        logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
+        return ports

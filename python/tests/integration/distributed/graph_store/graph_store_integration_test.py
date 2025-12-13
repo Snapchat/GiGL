@@ -14,8 +14,8 @@ from gigl.distributed.graph_store.compute import (
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.graph_store.storage_main import storage_node_process
-from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
+from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
@@ -34,32 +34,54 @@ def _run_client_process(
     cluster_info: GraphStoreInfo,
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
-    client_global_rank = (
-        cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
-        + client_rank
+    init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+
+    remote_dist_dataset = RemoteDistDataset(
+        cluster_info=cluster_info, local_rank=client_rank
     )
-    init_compute_process(client_rank, cluster_info)
+    assert (
+        remote_dist_dataset.get_edge_dir() == "in"
+    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.get_edge_dir()}"
+    assert (
+        remote_dist_dataset.get_edge_feature_info() is not None
+    ), "Edge feature info must not be None for the test dataset"
+    assert (
+        remote_dist_dataset.get_node_feature_info() is not None
+    ), "Node feature info must not be None for the test dataset"
+    ports = remote_dist_dataset.get_free_ports(num_ports=2)
+    assert len(ports) == 2, "Expected 2 free ports"
+    if torch.distributed.get_rank() == 0:
+        all_ports = [None] * torch.distributed.get_world_size()
+    else:
+        all_ports = None
+    torch.distributed.gather_object(ports, all_ports)
+    logger.info(f"All ports: {all_ports}")
+
+    if torch.distributed.get_rank() == 0:
+        for i, received_ports in enumerate(all_ports):
+            assert (
+                received_ports == ports
+            ), f"Expected {ports} free ports, got {received_ports}"
 
     torch.distributed.barrier()
-    remote_dist_dataset = RemoteDistDataset(
-        local_rank=client_rank, cluster_info=cluster_info
-    )
+    logger.info("Verified that all ranks received the same free ports")
+
     sampler_input = remote_dist_dataset.get_node_ids()
-    rank_expected_sampler_input = expected_sampler_input[client_global_rank]
-    for i in range(cluster_info.compute_cluster_world_size):
-        if i == client_global_rank:
+
+    rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]
+    for i in range(cluster_info.num_compute_nodes):
+        if i == cluster_info.compute_node_rank:
+            logger.info(f"Verifying sampler input for rank {i}")
+            logger.info(f"--------------------------------")
             assert len(sampler_input) == len(rank_expected_sampler_input)
             for j, expected in enumerate(rank_expected_sampler_input):
                 assert_tensor_equality(sampler_input[j], expected)
             logger.info(
-                f"{client_global_rank} / {cluster_info.compute_cluster_world_size} Sampler input verified"
+                f"{i} / {cluster_info.num_compute_nodes} compute node rank input nodes verified"
             )
         torch.distributed.barrier()
 
     torch.distributed.barrier()
-    logger.info(
-        f"{client_global_rank} / {cluster_info.compute_cluster_world_size} Shutting down client"
-    )
     shutdown_compute_proccess()
 
 
@@ -74,6 +96,7 @@ def _client_process(
 
     mp_context = torch.multiprocessing.get_context("spawn")
     client_processes = []
+    logger.info("Starting client processes")
     for i in range(cluster_info.num_processes_per_compute):
         client_process = mp_context.Process(
             target=_run_client_process,
@@ -104,38 +127,29 @@ def _run_server_processes(
         task_config_uri=task_config_uri,
         is_inference=is_inference,
         tf_record_uri_pattern=".*tfrecord",
+        storage_world_backend="gloo",
     )
 
 
-def _get_expected_sampler_input(
+def _get_expected_input_nodes_by_rank(
     num_nodes: int, cluster_info: GraphStoreInfo
 ) -> dict[int, list[torch.Tensor]]:
     """Get the expected sampler input for each compute rank.
 
     We generate the expected sampler input for each compute rank by sharding the nodes across the compute ranks.
     We then append the generated nodes to the expected sampler input for each compute rank.
-    Example for num_nodes = 16, num_processes_per_compute = 2, num_compute_nodes = 2, num_storage_nodes = 2:
+    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2:
     {
     0: # compute rank 0
     [
-        [0, 1], # From storage rank 0
-        [8, 9] # From storage rank 1
+        [0, 1, 3, 4], # From storage rank 0
+        [8, 9, 11, 12] # From storage rank 1
     ]
     1: # compute rank 1
     [
-        [2, 3], # From storage rank 0
-        [10, 11] # From storage rank 1
+        [5, 6, 7, 8], # From storage rank 0
+        [13, 14, 15, 16] # From storage rank 1
     ],
-    2: # compute rank 2
-    [
-        [4, 5], # From storage rank 0
-        [12, 13] # From storage rank 1
-    ],
-    3: # compute rank 3
-    [
-        [6, 7], # From storage rank 0
-        [14, 15] # From storage rank 1
-    ]
     }
 
 
@@ -154,12 +168,12 @@ def _get_expected_sampler_input(
             (server_rank + 1) * num_nodes // cluster_info.num_storage_nodes
         )
         server_nodes = all_nodes[server_node_start:server_node_end]
-        for compute_rank in range(cluster_info.compute_cluster_world_size):
+        for compute_rank in range(cluster_info.num_compute_nodes):
             generated_nodes = shard_nodes_by_process(
-                server_nodes, compute_rank, cluster_info.compute_cluster_world_size
+                server_nodes, compute_rank, cluster_info.num_processes_per_compute
             )
             expected_sampler_input[compute_rank].append(generated_nodes)
-    return expected_sampler_input
+    return dict(expected_sampler_input)
 
 
 class TestUtils(unittest.TestCase):
@@ -170,6 +184,12 @@ class TestUtils(unittest.TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+        (
+            cluster_master_port,
+            storage_cluster_master_port,
+            compute_cluster_master_port,
+            master_port,
+        ) = get_free_ports(num_ports=4)
         cluster_info = GraphStoreInfo(
             num_storage_nodes=2,
             num_compute_nodes=2,
@@ -177,16 +197,16 @@ class TestUtils(unittest.TestCase):
             cluster_master_ip="localhost",
             storage_cluster_master_ip="localhost",
             compute_cluster_master_ip="localhost",
-            cluster_master_port=get_free_port(),
-            storage_cluster_master_port=get_free_port(),
-            compute_cluster_master_port=get_free_port(),
+            cluster_master_port=cluster_master_port,
+            storage_cluster_master_port=storage_cluster_master_port,
+            compute_cluster_master_port=compute_cluster_master_port,
         )
 
         num_cora_nodes = 2708
-        expected_sampler_input = _get_expected_sampler_input(
+        expected_sampler_input = _get_expected_input_nodes_by_rank(
             num_cora_nodes, cluster_info
         )
-        master_port = get_free_port()
+
         ctx = mp.get_context("spawn")
         client_processes: list = []
         for i in range(cluster_info.num_compute_nodes):
