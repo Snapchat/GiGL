@@ -74,6 +74,5 @@ runs:
         if: ${{ inputs.install_dev_deps == 'true' }}
         shell: bash
         run: |
-          # We use --inexact to retain preinstalled packages from prior uv syncs.
-          make install_dev_deps --group docs --inexact
+          make install_dev_deps
           source ~/.profile
