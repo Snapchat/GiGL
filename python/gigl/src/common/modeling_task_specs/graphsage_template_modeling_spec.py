@@ -174,9 +174,12 @@ class GraphSageTemplateTrainerSpec(
         early_stop_counter = 0
         best_val_loss = float("inf")
 
+        assert hasattr(self.model, "graph_backend")
+        assert isinstance(self.model.graph_backend, GraphBackend)
+        graph_backend = self.model.graph_backend
         data_loaders: Dataloaders = self._dataloaders.get_training_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=self.model.graph_backend,
+            graph_backend=graph_backend,
             device=device,
         )
 
@@ -411,9 +414,12 @@ class GraphSageTemplateTrainerSpec(
 
         logger.info("Start testing...")
 
+        assert hasattr(self.model, "graph_backend")
+        assert isinstance(self.model.graph_backend, GraphBackend)
+        graph_backend = self.model.graph_backend
         data_loaders: Dataloaders = self._dataloaders.get_test_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=self.model.graph_backend,
+            graph_backend=graph_backend,
             device=device,
         )
 

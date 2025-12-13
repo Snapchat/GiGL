@@ -397,16 +397,16 @@ class LightGCN(nn.Module):
         Returns:
             torch.Tensor: Weighted sum of all layer embeddings, shape [N, D].
         """
-        if len(all_layer_embeddings) != len(self._layer_weights):
+        if len(all_layer_embeddings) != len(self._layer_weights):  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
             raise ValueError(
-                f"Got {len(all_layer_embeddings)} layer tensors but {len(self._layer_weights)} weights."
+                f"Got {len(all_layer_embeddings)} layer tensors but {len(self._layer_weights)} weights."  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
             )
 
         # Stack all layer embeddings and compute weighted sum
         # _layer_weights is already a tensor buffer registered in __init__
         stacked = torch.stack(all_layer_embeddings, dim=0)  # shape [K+1, N, D]
         w = self._layer_weights.to(stacked.device)  # shape [K+1], ensure on same device
-        out = (stacked * w.view(-1, 1, 1)).sum(
+        out = (stacked * w.view(-1, 1, 1)).sum(  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
             dim=0
         )  # shape [N, D], w_0*X_0 + w_1*X_1 + ...
 

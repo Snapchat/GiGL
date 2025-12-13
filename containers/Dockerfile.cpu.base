@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 
-FROM condaforge/miniforge3:25.3.0-1
+FROM ubuntu:noble-20251001
 
 SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
@@ -12,23 +14,31 @@ RUN apt-get update && apt-get install -y \
     wget \
     cmake \
     iputils-ping \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create the environment:
-# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y --override-channels --channel conda-forge --name gnn python=3.9 pip
 
-# Update path so any call for python executables in the built image defaults to using the gnn conda environment
-ENV PATH=/opt/conda/envs/gnn/bin:$PATH
+WORKDIR /gigl_deps
 
-# For debugging purposes, we also initialize respective conda env in bashrc
-RUN conda init bash
-RUN echo "conda activate gnn" >> ~/.bashrc
+COPY pyproject.toml pyproject.toml
+COPY uv.lock uv.lock
+COPY requirements requirements
+COPY python/gigl/scripts python/gigl/scripts
+COPY .python-version .python-version
 
-COPY requirements tmp/requirements
-COPY python/gigl/scripts tmp/python/gigl/scripts
-RUN pip install --upgrade pip
-RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+RUN bash ./requirements/install_py_deps.sh
+
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
+ENV UV_PROJECT_ENVIRONMENT=/gigl_deps/.venv
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /
 
 CMD [ "/bin/bash" ]

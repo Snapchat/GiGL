@@ -41,9 +41,7 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
   1. If on MAC, Install [Homebrew](https://brew.sh/).
 
-  2. Install [Conda](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install):
-
-  3. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
+  2. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
 
       Once installed, ensure you can run multiarch docker builds by running following command:
 
@@ -144,15 +142,6 @@ git clone https://github.com/Snapchat/GiGL.git
 ```
 
 From the root directory:
-
-```bash
-make initialize_environment
-conda activate gnn
-```
-
-This creates a Python 3.9 environment with some basic utilities. Next, to install all user dependencies. Note: The
-command below will try its best ot infer your environment and install necessary reqs i.e. if CUDA is available it will
-try to install the necessary gpu deps, otherwise it will install cpu deps.
 
 ```bash
 make install_deps
