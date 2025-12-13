@@ -6,8 +6,8 @@ This document outlines the steps required to add a new Python package as a depen
 
 Open `pyproject.toml` file --> Add the package to its correct location (dev, transform, etc.). Guidance:
 
-1. Lock versions of doc deps as version updates changes how the doc pages are rendered, files are formatted, etc.
-2. Lock versions for deps that don't do a great job of maintaining in their wheels what libs / libraries they are compatible with - this is a problem with packages like tensorflow.
+1. Freeze (set explicit versions e.g. `my-lib==1.2.3`) versions of doc deps as version updates changes how the doc pages are rendered, files are formatted, etc.
+2. Freeze versions for deps that don't do a great job of maintaining in their wheels what libs / libraries they are compatible with - this is a problem with packages like tensorflow.
 3. Everything else, let it auto resolve so we can keep flexibility for GiGL lib users.
 
 ### 2. Hash Generation
