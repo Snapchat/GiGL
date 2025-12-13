@@ -1,0 +1,2 @@
+global-exclude python/tests/*
+recursive-include python/gigl/deps *.jar
