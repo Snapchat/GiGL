@@ -70,7 +70,7 @@ jobs:
       id: set_vars
       run: |
         if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          echo "bump_type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+          echo "bump_type=${{ inputs.bump_type }}" >> $GITHUB_OUTPUT
         else
           echo "bump_type=nightly" >> $GITHUB_OUTPUT
         fi
