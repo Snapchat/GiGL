@@ -735,7 +735,7 @@ wheels = [
 
 [[package]]
 name = "gigl"
-version = "0.1.0"
+version = "0.0.11.dev20251213204557"
 source = { editable = "." }
 dependencies = [
     { name = "argo-workflows" },
