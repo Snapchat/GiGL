@@ -175,6 +175,13 @@ url = "https://data.pyg.org/whl/torch-2.8.0+cu128.html"
 explicit = true
 format = "flat"
 
+# =============================== Google Artifact Registry Index ========================
+[[tool.uv.index]]
+name = "gcp-release-registry"
+url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/"
+publish-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl"
+explicit = true
+
 # ========== Mapping individual packages to their appropriate index =============
 [tool.uv.sources]
 # ============= PyTorch hosted Package Index Mappings

@@ -61,7 +61,7 @@ jobs:
     - name: Get current version
       id: get_version
       run: |
-        CURRENT_VERSION=$(python -m scripts.bump_version --get_current_version)
+        CURRENT_VERSION=$(uv run python -m scripts.bump_version --get_current_version)
         echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         echo "Current version: $CURRENT_VERSION"
 
@@ -78,7 +78,7 @@ jobs:
     # Perform the version bump
     - name: Bump version
       run: |
-        python -m scripts.bump_version \
+        uv run python -m scripts.bump_version \
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
           --project ${{ vars.GCP_PROJECT_ID }}
 
@@ -86,7 +86,7 @@ jobs:
     - name: Get new version
       id: get_new_version
       run: |
-        NEW_VERSION=$(python -m scripts.bump_version --get_current_version)
+        NEW_VERSION=$(uv run python -m scripts.bump_version --get_current_version)
         RELEASE_BRANCH_NAME="release/v${NEW_VERSION}"
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "release_branch_name=$RELEASE_BRANCH_NAME" >> $GITHUB_OUTPUT
