@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import graphlearn_torch as glt
 import torch
@@ -9,7 +10,11 @@ from gigl.env.distributed import GraphStoreInfo
 logger = Logger()
 
 
-def init_compute_process(local_rank: int, cluster_info: GraphStoreInfo) -> None:
+def init_compute_process(
+    local_rank: int,
+    cluster_info: GraphStoreInfo,
+    compute_world_backend: Optional[str] = None,
+) -> None:
     """
     Initializes distributed setup for a compute node in a Graph Store cluster.
 
@@ -18,6 +23,7 @@ def init_compute_process(local_rank: int, cluster_info: GraphStoreInfo) -> None:
     Args:
         local_rank (int): The local (process) rank on the compute node.
         cluster_info (GraphStoreInfo): The cluster information.
+        compute_world_backend (Optional[str]): The backend for the compute Torch Distributed process group.
 
     Raises:
         ValueError: If the process group is already initialized.
@@ -31,11 +37,11 @@ def init_compute_process(local_rank: int, cluster_info: GraphStoreInfo) -> None:
         + local_rank
     )
     logger.info(
-        f"Initializing compute process group {compute_cluster_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}."
+        f"Initializing compute process group {compute_cluster_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port} with backend {compute_world_backend}."
         f" OS rank: {os.environ['RANK']}, local client rank: {local_rank}"
     )
     torch.distributed.init_process_group(
-        backend="nccl" if torch.cuda.is_available() else "gloo",
+        backend=compute_world_backend,
         world_size=cluster_info.compute_cluster_world_size,
         rank=compute_cluster_rank,
         init_method=f"tcp://{cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}",
