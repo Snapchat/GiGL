@@ -34,7 +34,7 @@ jobs:
       # For importing to work, we have to make sure that your modules can be found by Sphinx and
       # that dependencies can be resolved.
       - name: Setup Machine for releasing documentation
-        uses: snapchat/gigl/.github/actions/setup-python-tools@main
+        uses: ./.github/actions/setup-python-tools
         with:
             install_dev_deps: "true"
             setup_gcloud: "true"
