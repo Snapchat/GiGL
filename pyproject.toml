@@ -108,6 +108,7 @@ dev = [
   "pre-commit==3.3.2",
 ]
 docs = [
+  "astroid>=3,<4",
   "sphinx==7.4.7",
   "sphinx-rtd-theme==2.0.0",
   "pydata-sphinx-theme==0.16.1",
