@@ -310,6 +310,7 @@ compile_protos:
 	--proto_path=proto \
 	--python_out=./python \
 	--mypy_out=./python \
+	--plugin=protoc-gen-mypy=.venv/bin/protoc-gen-mypy \
 	proto/snapchat/research/gbml/*.proto
 
 	tools/scalapbc/scalapbc-0.11.11/bin/scalapbc \
