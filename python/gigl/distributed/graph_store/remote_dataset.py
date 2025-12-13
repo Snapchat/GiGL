@@ -18,7 +18,7 @@ TOOD(kmonte): If we ever fork GLT, we should look into expanding DistServer inst
 
 [1]: https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py#L38
 """
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import torch
 
@@ -86,6 +86,17 @@ def get_edge_feature_info() -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], N
     if _dataset is None:
         raise _NO_DATASET_ERROR
     return _dataset.edge_feature_info
+
+
+def get_edge_dir() -> Literal["in", "out"]:
+    """Get the edge direction from the registered dataset.
+
+    Returns:
+        The edge direction.
+    """
+    if _dataset is None:
+        raise _NO_DATASET_ERROR
+    return _dataset.edge_dir
 
 
 def get_node_ids_for_rank(
