@@ -132,13 +132,13 @@ class RemoteDistDataset:
             node_ids = torch.futures.wait_all(futures)
         return node_ids
 
-    def get_free_ports(self, num_ports: int) -> list[int]:
+    def get_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
         Get free ports from the storage master node.
 
         This *must* be used with a torch.distributed process group initialized, for the *entire* training cluster.
 
-        All compute ranks will recieve the same free ports.
+        All compute ranks will receive the same free ports.
 
         Args:
             num_ports (int): Number of free ports to get.

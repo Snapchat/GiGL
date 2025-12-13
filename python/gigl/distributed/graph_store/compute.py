@@ -23,6 +23,7 @@ def init_compute_process(
     Args:
         local_rank (int): The local (process) rank on the compute node.
         cluster_info (GraphStoreInfo): The cluster information.
+        compute_world_backend (Optional[str]): The backend for the compute Torch Distributed process group.
 
     Raises:
         ValueError: If the process group is already initialized.

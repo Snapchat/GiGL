@@ -29,12 +29,7 @@ def _run_storage_process(
     torch_process_port: int,
     storage_world_backend: Optional[str],
 ) -> None:
-    logger.info(
-        f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes } on {cluster_info.cluster_master_ip}:{cluster_info.cluster_master_port}. Cluster rank: {os.environ.get('RANK')}"
-    )
     register_dataset(dataset)
-    if storage_world_backend is None:
-        storage_world_backend = "nccl" if torch.cuda.is_available() else "gloo"
     logger.info(
         f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes} with backend {storage_world_backend} on {cluster_info.cluster_master_ip}:{torch_process_port}"
     )
@@ -78,6 +73,7 @@ def storage_node_process(
         task_config_uri (Uri): The task config URI.
         is_inference (bool): Whether the process is an inference process.
         tf_record_uri_pattern (str): The TF Record URI pattern.
+        storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(

@@ -48,7 +48,7 @@ def _run_client_process(
     assert (
         remote_dist_dataset.get_node_feature_info() is not None
     ), "Node feature info must not be None for the test dataset"
-    ports = remote_dist_dataset.get_free_ports(num_ports=2)
+    ports = remote_dist_dataset.get_free_ports_on_storage_cluster(num_ports=2)
     assert len(ports) == 2, "Expected 2 free ports"
     if torch.distributed.get_rank() == 0:
         all_ports = [None] * torch.distributed.get_world_size()
