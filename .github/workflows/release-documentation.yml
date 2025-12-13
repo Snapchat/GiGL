@@ -34,7 +34,7 @@ jobs:
       # For importing to work, we have to make sure that your modules can be found by Sphinx and
       # that dependencies can be resolved.
       - name: Setup Machine for releasing documentation
-        uses: snapchat/gigl/.github/actions/setup-python-tools@main
+        uses: ./.github/actions/setup-python-tools
         with:
             install_dev_deps: "true"
             setup_gcloud: "true"
@@ -44,7 +44,8 @@ jobs:
       # We also make gigl available w/ editable install `-e` so that autodoc can find it.
       - name: Install necessary doc dependencies
         run: |
-          uv sync --extra docs
+          uv sync --group docs --inexact
+          uv pip install -e .
       - name: Sphinx build
         run: |
           make build_docs
