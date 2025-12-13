@@ -4,7 +4,7 @@ import torch
 from graphlearn_torch.distributed import async_request_server, request_server
 
 from gigl.common.logger import Logger
-from gigl.distributed.graph_store.remote_dataset import (
+from gigl.distributed.graph_store.storage_utils import (
     get_edge_dir,
     get_edge_feature_info,
     get_node_feature_info,
