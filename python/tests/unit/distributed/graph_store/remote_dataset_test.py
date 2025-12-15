@@ -272,6 +272,27 @@ class TestRemoteDataset(unittest.TestCase):
             str(context.exception),
         )
 
+    def test_get_edge_dir(self) -> None:
+        """Test get_edge_dir with a registered dataset."""
+        dataset = self._create_homogeneous_dataset()
+        remote_dataset.register_dataset(dataset)
+        edge_dir = remote_dataset.get_edge_dir()
+        self.assertEqual(edge_dir, dataset.edge_dir)
+
+    def test_get_node_feature_info(self) -> None:
+        """Test get_node_feature_info with a registered dataset."""
+        dataset = self._create_homogeneous_dataset()
+        remote_dataset.register_dataset(dataset)
+        node_feature_info = remote_dataset.get_node_feature_info()
+        self.assertEqual(node_feature_info, dataset.node_feature_info)
+
+    def test_get_edge_feature_info(self) -> None:
+        """Test get_edge_feature_info with a registered dataset."""
+        dataset = self._create_homogeneous_dataset()
+        remote_dataset.register_dataset(dataset)
+        edge_feature_info = remote_dataset.get_edge_feature_info()
+        self.assertEqual(edge_feature_info, dataset.edge_feature_info)
+
 
 if __name__ == "__main__":
     unittest.main()
