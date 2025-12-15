@@ -1,6 +1,7 @@
 import collections
 import os
 import unittest
+from multiprocessing.managers import DictProxy
 from unittest import mock
 
 import torch
@@ -32,12 +33,15 @@ logger = Logger()
 def _run_client_process(
     client_rank: int,
     cluster_info: GraphStoreInfo,
+    mp_sharing_dict: DictProxy[str, torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
     remote_dist_dataset = RemoteDistDataset(
-        cluster_info=cluster_info, local_rank=client_rank
+        cluster_info=cluster_info,
+        local_rank=client_rank,
+        mp_sharing_dict=mp_sharing_dict,
     )
     assert (
         remote_dist_dataset.get_edge_dir() == "in"
@@ -70,15 +74,17 @@ def _run_client_process(
     sampler_input = remote_dist_dataset.get_node_ids()
 
     rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]
-    for i in range(cluster_info.num_compute_nodes):
-        if i == cluster_info.compute_node_rank:
-            logger.info(f"Verifying sampler input for rank {i}")
+    for i in range(cluster_info.compute_cluster_world_size):
+        if i == torch.distributed.get_rank():
+            logger.info(
+                f"Verifying sampler input for rank {i} / {cluster_info.compute_cluster_world_size}"
+            )
             logger.info(f"--------------------------------")
             assert len(sampler_input) == len(rank_expected_sampler_input)
             for j, expected in enumerate(rank_expected_sampler_input):
                 assert_tensor_equality(sampler_input[j], expected)
             logger.info(
-                f"{i} / {cluster_info.num_compute_nodes} compute node rank input nodes verified"
+                f"{i} / {cluster_info.compute_cluster_world_size} compute node rank input nodes verified"
             )
         torch.distributed.barrier()
 
@@ -96,6 +102,7 @@ def _client_process(
     )
 
     mp_context = torch.multiprocessing.get_context("spawn")
+    mp_sharing_dict = torch.multiprocessing.Manager().dict()
     client_processes = []
     logger.info("Starting client processes")
     for i in range(cluster_info.num_processes_per_compute):
@@ -104,6 +111,7 @@ def _client_process(
             args=[
                 i,  # client_rank
                 cluster_info,  # cluster_info
+                mp_sharing_dict,  # mp_sharing_dict
                 expected_sampler_input,  # expected_sampler_input
             ],
         )

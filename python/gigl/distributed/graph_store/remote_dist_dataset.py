@@ -1,3 +1,5 @@
+import time
+from multiprocessing.managers import DictProxy
 from typing import Literal, Optional, Union
 
 import torch
@@ -19,7 +21,12 @@ logger = Logger()
 
 
 class RemoteDistDataset:
-    def __init__(self, cluster_info: GraphStoreInfo, local_rank: int):
+    def __init__(
+        self,
+        cluster_info: GraphStoreInfo,
+        local_rank: int,
+        mp_sharing_dict: Optional[DictProxy[str, torch.Tensor]] = None,
+    ):
         """
         Represents a dataset that is stored on a difference storage cluster.
         *Must* be used in the GiGL graph-store distributed setup.
@@ -32,6 +39,7 @@ class RemoteDistDataset:
         """
         self._cluster_info = cluster_info
         self._local_rank = local_rank
+        self._mp_sharing_dict = mp_sharing_dict
 
     @property
     def cluster_info(self) -> GraphStoreInfo:
@@ -80,6 +88,28 @@ class RemoteDistDataset:
             get_edge_dir,
         )
 
+    def _get_node_ids(self, node_type: Optional[NodeType] = None) -> list[torch.Tensor]:
+        """Fetches node ids from the storage nodes for the current compute node (machine)."""
+        futures: list[torch.futures.Future[torch.Tensor]] = []
+        rank = self.cluster_info.compute_node_rank
+        world_size = self.cluster_info.num_storage_nodes
+        logger.info(
+            f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
+        )
+
+        for server_rank in range(self.cluster_info.num_storage_nodes):
+            futures.append(
+                async_request_server(
+                    server_rank,
+                    get_node_ids_for_rank,
+                    rank=rank,
+                    world_size=world_size,
+                    node_type=node_type,
+                )
+            )
+            node_ids = torch.futures.wait_all(futures)
+        return node_ids
+
     def get_node_ids(
         self,
         node_type: Optional[NodeType] = None,
@@ -112,25 +142,29 @@ class RemoteDistDataset:
         Returns:
             list[torch.Tensor]: A list of node IDs for the given node type.
         """
-        futures: list[torch.futures.Future[torch.Tensor]] = []
-        rank = self.cluster_info.compute_node_rank
-        world_size = self.cluster_info.num_storage_nodes
-        logger.info(
-            f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
-        )
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            futures.append(
-                async_request_server(
-                    server_rank,
-                    get_node_ids_for_rank,
-                    rank=rank,
-                    world_size=world_size,
-                    node_type=node_type,
+        if self._mp_sharing_dict is not None:
+            if self._local_rank == 0:
+                start_time = time.time()
+                logger.info(
+                    f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
                 )
-            )
-            node_ids = torch.futures.wait_all(futures)
-        return node_ids
+                node_ids = self._get_node_ids(node_type)
+                for server_rank, node_id in enumerate(node_ids):
+                    node_id.share_memory_()
+                    self._mp_sharing_dict[
+                        f"node_ids_from_server_{server_rank}"
+                    ] = node_id
+                logger.info(
+                    f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
+                )
+            torch.distributed.barrier()
+            node_ids = [
+                self._mp_sharing_dict[f"node_ids_from_server_{server_rank}"]
+                for server_rank in range(self.cluster_info.num_storage_nodes)
+            ]
+            return node_ids
+        else:
+            return self._get_node_ids(node_type)
 
     def get_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
