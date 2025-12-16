@@ -1,5 +1,4 @@
 import time
-from multiprocessing.managers import DictProxy
 from typing import Literal, Optional, Union
 
 import torch
@@ -25,7 +24,7 @@ class RemoteDistDataset:
         self,
         cluster_info: GraphStoreInfo,
         local_rank: int,
-        mp_sharing_dict: Optional[DictProxy[str, torch.Tensor]] = None,
+        mp_sharing_dict: Optional[dict[str, torch.Tensor]] = None,
     ):
         """
         Represents a dataset that is stored on a difference storage cluster.
