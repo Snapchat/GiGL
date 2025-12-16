@@ -1,4 +1,5 @@
 import time
+from multiprocessing.managers import DictProxy
 from typing import Literal, Optional, Union
 
 import torch
@@ -35,10 +36,21 @@ class RemoteDistDataset:
         Args:
             cluster_info (GraphStoreInfo): The cluster information.
             local_rank (int): The local rank of the process on the compute node.
+            mp_sharing_dict (Optional[dict[str, torch.Tensor]]):
+                (Optional) If provided, will be used to share tensors across the local machine.
+                e.g. for `get_node_ids`.
+                If provided, *must* be a `DictProxy` e.g. the return value of a mp.Manager.
+                ex. torch.multiprocessing.Manager().dict().
         """
         self._cluster_info = cluster_info
         self._local_rank = local_rank
         self._mp_sharing_dict = mp_sharing_dict
+        if self._mp_sharing_dict is not None and not isinstance(
+            self._mp_sharing_dict, DictProxy
+        ):
+            raise ValueError(
+                f"When using mp_sharing_dict, you must pass in a `DictProxy` e.g. mp.manager().dict(). Recieved a {type(self._mp_sharing_dict)}"
+            )
 
     @property
     def cluster_info(self) -> GraphStoreInfo:

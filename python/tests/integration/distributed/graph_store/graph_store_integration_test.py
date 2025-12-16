@@ -104,7 +104,6 @@ def _client_process(
     mp_sharing_dict = torch.multiprocessing.Manager().dict()
     client_processes = []
     logger.info("Starting client processes")
-    logger.info("Starting client processes")
     for i in range(cluster_info.num_processes_per_compute):
         client_process = mp_context.Process(
             target=_run_client_process,
@@ -161,52 +160,6 @@ def _get_expected_input_nodes_by_rank(
     ],
     }
 
-
-    Args:
-        num_nodes (int): The number of nodes in the graph.
-        cluster_info (GraphStoreInfo): The cluster information.
-
-    Returns:
-        dict[int, list[torch.Tensor]]: The expected sampler input for each compute rank.
-    """
-    expected_sampler_input = collections.defaultdict(list)
-    all_nodes = torch.arange(num_nodes, dtype=torch.int64)
-    for server_rank in range(cluster_info.num_storage_nodes):
-        server_node_start = server_rank * num_nodes // cluster_info.num_storage_nodes
-        server_node_end = (
-            (server_rank + 1) * num_nodes // cluster_info.num_storage_nodes
-        )
-        server_nodes = all_nodes[server_node_start:server_node_end]
-        for compute_rank in range(cluster_info.num_compute_nodes):
-            generated_nodes = shard_nodes_by_process(
-                server_nodes, compute_rank, cluster_info.num_processes_per_compute
-            )
-            expected_sampler_input[compute_rank].append(generated_nodes)
-    return dict(expected_sampler_input)
-
-
-def _get_expected_input_nodes_by_rank(
-    num_nodes: int, cluster_info: GraphStoreInfo
-) -> dict[int, list[torch.Tensor]]:
-    """Get the expected sampler input for each compute rank.
-
-    We generate the expected sampler input for each compute rank by sharding the nodes across the compute ranks.
-    We then append the generated nodes to the expected sampler input for each compute rank.
-    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2:
-    {
-    0: # compute rank 0
-    [
-        [0, 1, 3, 4], # From storage rank 0
-        [8, 9, 11, 12] # From storage rank 1
-    ]
-    1: # compute rank 1
-    [
-        [5, 6, 7, 8], # From storage rank 0
-        [13, 14, 15, 16] # From storage rank 1
-    ],
-    }
-
-
     Args:
         num_nodes (int): The number of nodes in the graph.
         cluster_info (GraphStoreInfo): The cluster information.
@@ -244,12 +197,6 @@ class TestUtils(unittest.TestCase):
             compute_cluster_master_port,
             master_port,
         ) = get_free_ports(num_ports=4)
-        (
-            cluster_master_port,
-            storage_cluster_master_port,
-            compute_cluster_master_port,
-            master_port,
-        ) = get_free_ports(num_ports=4)
         cluster_info = GraphStoreInfo(
             num_storage_nodes=2,
             num_compute_nodes=2,
@@ -260,14 +207,6 @@ class TestUtils(unittest.TestCase):
             cluster_master_port=cluster_master_port,
             storage_cluster_master_port=storage_cluster_master_port,
             compute_cluster_master_port=compute_cluster_master_port,
-            cluster_master_port=cluster_master_port,
-            storage_cluster_master_port=storage_cluster_master_port,
-            compute_cluster_master_port=compute_cluster_master_port,
-        )
-
-        num_cora_nodes = 2708
-        expected_sampler_input = _get_expected_input_nodes_by_rank(
-            num_cora_nodes, cluster_info
         )
 
         num_cora_nodes = 2708
@@ -296,7 +235,6 @@ class TestUtils(unittest.TestCase):
                     args=[
                         i,  # client_rank
                         cluster_info,  # cluster_info
-                        expected_sampler_input,  # expected_sampler_input
                         expected_sampler_input,  # expected_sampler_input
                     ],
                 )
