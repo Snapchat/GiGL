@@ -5,7 +5,9 @@ set -x
 DEV=0  # Flag to install dev dependencies.
 # Flag to skip installing GiGL lib dependencies, i.e. only dev tools will be installed if DEV=1.
 SKIP_GIGL_LIB_DEPS_INSTALL=0
-SKIP_GLT_POST_INSTALL=0 # Flag to skip GLT post install. if SKIP_GIGL_LIB_DEPS_INSTALL=1, overrides SKIP_GLT_POST_INSTALL to =1.
+# Flag to skip GLT post install. Note: if SKIP_GIGL_LIB_DEPS_INSTALL=1,
+# GLT will never be installed (i.e. SKIP_GLT_POST_INSTALL flag will be treated as set to 1)
+SKIP_GLT_POST_INSTALL=0
 
 
 for arg in "$@"
@@ -120,6 +122,11 @@ install_gigl_lib_deps() {
     done
 
     flag_use_inexact_match=""
+    # If we are using system python, we want to use inexact match for dependencies so we don't override system packages.
+    # We currently, only do this in our Dockerfile.cuda.base, and Dockerfile.dataflow.base images, as they have python
+    # pre-installed with relevant packages - and currently reinstalling these in the trivial manner in a new virtual
+    # environment is not able to correctly symlink existing optimizations / bootstrap scripts available in the parent
+    # docker images of our base images.
     if [[ "${UV_SYSTEM_PYTHON}" == "true" ]]
     then
         echo "Recognized using system python."

@@ -46,7 +46,7 @@ runs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
-          version: "0.9.5" # Matches the version in install_py_deps.sh
+          version: "0.9.5" # Matches the version in requirements/install_py_deps.sh
 
       # Step 3: Set up Gcloud AUTH using Workload Identity Federation
       # See following for context: https://cloud.google.com/blog/products/identity-security/enabling-keyless-authentication-from-github-actions

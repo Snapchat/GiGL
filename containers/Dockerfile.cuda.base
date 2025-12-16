@@ -34,6 +34,8 @@ COPY python/gigl/scripts python/gigl/scripts
 
 RUN bash ./requirements/install_py_deps.sh
 
+# Note: Since we are using system python, we dont need to create a virtual environment here unlike the
+# cpu base image.
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
 
