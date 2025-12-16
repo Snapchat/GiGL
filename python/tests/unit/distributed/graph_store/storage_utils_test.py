@@ -3,7 +3,7 @@ import unittest
 import torch
 
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.graph_store import remote_dataset
+from gigl.distributed.graph_store import storage_utils
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
     FeatureInfo,
@@ -22,11 +22,11 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 class TestRemoteDataset(unittest.TestCase):
     def setUp(self) -> None:
         """Reset the global dataset before each test."""
-        remote_dataset._dataset = None
+        storage_utils._dataset = None
 
     def tearDown(self) -> None:
         """Clean up after each test."""
-        remote_dataset._dataset = None
+        storage_utils._dataset = None
 
     def _create_heterogeneous_dataset(self) -> DistDataset:
         """Helper method to create a heterogeneous test dataset."""
@@ -99,26 +99,26 @@ class TestRemoteDataset(unittest.TestCase):
     def test_register_dataset(self) -> None:
         """Test that register_dataset correctly sets the global dataset."""
         dataset = self._create_heterogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
         # Verify the dataset was registered
-        self.assertIsNotNone(remote_dataset._dataset)
-        self.assertEqual(remote_dataset._dataset, dataset)
+        self.assertIsNotNone(storage_utils._dataset)
+        self.assertEqual(storage_utils._dataset, dataset)
 
     def test_reregister_dataset_raises_error(self) -> None:
         """Test that reregistering a dataset raises an error."""
         dataset = self._create_heterogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
         with self.assertRaises(ValueError) as context:
-            remote_dataset.register_dataset(dataset)
+            storage_utils.register_dataset(dataset)
         self.assertIn("Dataset already registered!", str(context.exception))
 
     def test_get_node_feature_info_with_heterogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a registered heterogeneous dataset."""
         dataset = self._create_heterogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
-        node_feature_info = remote_dataset.get_node_feature_info()
+        node_feature_info = storage_utils.get_node_feature_info()
 
         # Verify it returns the correct feature info
         expected = {
@@ -130,9 +130,9 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_node_feature_info_with_homogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a registered homogeneous dataset."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
-        node_feature_info = remote_dataset.get_node_feature_info()
+        node_feature_info = storage_utils.get_node_feature_info()
 
         # Verify it returns the correct feature info
         expected = FeatureInfo(dim=3, dtype=torch.float32)
@@ -141,7 +141,7 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_node_feature_info_without_registered_dataset(self) -> None:
         """Test get_node_feature_info raises ValueError when no dataset is registered."""
         with self.assertRaises(ValueError) as context:
-            remote_dataset.get_node_feature_info()
+            storage_utils.get_node_feature_info()
 
         self.assertIn("Dataset not registered", str(context.exception))
         self.assertIn("register_dataset", str(context.exception))
@@ -149,9 +149,9 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_edge_feature_info_with_heterogeneous_dataset(self) -> None:
         """Test get_edge_feature_info with a registered heterogeneous dataset."""
         dataset = self._create_heterogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
-        edge_feature_info = remote_dataset.get_edge_feature_info()
+        edge_feature_info = storage_utils.get_edge_feature_info()
 
         # For this test dataset, edge features are None
         self.assertIsNone(edge_feature_info)
@@ -159,9 +159,9 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_edge_feature_info_with_homogeneous_dataset(self) -> None:
         """Test get_edge_feature_info with a registered homogeneous dataset."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
-        edge_feature_info = remote_dataset.get_edge_feature_info()
+        edge_feature_info = storage_utils.get_edge_feature_info()
 
         # For this test dataset, edge features are None
         self.assertIsNone(edge_feature_info)
@@ -169,7 +169,7 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_edge_feature_info_without_registered_dataset(self) -> None:
         """Test get_edge_feature_info raises ValueError when no dataset is registered."""
         with self.assertRaises(ValueError) as context:
-            remote_dataset.get_edge_feature_info()
+            storage_utils.get_edge_feature_info()
 
         self.assertIn("Dataset not registered", str(context.exception))
         self.assertIn("register_dataset", str(context.exception))
@@ -177,10 +177,10 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_node_ids_for_rank_with_homogeneous_dataset(self) -> None:
         """Test get_node_ids_for_rank with a homogeneous dataset."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
         # Test with world_size=1, rank=0 (should get all nodes)
-        node_ids = remote_dataset.get_node_ids_for_rank(
+        node_ids = storage_utils.get_node_ids_for_rank(
             rank=0, world_size=1, node_type=None
         )
         self.assertIsInstance(node_ids, torch.Tensor)
@@ -190,10 +190,10 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_node_ids_for_rank_with_heterogeneous_dataset(self) -> None:
         """Test get_node_ids_for_rank with a heterogeneous dataset."""
         dataset = self._create_heterogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
         # Test with USER node type
-        user_node_ids = remote_dataset.get_node_ids_for_rank(
+        user_node_ids = storage_utils.get_node_ids_for_rank(
             rank=0, world_size=1, node_type=_USER
         )
         self.assertIsInstance(user_node_ids, torch.Tensor)
@@ -201,7 +201,7 @@ class TestRemoteDataset(unittest.TestCase):
         assert_tensor_equality(user_node_ids, torch.arange(5))
 
         # Test with STORY node type
-        story_node_ids = remote_dataset.get_node_ids_for_rank(
+        story_node_ids = storage_utils.get_node_ids_for_rank(
             rank=0, world_size=1, node_type=_STORY
         )
         self.assertIsInstance(story_node_ids, torch.Tensor)
@@ -211,13 +211,13 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_node_ids_for_rank_with_multiple_ranks(self) -> None:
         """Test get_node_ids_for_rank with multiple ranks to verify sharding."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
 
         # Test with world_size=2
-        rank_0_nodes = remote_dataset.get_node_ids_for_rank(
+        rank_0_nodes = storage_utils.get_node_ids_for_rank(
             rank=0, world_size=2, node_type=None
         )
-        rank_1_nodes = remote_dataset.get_node_ids_for_rank(
+        rank_1_nodes = storage_utils.get_node_ids_for_rank(
             rank=1, world_size=2, node_type=None
         )
 
@@ -226,13 +226,13 @@ class TestRemoteDataset(unittest.TestCase):
         assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
         # Test with world_size=3 (uneven split)
-        rank_0_nodes = remote_dataset.get_node_ids_for_rank(
+        rank_0_nodes = storage_utils.get_node_ids_for_rank(
             rank=0, world_size=3, node_type=None
         )
-        rank_1_nodes = remote_dataset.get_node_ids_for_rank(
+        rank_1_nodes = storage_utils.get_node_ids_for_rank(
             rank=1, world_size=3, node_type=None
         )
-        rank_2_nodes = remote_dataset.get_node_ids_for_rank(
+        rank_2_nodes = storage_utils.get_node_ids_for_rank(
             rank=2, world_size=3, node_type=None
         )
 
@@ -243,7 +243,7 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_node_ids_for_rank_without_registered_dataset(self) -> None:
         """Test get_node_ids_for_rank raises ValueError when no dataset is registered."""
         with self.assertRaises(ValueError) as context:
-            remote_dataset.get_node_ids_for_rank(rank=0, world_size=1)
+            storage_utils.get_node_ids_for_rank(rank=0, world_size=1)
 
         self.assertIn("Dataset not registered", str(context.exception))
         self.assertIn("register_dataset", str(context.exception))
@@ -251,9 +251,9 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_node_ids_for_rank_with_homogeneous_dataset_and_node_type(self) -> None:
         """Test get_node_ids_for_rank with a homogeneous dataset and a node type."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
         with self.assertRaises(ValueError) as context:
-            remote_dataset.get_node_ids_for_rank(rank=0, world_size=1, node_type=_USER)
+            storage_utils.get_node_ids_for_rank(rank=0, world_size=1, node_type=_USER)
         self.assertIn(
             "node_type must be None for a homogeneous dataset. Got user.",
             str(context.exception),
@@ -264,9 +264,9 @@ class TestRemoteDataset(unittest.TestCase):
     ) -> None:
         """Test get_node_ids_for_rank with a heterogeneous dataset and no node type."""
         dataset = self._create_heterogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
+        storage_utils.register_dataset(dataset)
         with self.assertRaises(ValueError) as context:
-            remote_dataset.get_node_ids_for_rank(rank=0, world_size=1, node_type=None)
+            storage_utils.get_node_ids_for_rank(rank=0, world_size=1, node_type=None)
         self.assertIn(
             "node_type must be not None for a heterogeneous dataset. Got None.",
             str(context.exception),
@@ -275,22 +275,22 @@ class TestRemoteDataset(unittest.TestCase):
     def test_get_edge_dir(self) -> None:
         """Test get_edge_dir with a registered dataset."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
-        edge_dir = remote_dataset.get_edge_dir()
+        storage_utils.register_dataset(dataset)
+        edge_dir = storage_utils.get_edge_dir()
         self.assertEqual(edge_dir, dataset.edge_dir)
 
     def test_get_node_feature_info(self) -> None:
         """Test get_node_feature_info with a registered dataset."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
-        node_feature_info = remote_dataset.get_node_feature_info()
+        storage_utils.register_dataset(dataset)
+        node_feature_info = storage_utils.get_node_feature_info()
         self.assertEqual(node_feature_info, dataset.node_feature_info)
 
     def test_get_edge_feature_info(self) -> None:
         """Test get_edge_feature_info with a registered dataset."""
         dataset = self._create_homogeneous_dataset()
-        remote_dataset.register_dataset(dataset)
-        edge_feature_info = remote_dataset.get_edge_feature_info()
+        storage_utils.register_dataset(dataset)
+        edge_feature_info = storage_utils.get_edge_feature_info()
         self.assertEqual(edge_feature_info, dataset.edge_feature_info)
 
 
