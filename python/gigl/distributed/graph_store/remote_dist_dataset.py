@@ -137,8 +137,8 @@ class RemoteDistDataset:
 
         NOTE: The GLT sampling enginer expects that all processes on a given compute machine
         to have the same sampling input (node ids).
-        As such, the input tensors will be duplicated across all processes on a given compute machine.
-        TODO(kmonte): Come up with a solution to avoid this duplication.
+        As such, the input tensors may be duplicated across all processes on a given compute machine.
+        In order to save on cpu memory, pass in `mp_sharing_dict` to the `RemoteDistDataset` constructor.
 
         Then, for compute rank 0 (node 0, process 0), the returned list will be:
             [
