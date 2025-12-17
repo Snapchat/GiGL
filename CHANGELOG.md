@@ -9,13 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.1.0] - Dec 18, 2025
 
-### Changed
-* Update deps / python to latest supported version - use UV for dep management by @svij-sc in https://github.com/Snapchat/GiGL/pull/414
-    - `uv` now helps us manage our python environment, so Instead of doing `python -m ...`; we will need to do `uv run python -m ...`; subsequently tools like `black` can now be executed as `uv run black` and dont need to be installed at a global level or inside some unmanaged python env.
-    - As long as you are in the gigl directory, uv will know how to work.
-    - We eliminate the need for using pip to manage/install deps; we also eliminate the need to maintain different requirements files, there is just one now uv.lock
+### Deprecations
+* Update deps / python to latest supported version - use [UV](https://docs.astral.sh/uv/) for dep management by @svij-sc in https://github.com/Snapchat/GiGL/pull/414
+    - **tl;dr** You will need to remove your old conda environments `conda remove --name gnn --all -y`, run `make install_dev_deps` from inside GiGL directory. Following you will need to do `uv run python -m ...` or `uv run black` (same with all other python tools i.e. `mypy`) instead of calling `python -m ...` or `black` directly.
+    - We eliminate the need for using pip to manage/install deps; we also eliminate the need to maintain different requirements files, there is just one now `uv.lock`
     - **Deprecation:** As a result of this change, we have deprecated use of host managed python environments and we let `uv` manage the virtual env. Consequentially, we don't need to support `make` targets like `initialize_environment`, `generate_..._requirements`, etc. have been removed.
-        - **Manual action needed:** Remove your old conda environments `conda remove --name gnn --all -y`, run `make install_dev_deps` from inside GiGL directory.
+
+### Changed
 * Update Vuln reporting process. by @svij-sc in https://github.com/Snapchat/GiGL/pull/272
 * Update splitter names to have `Dist` prefix by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/378
 * Update resource config wrapper / validation check to support graph store mode by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/383
@@ -84,7 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 * Add remote_dataset for graph store mode by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/386
 
 ### Fixed
-* Kmonte/fix install by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/270
+* Allow installs from non-GiGL root by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/270
 * Fix BQ Query by @svij-sc in https://github.com/Snapchat/GiGL/pull/263
 * Fix cost association for glt/trainer by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/290
 * Fail early if invalid Node IDs are found prior partitioning by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/284
