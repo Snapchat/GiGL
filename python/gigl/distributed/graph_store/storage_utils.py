@@ -9,7 +9,7 @@ And then the client can do something like:
 
 >>> edge_feature_info = graphlearn_torch.distributed.request_server(
 >>>    server_rank,
->>>    gigl.distributed.graph_store.remote_dataset.get_edge_feature_info,
+>>>    gigl.distributed.graph_store.storage_utils.get_edge_feature_info,
 >>> )
 
 
