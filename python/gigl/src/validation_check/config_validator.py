@@ -3,9 +3,9 @@ from typing import Optional
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
-from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
@@ -142,6 +142,11 @@ START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP = {
 START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP = {
     GiGLComponents.ConfigPopulator.value: [
         check_if_shared_resource_config_valid,
+        check_if_preprocessor_resource_config_valid,
+        check_if_subgraph_sampler_resource_config_valid,
+        check_if_split_generator_resource_config_valid,
+        check_if_trainer_resource_config_valid,
+        check_if_inferencer_resource_config_valid,
     ],
     GiGLComponents.DataPreprocessor.value: [
         check_if_shared_resource_config_valid,
@@ -178,6 +183,12 @@ START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP = {
     ],
 }
 
+# Resource config checks to skip when using live subgraph sampling backend
+RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_LIVE_SGS_BACKEND = [
+    check_if_subgraph_sampler_resource_config_valid,
+    check_if_split_generator_resource_config_valid,
+]
+
 logger = Logger()
 
 
@@ -190,46 +201,66 @@ def kfp_validation_checks(
 ) -> None:
     # check if job_name is valid
     check_if_kfp_pipeline_job_name_valid(job_name=job_name)
-    # check if start_at and stop_after aligns with glt backend use
+    # check if start_at and stop_after aligns with live subgraph sampling backend use
     check_pipeline_has_valid_start_and_stop_flags(
         start_at=start_at, stop_after=stop_after, task_config_uri=task_config_uri.uri
     )
-    proto_utils = ProtoUtils()
-    gbml_config_pb: gbml_config_pb2.GbmlConfig = proto_utils.read_proto_from_yaml(
-        uri=task_config_uri, proto_cls=gbml_config_pb2.GbmlConfig
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        gbml_config_uri=task_config_uri
     )
+
+    gbml_config_pb: gbml_config_pb2.GbmlConfig = gbml_config_pb_wrapper.gbml_config_pb
+
+    should_use_live_sgs_backend = gbml_config_pb_wrapper.should_use_glt_backend
 
     resource_config_wrapper: GiglResourceConfigWrapper = get_resource_config(
         resource_config_uri=resource_config_uri
     )
     resource_config_pb: GiglResourceConfig = resource_config_wrapper.resource_config
     # check user defined classes and their runtime args
+
     if (
         stop_after is not None
         and (start_at, stop_after) in START_STOP_COMPONENT_TO_CLS_CHECKS_MAP
     ):
-        for cls_check in START_STOP_COMPONENT_TO_CLS_CHECKS_MAP[(start_at, stop_after)]:
-            cls_check(gbml_config_pb=gbml_config_pb)
+        cls_checks = START_STOP_COMPONENT_TO_CLS_CHECKS_MAP[(start_at, stop_after)]
     else:
-        for cls_check in START_COMPONENT_TO_CLS_CHECKS_MAP.get(start_at, []):
-            cls_check(gbml_config_pb=gbml_config_pb)
+        cls_checks = START_COMPONENT_TO_CLS_CHECKS_MAP.get(start_at, [])
+    for cls_check in cls_checks:
+        cls_check(gbml_config_pb=gbml_config_pb)
+
     # check the existence of needed assets
     for asset_check in START_COMPONENT_TO_ASSET_CHECKS_MAP.get(start_at, []):
         asset_check(gbml_config_pb=gbml_config_pb)
     # check if user-provided resource config is valid
+
+    # Skip SGS and split resource config checks when using live subgraph sampling backend
+    resource_config_checks_to_skip = (
+        RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_LIVE_SGS_BACKEND
+        if should_use_live_sgs_backend
+        else []
+    )
+
     if (
         stop_after is not None
         and (start_at, stop_after) in START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP
     ):
-        for resource_config_check in START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP[
+        resource_config_checks = START_STOP_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP[
             (start_at, stop_after)
-        ]:
-            resource_config_check(resource_config_pb=resource_config_pb)
+        ]
     else:
-        for resource_config_check in START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP.get(
+        resource_config_checks = START_COMPONENT_TO_RESOURCE_CONFIG_CHECKS_MAP.get(
             start_at, []
-        ):
+        )
+
+    for resource_config_check in resource_config_checks:
+        if resource_config_check not in resource_config_checks_to_skip:
             resource_config_check(resource_config_pb=resource_config_pb)
+        else:
+            logger.info(
+                f"Skipping resource config check {resource_config_check.__name__} because we are using live subgraph sampling backend."
+            )
+
     # check if trained model file exist when skipping training
     if gbml_config_pb.shared_config.should_skip_training == True:
         assert_trained_model_exists(gbml_config_pb=gbml_config_pb)
