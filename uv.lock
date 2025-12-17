@@ -927,7 +927,7 @@ provides-extras = ["transform", "pyg27-torch28-cpu", "pyg27-torch28-cu128", "exp
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "astroid", specifier = ">=3,<4" },
+    { name = "astroid", specifier = "==3.3.11" },
     { name = "autoflake", specifier = "==2.3.1" },
     { name = "black", specifier = "~=23.1.0" },
     { name = "isort", specifier = "~=5.12.0" },
@@ -959,7 +959,7 @@ dev = [
     { name = "types-tqdm", specifier = "==4.67.0.20250513" },
 ]
 docs = [
-    { name = "astroid", specifier = ">=3,<4" },
+    { name = "astroid", specifier = "==3.3.11" },
     { name = "mistune", specifier = ">=2.0.3" },
     { name = "myst-nb", specifier = "==1.2.0" },
     { name = "myst-parser", specifier = "==2.0.0" },
