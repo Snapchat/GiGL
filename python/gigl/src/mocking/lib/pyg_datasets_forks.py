@@ -1,7 +1,7 @@
 """
 Our mocking logic uses public datasets like Cora and DBLP from PyG.  PyG datasets are
-downloaded from public sources which may not be available or rate-limit us.  We thus 
-override the dataset classes to download the datasets from GCS buckets to avoid issues. 
+downloaded from public sources which may not be available or rate-limit us.  We thus
+override the dataset classes to download the datasets from GCS buckets to avoid issues.
 """
 
 from torch_geometric.data import extract_zip
