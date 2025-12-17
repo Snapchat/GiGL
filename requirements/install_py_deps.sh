@@ -129,7 +129,7 @@ install_gigl_lib_deps() {
     # docker images of our base images.
     if [[ "${UV_SYSTEM_PYTHON}" == "true" ]]
     then
-        echo "Recognized using system python."
+        echo "Recognized using system python due to UV_SYSTEM_PYTHON = true."
         echo "Will use inexact match for dependencies so we don't override system packages."
         # Syncing is "exact" by default, which means it will remove any packages that are not present in the lockfile.
         # To retain extraneous packages, use the --inexact option:
