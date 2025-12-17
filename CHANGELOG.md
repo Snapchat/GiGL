@@ -121,5 +121,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### New Contributors
 * @nshah171, @swong3-sc
-
-**Full Changelog**: https://github.com/Snapchat/GiGL/compare/v0.0.7...v0.1.0.dev20251213213653
