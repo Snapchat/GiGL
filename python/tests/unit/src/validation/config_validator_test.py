@@ -252,6 +252,8 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
 
     def setUp(self):
         """Set up temporary directory for test config files."""
+        # Clear the cached resource config before each test to ensure isolation
+        gigl.env.pipelines_config._resource_config = None
         self._temp_dir = tempfile.mkdtemp()
         self._proto_utils = ProtoUtils()
 
