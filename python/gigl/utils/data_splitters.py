@@ -500,24 +500,6 @@ class DistNodeSplitter:
             return splits[DEFAULT_HOMOGENEOUS_NODE_TYPE]
 
 
-class HashedNodeAnchorLinkSplitter(DistNodeAnchorLinkSplitter):
-    def __init__(self, *args, **kwargs):
-        logger.warning(
-            "gigl.utils.data_splitters.HashedNodeAnchorLinkSplitter is deprecated and will be removed in a future release. "
-            "Please use the `gigl.utils.data_splitters.DistNodeAnchorLinkSplitter` class instead."
-        )
-        super(HashedNodeAnchorLinkSplitter, self).__init__(*args, **kwargs)
-
-
-class HashedNodeSplitter(DistNodeSplitter):
-    def __init__(self, *args, **kwargs):
-        logger.warning(
-            "gigl.utils.data_splitters.HashedNodeSplitter is deprecated and will be removed in a future release. "
-            "Please use the `gigl.utils.data_splitters.DistNodeSplitter` class instead."
-        )
-        super(HashedNodeSplitter, self).__init__(*args, **kwargs)
-
-
 def _create_distributed_splits_from_hash(
     nodes_to_select: torch.Tensor,
     hash_values: torch.Tensor,
