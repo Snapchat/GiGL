@@ -153,6 +153,10 @@ class RemoteDistDataset:
         Returns:
             list[torch.Tensor]: A list of node IDs for the given node type.
         """
+
+        def server_key(server_rank: int) -> str:
+            return f"node_ids_from_server_{server_rank}"
+
         if self._mp_sharing_dict is not None:
             if self._local_rank == 0:
                 start_time = time.time()
@@ -162,15 +166,13 @@ class RemoteDistDataset:
                 node_ids = self._get_node_ids(node_type)
                 for server_rank, node_id in enumerate(node_ids):
                     node_id.share_memory_()
-                    self._mp_sharing_dict[
-                        f"node_ids_from_server_{server_rank}"
-                    ] = node_id
+                    self._mp_sharing_dict[server_key(server_rank)] = node_id
                 logger.info(
                     f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
                 )
             torch.distributed.barrier()
             node_ids = [
-                self._mp_sharing_dict[f"node_ids_from_server_{server_rank}"]
+                self._mp_sharing_dict[server_key(server_rank)]
                 for server_rank in range(self.cluster_info.num_storage_nodes)
             ]
             return node_ids

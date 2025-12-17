@@ -29,6 +29,29 @@ from tests.test_assets.distributed.utils import assert_tensor_equality
 logger = Logger()
 
 
+def _assert_sampler_input(
+    cluster_info: GraphStoreInfo,
+    sampler_input: list[torch.Tensor],
+    expected_sampler_input: dict[int, list[torch.Tensor]],
+) -> None:
+    rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]
+    for i in range(cluster_info.compute_cluster_world_size):
+        if i == torch.distributed.get_rank():
+            logger.info(
+                f"Verifying sampler input for rank {i} / {cluster_info.compute_cluster_world_size}"
+            )
+            logger.info(f"--------------------------------")
+            assert len(sampler_input) == len(rank_expected_sampler_input)
+            for j, expected in enumerate(rank_expected_sampler_input):
+                assert_tensor_equality(sampler_input[j], expected)
+            logger.info(
+                f"{i} / {cluster_info.compute_cluster_world_size} compute node rank input nodes verified"
+            )
+        torch.distributed.barrier()
+
+    torch.distributed.barrier()
+
+
 def _run_client_process(
     client_rank: int,
     cluster_info: GraphStoreInfo,
@@ -71,23 +94,16 @@ def _run_client_process(
     logger.info("Verified that all ranks received the same free ports")
 
     sampler_input = remote_dist_dataset.get_node_ids()
+    _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
 
-    rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]
-    for i in range(cluster_info.compute_cluster_world_size):
-        if i == torch.distributed.get_rank():
-            logger.info(
-                f"Verifying sampler input for rank {i} / {cluster_info.compute_cluster_world_size}"
-            )
-            logger.info(f"--------------------------------")
-            assert len(sampler_input) == len(rank_expected_sampler_input)
-            for j, expected in enumerate(rank_expected_sampler_input):
-                assert_tensor_equality(sampler_input[j], expected)
-            logger.info(
-                f"{i} / {cluster_info.compute_cluster_world_size} compute node rank input nodes verified"
-            )
-        torch.distributed.barrier()
+    # test "simple" case where we don't have mp sharing dict too
+    simple_sampler_input = RemoteDistDataset(
+        cluster_info=cluster_info,
+        local_rank=client_rank,
+        mp_sharing_dict=None,
+    ).get_node_ids()
+    _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
-    torch.distributed.barrier()
     shutdown_compute_proccess()
 
 
