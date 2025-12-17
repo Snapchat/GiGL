@@ -14,7 +14,7 @@ from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed import build_dataset_from_task_config_uri
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.graph_store.remote_dataset import register_dataset
+from gigl.distributed.graph_store.storage_utils import register_dataset
 from gigl.distributed.utils import get_graph_store_info
 from gigl.distributed.utils.networking import get_free_ports_from_master_node
 from gigl.env.distributed import GraphStoreInfo
