@@ -1,39 +1,44 @@
 # syntax=docker/dockerfile:1
 
-# Used to generate hashed requirements.txt
-FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
 
 SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Already has python 3.11 installed - no need to install it again.
+# We use system python since it has packages pre-installed for us.
+ENV UV_SYSTEM_PYTHON=true
+ENV UV_PROJECT_ENVIRONMENT=/opt/conda/
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
-RUN apt-get update \
-    && apt-get upgrade -y \
-    && apt-get install -y build-essential git wget cmake iputils-ping \
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    cmake \
+    iputils-ping \
+    curl \
+    unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Miniconda
-ENV CONDA_DIR=/opt/conda
-RUN wget -O Miniforge3.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh" && bash Miniforge3.sh -b -p ${CONDA_DIR}
-ENV PATH=${CONDA_DIR}/bin:$PATH
+WORKDIR /gigl_deps
 
-# Create the conda env environment:
-# TODO: (svij) Build env using single entrypoint `make initialize_environment` for better maintainability
-RUN conda create -y --override-channels --channel conda-forge --name gnn python=3.9 pip
+COPY pyproject.toml pyproject.toml
+COPY uv.lock uv.lock
+COPY requirements requirements
+COPY python/gigl/scripts python/gigl/scripts
 
-# Update path so any call for python executables in the built image defaults to using the gnn conda environment
-ENV PATH=${CONDA_DIR}/envs/gnn/bin:$PATH
+RUN bash ./requirements/install_py_deps.sh
 
-# The default bashrc exists early and is mainly for local dev niceties - we delete so we can
-# Setup Conda for debugging purposes
-RUN rm ~/.bashrc && touch ~/.bashrc && conda init bash
-RUN echo "conda activate gnn" >> ~/.bashrc
+# Note: Since we are using system python, we dont need to create a virtual environment here unlike the
+# cpu base image.
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
 
-COPY requirements tmp/requirements
-COPY python/gigl/scripts tmp/python/gigl/scripts
-RUN pip install --upgrade pip
-RUN cd tmp && bash ./requirements/install_py_deps.sh --no-pip-cache
+WORKDIR /
 
 CMD [ "/bin/bash" ]

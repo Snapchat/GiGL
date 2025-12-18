@@ -3,8 +3,8 @@
 
 # More strict rules for specific files and directories
 .github/ @svij-sc @kmontemayor2-sc @nshah-sc
-requirements @svij-sc @kmontemayor2-sc @nshah-sc
-python/pyproject.toml @svij-sc @kmontemayor2-sc @nshah-sc
+requirements @svij-sc @kmontemayor2-sc @nshah-sc @yliu2-sc
+pyproject.toml @svij-sc @kmontemayor2-sc @nshah-sc @yliu2-sc
 
 # run_command_on_active_checkout.yaml gets updated when we build new images
 # As all devs may setup new images, we allow all of us to review it
