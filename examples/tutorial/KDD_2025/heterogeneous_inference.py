@@ -107,7 +107,7 @@ def inference(
                 embedding_batch=embeddings[node_type],
                 embedding_type=f"node_{node_type}",
             )
-        exporter.flush_embeddings()
+        exporter.flush_records()
         torch.distributed.barrier()  # Wait for all ranks to finish exporting embeddings
     logger.info(f"Finished inference on process {process_number}")
 

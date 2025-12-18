@@ -279,16 +279,6 @@ class EmbeddingExporter(GcsExporter):
 
         self.add_record(batched_records)
 
-    def flush_embeddings(self):
-        """
-        NOTE: This method is deprecated, and the `flush_records` method should be used instead.
-        This method will be removed in a future version.
-        """
-        logger.warning(
-            "flush_embeddings() is deprecated, and the `flush_records` method should be used instead. This method will be removed in a future version."
-        )
-        self.flush_records()
-
 
 class PredictionExporter(GcsExporter):
     def __init__(
