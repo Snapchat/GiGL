@@ -142,7 +142,7 @@ class SoftmaxLoss(nn.Module):
         )  # shape=[num_pos_nodes]
 
         loss = F.cross_entropy(
-            input=all_scores / self.softmax_temperature,
+            input=all_scores / self.softmax_temperature,  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
             target=ys,
             reduction="sum",
         )

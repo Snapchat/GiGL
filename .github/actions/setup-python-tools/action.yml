@@ -37,28 +37,16 @@ runs:
     using: "composite"
     # needs: comment-link-to-workflow  # Ensure that a comment is posted with workflow id
     steps:
-      # Step 1: Set up Python environment (Python 3.9.13).
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      # Step 1: Set up Python environment
+      - name: "Set up Python"
+        uses: actions/setup-python@v6
         with:
-          # Available versions: https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json
-          # Ensure to use a version that has support for arm64-darwin so we can build for Apple Silicon (macOS 14).
-          python-version: '3.9.13'
+          python-version-file: ".python-version"
 
-      # Step 2: Install pip-tools, which is used to generate hashed requirements.
-      # Note_1: pip 25.1 has a bug that causes pip-tools to fail with the following error:
-      # File ".../python3.9/site-packages/piptools/repositories/pypi.py", line 452, in allow_all_wheels
-      #   self.finder.find_all_candidates.cache_clear()
-      #   AttributeError: 'function' object has no attribute 'cache_clear'
-      # Note_2: Even though some wheels are guarded behind conditionals i.e. only use this if platform = linux;
-      # pip-tools 7.5.0 fails with the following error:
-      # pip._internal.exceptions.UnsupportedWheel: pyg_lib-0.4....linux_x86_64.whl is not a supported wheel on this platform.
-      # Thus, we fix the pip version to 25.0.1 and pip-tools version to 7.4.1.
-      - name: Install pip-tools
-        shell: bash
-        run: |
-          python -m pip install "pip==25.0.1"
-          python -m pip install "pip-tools==7.4.1"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.5" # Matches the version in requirements/install_py_deps.sh
 
       # Step 3: Set up Gcloud AUTH using Workload Identity Federation
       # See following for context: https://cloud.google.com/blog/products/identity-security/enabling-keyless-authentication-from-github-actions

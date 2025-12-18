@@ -26,7 +26,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
@@ -37,7 +37,7 @@ jobs:
       # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
       # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
       # https://github.com/tensorflow/tensorflow/issues/57104
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
         cmd: "make unit_test_py"
         service_account:  ${{ secrets.gcp_service_account_email }}
@@ -53,14 +53,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Scala Unit Tests
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      # We use cloud run here instead of using github hosted runners because of limitation of tests
+      # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
+      # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
+      # https://github.com/tensorflow/tensorflow/issues/57104
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
         cmd: "make unit_test_scala"
         service_account:  ${{ secrets.gcp_service_account_email }}
@@ -72,14 +76,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Integration Tests
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
         cmd: "make integration_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
@@ -91,14 +95,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run E2E Tests
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
         cmd: "make run_all_e2e_tests"
         service_account:  ${{ secrets.gcp_service_account_email }}
@@ -111,14 +115,14 @@ jobs:
   #   steps:
   #   - uses: actions/checkout@v4
   #   - name: Setup development environment
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
+  #     uses: ./.github/actions/setup-python-tools
   #     with:
   #         setup_gcloud: "true"
   #         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
   #         workload_identity_provider: ${{ secrets.workload_identity_provider }}
   #         gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
   #   - name: Run Example Notebook E2E Tests
-  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+  #     uses: ./.github/actions/run-cloud-run-command-on-active-checkout
   #     with:
   #       cmd: "make notebooks_test"
   #       service_account:  ${{ secrets.gcp_service_account_email }}
@@ -130,7 +134,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           install_dev_deps: "true"
           setup_gcloud: "true"
@@ -138,7 +142,9 @@ jobs:
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Lint Tests
+      shell: bash
       run: |
+        # sourcing .profile is important to resolve paths for java, sbt, et al.
+        # It is setup in the setup-python-tools action.
         source ~/.profile
-        make check_format
-        make assert_yaml_configs_parse
+        make lint_test

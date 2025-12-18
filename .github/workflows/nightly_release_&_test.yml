@@ -14,7 +14,7 @@ permissions:
 # Calls create_release w/ nightly and then run the api tests
 jobs:
   create-release:
-    uses: snapchat/gigl/.github/workflows/create_release.yml@main
+    uses: ./.github/workflows/create_release.yml
     secrets: inherit
     with:
       bump_type: nightly
@@ -28,14 +28,14 @@ jobs:
       with:
         ref: ${{ needs.create-release.outputs.release_branch_name }}
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run API Tests
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
         cmd: "make run_api_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
