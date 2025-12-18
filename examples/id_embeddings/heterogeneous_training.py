@@ -33,9 +33,6 @@ import collections
 import matplotlib
 matplotlib.use('Agg')  # Must be before importing pyplot for headless environments
 import matplotlib.pyplot as plt
-from google.cloud import storage
-import io
-from urllib.parse import urlparse
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -55,8 +52,9 @@ from torchrec.optim.optimizers import in_backward_optimizer_filter
 from torchrec.optim.rowwise_adagrad import RowWiseAdagrad
 
 import gigl.distributed.utils
-from gigl.common import Uri, UriFactory
+from gigl.common import Uri, UriFactory, GcsUri, LocalUri
 from gigl.common.logger import Logger
+from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed import (
     DistABLPLoader,
@@ -85,21 +83,31 @@ class DMPConfig:
     prefer_sharding_types: Optional[Sequence[str]] = ("table_wise", "row_wise")
     compute_kernel: EmbeddingComputeKernel = EmbeddingComputeKernel.FUSED
 
-def upload_file_to_gcs(local_path: str, gcs_uri: str) -> None:
+def upload_file_to_gcs(local_path: str, gcs_uri: str, project: Optional[str] = None) -> None:
     """
     Uploads a local file to a GCS URI of the form gs://bucket/path/to/file.png.
+
+    Args:
+        local_path (str): Path to the local file to upload.
+        gcs_uri (str): GCS URI destination (e.g., gs://bucket/path/to/file.png).
+        project (Optional[str]): GCP project ID. If None, uses default credentials.
     """
     if not gcs_uri.startswith("gs://"):
         raise ValueError(f"gcs_uri must start with 'gs://', got {gcs_uri}")
 
-    parsed = urlparse(gcs_uri.replace("gs://", "https://", 1))
-    bucket_name = parsed.netloc
-    blob_path = parsed.path.lstrip("/")
+    # Use GiGL's GcsUtils for proper GCS handling
+    gcs_utils = GcsUtils(project=project)
+    local_uri = LocalUri(local_path)
+    print(local_uri)
+    gcs_uri_obj = GcsUri(gcs_uri)
+    print(gcs_uri_obj)
 
-    client = storage.Client()  # uses default project/credentials on Vertex AI
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    blob.upload_from_filename(local_path)
+    logger.info(f"Uploading {local_path} to {gcs_uri}")
+    gcs_utils.upload_files_to_gcs(
+        local_file_path_to_gcs_path_map={local_uri: gcs_uri_obj},
+        parallel=False,
+    )
+    logger.info(f"Successfully uploaded to {gcs_uri}")
 
 
 
@@ -407,34 +415,34 @@ def compute_full_lightgcn_embeddings(model, dataset, node_type_to_num_nodes, dev
     num_users = node_type_to_num_nodes[NodeType("user")]
     num_items = node_type_to_num_nodes[NodeType("item")]
 
-    logger.info(f"num_users: {num_users}, num_items: {num_items}")
+    # logger.info(f"num_users: {num_users}, num_items: {num_items}")
 
     data["user"].node = torch.arange(num_users, device=device, dtype=torch.long)
     data["user"].batch_size = num_users
     data["item"].node = torch.arange(num_items, device=device, dtype=torch.long)
     data["item"].batch_size = num_items
 
-    logger.info(f"data: {data}")
+    # logger.info(f"data: {data}")
 
     dsts, srcs, _, _ = dataset.graph[("item", "to_train_gigl_positive", "user")].topo.to_coo()
-    logger.info(f"dsts: {dsts.shape}, srcs: {srcs.shape}")
+    # logger.info(f"dsts: {dsts.shape}, srcs: {srcs.shape}")
     edge_ui = torch.stack([srcs.to(device), dsts.to(device)], dim=0)  # [2, E]
     edge_iu = torch.stack([dsts.to(device), srcs.to(device)], dim=0)  # [2, E]
-    logger.info(f"edge_ui: {edge_ui.shape}, edge_iu: {edge_iu.shape}")
+    # logger.info(f"edge_ui: {edge_ui.shape}, edge_iu: {edge_iu.shape}")
 
     data["user", "to_train", "item"].edge_index = edge_ui
     data["item", "to_train", "user"].edge_index = edge_iu
 
-    logger.info(f"data: {data}")
+    # logger.info(f"data: {data}")
 
     emb_dict = model(data=data, device=device)  # dict[NodeType, Tensor]
 
-    logger.info(f"emb_dict: {emb_dict}")
+    # logger.info(f"emb_dict: {emb_dict}")
 
 
     user_emb = emb_dict[NodeType("user")]   # shape [num_users, D]
     item_emb = emb_dict[NodeType("item")]   # shape [num_items, D]
-    logger.info(f"user_emb: {user_emb.shape}, item_emb: {item_emb.shape}")
+    # logger.info(f"user_emb: {user_emb.shape}, item_emb: {item_emb.shape}")
 
     return user_emb, item_emb, srcs, dsts  # srcs/dsts = full train edge list
 
@@ -457,6 +465,7 @@ def compute_full_recall_at_k(user_emb, item_emb, pos_items_per_user, K=20, devic
     # logger.info(f"num_users: {num_users}, num_items: {num_items}")
     # logger.info(f"pos_items_per_user: {pos_items_per_user}")
     # logger.info(f"length of pos_items_per_user: {len(pos_items_per_user)}")
+    # logger.info(pos_items_per_user[:2])
 
     recalls = []
     batch_users = 256  # chunk users to avoid huge score matrix
@@ -467,20 +476,28 @@ def compute_full_recall_at_k(user_emb, item_emb, pos_items_per_user, K=20, devic
 
         # [B, D] x [D, I] -> [B, I]
         scores = user_emb[u_batch] @ item_emb.T  # full ranking over all items
+        # logger.info(f"scores: {scores.shape}")
 
         # Top-K items per user
         topk_items = torch.topk(scores, K, dim=1).indices  # [B, K]
-
+        # logger.info(topk_items.shape)
+        # logger.info(f"topk_items: {topk_items}")
         topk_sets = [set(row.tolist()) for row in topk_items]
+        # logger.info(f"topk_sets: {topk_sets}")
 
         for local_idx, u in enumerate(u_batch.tolist()):
+            # logger.info(f"local_idx: {local_idx}, u: {u}")
             pos_items = pos_items_per_user[u]
+            # logger.info(f"pos_items: {pos_items}")
             if not pos_items:
                 continue  # skip users with no train positives
 
+            # logger.info(f"topk_sets[local_idx]: {topk_sets[local_idx]}")
             hits = sum(1 for i in pos_items if i in topk_sets[local_idx])
+            # logger.info(f"hits: {hits}")
             recalls.append(hits / len(pos_items))
 
+    # logger.info(f"recalls: {recalls}")
     return sum(recalls) / len(recalls) if recalls else 0.0
 
 def _training_process(
@@ -656,7 +673,7 @@ def _training_process(
 
         # How often to run *full* Recall@K over all TRAIN edges.
         # This is expensive (full graph + full item ranking), so keep it infrequent.
-        full_recall_eval_every_n_batch = 10   # adjust up/down as you like
+        full_recall_eval_every_n_batch = 100   # adjust up/down as you like
         full_recall_K = 20
 
 
@@ -682,7 +699,7 @@ def _training_process(
             debug_this_batch = (batch_num == 0) or ((batch_num + 1) % log_every_n_batch == 0)
 
             optimizer.zero_grad()
-            # logger.info(f"Zeroing gradients")
+            logger.info(f"Zeroing gradients")
             main_data = next(train_main_iter)
             # logger.info(f"Main data: {main_data}")
             random_negative_data = next(train_random_neg_iter)
@@ -704,7 +721,7 @@ def _training_process(
                 #     logger.info(f"y_positive keys: {list(main_data.y_positive.keys())}")
                 #     for k, v in main_data.y_positive.items():
                 #         logger.info(f"  {k}: {len(v)} positives, sample IDs: {v[:5].tolist() if len(v) > 0 else []}")
-
+            logger.info(f"Computing BPR batch")
             loss, debug_info = _compute_bpr_batch(
                 model=model,
                 main_data=main_data,
@@ -723,29 +740,30 @@ def _training_process(
                     logger.info(f"  {key}: {value}")
 
             loss.backward()
-
+            logger.info(f"Backward pass completed")
             # Check if gradients exist and their magnitudes
             # NOTE: With TorchRec's fused optimizer, embedding gradients are not materialized on .grad
             # (they're applied directly in backward), so we only check non-embedding params here
-            if debug_this_batch and rank == 0:
-                grad_norms = []
-                param_norms = []
-                for name, param in model.named_parameters():
-                    if param.grad is not None:
-                        grad_norms.append(param.grad.norm().item())
-                        param_norms.append(param.norm().item())
-                if grad_norms:
-                    logger.info(f"  Non-embedding gradient norms - mean: {sum(grad_norms)/len(grad_norms):.6f}, "
-                               f"max: {max(grad_norms):.6f}, min: {min(grad_norms):.6f}")
-                    logger.info(f"  Non-embedding param norms - mean: {sum(param_norms)/len(param_norms):.6f}, "
-                               f"max: {max(param_norms):.6f}, min: {min(param_norms):.6f}")
-                else:
-                    logger.info("  Note: No .grad found on params (expected with TorchRec fused optimizer for embeddings)")
+            # if debug_this_batch and rank == 0:
+            #     grad_norms = []
+            #     param_norms = []
+            #     for name, param in model.named_parameters():
+            #         if param.grad is not None:
+            #             grad_norms.append(param.grad.norm().item())
+            #             param_norms.append(param.norm().item())
+            #     if grad_norms:
+            #         logger.info(f"  Non-embedding gradient norms - mean: {sum(grad_norms)/len(grad_norms):.6f}, "
+            #                    f"max: {max(grad_norms):.6f}, min: {min(grad_norms):.6f}")
+            #         logger.info(f"  Non-embedding param norms - mean: {sum(param_norms)/len(param_norms):.6f}, "
+            #                    f"max: {max(param_norms):.6f}, min: {min(param_norms):.6f}")
+            #     else:
+            #         logger.info("  Note: No .grad found on params (expected with TorchRec fused optimizer for embeddings)")
 
             optimizer.step()
-
+            logger.info(f"Step completed")
             batch_loss = _sync_metric_across_processes(loss)
             batch_losses.append(batch_loss)
+            logger.info(f"Batch loss: {batch_loss}")
 
             # Track train loss for plotting (rank 0 only)
             if rank == 0:
@@ -766,108 +784,112 @@ def _training_process(
             # ------------------------------------------------------------------
             # Periodic *full* Recall@K over TRAIN edges vs batch (rank 0 only)
             # ------------------------------------------------------------------
-            if (batch_num + 1) % full_recall_eval_every_n_batch == 0 and rank == 0:
-                global_step = batch_num + 1
-                logger.info(
-                    f"Rank {rank}: running FULL TRAIN Recall@{full_recall_K} eval "
-                    f"at batch {global_step}"
-                )
+    #         if (batch_num + 1) % full_recall_eval_every_n_batch == 0 and rank == 0:
+    #             global_step = batch_num + 1
+    #             logger.info(
+    #                 f"Rank {rank}: running FULL TRAIN Recall@{full_recall_K} eval "
+    #                 f"at batch {global_step}"
+    #             )
 
-                # Compute full LightGCN embeddings for all users/items on TRAIN graph
-                user_emb, item_emb, srcs, dsts = compute_full_lightgcn_embeddings(
-                    model=model,
-                    dataset=dataset,
-                    node_type_to_num_nodes=node_type_to_num_nodes,
-                    device=device,
-                )
-                pos_items_per_user = build_train_pos_lists(
-                    num_users=node_type_to_num_nodes[NodeType("user")],
-                    srcs=srcs,
-                    dsts=dsts,
-    )
+    #             # Compute full LightGCN embeddings for all users/items on TRAIN graph
+    #             user_emb, item_emb, srcs, dsts = compute_full_lightgcn_embeddings(
+    #                 model=model,
+    #                 dataset=dataset,
+    #                 node_type_to_num_nodes=node_type_to_num_nodes,
+    #                 device=device,
+    #             )
+    #             pos_items_per_user = build_train_pos_lists(
+    #                 num_users=node_type_to_num_nodes[NodeType("user")],
+    #                 srcs=srcs,
+    #                 dsts=dsts,
+    # )
 
-                # Compute true Recall@K over all items & all TRAIN edges
-                full_recall = compute_full_recall_at_k(
-                    user_emb=user_emb,
-                    item_emb=item_emb,
-                    pos_items_per_user=pos_items_per_user,
-                    K=full_recall_K,
-                    device=device,
-                )
+    #             # Compute true Recall@K over all items & all TRAIN edges
+    #             full_recall = compute_full_recall_at_k(
+    #                 user_emb=user_emb,
+    #                 item_emb=item_emb,
+    #                 pos_items_per_user=pos_items_per_user,
+    #                 K=full_recall_K,
+    #                 device=device,
+    #             )
 
-                full_eval_batch_indices.append(global_step)
-                full_eval_recall20.append(full_recall)
+    #             full_eval_batch_indices.append(global_step)
+    #             full_eval_recall20.append(full_recall)
 
-                logger.info(
-                    f"[FULL TRAIN Recall] batch {global_step}: "
-                    f"Recall@{full_recall_K}={full_recall:.4f}"
-                )
+    #             logger.info(
+    #                 f"[FULL TRAIN Recall] batch {global_step}: "
+    #                 f"Recall@{full_recall_K}={full_recall:.4f}"
+    #             )
 
         logger.info(f"Rank {rank}: Training completed. Saving model to {model_uri}")
         # if rank == 0:
         #     save_state_dict(model.state_dict(), model_uri)
 
-    user_emb, item_emb, srcs, dsts = compute_full_lightgcn_embeddings(
-        model=unwrap_from_dmp(model),
-        dataset=dataset,
-        node_type_to_num_nodes=node_type_to_num_nodes,
-        device=device,
-    )
-    pos_items_per_user = build_train_pos_lists(
-        num_users=node_type_to_num_nodes[NodeType("user")],
-        srcs=srcs,
-        dsts=dsts,
-    )
-    recall20 = compute_full_recall_at_k(
-        user_emb=user_emb,
-        item_emb=item_emb,
-        pos_items_per_user=pos_items_per_user,
-        K=20,
-        device=device,
-    )
-    logger.info(f"Full-train Recall@20 over all items: {recall20:.4f}")
+    if rank == 0:
+        logger.info(f"Computing full LightGCN embeddings after training")
+        user_emb, item_emb, srcs, dsts = compute_full_lightgcn_embeddings(
+            model=unwrap_from_dmp(model),
+            dataset=dataset,
+            node_type_to_num_nodes=node_type_to_num_nodes,
+            device=device,
+        )
+        logger.info(f"Building train pos lists after training")
+        pos_items_per_user = build_train_pos_lists(
+            num_users=node_type_to_num_nodes[NodeType("user")],
+            srcs=srcs,
+            dsts=dsts,
+        )
+        logger.info(f"Computing full Recall@20 after training")
+        recall20 = compute_full_recall_at_k(
+            user_emb=user_emb,
+            item_emb=item_emb,
+            pos_items_per_user=pos_items_per_user,
+            K=20,
+            device=device,
+        )
+        logger.info(f"Full-train Recall@20 over all items: {recall20:.4f}")
 
     # ----------------------------------------------------------------------
     # Offline plotting with matplotlib (only rank 0)
     # ----------------------------------------------------------------------
-    if rank == 0:
-        # Train loss vs batch
-        loss_plot_path = "train_loss_vs_batch.png"
-        if train_batch_indices and train_losses:
-            plt.figure()
-            plt.plot(train_batch_indices, train_losses, marker=".", linewidth=1)
-            plt.xlabel("Batch")
-            plt.ylabel("Train BPR loss")
-            plt.title("Train Loss vs Batch")
-            plt.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plt.savefig(loss_plot_path)
-            plt.close()
-            logger.info(f"Saved train loss curve to {loss_plot_path}")
+    # if rank == 0:
+    #     # Train loss vs batch
+    #     loss_plot_path = "train_loss_vs_batch.png"
+    #     if train_batch_indices and train_losses:
+    #         plt.figure()
+    #         plt.plot(train_batch_indices, train_losses, marker=".", linewidth=1)
+    #         plt.xlabel("Batch")
+    #         plt.ylabel("Train BPR loss")
+    #         plt.title("Train Loss vs Batch")
+    #         plt.grid(True, alpha=0.3)
+    #         plt.tight_layout()
+    #         plt.savefig(loss_plot_path)
+    #         plt.close()
+    #         logger.info(f"Saved train loss curve to {loss_plot_path}")
 
-            if plots_output_uri:
-                gcs_path = plots_output_uri.rstrip("/") + "/train_loss_vs_batch.png"
-                upload_file_to_gcs(loss_plot_path, gcs_path)
-                logger.info(f"Uploaded train loss curve to {gcs_path}")
+    #         if plots_output_uri:
+    #             gcs_path = plots_output_uri.rstrip("/") + "/train_loss_vs_batch.png"
+    #             upload_file_to_gcs(loss_plot_path, gcs_path)
+    #             logger.info(f"Uploaded train loss curve to {gcs_path}")
 
-        # Full-train Recall@20 vs batch
-        recall_plot_path = f"full_train_recall@{full_recall_K}_vs_batch.png"
-        if full_eval_batch_indices and full_eval_recall20:
-            plt.figure()
-            plt.plot(full_eval_batch_indices, full_eval_recall20, marker="o", linewidth=1)
-            plt.xlabel("Batch")
-            plt.ylabel(f"Full-train Recall@{full_recall_K}")
-            plt.title(f"Full-train Recall@{full_recall_K} vs Batch")
-            plt.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plt.savefig(recall_plot_path)
-            plt.close()
-            logger.info(f"Saved full-train Recall@{full_recall_K} curve to {recall_plot_path}")
+    #     # Full-train Recall@20 vs batch
+    #     recall_plot_path = f"full_train_recall@{full_recall_K}_vs_batch.png"
+    #     if full_eval_batch_indices and full_eval_recall20:
+    #         plt.figure()
+    #         plt.plot(full_eval_batch_indices, full_eval_recall20, marker="o", linewidth=1)
+    #         plt.xlabel("Batch")
+    #         plt.ylabel(f"Full-train Recall@{full_recall_K}")
+    #         plt.title(f"Full-train Recall@{full_recall_K} vs Batch")
+    #         plt.grid(True, alpha=0.3)
+    #         plt.tight_layout()
+    #         plt.savefig(recall_plot_path)
+    #         plt.close()
+    #         logger.info(f"Saved full-train Recall@{full_recall_K} curve to {recall_plot_path}")
 
-            if plots_output_uri:
-                gcs_path = plots_output_uri.rstrip("/") + f"/{recall_plot_path}"
-                upload_file_to_gcs(recall_plot_path, gcs_path)
-                logger.info(f"Uploaded full-train Recall curve to {gcs_path}")
+    #         if plots_output_uri:
+    #             gcs_path = plots_output_uri.rstrip("/") + f"/{recall_plot_path}"
+    #             upload_file_to_gcs(recall_plot_path, gcs_path)
+    #             logger.info(f"Uploaded full-train Recall curve to {gcs_path}")
 
 
 
@@ -970,6 +992,7 @@ def _run_example_training(
     l2_lambda = float(trainer_args.get("l2_lambda", "0.0"))
 
     plots_output_uri = trainer_args.get("plots_output_uri", "")  # optional
+    plots_output_uri = "gs://gigl-dev-temp-assets/swong3"
 
 
     # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
@@ -987,7 +1010,7 @@ def _run_example_training(
     learning_rate = float(trainer_args.get("learning_rate", "0.01"))
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
     num_max_train_batches = int(trainer_args.get("num_max_train_batches", "1000"))
-    num_max_train_batches = 100
+    num_max_train_batches = 10000
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
