@@ -52,6 +52,7 @@ ITEM_NODE_TYPE_NAME: Final[str] = "item"
 
 # Column names
 NODE_ID_COLUMN: Final[str] = "node_id"
+PLACEHOLDER_FEATURE_COLUMN: Final[str] = "placeholder_feature"
 SRC_COLUMN: Final[str] = "from_user_id"
 DST_COLUMN: Final[str] = "to_item_id"
 
@@ -67,6 +68,10 @@ def _build_node_table_query(
     The query aggregates nodes from both edge tables to ensure all nodes
     (even those only appearing in test edges) are included.
 
+    Note: A placeholder feature column is added to satisfy GiGL's data preprocessor
+    requirements, which expects at least one feature column in addition to node_id.
+    This column is not used by the LightGCN model.
+
     Args:
         node_id_column (str): The column name in the edge table representing this node type
             (e.g., SRC_COLUMN for user nodes, DST_COLUMN for item nodes)
@@ -74,16 +79,18 @@ def _build_node_table_query(
         test_edge_table (str): Full BigQuery path to the test edge table
 
     Returns:
-        str: SQL query that creates a node table with node_id column
+        str: SQL query that creates a node table with node_id and placeholder_feature columns
     """
     return f"""
     SELECT
-        {node_id_column} AS {NODE_ID_COLUMN}
+        {node_id_column} AS {NODE_ID_COLUMN},
+        0 AS {PLACEHOLDER_FEATURE_COLUMN}
     FROM
         `{train_edge_table}`
     UNION DISTINCT
     SELECT
-        {node_id_column} AS {NODE_ID_COLUMN}
+        {node_id_column} AS {NODE_ID_COLUMN},
+        0 AS {PLACEHOLDER_FEATURE_COLUMN}
     FROM
         `{test_edge_table}`
     """
@@ -248,7 +255,7 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
         )
 
         user_feature_spec_fn = build_ingestion_feature_spec_fn(
-            fixed_int_fields=[NODE_ID_COLUMN],
+            fixed_int_fields=[NODE_ID_COLUMN, PLACEHOLDER_FEATURE_COLUMN],
         )
 
         user_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
@@ -273,7 +280,7 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
         )
 
         item_feature_spec_fn = build_ingestion_feature_spec_fn(
-            fixed_int_fields=[NODE_ID_COLUMN],
+            fixed_int_fields=[NODE_ID_COLUMN, PLACEHOLDER_FEATURE_COLUMN],
         )
 
         item_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
@@ -437,23 +444,3 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
 
         logger.info("All edge preprocessing specs defined (4 edge types: forward and reverse for train and test)")
         return edge_data_ref_to_preprocessing_specs
-
-
-def get_gowalla_preprocessor_config(
-    train_edge_table: str, test_edge_table: str, **kwargs: Any
-) -> GowallaDataPreprocessorConfig:
-    """
-    Factory function to create a GowallaDataPreprocessorConfig instance.
-
-    Args:
-        train_edge_table (str): Full BigQuery path to the training edge table
-        test_edge_table (str): Full BigQuery path to the test edge table
-        **kwargs: Additional configuration arguments
-
-    Returns:
-        GowallaDataPreprocessorConfig: Configured preprocessor instance
-
-    """
-    return GowallaDataPreprocessorConfig(
-        train_edge_table=train_edge_table, test_edge_table=test_edge_table, **kwargs
-    )
