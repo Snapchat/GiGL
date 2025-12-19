@@ -1003,7 +1003,7 @@ def _run_example_training(
     learning_rate = float(trainer_args.get("learning_rate", "0.01"))
     weight_decay = float(trainer_args.get("weight_decay", "0.0005"))
     num_max_train_batches = int(trainer_args.get("num_max_train_batches", "1000"))
-    num_max_train_batches = 1000
+    num_max_train_batches = 5000
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
