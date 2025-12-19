@@ -249,7 +249,7 @@ def generate_pipeline(
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
         # We need to provide *some* notification emails, other wise the cleanup component will fail.
-        notification_emails: List[str] = [get_resource_config().service_account_email],
+        notification_emails: List[str] = ["kmonte@snap.com"],
     ):
         with kfp.dsl.ExitHandler(
             VertexNotificationEmailOp(recipients=notification_emails),
