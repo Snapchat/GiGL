@@ -28,7 +28,6 @@ import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
-from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -199,13 +198,13 @@ def _inference_process(
 
     # GiGL class for exporting embeddings to GCS. This is achieved by writing ids and embeddings to an in-memory buffer which gets
     # flushed to GCS. Setting the min_shard_size_threshold_bytes field of this class sets the frequency of flushing to GCS, and defaults
-    # to only flushing when flush_embeddings() is called explicitly or after exiting via a context manager.
+    # to only flushing when flush_records() is called explicitly or after exiting via a context manager.
     exporter = EmbeddingExporter(export_dir=gcs_base_uri)
 
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
 
-    barrier()
+    torch.distributed.barrier()
 
     t = time.time()
     data_loading_start_time = time.time()
@@ -261,7 +260,7 @@ def _inference_process(
 
     write_embedding_start_time = time.time()
     # Flushes all remaining embeddings to GCS
-    exporter.flush_embeddings()
+    exporter.flush_records()
 
     logger.info(
         f"--- Rank {rank} finished writing embeddings to GCS for node type {inference_node_type}, which took {time.time()-write_embedding_start_time:.2f} seconds"
@@ -272,7 +271,7 @@ def _inference_process(
     # Otherwise, processes which are still sampling *will* fail as the loaders they are trying to communicatate with will be shutdown.
     # We then call `gc.collect()` to cleanup the memory used by the data_loader on the current machine.
 
-    barrier()
+    torch.distributed.barrier()
 
     data_loader.shutdown()
     gc.collect()
@@ -280,9 +279,6 @@ def _inference_process(
     logger.info(
         f"--- All machines local rank {local_rank} finished inference for node type {inference_node_type}. Deleted data loader"
     )
-
-    # Clean up for a graceful exit
-    shutdown_rpc()
 
 
 def _run_example_inference(

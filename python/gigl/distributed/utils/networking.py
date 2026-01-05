@@ -5,8 +5,15 @@ from typing import Optional
 import torch
 
 from gigl.common.logger import Logger
-from gigl.common.utils.vertex_ai_context import ClusterSpec, get_cluster_spec
-from gigl.env.distributed import GraphStoreInfo
+from gigl.common.utils.vertex_ai_context import (
+    ClusterSpec,
+    get_cluster_spec,
+    is_currently_running_in_vertex_ai_job,
+)
+from gigl.env.distributed import (
+    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
+    GraphStoreInfo,
+)
 
 logger = Logger()
 
@@ -39,7 +46,8 @@ def get_free_ports(num_ports: int) -> list[int]:
         # OS assigns a free port; we want to keep it open until we have all ports so we only return unique ports
         s.bind(("", 0))
         open_sockets.append(s)
-        ports.append(s.getsockname()[1])
+        port = s.getsockname()[1]
+        ports.append(port)
     # Free up ports by closing the sockets
     for s in open_sockets:
         s.close()
@@ -147,10 +155,10 @@ def get_internal_ip_from_node(
         # Other nodes will receive the master's IP via broadcast
         ip_list = [None]
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
     node_ip = ip_list[0]
-    logger.info(f"Rank {rank} received master internal IP: {node_ip}")
+    logger.info(f"Rank {rank} received master node's internal IP: {node_ip}")
     assert node_ip is not None, "Could not retrieve master node's internal IP"
     return node_ip
 
@@ -187,6 +195,7 @@ def get_internal_ip_from_all_ranks() -> list[str]:
 def get_graph_store_info() -> GraphStoreInfo:
     """
     Get the information about the graph store cluster.
+
     MUST be called with a torch.distributed process group initialized, for the *entire* training cluster.
     E.g. the process group *must* include both the compute and storage nodes.
 
@@ -202,8 +211,9 @@ def get_graph_store_info() -> GraphStoreInfo:
     """
     # If we want to ever support other (non-VAI) environments,
     # we must switch here depending on the environment.
+    if not is_currently_running_in_vertex_ai_job():
+        raise ValueError("get_graph_store_info must be called in a Vertex AI job.")
     cluster_spec = get_cluster_spec()
-
     _validate_cluster_spec(cluster_spec)
 
     if "workerpool1" in cluster_spec.cluster:
@@ -227,10 +237,14 @@ def get_graph_store_info() -> GraphStoreInfo:
         num_ports=1, node_rank=num_compute_nodes
     )[0]
 
+    num_processes_per_compute = int(
+        os.environ.get(COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY, "1")
+    )
+
     return GraphStoreInfo(
-        num_cluster_nodes=num_storage_nodes + num_compute_nodes,
         num_storage_nodes=num_storage_nodes,
         num_compute_nodes=num_compute_nodes,
+        num_processes_per_compute=num_processes_per_compute,
         cluster_master_ip=cluster_master_ip,
         storage_cluster_master_ip=storage_cluster_master_ip,
         compute_cluster_master_ip=compute_cluster_master_ip,

@@ -1,5 +1,36 @@
-# Use the main Dockerfile.cpu.base as the base
-ARG BASE_IMAGE
-FROM $BASE_IMAGE
+FROM apache/beam_python3.11_sdk:2.56.0
 
-COPY --from=apache/beam_python3.9_sdk:2.53.0 /opt/apache/beam /opt/apache/beam
+ENV DEBIAN_FRONTEND=noninteractive
+
+# We use system python for dataflow images since it has python and apache beam pre-installed.
+ENV UV_SYSTEM_PYTHON=true
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
+
+# TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
+# Once VAI natively supports this communication, we can remove this requirement.
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    cmake \
+    iputils-ping \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+
+WORKDIR /gigl_deps
+
+COPY pyproject.toml pyproject.toml
+COPY uv.lock uv.lock
+COPY requirements requirements
+COPY python/gigl/scripts python/gigl/scripts
+
+RUN bash ./requirements/install_py_deps.sh --skip-glt-post-install
+
+# Note: Since we are using system python, we dont need to create a virtual environment here unlike the
+# cpu base image.
+# We also need to make UV detectable by the system
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /

@@ -139,8 +139,8 @@ def infer_task_inputs(
         decoder = model.module.decode
         batch_result_types = model.module.tasks.result_types
     else:
-        decoder = model.decode
-        batch_result_types = model.tasks.result_types
+        decoder = model.decode  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
+        batch_result_types = model.tasks.result_types  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.

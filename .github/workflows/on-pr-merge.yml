@@ -16,7 +16,7 @@ permissions:
   issues: 'write'
 
 jobs:
-  ci-unit-test:
+  ci-unit-test-python:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
@@ -26,20 +26,47 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run Unit Tests
+    - name: Run Python Unit Tests
       # We use cloud run here instead of using github hosted runners because of limitation of tests
       # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
       # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
       # https://github.com/tensorflow/tensorflow/issues/57104
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make unit_test"
+        cmd: "make unit_test_py"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
+
+  ci-unit-test-scala:
+    # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
+    # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
+    # Once before it gets into the merge queue and once when it is in the merge queue.
+    # Our tests take a long time to run, so this is not ideal.
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup development environment
+      uses: ./.github/actions/setup-python-tools
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run Scala Unit Tests
+      # We use cloud run here instead of using github hosted runners because of limitation of tests
+      # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
+      # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
+      # https://github.com/tensorflow/tensorflow/issues/57104
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
+      with:
+        cmd: "make unit_test_scala"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
@@ -49,14 +76,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Integration Tests
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
         cmd: "make integration_test"
         service_account:  ${{ secrets.gcp_service_account_email }}
@@ -68,14 +95,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run E2E Tests
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
         cmd: "make run_all_e2e_tests"
         service_account:  ${{ secrets.gcp_service_account_email }}
@@ -88,14 +115,14 @@ jobs:
   #   steps:
   #   - uses: actions/checkout@v4
   #   - name: Setup development environment
-  #     uses: snapchat/gigl/.github/actions/setup-python-tools@main
+  #     uses: ./.github/actions/setup-python-tools
   #     with:
   #         setup_gcloud: "true"
   #         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
   #         workload_identity_provider: ${{ secrets.workload_identity_provider }}
   #         gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
   #   - name: Run Example Notebook E2E Tests
-  #     uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+  #     uses: ./.github/actions/run-cloud-run-command-on-active-checkout
   #     with:
   #       cmd: "make notebooks_test"
   #       service_account:  ${{ secrets.gcp_service_account_email }}
@@ -107,7 +134,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
           install_dev_deps: "true"
           setup_gcloud: "true"
@@ -115,7 +142,9 @@ jobs:
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Lint Tests
+      shell: bash
       run: |
+        # sourcing .profile is important to resolve paths for java, sbt, et al.
+        # It is setup in the setup-python-tools action.
         source ~/.profile
-        make check_format
-        make assert_yaml_configs_parse
+        make lint_test

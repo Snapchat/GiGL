@@ -44,8 +44,8 @@ from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
 from gigl.utils.data_splitters import (
-    HashedNodeAnchorLinkSplitter,
-    HashedNodeSplitter,
+    DistNodeAnchorLinkSplitter,
+    DistNodeSplitter,
     NodeAnchorLinkSplitter,
     NodeSplitter,
     select_ssl_positive_label_edges,
@@ -118,8 +118,8 @@ def _load_and_build_partitioned_dataset(
             # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
             # we can remove this assert.
             assert isinstance(
-                splitter, HashedNodeAnchorLinkSplitter
-            ), f"Only {HashedNodeAnchorLinkSplitter.__name__} supports self-supervised positive label selection, got {type(splitter)}"
+                splitter, DistNodeAnchorLinkSplitter
+            ), f"Only {DistNodeAnchorLinkSplitter.__name__} supports self-supervised positive label selection, got {type(splitter)}"
             positive_label_edges = {}
             for supervision_edge_type in splitter._supervision_edge_types:
                 positive_label_edges[
@@ -282,13 +282,13 @@ def _build_dataset_process(
         master_port=rpc_port,
         num_rpc_threads=16,
     )
-    # HashedNodeAnchorLinkSplitter and HashedNodeSplitter require rpc to be initialized, so we initialize it here.
+    # DistNodeAnchorLinkSplitter and DistNodeSplitter require rpc to be initialized, so we initialize it here.
     should_teardown_process_group = False
 
     # TODO (mkolodner-sc): Address this code smell to better determine whether we have a distributed splitter without referencing
     # the protocol derivatives directly.
-    if isinstance(splitter, HashedNodeAnchorLinkSplitter) or isinstance(
-        splitter, HashedNodeSplitter
+    if isinstance(splitter, DistNodeAnchorLinkSplitter) or isinstance(
+        splitter, DistNodeSplitter
     ):
         should_teardown_process_group = True
         torch.distributed.init_process_group(
@@ -548,7 +548,7 @@ def build_dataset_from_task_config_uri(
                 else None  # Pass in None, which uses the default homogeneous edge type for the splitter
             )
             # TODO(kmonte): Maybe we should enable `should_convert_labels_to_edges` as a flag?
-            splitter = HashedNodeAnchorLinkSplitter(
+            splitter = DistNodeAnchorLinkSplitter(
                 sampling_direction=sample_edge_direction,
                 supervision_edge_types=supervision_edge_types,
                 should_convert_labels_to_edges=True,
@@ -563,7 +563,7 @@ def build_dataset_from_task_config_uri(
             task_metadata_pb_wrapper.task_metadata_type
             == TaskMetadataType.NODE_BASED_TASK
         ):
-            splitter = HashedNodeSplitter(
+            splitter = DistNodeSplitter(
                 num_val=num_val,
                 num_test=num_test,
             )
