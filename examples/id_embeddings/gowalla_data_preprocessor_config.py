@@ -116,14 +116,20 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
         **kwargs: Additional configuration arguments (currently unused but maintained for extensibility)
     """
 
-    def __init__(self, train_edge_table: str, test_edge_table: str, **kwargs: Any) -> None:
+    def __init__(
+        self, train_edge_table: str, test_edge_table: str, **kwargs: Any
+    ) -> None:
         super().__init__()
 
         # Store the edge table paths
         self._train_edge_table = train_edge_table
         self._test_edge_table = test_edge_table
-        logger.info(f"Initializing Gowalla config with train edge table: {self._train_edge_table}")
-        logger.info(f"Initializing Gowalla config with test edge table: {self._test_edge_table}")
+        logger.info(
+            f"Initializing Gowalla config with train edge table: {self._train_edge_table}"
+        )
+        logger.info(
+            f"Initializing Gowalla config with test edge table: {self._test_edge_table}"
+        )
 
         # Define node types
         self._user_node_type = NodeType(USER_NODE_TYPE_NAME)
@@ -173,7 +179,9 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
         Args:
             applied_task_identifier (AppliedTaskIdentifier): Unique identifier for this pipeline run
         """
-        logger.info("Preparing node tables for Gowalla dataset (combining train and test edges)...")
+        logger.info(
+            "Preparing node tables for Gowalla dataset (combining train and test edges)..."
+        )
 
         bq_utils = BqUtils(project=self._resource_config.project)
 
@@ -320,7 +328,9 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             EdgeDataReference, EdgeDataPreprocessingSpec
         ] = {}
 
-        logger.info("Defining edge preprocessing specs for bidirectional train and test edges...")
+        logger.info(
+            "Defining edge preprocessing specs for bidirectional train and test edges..."
+        )
 
         # ========== Forward Training Edges: user -> to_train -> item ==========
         user_to_train_item_edge_ref = BigqueryEdgeDataReference(
@@ -338,7 +348,9 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
         )
 
-        user_to_train_item_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+        user_to_train_item_preprocessing_fn = (
+            build_passthrough_transform_preprocessing_fn()
+        )
 
         edge_data_ref_to_preprocessing_specs[
             user_to_train_item_edge_ref
@@ -367,7 +379,9 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
         )
 
-        user_to_test_item_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+        user_to_test_item_preprocessing_fn = (
+            build_passthrough_transform_preprocessing_fn()
+        )
 
         edge_data_ref_to_preprocessing_specs[
             user_to_test_item_edge_ref
@@ -398,7 +412,9 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
         )
 
-        item_to_train_user_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+        item_to_train_user_preprocessing_fn = (
+            build_passthrough_transform_preprocessing_fn()
+        )
 
         edge_data_ref_to_preprocessing_specs[
             item_to_train_user_edge_ref
@@ -429,7 +445,9 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             fixed_int_fields=[SRC_COLUMN, DST_COLUMN],
         )
 
-        item_to_test_user_preprocessing_fn = build_passthrough_transform_preprocessing_fn()
+        item_to_test_user_preprocessing_fn = (
+            build_passthrough_transform_preprocessing_fn()
+        )
 
         edge_data_ref_to_preprocessing_specs[
             item_to_test_user_edge_ref
@@ -442,5 +460,7 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
         )
         logger.info("Reverse test edge spec defined (item -> to_test -> user)")
 
-        logger.info("All edge preprocessing specs defined (4 edge types: forward and reverse for train and test)")
+        logger.info(
+            "All edge preprocessing specs defined (4 edge types: forward and reverse for train and test)"
+        )
         return edge_data_ref_to_preprocessing_specs
