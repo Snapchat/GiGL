@@ -111,14 +111,12 @@ def get_free_ports_from_node(
 
 
 def get_internal_ip_from_master_node(
-    device: Optional[torch.device] = None,
     _global_rank_override: Optional[int] = None,
 ) -> str:
     """
     Get the internal IP address of the master node in a distributed setup.
 
     Args:
-        device (Optional[torch.device]): Device to use for communication. Defaults to None, which will use the default device.
         _global_rank_override (Optional[int]): Override for the global rank,
             useful for testing or if global rank is not accurately available.
 
@@ -126,13 +124,12 @@ def get_internal_ip_from_master_node(
         str: The internal IP address of the master node.
     """
     return get_internal_ip_from_node(
-        node_rank=0, device=device, _global_rank_override=_global_rank_override
+        node_rank=0, _global_rank_override=_global_rank_override
     )
 
 
 def get_internal_ip_from_node(
     node_rank: int,
-    device: Optional[torch.device] = None,
     _global_rank_override: Optional[int] = None,
 ) -> str:
     """
@@ -171,8 +168,7 @@ def get_internal_ip_from_node(
         # Other nodes will receive the master's IP via broadcast
         ip_list = [None]
 
-    if device is None:
-        device = torch.device("cpu" if not torch.cuda.is_available() else "cuda")
+    device = torch.device("cpu" if not torch.cuda.is_available() else "cuda")
 
     torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
     node_ip = ip_list[0]
