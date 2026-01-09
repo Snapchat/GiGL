@@ -1,13 +1,20 @@
 import collections
+import collections
 import os
+os.environ["TORCH_DISTRIBUTED_DEBUG"] = "INFO"
+os.environ["TORCH_SHOW_CPP_STACKTRACES"] = "1"
+import socket
 import unittest
 from unittest import mock
 
 import torch
 import torch.multiprocessing as mp
+from torch_geometric.data import Data
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.common.types.uri.uri_factory import UriFactory
+from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
     shutdown_compute_proccess,
@@ -22,7 +29,7 @@ from gigl.env.distributed import (
 )
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
-    CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
+   CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
@@ -58,6 +65,7 @@ def _run_client_process(
     mp_sharing_dict: dict[str, torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
+
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
     remote_dist_dataset = RemoteDistDataset(
@@ -94,16 +102,24 @@ def _run_client_process(
     logger.info("Verified that all ranks received the same free ports")
 
     sampler_input = remote_dist_dataset.get_node_ids()
+
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
-
-    # test "simple" case where we don't have mp sharing dict too
-    simple_sampler_input = RemoteDistDataset(
-        cluster_info=cluster_info,
-        local_rank=client_rank,
-        mp_sharing_dict=None,
-    ).get_node_ids()
-    _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
-
+    _assert_sampler_input(cluster_info, RemoteDistDataset(cluster_info, client_rank, mp_sharing_dict=None).get_node_ids(), expected_sampler_input)
+    torch.distributed.barrier()
+    loader = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+        input_nodes=sampler_input,
+        num_workers=2,
+        worker_concurrency=2,
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        count += 1
+    torch.distributed.barrier()
+    logger.info(f"Loaded {count} batches")
     shutdown_compute_proccess()
 
 
@@ -176,6 +192,7 @@ def _get_expected_input_nodes_by_rank(
     ],
     }
 
+
     Args:
         num_nodes (int): The number of nodes in the graph.
         cluster_info (GraphStoreInfo): The cluster information.
@@ -212,17 +229,22 @@ class TestUtils(unittest.TestCase):
             storage_cluster_master_port,
             compute_cluster_master_port,
             master_port,
-        ) = get_free_ports(num_ports=4)
+            rpc_master_port,
+            rpc_wait_port,
+        ) = get_free_ports(num_ports=6)
+        host_ip = socket.gethostbyname(socket.gethostname())
         cluster_info = GraphStoreInfo(
             num_storage_nodes=2,
             num_compute_nodes=2,
             num_processes_per_compute=2,
-            cluster_master_ip="localhost",
-            storage_cluster_master_ip="localhost",
-            compute_cluster_master_ip="localhost",
+            cluster_master_ip=host_ip,
+            storage_cluster_master_ip=host_ip,
+            compute_cluster_master_ip=host_ip,
             cluster_master_port=cluster_master_port,
             storage_cluster_master_port=storage_cluster_master_port,
             compute_cluster_master_port=compute_cluster_master_port,
+            rpc_master_port=rpc_master_port,
+            rpc_wait_port=rpc_wait_port,
         )
 
         num_cora_nodes = 2708
@@ -230,13 +252,14 @@ class TestUtils(unittest.TestCase):
             num_cora_nodes, cluster_info
         )
 
+
         ctx = mp.get_context("spawn")
         client_processes: list = []
         for i in range(cluster_info.num_compute_nodes):
             with mock.patch.dict(
                 os.environ,
                 {
-                    "MASTER_ADDR": "localhost",
+                    "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i),
                     "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),
@@ -262,7 +285,7 @@ class TestUtils(unittest.TestCase):
             with mock.patch.dict(
                 os.environ,
                 {
-                    "MASTER_ADDR": "localhost",
+                    "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i + cluster_info.num_compute_nodes),
                     "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),

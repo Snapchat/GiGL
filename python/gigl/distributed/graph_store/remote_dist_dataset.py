@@ -104,7 +104,7 @@ class RemoteDistDataset:
         futures: list[torch.futures.Future[torch.Tensor]] = []
         rank = self.cluster_info.compute_node_rank
         world_size = self.cluster_info.num_storage_nodes
-        logger.info(
+        print(
             f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
         )
 
@@ -160,14 +160,14 @@ class RemoteDistDataset:
         if self._mp_sharing_dict is not None:
             if self._local_rank == 0:
                 start_time = time.time()
-                logger.info(
+                print(
                     f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
                 )
                 node_ids = self._get_node_ids(node_type)
                 for server_rank, node_id in enumerate(node_ids):
                     node_id.share_memory_()
                     self._mp_sharing_dict[server_key(server_rank)] = node_id
-                logger.info(
+                print(
                     f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
                 )
             torch.distributed.barrier()
@@ -175,6 +175,7 @@ class RemoteDistDataset:
                 self._mp_sharing_dict[server_key(server_rank)]
                 for server_rank in range(self.cluster_info.num_storage_nodes)
             ]
+            print(f"node_ids: {[node.shape for node in node_ids]}")
             return node_ids
         else:
             return self._get_node_ids(node_type)
@@ -194,11 +195,7 @@ class RemoteDistDataset:
             raise ValueError(
                 "torch.distributed process group must be initialized for the entire training cluster"
             )
-        compute_cluster_rank = (
-            self.cluster_info.compute_node_rank
-            * self.cluster_info.num_processes_per_compute
-            + self._local_rank
-        )
+        compute_cluster_rank = torch.distributed.get_rank()
         if compute_cluster_rank == 0:
             ports = request_server(
                 0,

@@ -67,9 +67,10 @@ def launch_single_pool_job(
     cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
     cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
     container_uri = cpu_docker_uri if is_cpu_execution else cuda_docker_uri
-
+    is_inference = component == GiGLComponents.Inferencer
     job_config = _build_job_config(
         job_name=job_name,
+        is_inference=is_inference,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
         command_str=process_command,
@@ -153,10 +154,11 @@ def launch_graph_store_enabled_job(
     ]
 
     labels = resource_config_wrapper.get_resource_labels(component=component)
-
+    is_inference = component == GiGLComponents.Inferencer
     # Create compute pool job config
     compute_job_config = _build_job_config(
         job_name=job_name,
+        is_inference=is_inference,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
         command_str=process_command,
@@ -171,6 +173,7 @@ def launch_graph_store_enabled_job(
     # Create storage pool job config
     storage_job_config = _build_job_config(
         job_name=job_name,
+        is_inference=is_inference,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
         command_str=f"python -m gigl.distributed.graph_store.storage_main",
@@ -203,6 +206,7 @@ def launch_graph_store_enabled_job(
 
 def _build_job_config(
     job_name: str,
+    is_inference: bool,
     task_config_uri: Uri,
     resource_config_uri: Uri,
     command_str: str,
@@ -242,6 +246,7 @@ def _build_job_config(
             f"--task_config_uri={task_config_uri}",
             f"--resource_config_uri={resource_config_uri}",
         ]
+        + (["--is_inference"] if is_inference else [])
         + (["--use_cuda"] if use_cuda else [])
         + ([f"--{k}={v}" for k, v in args.items()])
     )

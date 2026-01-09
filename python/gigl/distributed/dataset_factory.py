@@ -10,13 +10,11 @@ from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.distributed import (
-    barrier,
     get_context,
-    init_rpc,
     init_worker_group,
-    rpc_is_initialized,
-    shutdown_rpc,
 )
+#from gigl.distributed.rpc import init_rpc, rpc_is_initialized, shutdown_rpc, barrier
+from graphlearn_torch.distributed.rpc import init_rpc, rpc_is_initialized, shutdown_rpc, barrier
 
 from gigl.common import Uri, UriFactory
 from gigl.common.data.dataloaders import TFRecordDataLoader

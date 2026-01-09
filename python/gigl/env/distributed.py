@@ -54,6 +54,8 @@ class GraphStoreInfo:
     # See documentation on the VertexAiGraphStoreConfig message for more details.
     # https://snapchat.github.io/GiGL/docs/api/snapchat/research/gbml/gigl_resource_config_pb2/index.html#snapchat.research.gbml.gigl_resource_config_pb2.VertexAiGraphStoreConfig
     num_processes_per_compute: int
+    rpc_master_port: int
+    rpc_wait_port: int
 
     @property
     def num_cluster_nodes(self) -> int:
@@ -94,3 +96,14 @@ class GraphStoreInfo:
                 f"Global rank {global_rank} is not a compute rank. Expected compute rank to be in [0, {self.num_compute_nodes})"
             )
         return global_rank
+
+    def compute_cluster_rank(self, local_rank: int) -> int:
+        """Get the global rank of the compute process in the compute cluster.
+
+        Args:
+            local_rank (int): The local rank of the process.
+
+        Returns:
+            int: The rank of the compute node in the compute cluster.
+        """
+        return self.compute_node_rank * self.num_processes_per_compute + local_rank

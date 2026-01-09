@@ -249,6 +249,8 @@ class VertexAIService:
         env_vars: list[env_var.EnvVar] = (
             compute_pool_job_config.environment_variables or []
         )
+        # env_vars.append(env_var.EnvVar(name="TORCH_DISTRIBUTED_DEBUG", value="INFO"))
+        # env_vars.append(env_var.EnvVar(name="TORCH_SHOW_CPP_STACKTRACES", value="1"))
 
         storage_container_spec = _create_container_spec(
             storage_pool_job_config, env_vars

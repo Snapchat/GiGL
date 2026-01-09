@@ -5,7 +5,6 @@ from typing import MutableMapping, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.distributed.rpc import barrier, rpc_is_initialized
 from torch.multiprocessing import Manager
 
 from gigl.common.data.dataloaders import (
@@ -21,7 +20,7 @@ from gigl.types.graph import (
     LoadedGraphTensors,
 )
 from gigl.utils.share_memory import share_memory
-
+from graphlearn_torch.distributed.rpc import rpc_is_initialized,  barrier
 logger = Logger()
 
 _ID_FMT = "{entity}_ids"
@@ -360,6 +359,7 @@ def load_torch_tensors_from_tf_record(
         _ID_FMT.format(entity=_NEGATIVE_LABEL_KEY), None
     )
 
+    #from gigl.distributed.rpc import rpc_is_initialized,  barrier
     if rpc_is_initialized():
         logger.info(
             f"Rank {rank} has finished loading data in {time.time() - start_time:.2f} seconds. Wait for other ranks to finish loading data from tfrecords"
