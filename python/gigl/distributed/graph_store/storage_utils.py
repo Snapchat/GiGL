@@ -133,7 +133,7 @@ def get_node_ids_for_rank(
     elif isinstance(_dataset.node_ids, dict):
         if node_type is None:
             raise ValueError(
-                f"node_type must be not None for a heterogeneous dataset. Got {node_type}."
+                f"node_type must be not None for a heterogeneous dataset. Got {node_type}. All node types in the dataset are: {_dataset.node_ids.keys()}"
             )
         nodes = _dataset.node_ids[node_type]
     else:
