@@ -354,9 +354,9 @@ class DistNeighborLoader(DistLoader):
         node_feature_info = dataset.get_node_feature_info()
         edge_feature_info = dataset.get_edge_feature_info()
         node_rank = dataset.cluster_info.compute_node_rank
-        compute_cluster_rank = dataset.cluster_info.compute_cluster_rank(local_rank)
+        compute_cluster_rank = torch.distributed.get_rank()
         logger.info(
-            f"Compute cluster rank: {compute_cluster_rank} for local rank: {local_rank}, node_rank: {node_rank}, torch rank: {torch.distributed.get_rank()}\n{'#'*100}\n"
+            f"Compute cluster rank: {compute_cluster_rank} for local rank: {local_rank}, node_rank: {node_rank}\n{'#'*100}\n"
         )
         torch.distributed.barrier()
         glt_ports = dataset.get_free_ports_on_storage_cluster(
@@ -409,14 +409,18 @@ class DistNeighborLoader(DistLoader):
                     raise ValueError(
                         "When using Graph Store mode, edge feature info must be provided for heterogeneous graphs."
                     )
-                elif len(edge_feature_info) == 1 and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_feature_info:
+                elif (
+                    len(edge_feature_info) == 1
+                    and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_feature_info
+                ):
                     input_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
                 else:
                     input_type = None
             else:
                 input_type = None
             input_data = [
-                NodeSamplerInput(node=node, input_type=input_type) for node in input_nodes
+                NodeSamplerInput(node=node, input_type=input_type)
+                for node in input_nodes
             ]
         elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], list):
             if isinstance(edge_feature_info, dict):
@@ -424,7 +428,10 @@ class DistNeighborLoader(DistLoader):
                     raise ValueError(
                         "When using Graph Store mode, edge feature info must be provided for heterogeneous graphs."
                     )
-                elif len(edge_feature_info) == 1 and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_feature_info:
+                elif (
+                    len(edge_feature_info) == 1
+                    and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_feature_info
+                ):
                     input_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
                 else:
                     input_type = input_nodes[0]
@@ -436,7 +443,7 @@ class DistNeighborLoader(DistLoader):
             raise ValueError(
                 f"When using Graph Store mode, input nodes must be of type (list[torch.Tensor] | (NodeType, list[torch.Tensor])), received {type(input_nodes)}"
             )
-        #print(f"input_data: {input_data}")
+        # print(f"input_data: {input_data}")
         print(f"input_type: {input_type}")
 
         return (

@@ -1,15 +1,11 @@
 import os
-import time
 from typing import Optional
 
-import graphlearn_torch as glt
 import torch
+from graphlearn_torch.distributed.dist_client import init_client, shutdown_client
 
 from gigl.common.logger import Logger
-from gigl.distributed.utils.networking import get_free_ports_from_master_node
 from gigl.env.distributed import GraphStoreInfo
-#from gigl.distributed.dist_client import init_client, shutdown_client
-from graphlearn_torch.distributed.dist_client import init_client, shutdown_client
 
 logger = Logger()
 
@@ -41,24 +37,6 @@ def init_compute_process(
         + local_rank
     )
     cluster_master_ip = cluster_info.storage_cluster_master_ip
-    world_size = (
-        cluster_info.compute_cluster_world_size + cluster_info.num_storage_nodes
-    )
-    # init_method = f"tcp://{cluster_master_ip}:{cluster_info.rpc_wait_port}"
-    # timeout = timedelta(minutes=15)
-    # logger.info(f"compute cluster rank {compute_cluster_rank} / {cluster_info.compute_cluster_world_size} will wait for server to be ready. PG rank: {compute_cluster_rank} / {world_size} and init method {init_method} and timeout {timeout}")
-    # start_time = time.time()
-    # torch.distributed.init_process_group(
-    #     backend="gloo",
-    #     world_size=world_size,
-    #     rank=compute_cluster_rank,
-    #     init_method=init_method,
-    #     timeout=timeout,
-    # )
-    # end_time = time.time()
-    # logger.info(f"compute cluster rank {compute_cluster_rank} / {cluster_info.compute_cluster_world_size} waited for {end_time - start_time} seconds to be ready")
-    # torch.distributed.destroy_process_group()
-    #time.sleep(90)  # Wait for the server to be ready
     logger.info(
         f"Initializing RPC client for compute node {compute_cluster_rank} / {cluster_info.compute_cluster_world_size} on {cluster_master_ip}:{cluster_info.rpc_master_port}."
         f" OS rank: {os.environ['RANK']}, local compute rank: {local_rank}"
@@ -82,9 +60,6 @@ def init_compute_process(
         world_size=cluster_info.compute_cluster_world_size,
         rank=compute_cluster_rank,
         init_method=f"tcp://{cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}",
-    )
-    logger.info(
-        f"Free ports from master node: {get_free_ports_from_master_node(num_ports=3)}"
     )
 
 

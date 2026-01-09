@@ -3,7 +3,6 @@ import time
 from typing import Optional, Union
 
 import torch
-#from gigl.distributed.rpc import all_gather
 from graphlearn_torch.distributed.rpc import all_gather
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor

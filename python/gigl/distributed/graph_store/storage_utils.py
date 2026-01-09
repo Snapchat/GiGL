@@ -52,10 +52,6 @@ def register_dataset(dataset: DistDataset) -> None:
     if _dataset is not None:
         raise ValueError("Dataset already registered! Cannot register a new dataset.")
     _dataset = dataset
-    logger.info(f"Registered dataset: {_dataset}")
-    logger.info(f"Node feature info: {_dataset.node_feature_info}")
-    logger.info(f"Edge feature info: {_dataset.edge_feature_info}")
-    logger.info(f"Edge dir: {_dataset.edge_dir}")
 
 
 def get_node_feature_info() -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
@@ -144,5 +140,4 @@ def get_node_ids_for_rank(
         raise ValueError(
             f"Node ids must be a torch.Tensor or a dict[NodeType, torch.Tensor], got {type(_dataset.node_ids)}"
         )
-    logger.info(f"Found {nodes.shape[0]} nodes for rank {rank} / {world_size} with node type {node_type}")
     return shard_nodes_by_process(nodes, rank, world_size)

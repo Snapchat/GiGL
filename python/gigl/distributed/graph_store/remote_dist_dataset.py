@@ -104,7 +104,7 @@ class RemoteDistDataset:
         futures: list[torch.futures.Future[torch.Tensor]] = []
         rank = self.cluster_info.compute_node_rank
         world_size = self.cluster_info.num_storage_nodes
-        print(
+        logger.info(
             f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
         )
 
@@ -160,14 +160,14 @@ class RemoteDistDataset:
         if self._mp_sharing_dict is not None:
             if self._local_rank == 0:
                 start_time = time.time()
-                print(
+                logger.info(
                     f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
                 )
                 node_ids = self._get_node_ids(node_type)
                 for server_rank, node_id in enumerate(node_ids):
                     node_id.share_memory_()
                     self._mp_sharing_dict[server_key(server_rank)] = node_id
-                print(
+                logger.info(
                     f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
                 )
             torch.distributed.barrier()
@@ -175,7 +175,6 @@ class RemoteDistDataset:
                 self._mp_sharing_dict[server_key(server_rank)]
                 for server_rank in range(self.cluster_info.num_storage_nodes)
             ]
-            print(f"node_ids: {[node.shape for node in node_ids]}")
             return node_ids
         else:
             return self._get_node_ids(node_type)
@@ -185,6 +184,7 @@ class RemoteDistDataset:
         Get free ports from the storage master node.
 
         This *must* be used with a torch.distributed process group initialized, for the *entire* training cluster.
+        E.g. if your training machines have 4 GPUs each, then the world size is probably number training machines * 4.
 
         All compute ranks will receive the same free ports.
 

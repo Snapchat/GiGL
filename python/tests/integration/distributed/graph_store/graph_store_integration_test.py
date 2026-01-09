@@ -1,6 +1,6 @@
 import collections
-import collections
 import os
+
 os.environ["TORCH_DISTRIBUTED_DEBUG"] = "INFO"
 os.environ["TORCH_SHOW_CPP_STACKTRACES"] = "1"
 import socket
@@ -13,7 +13,6 @@ from torch_geometric.data import Data
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
-from gigl.common.types.uri.uri_factory import UriFactory
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
@@ -29,7 +28,7 @@ from gigl.env.distributed import (
 )
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
-   CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
+    CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
@@ -65,7 +64,6 @@ def _run_client_process(
     mp_sharing_dict: dict[str, torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
-
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
     remote_dist_dataset = RemoteDistDataset(
@@ -102,10 +100,18 @@ def _run_client_process(
     logger.info("Verified that all ranks received the same free ports")
 
     sampler_input = remote_dist_dataset.get_node_ids()
-
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
-    _assert_sampler_input(cluster_info, RemoteDistDataset(cluster_info, client_rank, mp_sharing_dict=None).get_node_ids(), expected_sampler_input)
+
+    # test "simple" case where we don't have mp sharing dict too
+    simple_sampler_input = RemoteDistDataset(
+        cluster_info=cluster_info,
+        local_rank=client_rank,
+        mp_sharing_dict=None,
+    ).get_node_ids()
+    _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
     torch.distributed.barrier()
+
+    # Test the DistNeighborLoader
     loader = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -119,7 +125,15 @@ def _run_client_process(
         assert isinstance(datum, Data)
         count += 1
     torch.distributed.barrier()
-    logger.info(f"Loaded {count} batches")
+    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} batches")
+    count_tensor = torch.tensor(count, dtype=torch.int64)
+    all_node_count = 0
+    for rank_expected_sampler_input in expected_sampler_input.values():
+        all_node_count += sum(len(nodes) for nodes in rank_expected_sampler_input)
+    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
+    assert (
+        count_tensor.item() == all_node_count
+    ), f"Expected {all_node_count} total nodes, got {count_tensor.item()}"
     shutdown_compute_proccess()
 
 
@@ -251,7 +265,6 @@ class TestUtils(unittest.TestCase):
         expected_sampler_input = _get_expected_input_nodes_by_rank(
             num_cora_nodes, cluster_info
         )
-
 
         ctx = mp.get_context("spawn")
         client_processes: list = []

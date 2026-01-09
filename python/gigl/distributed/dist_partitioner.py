@@ -3,7 +3,6 @@ import time
 from collections import abc, defaultdict
 from typing import Callable, Optional, Tuple, Union
 
-#import gigl.distributed.rpc as glt_rpc
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
 from graphlearn_torch.distributed.dist_context import get_context

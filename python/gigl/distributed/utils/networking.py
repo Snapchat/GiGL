@@ -111,18 +111,28 @@ def get_free_ports_from_node(
 
 
 def get_internal_ip_from_master_node(
+    device: Optional[torch.device] = None,
     _global_rank_override: Optional[int] = None,
 ) -> str:
     """
     Get the internal IP address of the master node in a distributed setup.
+
+    Args:
+        device (Optional[torch.device]): Device to use for communication. Defaults to None, which will use the default device.
+        _global_rank_override (Optional[int]): Override for the global rank,
+            useful for testing or if global rank is not accurately available.
+
+    Returns:
+        str: The internal IP address of the master node.
     """
     return get_internal_ip_from_node(
-        node_rank=0, _global_rank_override=_global_rank_override
+        node_rank=0, device=device, _global_rank_override=_global_rank_override
     )
 
 
 def get_internal_ip_from_node(
     node_rank: int,
+    device: Optional[torch.device] = None,
     _global_rank_override: Optional[int] = None,
 ) -> str:
     """
@@ -130,6 +140,12 @@ def get_internal_ip_from_node(
     This is useful for setting up RPC communication between workers where the default torch.distributed env:// setup is not enough.
 
     i.e. when using :py:obj:`gigl.distributed.dataset_factory`
+
+    Args:
+        node_rank (int): Rank of the node, to fetch the internal IP address of.
+        device (Optional[torch.device]): Device to use for communication. Defaults to None, which will use the default device.
+        _global_rank_override (Optional[int]): Override for the global rank,
+            useful for testing or if global rank is not accurately available.
 
     Returns:
         str: The internal IP address of the node.
@@ -155,7 +171,9 @@ def get_internal_ip_from_node(
         # Other nodes will receive the master's IP via broadcast
         ip_list = [None]
 
-    device = "cpu"#"cuda" if torch.cuda.is_available() else "cpu"
+    if device is None:
+        device = torch.device("cpu" if not torch.cuda.is_available() else "cuda")
+
     torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
     node_ip = ip_list[0]
     logger.info(f"Rank {rank} received master node's internal IP: {node_ip}")
@@ -233,12 +251,12 @@ def get_graph_store_info() -> GraphStoreInfo:
     (
         cluster_master_port,
         compute_cluster_master_port,
-        rpc_master_port,
-        rpc_wait_port,
-    ) = get_free_ports_from_node(num_ports=4, node_rank=0)
-    storage_cluster_master_port, storage_rpc_port, storage_rpc_wait_port = get_free_ports_from_node(
-        num_ports=3, node_rank=num_compute_nodes
-    )
+    ) = get_free_ports_from_node(num_ports=2, node_rank=0)
+    (
+        storage_cluster_master_port,
+        storage_rpc_port,
+        storage_rpc_wait_port,
+    ) = get_free_ports_from_node(num_ports=3, node_rank=num_compute_nodes)
 
     num_processes_per_compute = int(
         os.environ.get(COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY, "1")

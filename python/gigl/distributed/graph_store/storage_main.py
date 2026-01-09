@@ -4,16 +4,15 @@ Derivved from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/exampl
 
 """
 import argparse
-import functools
 import os
-import os
-os.environ["TORCH_DISTRIBUTED_DEBUG"] = "INFO"
-os.environ["TORCH_SHOW_CPP_STACKTRACES"] = "1"
 from datetime import timedelta
 from typing import Optional
 
-import graphlearn_torch as glt
 import torch
+from graphlearn_torch.distributed.dist_server import (
+    init_server,
+    wait_and_shutdown_server,
+)
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
@@ -22,59 +21,9 @@ from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.storage_utils import register_dataset
 from gigl.distributed.utils import get_graph_store_info
 from gigl.distributed.utils.networking import get_free_ports_from_master_node
-#from gigl.distributed.rpc import init_rpc, rpc_is_initialized, shutdown_rpc, barrier
-#from gigl.distributed.dist_server import init_server, wait_and_shutdown_server
-from graphlearn_torch.distributed.rpc import init_rpc, rpc_is_initialized, shutdown_rpc, barrier
-from graphlearn_torch.distributed.dist_server import init_server, wait_and_shutdown_server, DistServer
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
-
-
-def _wrap_method_with_logging(method_name: str, original_method):
-    """Wrap a method to log its calls with arguments."""
-    @functools.wraps(original_method)
-    def wrapper(*args, **kwargs):
-        # Skip 'self' in args for logging
-        log_args = args[1:] if args else args
-        logger.info(f"[DistServer] {method_name} called with args={log_args}, kwargs={kwargs}")
-        try:
-            result = original_method(*args, **kwargs)
-            return result
-        except Exception as e:
-            logger.error(f"[DistServer] {method_name} raised exception: {e}")
-            raise
-    return wrapper
-
-
-def _instrument_dist_server_logging():
-    """Wrap all DistServer methods with logging."""
-    methods_to_wrap = [
-        "shutdown",
-        "wait_for_exit",
-        "exit",
-        "get_dataset_meta",
-        "get_node_partition_id",
-        "get_node_feature",
-        "get_tensor_size",
-        "get_node_label",
-        "get_edge_index",
-        "get_edge_size",
-        "create_sampling_producer",
-        "destroy_sampling_producer",
-        "start_new_epoch_sampling",
-        "fetch_one_sampled_message",
-    ]
-    for method_name in methods_to_wrap:
-        if hasattr(DistServer, method_name):
-            original_method = getattr(DistServer, method_name)
-            wrapped_method = _wrap_method_with_logging(method_name, original_method)
-            setattr(DistServer, method_name, wrapped_method)
-    logger.info("[DistServer] All methods instrumented with logging")
-
-
-# Instrument DistServer methods with logging at module load time
-_instrument_dist_server_logging()
 
 
 def _run_storage_process(
