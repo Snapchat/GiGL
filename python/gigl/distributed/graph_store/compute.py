@@ -1,8 +1,8 @@
 import os
 from typing import Optional
 
+import graphlearn_torch as glt
 import torch
-from graphlearn_torch.distributed.dist_client import init_client, shutdown_client
 
 from gigl.common.logger import Logger
 from gigl.env.distributed import GraphStoreInfo
@@ -42,7 +42,9 @@ def init_compute_process(
         f" OS rank: {os.environ['RANK']}, local compute rank: {local_rank}"
         f" num_servers: {cluster_info.num_storage_nodes}, num_clients: {cluster_info.compute_cluster_world_size}"
     )
-    init_client(
+    # Initialize the GLT client before starting the Torch Distributed process group.
+    # Otherwise, we saw intermittent hangs when initializing the client.
+    glt.distributed.init_client(
         num_servers=cluster_info.num_storage_nodes,
         num_clients=cluster_info.compute_cluster_world_size,
         client_rank=compute_cluster_rank,
@@ -72,5 +74,5 @@ def shutdown_compute_proccess() -> None:
     Args:
         None
     """
-    shutdown_client()
+    glt.distributed.shutdown_client()
     torch.distributed.destroy_process_group()

@@ -1,6 +1,5 @@
 from collections import Counter, abc
-from dataclasses import dataclass
-from typing import Literal, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -20,6 +19,7 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
+    DatasetMetadata,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     set_missing_features,
@@ -32,22 +32,12 @@ from gigl.src.common.types.graph_data import (
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    FeatureInfo,
 )
 
 logger = Logger()
 
 # When using CPU based inference/training, we default cpu threads for neighborloading on top of the per process parallelism.
 DEFAULT_NUM_CPU_THREADS = 2
-
-
-# Shared metadata between the local and remote datasets.
-@dataclass(frozen=True)
-class _DatasetMetadata:
-    is_labeled_heterogeneous: bool
-    node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
-    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
-    edge_dir: Union[str, Literal["in", "out"]]
 
 
 class DistNeighborLoader(DistLoader):
@@ -312,7 +302,7 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
-    ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, _DatasetMetadata]:
+    ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetMetadata]:
         if input_nodes is None:
             raise ValueError(
                 f"When using Graph Store mode, input nodes must be provided, received {input_nodes}"
@@ -394,7 +384,7 @@ class DistNeighborLoader(DistLoader):
         return (
             input_data,
             worker_options,
-            _DatasetMetadata(
+            DatasetMetadata(
                 is_labeled_heterogeneous=is_labeled_heterogeneous,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
@@ -424,7 +414,7 @@ class DistNeighborLoader(DistLoader):
         worker_concurrency: int,
         channel_size: str,
         num_cpu_threads: Optional[int],
-    ) -> tuple[NodeSamplerInput, MpDistSamplingWorkerOptions, _DatasetMetadata]:
+    ) -> tuple[NodeSamplerInput, MpDistSamplingWorkerOptions, DatasetMetadata]:
         if input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -540,7 +530,7 @@ class DistNeighborLoader(DistLoader):
         return (
             input_data,
             worker_options,
-            _DatasetMetadata(
+            DatasetMetadata(
                 is_labeled_heterogeneous=is_labeled_heterogeneous,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,

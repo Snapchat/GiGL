@@ -7,11 +7,8 @@ import argparse
 import os
 from typing import Optional
 
+import graphlearn_torch as glt
 import torch
-from graphlearn_torch.distributed.dist_server import (
-    init_server,
-    wait_and_shutdown_server,
-)
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
@@ -37,7 +34,9 @@ def _run_storage_process(
     logger.info(
         f"Initializing GLT server for storage node process group {storage_rank} / {cluster_info.num_storage_nodes} on {cluster_master_ip}:{cluster_info.rpc_master_port}"
     )
-    init_server(
+    # Initialize the GLT server before starting the Torch Distributed process group.
+    # Otherwise, we saw intermittent hangs when initializing the server.
+    glt.distributed.init_server(
         num_servers=cluster_info.num_storage_nodes,
         server_rank=storage_rank,
         dataset=dataset,
@@ -60,7 +59,7 @@ def _run_storage_process(
     logger.info(
         f"Waiting for storage node {storage_rank} / {cluster_info.num_storage_nodes} to exit"
     )
-    wait_and_shutdown_server()
+    glt.distributed.wait_and_shutdown_server()
     logger.info(f"Storage node {storage_rank} exited")
 
 

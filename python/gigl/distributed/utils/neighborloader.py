@@ -1,7 +1,8 @@
 """Utils for Neighbor loaders."""
 from collections import abc
 from copy import deepcopy
-from typing import Optional, TypeVar, Union
+from dataclasses import dataclass
+from typing import Literal, Optional, TypeVar, Union
 
 import torch
 from torch_geometric.data import Data, HeteroData
@@ -13,6 +14,22 @@ from gigl.types.graph import FeatureInfo, is_label_edge_type
 logger = Logger()
 
 _GraphType = TypeVar("_GraphType", Data, HeteroData)
+
+
+@dataclass(frozen=True)
+class DatasetMetadata:
+    """
+    Shared metadata between the local and remote datasets.
+    """
+
+    # If the dataset is labeled heterogeneous. E.g. one node type, one edge type, and "label" edges.
+    is_labeled_heterogeneous: bool
+    # Node feature info.
+    node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
+    # Edge feature info.
+    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
+    # Edge direction.
+    edge_dir: Union[str, Literal["in", "out"]]
 
 
 def patch_fanout_for_sampling(
