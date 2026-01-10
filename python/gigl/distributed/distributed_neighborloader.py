@@ -1,9 +1,14 @@
 from collections import Counter, abc
-from typing import Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Literal, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.distributed import DistLoader, MpDistSamplingWorkerOptions
+from graphlearn_torch.distributed import (
+    DistLoader,
+    MpDistSamplingWorkerOptions,
+    RemoteDistSamplingWorkerOptions,
+)
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -13,6 +18,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -26,6 +32,7 @@ from gigl.src.common.types.graph_data import (
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureInfo,
 )
 
 logger = Logger()
@@ -34,13 +41,27 @@ logger = Logger()
 DEFAULT_NUM_CPU_THREADS = 2
 
 
+# Shared metadata between the local and remote datasets.
+@dataclass(frozen=True)
+class _DatasetMetadata:
+    is_labeled_heterogeneous: bool
+    node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
+    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
+    edge_dir: Union[str, Literal["in", "out"]]
+
+
 class DistNeighborLoader(DistLoader):
     def __init__(
         self,
-        dataset: DistDataset,
+        dataset: Union[DistDataset, RemoteDistDataset],
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
-            Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
+            Union[
+                torch.Tensor,
+                Tuple[NodeType, torch.Tensor],
+                list[torch.Tensor],
+                Tuple[NodeType, list[torch.Tensor]],
+            ]
         ] = None,
         num_workers: int = 1,
         batch_size: int = 1,
@@ -62,7 +83,7 @@ class DistNeighborLoader(DistLoader):
         https://pytorch-geometric.readthedocs.io/en/2.5.2/_modules/torch_geometric/distributed/dist_neighbor_loader.html#DistNeighborLoader
 
         Args:
-            dataset (DistDataset): The dataset to sample from.
+            dataset (DistDataset | RemoteDistDataset): The dataset to sample from. Must be a "RemoteDistDataset" if using Graph Store mode.
             num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
@@ -71,12 +92,15 @@ class DistNeighborLoader(DistLoader):
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
-            input_nodes (torch.Tensor or Tuple[str, torch.Tensor]): The
-                indices of seed nodes to start sampling from.
+            input_nodes (Tenor | Tuple[NodeType, Tenor] | list[Tenor] | Tuple[NodeType, list[Tenor]]):
+                The nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
                 If set to `None` for homogeneous settings, all nodes will be considered.
                 In heterogeneous graphs, this flag must be passed in as a tuple that holds
                 the node type and node indices. (default: `None`)
+                For Graph Store mode, this must be a tuple of (NodeType, list[Tenor]) or list[Tenor].
+                Where each Tensor in the list is the node ids to sample from, for each server.
+                e.g. [[10, 20], [30, 40]] means sample from nodes 10 and 20 on server 0, and nodes 30 and 40 on server 1.
             num_workers (int): How many workers to use (subprocesses to spwan) for
                     distributed neighbor sampling of the current process. (default: ``1``).
             batch_size (int, optional): how many samples per batch to load
@@ -188,10 +212,219 @@ class DistNeighborLoader(DistLoader):
                 local_process_rank=local_rank
             )
         )
-        logger.info(
-            f"Dataset Building started on {node_rank} of {node_world_size} nodes, using following node as main: {master_ip_address}"
+
+        # Determines if the node ids passed in are heterogeneous or homogeneous.
+        self._is_labeled_heterogeneous = False
+        if isinstance(dataset, DistDataset):
+            input_data, worker_options, dataset_metadata = self._setup_for_colocated(
+                input_nodes,
+                dataset,
+                local_rank,
+                local_world_size,
+                device,
+                master_ip_address,
+                node_rank,
+                node_world_size,
+                process_start_gap_seconds,
+                num_workers,
+                worker_concurrency,
+                channel_size,
+                num_cpu_threads,
+            )
+        else:  # RemoteDistDataset
+            input_data, worker_options, dataset_metadata = self._setup_for_graph_store(
+                input_nodes,
+                dataset,
+                num_workers,
+            )
+
+        self._is_labeled_heterogeneous = dataset_metadata.is_labeled_heterogeneous
+        self._node_feature_info = dataset_metadata.node_feature_info
+        self._edge_feature_info = dataset_metadata.edge_feature_info
+
+        num_neighbors = patch_fanout_for_sampling(
+            list(dataset_metadata.edge_feature_info.keys())
+            if isinstance(dataset_metadata.edge_feature_info, dict)
+            else None,
+            num_neighbors,
         )
 
+        sampling_config = SamplingConfig(
+            sampling_type=SamplingType.NODE,
+            num_neighbors=num_neighbors,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            drop_last=drop_last,
+            with_edge=True,
+            collect_features=True,
+            with_neg=False,
+            with_weight=False,
+            edge_dir=dataset_metadata.edge_dir,
+            seed=None,  # it's actually optional - None means random.
+        )
+
+        if should_cleanup_distributed_context and torch.distributed.is_initialized():
+            logger.info(
+                f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
+            )
+            torch.distributed.destroy_process_group()
+
+        if isinstance(dataset, DistDataset):
+            super().__init__(
+                dataset if isinstance(dataset, DistDataset) else None,
+                input_data,
+                sampling_config,
+                device,
+                worker_options,
+            )
+        else:
+            # For Graph Store mode, we need to start the communcation between compute and storage nodes sequentially, by compute node.
+            # E.g. intialize connections between compute node 0 and storage nodes 0, 1, 2, 3, then compute node 1 and storage nodes 0, 1, 2, 3, etc.
+            # Note that each compute node may have multiple connections to each storage node, once per compute process.
+            # E.g. if there are 4 gpus per compute node, then there will be 4 connections to each storage node.
+            # We need to this because if we don't, then there is a race condition when initalizing the samplers on the storage nodes [1]
+            # Where since the lock is per *server* (e.g. per storage node), if we try to start one connection from compute node 0, and compute node 1
+            # Then we deadlock and fail.
+            # [1]: https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py#L129-L167
+            node_rank = dataset.cluster_info.compute_node_rank
+            for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
+                if node_rank == target_node_rank:
+                    super().__init__(
+                        dataset if isinstance(dataset, DistDataset) else None,
+                        input_data,
+                        sampling_config,
+                        device,
+                        worker_options,
+                    )
+                    print(f"node_rank {node_rank} initialized the dist loader")
+                torch.distributed.barrier()
+            torch.distributed.barrier()
+
+    def _setup_for_graph_store(
+        self,
+        input_nodes: Optional[
+            Union[
+                torch.Tensor,
+                Tuple[NodeType, torch.Tensor],
+                list[torch.Tensor],
+                Tuple[NodeType, list[torch.Tensor]],
+            ]
+        ],
+        dataset: RemoteDistDataset,
+        num_workers: int,
+    ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, _DatasetMetadata]:
+        if input_nodes is None:
+            raise ValueError(
+                f"When using Graph Store mode, input nodes must be provided, received {input_nodes}"
+            )
+        elif isinstance(input_nodes, torch.Tensor):
+            raise ValueError(
+                f"When using Graph Store mode, input nodes must be of type (list[Tensor] | (NodeType, list[torch.Tensor]), received {type(input_nodes)}"
+            )
+        elif isinstance(input_nodes, tuple) and isinstance(
+            input_nodes[1], torch.Tensor
+        ):
+            raise ValueError(
+                f"When using Graph Store mode, input nodes must be of type (list[torch.Tensor] | (NodeType, list[torch.Tensor])), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
+            )
+
+        is_labeled_heterogeneous = False
+        node_feature_info = dataset.get_node_feature_info()
+        edge_feature_info = dataset.get_edge_feature_info()
+        node_rank = dataset.cluster_info.compute_node_rank
+
+        # Get sampling ports for compute-storage connections.
+        sampling_ports = dataset.get_free_ports_on_storage_cluster(
+            num_ports=dataset.cluster_info.num_processes_per_compute
+        )
+        sampling_port = sampling_ports[node_rank]
+
+        worker_options = RemoteDistSamplingWorkerOptions(
+            server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
+            num_workers=num_workers,
+            worker_devices=[torch.device("cpu") for i in range(num_workers)],
+            master_addr=dataset.cluster_info.storage_cluster_master_ip,
+            master_port=sampling_port,
+            worker_key=f"compute_rank_{node_rank}",
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
+        )
+
+        # Setup input data for the dataloader.
+
+        # Determine nodes list and fallback input_type based on input_nodes structure
+        if isinstance(input_nodes, list):
+            nodes = input_nodes
+            fallback_input_type = None
+            require_edge_feature_info = False
+        elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], list):
+            nodes = input_nodes[1]
+            fallback_input_type = input_nodes[0]
+            require_edge_feature_info = True
+        else:
+            raise ValueError(
+                f"When using Graph Store mode, input nodes must be of type (list[torch.Tensor] | (NodeType, list[torch.Tensor])), received {type(input_nodes)}"
+            )
+
+        # Determine input_type based on edge_feature_info
+        if isinstance(edge_feature_info, dict):
+            if len(edge_feature_info) == 0:
+                raise ValueError(
+                    "When using Graph Store mode, edge feature info must be provided for heterogeneous graphs."
+                )
+            elif (
+                len(edge_feature_info) == 1
+                and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_feature_info
+            ):
+                input_type: NodeType | None = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            else:
+                input_type = fallback_input_type
+        elif require_edge_feature_info:
+            raise ValueError(
+                "When using Graph Store mode, edge feature info must be provided for heterogeneous graphs."
+            )
+        else:
+            input_type = None
+
+        input_data = [
+            NodeSamplerInput(node=node, input_type=input_type) for node in nodes
+        ]
+
+        return (
+            input_data,
+            worker_options,
+            _DatasetMetadata(
+                is_labeled_heterogeneous=is_labeled_heterogeneous,
+                node_feature_info=node_feature_info,
+                edge_feature_info=edge_feature_info,
+                edge_dir=dataset.get_edge_dir(),
+            ),
+        )
+
+    def _setup_for_colocated(
+        self,
+        input_nodes: Optional[
+            Union[
+                torch.Tensor,
+                Tuple[NodeType, torch.Tensor],
+                list[torch.Tensor],
+                Tuple[NodeType, list[torch.Tensor]],
+            ]
+        ],
+        dataset: DistDataset,
+        local_rank: int,
+        local_world_size: int,
+        device: torch.device,
+        master_ip_address: str,
+        node_rank: int,
+        node_world_size: int,
+        process_start_gap_seconds: float,
+        num_workers: int,
+        worker_concurrency: int,
+        channel_size: str,
+        num_cpu_threads: Optional[int],
+    ) -> tuple[NodeSamplerInput, MpDistSamplingWorkerOptions, _DatasetMetadata]:
         if input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -202,9 +435,15 @@ class DistNeighborLoader(DistLoader):
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
             input_nodes = dataset.node_ids
-
-        # Determines if the node ids passed in are heterogeneous or homogeneous.
-        self._is_labeled_heterogeneous = False
+        if isinstance(input_nodes, list):
+            raise ValueError(
+                f"When using Colocated mode, input nodes must be of type (torch.Tensor | (NodeType, torch.Tensor)), received {type(input_nodes)}"
+            )
+        elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], list):
+            raise ValueError(
+                f"When using Colocated mode, input nodes must be of type (torch.Tensor | (NodeType, torch.Tensor)), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
+            )
+        is_labeled_heterogeneous = False
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
 
@@ -216,7 +455,7 @@ class DistNeighborLoader(DistLoader):
                     and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
                 ):
                     node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-                    self._is_labeled_heterogeneous = True
+                    is_labeled_heterogeneous = True
                 else:
                     raise ValueError(
                         f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
@@ -229,18 +468,11 @@ class DistNeighborLoader(DistLoader):
                 dataset.node_ids, abc.Mapping
             ), "Dataset must be heterogeneous if provided input nodes are a tuple."
 
-        num_neighbors = patch_fanout_for_sampling(
-            dataset.get_edge_types(), num_neighbors
-        )
-
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
         )
-
-        self._node_feature_info = dataset.node_feature_info
-        self._edge_feature_info = dataset.edge_feature_info
 
         input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
@@ -305,27 +537,16 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
-        sampling_config = SamplingConfig(
-            sampling_type=SamplingType.NODE,
-            num_neighbors=num_neighbors,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            drop_last=drop_last,
-            with_edge=True,
-            collect_features=True,
-            with_neg=False,
-            with_weight=False,
-            edge_dir=dataset.edge_dir,
-            seed=None,  # it's actually optional - None means random.
+        return (
+            input_data,
+            worker_options,
+            _DatasetMetadata(
+                is_labeled_heterogeneous=is_labeled_heterogeneous,
+                node_feature_info=dataset.node_feature_info,
+                edge_feature_info=dataset.edge_feature_info,
+                edge_dir=dataset.edge_dir,
+            ),
         )
-
-        if should_cleanup_distributed_context and torch.distributed.is_initialized():
-            logger.info(
-                f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
-            )
-            torch.distributed.destroy_process_group()
-
-        super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
