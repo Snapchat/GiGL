@@ -1,4 +1,4 @@
-from typing import Any, Callable, Iterable, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, Optional, Tuple
 
 import apache_beam as beam
 import pyarrow as pa
@@ -209,7 +209,7 @@ class WriteTFSchema(beam.PTransform):
 def get_load_data_and_transform_pipeline_component(
     applied_task_identifier: AppliedTaskIdentifier,
     data_reference: DataReference,
-    preprocessing_spec: Union[NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec],
+    preprocessing_spec: NodeDataPreprocessingSpec | EdgeDataPreprocessingSpec,
     transformed_features_info: TransformedFeaturesInfo,
     num_shards: int,
     custom_worker_image_uri: Optional[str] = None,

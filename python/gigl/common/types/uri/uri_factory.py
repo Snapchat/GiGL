@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Type, Union
+from typing import Type
 
 from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.types.uri.http_uri import HttpUri
@@ -15,7 +15,7 @@ class UriFactory:
     """
 
     @staticmethod
-    def create_uri(uri: Union[str, Path, Uri]) -> Uri:
+    def create_uri(uri: str | Path | Uri) -> Uri:
         """
         Create a Uri object based on the given URI string, path, or existing Uri object.
 

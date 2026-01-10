@@ -4,7 +4,7 @@ import sys
 import threading
 from collections import defaultdict
 from itertools import chain, repeat
-from typing import Callable, Iterable, NamedTuple, Optional, Tuple, Union
+from typing import Callable, Iterable, NamedTuple, Optional, Tuple
 
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
@@ -190,8 +190,8 @@ class DataPreprocessor:
 
     def __preprocess_single_data_reference(
         self,
-        data_reference: Union[NodeDataReference, EdgeDataReference],
-        preprocessing_spec: Union[NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec],
+        data_reference: NodeDataReference | EdgeDataReference,
+        preprocessing_spec: NodeDataPreprocessingSpec | EdgeDataPreprocessingSpec,
         lock: threading.Lock,
     ) -> TransformedFeaturesInfo:
         """
@@ -200,7 +200,7 @@ class DataPreprocessor:
         """
 
         feature_type: FeatureTypes
-        entity_type: Union[NodeType, EdgeType]
+        entity_type: NodeType | EdgeType
 
         custom_identifier: str = ""
         if isinstance(data_reference, NodeDataReference):
@@ -360,14 +360,12 @@ class DataPreprocessor:
             logger.info(f"Launching {num_dataflow_jobs} dataflow jobs in parallel.")
             futures: dict[
                 concurrent.futures.Future[TransformedFeaturesInfo],
-                Tuple[Union[NodeDataReference, EdgeDataReference], FeatureTypes],
+                Tuple[NodeDataReference | EdgeDataReference, FeatureTypes],
             ] = dict()
 
             data_ref_and_prep_specs: Iterable[
-                Union[
-                    Tuple[NodeDataReference, NodeDataPreprocessingSpec],
-                    Tuple[EdgeDataReference, EdgeDataPreprocessingSpec],
-                ]
+                Tuple[NodeDataReference, NodeDataPreprocessingSpec]
+                | Tuple[EdgeDataReference, EdgeDataPreprocessingSpec]
             ] = chain(
                 node_ref_to_preprocessing_spec.items(),
                 edge_ref_to_preprocessing_spec.items(),
@@ -381,12 +379,12 @@ class DataPreprocessor:
             for data_ref_and_prep_spec, feature_type in zip(
                 data_ref_and_prep_specs, feature_types
             ):
-                data_ref: Union[
-                    NodeDataReference, EdgeDataReference
-                ] = data_ref_and_prep_spec[0]
-                prep_spec: Union[
-                    NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec
-                ] = data_ref_and_prep_spec[1]
+                data_ref: NodeDataReference | EdgeDataReference = (
+                    data_ref_and_prep_spec[0]
+                )
+                prep_spec: NodeDataPreprocessingSpec | EdgeDataPreprocessingSpec = (
+                    data_ref_and_prep_spec[1]
+                )
 
                 future = executor.submit(
                     self.__preprocess_single_data_reference,

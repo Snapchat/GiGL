@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from typing_extensions import Self
 
@@ -95,4 +95,4 @@ class Uri(object):
         return self.join(self, other)
 
 
-_URI_LIKE = Union[str, Path, Uri]
+_URI_LIKE = str | Path | Uri

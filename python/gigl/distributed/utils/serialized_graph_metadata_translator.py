@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Tuple
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
@@ -14,11 +14,10 @@ from snapchat.research.gbml.preprocessed_metadata_pb2 import PreprocessedMetadat
 
 
 def _build_serialized_tfrecord_entity_info(
-    preprocessed_metadata: Union[
-        PreprocessedMetadata.NodeMetadataOutput, PreprocessedMetadata.EdgeMetadataInfo
-    ],
+    preprocessed_metadata: PreprocessedMetadata.NodeMetadataOutput
+    | PreprocessedMetadata.EdgeMetadataInfo,
     feature_spec_dict: FeatureSpecDict,
-    entity_key: Union[str, Tuple[str, str]],
+    entity_key: str | Tuple[str, str],
     tfrecord_uri_pattern: str,
 ) -> SerializedTFRecordInfo:
     """

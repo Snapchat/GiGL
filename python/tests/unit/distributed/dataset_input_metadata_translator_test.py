@@ -1,6 +1,6 @@
 import unittest
 from collections import abc
-from typing import Optional, Union
+from typing import Optional
 
 from parameterized import param, parameterized
 
@@ -32,16 +32,14 @@ class TranslatorTestCase(unittest.TestCase):
     def _assert_data_type_correctness(
         self,
         entity_info: Optional[
-            Union[
-                SerializedTFRecordInfo,
-                dict[NodeType, SerializedTFRecordInfo],
-                dict[EdgeType, SerializedTFRecordInfo],
-                dict[NodeType, SerializedTFRecordInfo],
-                dict[EdgeType, SerializedTFRecordInfo],
-            ]
+            SerializedTFRecordInfo
+            | dict[NodeType, SerializedTFRecordInfo]
+            | dict[EdgeType, SerializedTFRecordInfo]
+            | dict[NodeType, SerializedTFRecordInfo]
+            | dict[EdgeType, SerializedTFRecordInfo]
         ],
         is_heterogeneous: bool,
-        expected_entity_types: Union[list[EdgeType], list[NodeType]],
+        expected_entity_types: list[EdgeType] | list[NodeType],
     ):
         """
         Checks that each item in the provided serialized graph metadata is correctly typed and, if heterogeneous, that edge types and node types are as expected.

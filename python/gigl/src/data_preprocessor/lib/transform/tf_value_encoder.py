@@ -1,11 +1,11 @@
-from typing import Any, AnyStr, Union
+from typing import Any, AnyStr
 
 import tensorflow as tf
 
 
 class TFValueEncoder:
     @staticmethod
-    def get_value_to_impute(dtype: tf.dtypes.DType) -> Union[int, str, float]:
+    def get_value_to_impute(dtype: tf.dtypes.DType) -> int | str | float:
         """
         Returns the default value to use for a missing field.
         :param dtype:

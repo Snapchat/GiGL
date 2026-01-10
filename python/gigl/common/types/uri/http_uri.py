@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Union
 
 from gigl.common.types.uri.uri import Uri
 
@@ -9,27 +8,25 @@ from gigl.common.types.uri.uri import Uri
 class HttpUri(Uri):
     """Represents an HTTP URI."""
 
-    def __init__(self, uri: Union[str, Path, HttpUri]) -> None:
+    def __init__(self, uri: str | Path | HttpUri) -> None:
         self._has_valid_prefix(uri=uri)
         self._has_no_backslash(uri=uri)
         super().__init__(uri=uri)
 
     @classmethod
-    def _has_valid_prefix(cls, uri: Union[str, Path, Uri]) -> bool:
+    def _has_valid_prefix(cls, uri: str | Path | Uri) -> bool:
         """Check if the URI has a valid prefix (http:// or https://)."""
         uri_str = cls._token_to_string(uri)
 
         return uri_str.startswith("http://") or uri_str.startswith("https://")
 
     @classmethod
-    def _has_no_backslash(cls, uri: Union[str, Path, Uri]) -> bool:
+    def _has_no_backslash(cls, uri: str | Path | Uri) -> bool:
         """Check if the URI has no backslashes."""
         return cls._token_to_string(uri).count("\\") == 0
 
     @classmethod
-    def is_valid(
-        cls, uri: Union[str, Path, Uri], raise_exception: bool = False
-    ) -> bool:
+    def is_valid(cls, uri: str | Path | Uri, raise_exception: bool = False) -> bool:
         """Check if the URI is valid.
 
         Args:

@@ -1,6 +1,6 @@
 import unittest
 from collections import defaultdict
-from typing import Literal, Optional, Union
+from typing import Literal, Optional
 
 import torch
 import torch.multiprocessing as mp
@@ -237,7 +237,7 @@ def _run_toy_heterogeneous_ablp(
     _,
     dataset: DistDataset,
     supervision_edge_types: list[EdgeType],
-    fanout: Union[list[int], dict[EdgeType, list[int]]],
+    fanout: list[int] | dict[EdgeType, list[int]],
 ):
     anchor_node_type = NodeType("user")
     supervision_node_type = NodeType("story")
@@ -638,7 +638,7 @@ class DistABLPLoaderTest(unittest.TestCase):
         self,
         _,
         partitioner_class: type[DistPartitioner],
-        fanout: Union[list[int], dict[EdgeType, list[int]]],
+        fanout: list[int] | dict[EdgeType, list[int]],
     ):
         create_test_process_group()
         toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[

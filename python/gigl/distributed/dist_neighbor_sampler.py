@@ -1,7 +1,7 @@
 import asyncio
 import gc
 from collections import defaultdict
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -49,9 +49,9 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         # Go through the positive and negative labels and add them to the metadata and input seeds builder.
         # We need to sample from the supervision nodes as well, and ensure that we are sampling from the correct node type.
         metadata: dict[str, torch.Tensor] = {}
-        input_seeds_builder: dict[
-            Union[str, NodeType], list[torch.Tensor]
-        ] = defaultdict(list)
+        input_seeds_builder: dict[str | NodeType, list[torch.Tensor]] = defaultdict(
+            list
+        )
         input_seeds_builder[input_type].append(input_seeds)
         for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
             filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
@@ -80,7 +80,7 @@ class DistABLPNeighborSampler(DistNeighborSampler):
         # As a perf optimization, we *could* have `input_nodes` be only the unique nodes,
         # but since torch.unique() calls a sort, we should investigate if it's worth it.
         # TODO(kmonte, mkolodner-sc): Investigate if this is worth it.
-        input_nodes: dict[Union[str, NodeType], torch.Tensor] = {
+        input_nodes: dict[str | NodeType, torch.Tensor] = {
             node_type: torch.cat(seeds, dim=0).to(self.device)
             for node_type, seeds in input_seeds_builder.items()
         }

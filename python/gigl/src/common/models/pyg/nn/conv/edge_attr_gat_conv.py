@@ -1,5 +1,3 @@
-from typing import Union
-
 from torch import Tensor
 from torch_geometric.nn import GATConv
 from torch_geometric.nn.dense.linear import Linear
@@ -34,7 +32,7 @@ class EdgeAttrGATConv(GATConv):
 
     def forward(
         self,
-        x: Union[Tensor, OptPairTensor],
+        x: Tensor | OptPairTensor,
         edge_index: Adj,
         edge_attr: OptTensor = None,
         size: Size = None,

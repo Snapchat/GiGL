@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 from gigl.common import GcsUri
 from gigl.env.pipelines_config import get_resource_config
@@ -128,7 +128,7 @@ def get_data_preprocessor_staging_gcs_path(
 def get_tf_transform_directory_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: Optional[str] = "",
 ) -> GcsUri:
     """
@@ -158,7 +158,7 @@ def get_tf_transform_directory_path(
 def get_tf_transformed_features_schema_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """
@@ -187,7 +187,7 @@ def get_tf_transformed_features_schema_path(
 def get_tf_transformed_features_transform_fn_assets_directory_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: Optional[str] = "",
 ) -> GcsUri:
     """
@@ -214,7 +214,7 @@ def get_tf_transformed_features_transform_fn_assets_directory_path(
 def get_tf_transform_temp_directory_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """
@@ -244,7 +244,7 @@ def get_tf_transform_temp_directory_path(
 def get_tf_transform_stats_directory_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """
@@ -271,7 +271,7 @@ def get_tf_transform_stats_directory_path(
 def get_tf_transform_visualized_facets_file_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """
@@ -298,7 +298,7 @@ def get_tf_transform_visualized_facets_file_path(
 def get_tf_transform_stats_file_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """
@@ -325,7 +325,7 @@ def get_tf_transform_stats_file_path(
 def get_tf_transform_raw_data_schema_file_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """
@@ -352,7 +352,7 @@ def get_tf_transform_raw_data_schema_file_path(
 def get_transformed_features_directory_path(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """
@@ -381,7 +381,7 @@ def get_transformed_features_directory_path(
 def get_transformed_features_file_prefix(
     applied_task_identifier: AppliedTaskIdentifier,
     feature_type: FeatureTypes,
-    entity_type: Union[NodeType, EdgeType],
+    entity_type: NodeType | EdgeType,
     custom_identifier: str = "",
 ) -> GcsUri:
     """

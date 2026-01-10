@@ -1,4 +1,4 @@
-from typing import Any, Final, Optional, Union
+from typing import Any, Final, Optional
 
 import torch
 from graphlearn_torch.sampler import NodeSamplerInput
@@ -26,7 +26,7 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
     def __init__(
         self,
         node: torch.Tensor,
-        input_type: Optional[Union[str, NodeType]],
+        input_type: Optional[str | NodeType],
         positive_label_by_edge_types: dict[EdgeType, torch.Tensor],
         negative_label_by_edge_types: dict[EdgeType, torch.Tensor],
     ):
@@ -53,7 +53,7 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
     def __len__(self) -> int:
         return self.node.shape[0]
 
-    def __getitem__(self, index: Union[torch.Tensor, Any]) -> "ABLPNodeSamplerInput":
+    def __getitem__(self, index: torch.Tensor | Any) -> "ABLPNodeSamplerInput":
         if not isinstance(index, torch.Tensor):
             index = torch.tensor(index, dtype=torch.long)
         index = index.to(self.node.device)

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Type, Union
+from typing import Type
 
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
@@ -47,13 +47,13 @@ def run_distributed_partitioner(
     """
 
     input_graph = rank_to_input_graph[rank]
-    node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    positive_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    negative_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    node_labels: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    node_ids: torch.Tensor | dict[NodeType, torch.Tensor]
+    edge_index: torch.Tensor | dict[EdgeType, torch.Tensor]
+    node_features: torch.Tensor | dict[NodeType, torch.Tensor]
+    edge_features: torch.Tensor | dict[EdgeType, torch.Tensor]
+    positive_labels: torch.Tensor | dict[EdgeType, torch.Tensor]
+    negative_labels: torch.Tensor | dict[EdgeType, torch.Tensor]
+    node_labels: torch.Tensor | dict[NodeType, torch.Tensor]
 
     if not is_heterogeneous:
         node_ids = input_graph.node_ids[USER_NODE_TYPE]

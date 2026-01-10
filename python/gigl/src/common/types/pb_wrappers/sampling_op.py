@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Set, Union, cast
+from typing import Optional, Set, cast
 
 from gigl.src.common.types.exception import (
     SubgraphSamplingValidationError,
@@ -114,12 +114,7 @@ class SamplingOpPbWrapper:
             str, self.sampling_op_pb.WhichOneof("sampling_method")
         )
         sampling_method_pb = getattr(self.sampling_op_pb, sampling_method_field)
-        self.__sampling_method: Union[
-            RandomUniformPbWrapper,
-            RandomWeightedPbWrapper,
-            TopKPbWrapper,
-            UserDefinedPbWrapper,
-        ]
+        self.__sampling_method: RandomUniformPbWrapper | RandomWeightedPbWrapper | TopKPbWrapper | UserDefinedPbWrapper
         if sampling_method_field == "random_uniform":
             self.__sampling_method = RandomUniformPbWrapper(
                 random_uniform_pb=sampling_method_pb
@@ -184,12 +179,12 @@ class SamplingOpPbWrapper:
     @property
     def sampling_method(
         self,
-    ) -> Union[
-        RandomUniformPbWrapper,
-        RandomWeightedPbWrapper,
-        TopKPbWrapper,
-        UserDefinedPbWrapper,
-    ]:
+    ) -> (
+        RandomUniformPbWrapper
+        | RandomWeightedPbWrapper
+        | TopKPbWrapper
+        | UserDefinedPbWrapper
+    ):
         return self.__sampling_method
 
     @property

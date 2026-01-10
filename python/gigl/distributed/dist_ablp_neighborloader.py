@@ -1,6 +1,6 @@
 import ast
 from collections import Counter, abc, defaultdict
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 from graphlearn_torch.channel import SampleMessage, ShmChannel
@@ -53,14 +53,9 @@ class DistABLPLoader(DistLoader):
     def __init__(
         self,
         dataset: DistDataset,
-        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
-        input_nodes: Optional[
-            Union[
-                torch.Tensor,
-                tuple[NodeType, torch.Tensor],
-            ]
-        ] = None,
-        supervision_edge_type: Optional[Union[EdgeType, list[EdgeType]]] = None,
+        num_neighbors: list[int] | dict[EdgeType, list[int]],
+        input_nodes: Optional[torch.Tensor | tuple[NodeType, torch.Tensor]] = None,
+        supervision_edge_type: Optional[EdgeType | list[EdgeType]] = None,
         num_workers: int = 1,
         batch_size: int = 1,
         pin_memory_device: Optional[torch.device] = None,
@@ -599,10 +594,10 @@ class DistABLPLoader(DistLoader):
 
     def _set_labels(
         self,
-        data: Union[Data, HeteroData],
+        data: Data | HeteroData,
         positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor],
         negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor],
-    ) -> Union[Data, HeteroData]:
+    ) -> Data | HeteroData:
         """
         Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
         local index. Removes inserted supervision edge type from the data variables, since this is an implementation detail and should not be
@@ -681,7 +676,7 @@ class DistABLPLoader(DistLoader):
             data.y_negative = output_negative_labels
         return data
 
-    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+    def _collate_fn(self, msg: SampleMessage) -> Data | HeteroData:
         msg, positive_labels, negative_labels = self._get_labels(msg)
         data = super()._collate_fn(msg)
         data = set_missing_features(

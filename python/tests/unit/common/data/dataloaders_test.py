@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -398,7 +398,7 @@ class TFRecordDataLoaderTest(unittest.TestCase):
         expected_node_ids: torch.Tensor,
         expected_features: Optional[torch.Tensor],
         expected_label_tensor: Optional[torch.Tensor],
-        entity_key: Union[str, Tuple[str, str]],
+        entity_key: str | Tuple[str, str],
         label_keys: list[str] = [],
     ):
         temp_dir = tempfile.TemporaryDirectory()

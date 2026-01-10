@@ -1,7 +1,7 @@
 """Utils for Neighbor loaders."""
 from collections import abc
 from copy import deepcopy
-from typing import Optional, TypeVar, Union
+from typing import Optional, TypeVar
 
 import torch
 from torch_geometric.data import Data, HeteroData
@@ -17,8 +17,8 @@ _GraphType = TypeVar("_GraphType", Data, HeteroData)
 
 def patch_fanout_for_sampling(
     edge_types: Optional[list[EdgeType]],
-    num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
-) -> Union[list[int], dict[EdgeType, list[int]]]:
+    num_neighbors: list[int] | dict[EdgeType, list[int]],
+) -> list[int] | dict[EdgeType, list[int]]:
     """
     Sets up an approprirate fanout for sampling.
 
@@ -159,8 +159,8 @@ def strip_label_edges(data: HeteroData) -> HeteroData:
 
 def set_missing_features(
     data: _GraphType,
-    node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
-    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
+    node_feature_info: Optional[FeatureInfo | dict[NodeType, FeatureInfo]],
+    edge_feature_info: Optional[FeatureInfo | dict[EdgeType, FeatureInfo]],
     device: torch.device,
 ) -> _GraphType:
     """

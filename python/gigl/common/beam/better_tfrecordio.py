@@ -6,7 +6,7 @@ tft.tf_metadata.dataset_metadata.DatasetMetadata, so it can be used
 in pipelines where DatasetMetadata is derived on runtime.
 """
 
-from typing import Optional, Union
+from typing import Optional
 
 import apache_beam as beam
 import apache_beam.pvalue
@@ -67,7 +67,7 @@ class BetterWriteToTFRecord(PTransform):
         self,
         file_path_prefix: str,
         transformed_metadata: Optional[
-            Union[dataset_metadata.DatasetMetadata, apache_beam.pvalue.AsSingleton]
+            dataset_metadata.DatasetMetadata | apache_beam.pvalue.AsSingleton
         ] = None,
         file_name_suffix: Optional[str] = ".tfrecord",
         compression_type: Optional[str] = CompressionTypes.AUTO,

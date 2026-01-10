@@ -4,7 +4,7 @@
 import datetime
 import queue
 from threading import Barrier
-from typing import Optional, Union, cast
+from typing import Optional, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -38,7 +38,7 @@ from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
 def _sampling_worker_loop(
     rank: int,
     data: DistDataset,
-    sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
+    sampler_input: NodeSamplerInput | EdgeSamplerInput,
     unshuffled_index: Optional[torch.Tensor],
     sampling_config: SamplingConfig,
     worker_options: MpDistSamplingWorkerOptions,

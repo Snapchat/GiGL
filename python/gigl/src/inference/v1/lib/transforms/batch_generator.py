@@ -1,4 +1,4 @@
-from typing import Iterable, Union
+from typing import Iterable
 
 import apache_beam as beam
 
@@ -10,14 +10,12 @@ from gigl.src.training.v1.lib.data_loaders.supervised_node_classification_data_l
 )
 from snapchat.research.gbml import training_samples_schema_pb2
 
-RawBatchType = Union[
-    training_samples_schema_pb2.RootedNodeNeighborhood,
-    training_samples_schema_pb2.SupervisedNodeClassificationSample,
-]
+RawBatchType = (
+    training_samples_schema_pb2.RootedNodeNeighborhood
+    | training_samples_schema_pb2.SupervisedNodeClassificationSample
+)
 
-InferenceBatchType = Union[
-    SupervisedNodeClassificationBatch, RootedNodeNeighborhoodBatch
-]
+InferenceBatchType = SupervisedNodeClassificationBatch | RootedNodeNeighborhoodBatch
 
 
 class BatchProcessorDoFn(beam.DoFn):

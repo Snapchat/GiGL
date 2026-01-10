@@ -1,5 +1,4 @@
 import unittest
-from typing import Union
 
 from parameterized import param, parameterized
 
@@ -35,7 +34,7 @@ class SamplingTest(unittest.TestCase):
         self,
         _,
         input_fanout: str,
-        expected_fanout: Union[list[int], dict[EdgeType, list[int]]],
+        expected_fanout: list[int] | dict[EdgeType, list[int]],
     ):
         output_fanout = parse_fanout(fanout_str=input_fanout)
         self.assertEqual(output_fanout, expected_fanout)

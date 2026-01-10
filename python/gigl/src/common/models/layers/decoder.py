@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Callable, Optional, Union
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -21,11 +21,11 @@ class LinkPredictionDecoder(nn.Module):
         self,
         decoder_type: DecoderType = DecoderType.inner_product,
         decoder_channel_list: Optional[list[int]] = None,
-        act: Union[str, Callable, None] = F.relu,
+        act: str | Callable | None = F.relu,
         act_first: bool = False,
-        bias: Union[bool, list[bool]] = False,
+        bias: bool | list[bool] = False,
         plain_last: bool = False,
-        norm: Optional[Union[str, Callable]] = None,
+        norm: Optional[str | Callable] = None,
     ):
         super(LinkPredictionDecoder, self).__init__()
         self.decoder_type = decoder_type

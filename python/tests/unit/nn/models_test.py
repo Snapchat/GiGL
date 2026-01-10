@@ -1,5 +1,5 @@
 import unittest
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -34,10 +34,10 @@ class DummyEncoder(nn.Module):
 
     def forward(
         self,
-        data: Union[Data, HeteroData],
+        data: Data | HeteroData,
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
+    ) -> torch.Tensor | dict[NodeType, torch.Tensor]:
         if isinstance(data, HeteroData):
             if not output_node_types:
                 raise ValueError(
@@ -199,7 +199,7 @@ class TestLightGCN(unittest.TestCase):
         super().tearDown()
 
     def _create_lightgcn_model(
-        self, node_type_to_num_nodes: Union[int, dict[NodeType, int]]
+        self, node_type_to_num_nodes: int | dict[NodeType, int]
     ) -> LightGCN:
         """Create a LightGCN model with the specified configuration."""
         return LightGCN(

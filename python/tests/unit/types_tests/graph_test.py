@@ -1,5 +1,5 @@
 import unittest
-from typing import Literal, Union
+from typing import Literal
 
 import torch
 from parameterized import param, parameterized
@@ -277,12 +277,12 @@ class GraphTypesTyest(unittest.TestCase):
     def test_treat_supervision_edges_as_graph_edges(
         self,
         _,
-        node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        positive_label: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        negative_label: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        node_ids: torch.Tensor | dict[NodeType, torch.Tensor],
+        node_features: torch.Tensor | dict[NodeType, torch.Tensor],
+        edge_index: torch.Tensor | dict[EdgeType, torch.Tensor],
+        edge_features: torch.Tensor | dict[EdgeType, torch.Tensor],
+        positive_label: torch.Tensor | dict[EdgeType, torch.Tensor],
+        negative_label: torch.Tensor | dict[EdgeType, torch.Tensor],
         expected_edge_index: dict[EdgeType, torch.Tensor],
         edge_dir: Literal["in", "out"],
     ):

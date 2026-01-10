@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import glob
 from dataclasses import dataclass
-from typing import Optional, Type, TypeVar, Union, cast
+from typing import Optional, Type, TypeVar, cast
 
 import google.protobuf.message
 import torch
@@ -252,7 +252,7 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def _get_data_loader_configs(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        uris_prefix_map: dict[DataloaderTypes, Union[str, dict[str, str]]],
+        uris_prefix_map: dict[DataloaderTypes, str | dict[str, str]],
         device: torch.device,
         should_loop: bool = True,
     ) -> dict[DataloaderTypes, DataloaderConfig]:
@@ -269,7 +269,7 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         }
 
         for data_loader_type in data_loader_types:
-            uris: Union[list[Uri], dict[NodeType, list[Uri]]]
+            uris: list[Uri] | dict[NodeType, list[Uri]]
             if isinstance(uris_prefix_map[data_loader_type], str):
                 uris_prefix: str = uris_prefix_map[data_loader_type]  # type: ignore
                 uris = _get_tfrecord_uris(UriFactory.create_uri(uris_prefix))
@@ -339,11 +339,11 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         data_loader_types: list[DataloaderTypes],
-    ) -> dict[DataloaderTypes, Union[str, dict[str, str]]]:
+    ) -> dict[DataloaderTypes, str | dict[str, str]]:
         dataset_pb: dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset = (
             gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.node_anchor_based_link_prediction_dataset
         )
-        uri_map: dict[DataloaderTypes, Union[str, dict[str, str]]] = {
+        uri_map: dict[DataloaderTypes, str | dict[str, str]] = {
             DataloaderTypes.train_main: dataset_pb.train_main_data_uri,
             DataloaderTypes.val_main: dataset_pb.val_main_data_uri,
             DataloaderTypes.train_random_negative: dict(
@@ -358,7 +358,7 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
             ),
         }
 
-        target_uri_map: dict[DataloaderTypes, Union[str, dict[str, str]]] = {
+        target_uri_map: dict[DataloaderTypes, str | dict[str, str]] = {
             data_loader_type: uri_map[data_loader_type]
             for data_loader_type in data_loader_types
         }

@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, TypeVar, Union, overload
+from typing import Literal, Optional, Tuple, TypeVar, overload
 
 import graphlearn_torch as glt
 import torch
@@ -46,36 +46,28 @@ class DistDataset(glt.distributed.DistDataset):
         rank: int,
         world_size: int,
         edge_dir: Literal["in", "out"],
-        graph_partition: Optional[Union[Graph, dict[EdgeType, Graph]]] = None,
-        node_feature_partition: Optional[
-            Union[Feature, dict[NodeType, Feature]]
-        ] = None,
-        edge_feature_partition: Optional[
-            Union[Feature, dict[EdgeType, Feature]]
-        ] = None,
-        node_labels: Optional[Union[Feature, dict[NodeType, Feature]]] = None,
+        graph_partition: Optional[Graph | dict[EdgeType, Graph]] = None,
+        node_feature_partition: Optional[Feature | dict[NodeType, Feature]] = None,
+        edge_feature_partition: Optional[Feature | dict[EdgeType, Feature]] = None,
+        node_labels: Optional[Feature | dict[NodeType, Feature]] = None,
         node_partition_book: Optional[
-            Union[PartitionBook, dict[NodeType, PartitionBook]]
+            PartitionBook | dict[NodeType, PartitionBook]
         ] = None,
         edge_partition_book: Optional[
-            Union[PartitionBook, dict[EdgeType, PartitionBook]]
+            PartitionBook | dict[EdgeType, PartitionBook]
         ] = None,
         positive_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            torch.Tensor | dict[EdgeType, torch.Tensor]
         ] = None,
         negative_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            torch.Tensor | dict[EdgeType, torch.Tensor]
         ] = None,
-        node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
-        num_train: Optional[Union[int, dict[NodeType, int]]] = None,
-        num_val: Optional[Union[int, dict[NodeType, int]]] = None,
-        num_test: Optional[Union[int, dict[NodeType, int]]] = None,
-        node_feature_info: Optional[
-            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
-        ] = None,
-        edge_feature_info: Optional[
-            Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
-        ] = None,
+        node_ids: Optional[torch.Tensor | dict[NodeType, torch.Tensor]] = None,
+        num_train: Optional[int | dict[NodeType, int]] = None,
+        num_val: Optional[int | dict[NodeType, int]] = None,
+        num_test: Optional[int | dict[NodeType, int]] = None,
+        node_feature_info: Optional[FeatureInfo | dict[NodeType, FeatureInfo]] = None,
+        edge_feature_info: Optional[FeatureInfo | dict[EdgeType, FeatureInfo]] = None,
     ) -> None:
         """
         Initializes the fields of the DistDataset class. This function is called upon each serialization of the DistDataset instance.
@@ -117,15 +109,13 @@ class DistDataset(glt.distributed.DistDataset):
             edge_dir=edge_dir,
         )
         self._positive_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            torch.Tensor | dict[EdgeType, torch.Tensor]
         ] = positive_edge_label
         self._negative_edge_label: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            torch.Tensor | dict[EdgeType, torch.Tensor]
         ] = negative_edge_label
 
-        self._node_ids: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-        ] = node_ids
+        self._node_ids: Optional[torch.Tensor | dict[NodeType, torch.Tensor]] = node_ids
 
         self._num_train = num_train
         self._num_val = num_val
@@ -163,15 +153,15 @@ class DistDataset(glt.distributed.DistDataset):
         self._edge_dir = new_edge_dir
 
     @property
-    def graph(self) -> Optional[Union[Graph, dict[EdgeType, Graph]]]:
+    def graph(self) -> Optional[Graph | dict[EdgeType, Graph]]:
         return self._graph
 
     @graph.setter
-    def graph(self, new_graph: Optional[Union[Graph, dict[EdgeType, Graph]]]):
+    def graph(self, new_graph: Optional[Graph | dict[EdgeType, Graph]]):
         self._graph = new_graph
 
     @property
-    def node_features(self) -> Optional[Union[Feature, dict[NodeType, Feature]]]:
+    def node_features(self) -> Optional[Feature | dict[NodeType, Feature]]:
         """
         During serializiation, the initialized `Feature` type does not immediately contain the feature and id2index tensors. These
         fields are initially set to None, and are only populated when we retrieve the size, retrieve the shape, or index into one of these tensors.
@@ -181,12 +171,12 @@ class DistDataset(glt.distributed.DistDataset):
 
     @node_features.setter
     def node_features(
-        self, new_node_features: Optional[Union[Feature, dict[NodeType, Feature]]]
+        self, new_node_features: Optional[Feature | dict[NodeType, Feature]]
     ):
         self._node_features = new_node_features
 
     @property
-    def edge_features(self) -> Optional[Union[Feature, dict[EdgeType, Feature]]]:
+    def edge_features(self) -> Optional[Feature | dict[EdgeType, Feature]]:
         """
         During serializiation, the initialized `Feature` type does not immediately contain the feature and id2index tensors. These
         fields are initially set to None, and are only populated when we retrieve the size, retrieve the shape, or index into one of these tensors.
@@ -196,50 +186,50 @@ class DistDataset(glt.distributed.DistDataset):
 
     @edge_features.setter
     def edge_features(
-        self, new_edge_features: Optional[Union[Feature, dict[EdgeType, Feature]]]
+        self, new_edge_features: Optional[Feature | dict[EdgeType, Feature]]
     ):
         self._edge_features = new_edge_features
 
     @property
     def node_pb(
         self,
-    ) -> Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]]:
+    ) -> Optional[PartitionBook | dict[NodeType, PartitionBook]]:
         return self._node_partition_book
 
     @node_pb.setter
     def node_pb(
         self,
-        new_node_pb: Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]],
+        new_node_pb: Optional[PartitionBook | dict[NodeType, PartitionBook]],
     ):
         self._node_partition_book = new_node_pb
 
     @property
     def edge_pb(
         self,
-    ) -> Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]:
+    ) -> Optional[PartitionBook | dict[EdgeType, PartitionBook]]:
         return self._edge_partition_book
 
     @edge_pb.setter
     def edge_pb(
         self,
-        new_edge_pb: Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]],
+        new_edge_pb: Optional[PartitionBook | dict[EdgeType, PartitionBook]],
     ):
         self._edge_partition_book = new_edge_pb
 
     @property
     def positive_edge_label(
         self,
-    ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
+    ) -> Optional[torch.Tensor | dict[EdgeType, torch.Tensor]]:
         return self._positive_edge_label
 
     @property
     def negative_edge_label(
         self,
-    ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
+    ) -> Optional[torch.Tensor | dict[EdgeType, torch.Tensor]]:
         return self._negative_edge_label
 
     @property
-    def node_ids(self) -> Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
+    def node_ids(self) -> Optional[torch.Tensor | dict[NodeType, torch.Tensor]]:
         """
         Node ids local to the current machine.
 
@@ -260,20 +250,20 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def node_labels(
         self,
-    ) -> Optional[Union[Feature, dict[NodeType, Feature]]]:
+    ) -> Optional[Feature | dict[NodeType, Feature]]:
         return self._node_labels
 
     @node_labels.setter
     def node_labels(
         self,
-        new_node_labels: Optional[Union[Feature, dict[NodeType, Feature]]],
+        new_node_labels: Optional[Feature | dict[NodeType, Feature]],
     ):
         self._node_labels = new_node_labels
 
     @property
     def node_feature_info(
         self,
-    ) -> Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]:
+    ) -> Optional[FeatureInfo | dict[NodeType, FeatureInfo]]:
         """
         Contains information about the dimension and dtype for the node features in the graph
         """
@@ -282,7 +272,7 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def edge_feature_info(
         self,
-    ) -> Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]:
+    ) -> Optional[FeatureInfo | dict[EdgeType, FeatureInfo]]:
         """
         Contains information about the dimension and dtype for the edge features in the graph
         """
@@ -291,7 +281,7 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def train_node_ids(
         self,
-    ) -> Optional[Union[torch.Tensor, Mapping[NodeType, torch.Tensor]]]:
+    ) -> Optional[torch.Tensor | Mapping[NodeType, torch.Tensor]]:
         if self._num_train is None:
             return None
         elif isinstance(self._num_train, int) and isinstance(
@@ -313,7 +303,7 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def val_node_ids(
         self,
-    ) -> Optional[Union[torch.Tensor, Mapping[NodeType, torch.Tensor]]]:
+    ) -> Optional[torch.Tensor | Mapping[NodeType, torch.Tensor]]:
         if self._num_val is None:
             return None
         if self._num_train is None:
@@ -347,7 +337,7 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def test_node_ids(
         self,
-    ) -> Optional[Union[torch.Tensor, Mapping[NodeType, torch.Tensor]]]:
+    ) -> Optional[torch.Tensor | Mapping[NodeType, torch.Tensor]]:
         if self._num_test is None:
             return None
         if self._num_train is None or self._num_val is None:
@@ -391,12 +381,10 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_node_ids(
         self,
-        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        node_ids_on_machine: torch.Tensor | dict[NodeType, torch.Tensor],
         splits: Optional[
-            Union[
-                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-                Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-            ]
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+            | Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
         ],
     ) -> None:
         """
@@ -497,9 +485,7 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_graph(
         self,
-        partitioned_edge_index: Union[
-            GraphPartitionData, dict[EdgeType, GraphPartitionData]
-        ],
+        partitioned_edge_index: GraphPartitionData | dict[EdgeType, GraphPartitionData],
     ) -> None:
         """
         Initializes the graph structure with edge index and edge IDs from partition output.
@@ -511,11 +497,11 @@ class DistDataset(glt.distributed.DistDataset):
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
         if isinstance(partitioned_edge_index, GraphPartitionData):
-            edge_index: Union[
-                torch.Tensor, dict[EdgeType, torch.Tensor]
+            edge_index: torch.Tensor | dict[
+                EdgeType, torch.Tensor
             ] = partitioned_edge_index.edge_index
-            edge_ids: Union[
-                Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
+            edge_ids: Optional[torch.Tensor] | dict[
+                EdgeType, Optional[torch.Tensor]
             ] = partitioned_edge_index.edge_ids
         else:
             edge_index = {
@@ -543,9 +529,9 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_node_features(
         self,
-        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        node_partition_book: PartitionBook | dict[NodeType, PartitionBook],
         partitioned_node_features: Optional[
-            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+            FeaturePartitionData | dict[NodeType, FeaturePartitionData]
         ],
     ) -> None:
         """
@@ -594,9 +580,9 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_node_labels(
         self,
-        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        node_partition_book: PartitionBook | dict[NodeType, PartitionBook],
         partitioned_node_labels: Optional[
-            Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+            FeaturePartitionData | dict[NodeType, FeaturePartitionData]
         ],
     ) -> None:
         """
@@ -630,9 +616,9 @@ class DistDataset(glt.distributed.DistDataset):
 
     def _initialize_edge_features(
         self,
-        edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]],
+        edge_partition_book: PartitionBook | dict[EdgeType, PartitionBook],
         partitioned_edge_features: Optional[
-            Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
+            FeaturePartitionData | dict[EdgeType, FeaturePartitionData]
         ],
     ) -> None:
         """
@@ -678,7 +664,7 @@ class DistDataset(glt.distributed.DistDataset):
     def build(
         self,
         partition_output: PartitionOutput,
-        splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
+        splitter: Optional[NodeSplitter | NodeAnchorLinkSplitter] = None,
     ) -> None:
         """
         Provided some partition graph information, this method stores these tensors inside of the class for
@@ -705,7 +691,7 @@ class DistDataset(glt.distributed.DistDataset):
         ), "Edge index must be present in the partition output"
 
         # We compute the node ids on the current machine, which will be used as input to the neighbor loaders.
-        node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
+        node_ids_on_machine: torch.Tensor | dict[NodeType, torch.Tensor] = (
             {
                 node_type: get_ids_on_rank(partition_book, rank=self._rank)
                 for node_type, partition_book in partition_output.node_partition_book.items()
@@ -719,7 +705,7 @@ class DistDataset(glt.distributed.DistDataset):
         if isinstance(splitter, NodeAnchorLinkSplitter):
             split_start = time.time()
             assert partition_output.partitioned_edge_index is not None
-            edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+            edge_index: torch.Tensor | dict[EdgeType, torch.Tensor] = (
                 partition_output.partitioned_edge_index.edge_index
                 if isinstance(
                     partition_output.partitioned_edge_index, GraphPartitionData
@@ -802,20 +788,20 @@ class DistDataset(glt.distributed.DistDataset):
         int,
         int,
         Literal["in", "out"],
-        Optional[Union[Graph, dict[EdgeType, Graph]]],
-        Optional[Union[Feature, dict[NodeType, Feature]]],
-        Optional[Union[Feature, dict[EdgeType, Feature]]],
-        Optional[Union[Feature, dict[NodeType, Feature]]],
-        Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]],
-        Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
-        Optional[Union[int, dict[NodeType, int]]],
-        Optional[Union[int, dict[NodeType, int]]],
-        Optional[Union[int, dict[NodeType, int]]],
-        Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
-        Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
+        Optional[Graph | dict[EdgeType, Graph]],
+        Optional[Feature | dict[NodeType, Feature]],
+        Optional[Feature | dict[EdgeType, Feature]],
+        Optional[Feature | dict[NodeType, Feature]],
+        Optional[PartitionBook | dict[NodeType, PartitionBook]],
+        Optional[PartitionBook | dict[EdgeType, PartitionBook]],
+        Optional[torch.Tensor | dict[EdgeType, torch.Tensor]],
+        Optional[torch.Tensor | dict[EdgeType, torch.Tensor]],
+        Optional[torch.Tensor | dict[NodeType, torch.Tensor]],
+        Optional[int | dict[NodeType, int]],
+        Optional[int | dict[NodeType, int]],
+        Optional[int | dict[NodeType, int]],
+        Optional[FeatureInfo | dict[NodeType, FeatureInfo]],
+        Optional[FeatureInfo | dict[EdgeType, FeatureInfo]],
     ]:
         """
         Serializes the member variables of the DistDatasetClass
@@ -983,26 +969,13 @@ def _prepare_feature_data(
 
 
 def _prepare_feature_data(
-    partition_book: Union[PartitionBook, dict[_EntityType, PartitionBook]],
+    partition_book: PartitionBook | dict[_EntityType, PartitionBook],
     partitioned_data: Optional[
-        Union[
-            FeaturePartitionData,
-            dict[_EntityType, FeaturePartitionData],
-        ]
+        FeaturePartitionData | dict[_EntityType, FeaturePartitionData]
     ],
 ) -> Tuple[
-    Optional[
-        Union[
-            torch.Tensor,
-            dict[_EntityType, torch.Tensor],
-        ]
-    ],
-    Optional[
-        Union[
-            TensorDataType,
-            dict[_EntityType, TensorDataType],
-        ]
-    ],
+    Optional[torch.Tensor | dict[_EntityType, torch.Tensor]],
+    Optional[TensorDataType | dict[_EntityType, TensorDataType]],
 ]:
     """
     Utility function to prepare feature/label data for initialization.
@@ -1088,35 +1061,31 @@ def _rebuild_distributed_dataset(
         int,  # Rank on current machine
         int,  # World size across machines
         Literal["in", "out"],  # Edge Direction
-        Optional[Union[Graph, dict[EdgeType, Graph]]],  # Partitioned Graph Data
+        Optional[Graph | dict[EdgeType, Graph]],  # Partitioned Graph Data
+        Optional[Feature | dict[NodeType, Feature]],  # Partitioned Node Feature Data
+        Optional[Feature | dict[EdgeType, Feature]],  # Partitioned Edge Feature Data
+        Optional[Feature | dict[NodeType, Feature]],  # Node Labels
         Optional[
-            Union[Feature, dict[NodeType, Feature]]
-        ],  # Partitioned Node Feature Data
-        Optional[
-            Union[Feature, dict[EdgeType, Feature]]
-        ],  # Partitioned Edge Feature Data
-        Optional[Union[Feature, dict[NodeType, Feature]]],  # Node Labels
-        Optional[
-            Union[PartitionBook, dict[NodeType, PartitionBook]]
+            PartitionBook | dict[NodeType, PartitionBook]
         ],  # Node Partition Book Tensor
         Optional[
-            Union[PartitionBook, dict[EdgeType, PartitionBook]]
+            PartitionBook | dict[EdgeType, PartitionBook]
         ],  # Edge Partition Book Tensor
         Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            torch.Tensor | dict[EdgeType, torch.Tensor]
         ],  # Positive Edge Label Tensor
         Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            torch.Tensor | dict[EdgeType, torch.Tensor]
         ],  # Negative Edge Label Tensor
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],  # Node Ids
-        Optional[Union[int, dict[NodeType, int]]],  # Number of training nodes
-        Optional[Union[int, dict[NodeType, int]]],  # Number of val nodes
-        Optional[Union[int, dict[NodeType, int]]],  # Number of test nodes
+        Optional[torch.Tensor | dict[NodeType, torch.Tensor]],  # Node Ids
+        Optional[int | dict[NodeType, int]],  # Number of training nodes
+        Optional[int | dict[NodeType, int]],  # Number of val nodes
+        Optional[int | dict[NodeType, int]],  # Number of test nodes
         Optional[
-            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
+            FeatureInfo | dict[NodeType, FeatureInfo]
         ],  # Node feature dim and its data type
         Optional[
-            Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
+            FeatureInfo | dict[EdgeType, FeatureInfo]
         ],  # Edge feature dim and its data type
     ]
 ):

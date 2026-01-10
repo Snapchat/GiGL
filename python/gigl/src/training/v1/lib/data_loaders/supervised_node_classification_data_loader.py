@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch_geometric.data
@@ -31,9 +31,7 @@ from snapchat.research.gbml import graph_schema_pb2, training_samples_schema_pb2
 
 @dataclass
 class SupervisedNodeClassificationBatch:
-    graph: Union[
-        torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
-    ]  # batch-coalesced graph data used for message passing
+    graph: torch_geometric.data.Data | torch_geometric.data.hetero_data.HeteroData  # batch-coalesced graph data used for message passing
     root_node_indices: torch.LongTensor  # dtype: int64, shape: [num_root_nodes, ]
     root_nodes: list[Node]  # len(root_nodes) == number of graphs in Batch
     root_node_labels: Optional[
@@ -187,10 +185,9 @@ class SupervisedNodeClassificationBatch:
             process_raw_sample_fn=preprocess_raw_sample_fn,
             seed=config.seed,
         )
-        iterable_training_dataset: Union[
-            LoopyIterableDataset[SupervisedNodeClassificationSample],
-            TfRecordsIterableDataset[SupervisedNodeClassificationSample],
-        ]
+        iterable_training_dataset: LoopyIterableDataset[
+            SupervisedNodeClassificationSample
+        ] | TfRecordsIterableDataset[SupervisedNodeClassificationSample]
         if config.should_loop:
             iterable_training_dataset = LoopyIterableDataset(
                 iterable_dataset=_iterable_training_dataset

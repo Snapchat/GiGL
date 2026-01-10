@@ -1,4 +1,4 @@
-from typing import MutableMapping, Optional, Type, Union
+from typing import MutableMapping, Optional, Type
 
 import torch.distributed as dist
 
@@ -51,7 +51,7 @@ def run_distributed_dataset(
     should_load_tensors_in_parallel: bool = True,
     output_dict: Optional[MutableMapping[int, DistDataset]] = None,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
-    splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
+    splitter: Optional[NodeAnchorLinkSplitter | NodeSplitter] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
 ) -> DistDataset:

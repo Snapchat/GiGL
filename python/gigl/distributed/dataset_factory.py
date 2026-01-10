@@ -5,7 +5,7 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 import time
 from collections.abc import Mapping
 from distutils.util import strtobool
-from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
+from typing import Literal, MutableMapping, Optional, Tuple, Type
 
 import torch
 import torch.multiprocessing as mp
@@ -62,7 +62,7 @@ def _load_and_build_partitioned_dataset(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
+    splitter: Optional[NodeSplitter | NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> DistDataset:
     """
@@ -113,7 +113,7 @@ def _load_and_build_partitioned_dataset(
             raise ValueError(
                 "Cannot have loaded positive and negative labels when attempting to select self-supervised positive edges from edge index."
             )
-        positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        positive_label_edges: torch.Tensor | dict[EdgeType, torch.Tensor]
         if isinstance(loaded_graph_tensors.edge_index, Mapping):
             # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
             # we can remove this assert.
@@ -224,7 +224,7 @@ def _build_dataset_process(
     partitioner_class: Optional[Type[DistPartitioner]],
     node_tf_dataset_options: TFDatasetOptions,
     edge_tf_dataset_options: TFDatasetOptions,
-    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
+    splitter: Optional[NodeSplitter | NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
 ) -> None:
     """
@@ -321,13 +321,13 @@ def _build_dataset_process(
 
 def build_dataset(
     serialized_graph_metadata: SerializedGraphMetadata,
-    sample_edge_direction: Union[Literal["in", "out"], str],
+    sample_edge_direction: Literal["in", "out"] | str,
     distributed_context: Optional[DistributedContext] = None,
     should_load_tensors_in_parallel: bool = True,
     partitioner_class: Optional[Type[DistPartitioner]] = None,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
-    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
+    splitter: Optional[NodeSplitter | NodeAnchorLinkSplitter] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     _dataset_building_port: Optional[
         int
@@ -470,7 +470,7 @@ def build_dataset(
 
 
 def build_dataset_from_task_config_uri(
-    task_config_uri: Union[str, Uri],
+    task_config_uri: str | Uri,
     distributed_context: Optional[DistributedContext] = None,
     is_inference: bool = True,
     _tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
@@ -525,7 +525,7 @@ def build_dataset_from_task_config_uri(
     )
 
     ssl_positive_label_percentage: Optional[float] = None
-    splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None
+    splitter: Optional[NodeSplitter | NodeAnchorLinkSplitter] = None
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 

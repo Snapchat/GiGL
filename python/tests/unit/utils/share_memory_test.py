@@ -1,6 +1,6 @@
 import unittest
 from collections import abc
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 from graphlearn_torch.partition import RangePartitionBook
@@ -40,7 +40,7 @@ class ShareMemoryTest(unittest.TestCase):
         self,
         _,
         entity: Optional[
-            Union[torch.Tensor, RangePartitionBook, dict[NodeType, torch.Tensor]]
+            torch.Tensor | RangePartitionBook | dict[NodeType, torch.Tensor]
         ],
     ):
         share_memory(entity=entity)

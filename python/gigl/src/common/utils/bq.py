@@ -1,7 +1,7 @@
 import datetime
 import itertools
 import re
-from typing import Iterable, Optional, Tuple, Union
+from typing import Iterable, Optional, Tuple
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
@@ -92,7 +92,7 @@ class BqUtils:
         self.__bq_client.delete_table(
             table=bq_path, not_found_ok=True
         )  # Deletes if table exists
-        table: Union[str, bigquery.Table] = (
+        table: str | bigquery.Table = (
             bigquery.Table(table_ref=bq_path, schema=schema) if schema else bq_path
         )
         self.__bq_client.create_table(

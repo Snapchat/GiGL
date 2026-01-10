@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from google.cloud import aiplatform
 from kfp.compiler import Compiler
@@ -183,12 +183,7 @@ class KfpOrchestrator:
 
     def wait_for_completion(
         self,
-        run: Union[
-            str,
-            aiplatform.PipelineJob,
-            list[str],
-            list[aiplatform.PipelineJob],
-        ],
+        run: str | aiplatform.PipelineJob | list[str] | list[aiplatform.PipelineJob],
     ):
         """
         Waits for the completion of a pipeline run.

@@ -1,5 +1,5 @@
 import unittest
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 from parameterized import param, parameterized
@@ -110,8 +110,8 @@ class LoaderUtilsTest(unittest.TestCase):
         self,
         _,
         edge_types: Optional[list[EdgeType]],
-        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
-        expected_num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
+        num_neighbors: list[int] | dict[EdgeType, list[int]],
+        expected_num_neighbors: list[int] | dict[EdgeType, list[int]],
     ):
         num_neighbors = patch_fanout_for_sampling(edge_types, num_neighbors)
         self.assertEqual(num_neighbors, expected_num_neighbors)
@@ -163,7 +163,7 @@ class LoaderUtilsTest(unittest.TestCase):
         self,
         _,
         edge_types: Optional[list[EdgeType]],
-        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
+        num_neighbors: list[int] | dict[EdgeType, list[int]],
     ):
         with self.assertRaises(ValueError):
             num_neighbors = patch_fanout_for_sampling(edge_types, num_neighbors)

@@ -1,6 +1,6 @@
 import time
 from functools import wraps
-from typing import Callable, Optional, Tuple, Type, TypeVar, Union
+from typing import Callable, Optional, Tuple, Type, TypeVar
 from xmlrpc.client import Boolean
 
 from gigl.common.logger import Logger
@@ -21,7 +21,7 @@ class __RetriableTimeoutException(Exception):
 
 
 def retry(
-    exception_to_check: Union[Type, Tuple[Type, ...]] = Exception,
+    exception_to_check: Type | Tuple[Type, ...] = Exception,
     tries: int = 5,
     delay_s: int = 3,
     backoff: int = 2,

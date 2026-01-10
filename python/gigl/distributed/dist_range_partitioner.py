@@ -1,6 +1,6 @@
 import gc
 import time
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 from graphlearn_torch.distributed.rpc import all_gather
@@ -29,7 +29,7 @@ class DistRangePartitioner(DistPartitioner):
     """
 
     def register_edge_index(
-        self, edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        self, edge_index: torch.Tensor | dict[EdgeType, torch.Tensor]
     ) -> None:
         """
         Registers the edge_index to the partitioner. Unlike the tensor-based partitioner, this register pattern
@@ -346,17 +346,17 @@ class DistRangePartitioner(DistPartitioner):
         return current_graph_part, current_feat_part, edge_partition_book
 
     def partition_edge_index_and_edge_features(
-        self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
-    ) -> Union[
+        self, node_partition_book: PartitionBook | dict[NodeType, PartitionBook]
+    ) -> (
         tuple[
             GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
-        ],
-        tuple[
+        ]
+        | tuple[
             dict[EdgeType, GraphPartitionData],
             Optional[dict[EdgeType, FeaturePartitionData]],
             Optional[dict[EdgeType, PartitionBook]],
-        ],
-    ]:
+        ]
+    ):
         """
         Partitions edges of a graph, including edge indices and edge features. If heterogeneous, partitions edges
         for all edge types. You must call `partition_node` first to get the node partition book as input. The difference

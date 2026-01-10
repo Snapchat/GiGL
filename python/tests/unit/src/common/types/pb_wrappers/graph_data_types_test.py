@@ -1,6 +1,5 @@
 import pickle
 import unittest
-from typing import Union
 
 from gigl.src.common.types.pb_wrappers.graph_data_types import (
     _HASH_CACHE_KEY,
@@ -79,7 +78,7 @@ class GraphDataTypesTest(unittest.TestCase):
         self.assertEqual(g1_wrap, g2_wrap)
 
     def _test_cached_hash_helper(
-        self, pb_wrapper: Union[NodePbWrapper, EdgePbWrapper, GraphPbWrapper]
+        self, pb_wrapper: NodePbWrapper | EdgePbWrapper | GraphPbWrapper
     ):
         # Check that the hash is indeed cached after the first call.
         is_hash_cached_before = getattr(pb_wrapper, _HASH_CACHE_KEY, None) is not None

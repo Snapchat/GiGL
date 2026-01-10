@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 from torch import Tensor
@@ -55,7 +55,7 @@ class GINEConv(MessagePassing):
 
     def forward(
         self,
-        x: Union[Tensor, OptPairTensor],
+        x: Tensor | OptPairTensor,
         edge_index: Adj,
         edge_attr: OptTensor = None,
         size: Size = None,

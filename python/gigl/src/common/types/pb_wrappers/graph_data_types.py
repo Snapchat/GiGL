@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence, Set, Union, cast
+from typing import Optional, Sequence, Set, cast
 
 from gigl.common.utils.func_tools import lru_cache
 from gigl.src.common.types.graph_data import CondensedEdgeType, CondensedNodeType
@@ -98,7 +98,7 @@ class EdgePbWrapper:
     def __setstate__(self, state):
         self.__dict__.update(state)
 
-    def __eq__(self, other: Union[object, EdgePbWrapper]) -> bool:
+    def __eq__(self, other: object | EdgePbWrapper) -> bool:
         if not isinstance(other, EdgePbWrapper):
             return False
         elif hash(self) == hash(other):
@@ -170,7 +170,7 @@ class NodePbWrapper:
     def __setstate__(self, state):
         self.__dict__.update(state)
 
-    def __eq__(self, other: Union[object, NodePbWrapper]) -> bool:
+    def __eq__(self, other: object | NodePbWrapper) -> bool:
         if not isinstance(other, NodePbWrapper):
             return False
         elif hash(self) == hash(other):
@@ -346,7 +346,7 @@ class GraphPbWrapper:
     def __setstate__(self, state):
         self.__dict__.update(state)
 
-    def __eq__(self, other: Union[object, GraphPbWrapper]) -> bool:
+    def __eq__(self, other: object | GraphPbWrapper) -> bool:
         if not isinstance(other, GraphPbWrapper):
             return False
         elif hash(self) == hash(other):

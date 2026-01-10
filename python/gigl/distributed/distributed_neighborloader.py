@@ -1,5 +1,5 @@
 from collections import Counter, abc
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -38,10 +38,8 @@ class DistNeighborLoader(DistLoader):
     def __init__(
         self,
         dataset: DistDataset,
-        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
-        input_nodes: Optional[
-            Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
-        ] = None,
+        num_neighbors: list[int] | dict[EdgeType, list[int]],
+        input_nodes: Optional[torch.Tensor | Tuple[NodeType, torch.Tensor]] = None,
         num_workers: int = 1,
         batch_size: int = 1,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
@@ -327,7 +325,7 @@ class DistNeighborLoader(DistLoader):
 
         super().__init__(dataset, input_data, sampling_config, device, worker_options)
 
-    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+    def _collate_fn(self, msg: SampleMessage) -> Data | HeteroData:
         data = super()._collate_fn(msg)
         data = set_missing_features(
             data=data,

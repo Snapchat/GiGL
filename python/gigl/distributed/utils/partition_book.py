@@ -1,5 +1,3 @@
-from typing import Union
-
 import torch
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 
@@ -30,7 +28,7 @@ def _get_ids_from_range_partition_book(
 
 
 def get_ids_on_rank(
-    partition_book: Union[torch.Tensor, PartitionBook],
+    partition_book: torch.Tensor | PartitionBook,
     rank: int,
 ) -> torch.Tensor:
     """
@@ -48,7 +46,7 @@ def get_ids_on_rank(
         )
 
 
-def get_total_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
+def get_total_ids(partition_book: torch.Tensor | PartitionBook) -> int:
     """
     Returns the total number of ids (e.g. the total number of nodes) from a partition book.
     Args:

@@ -1,5 +1,5 @@
 from concurrent.futures import Future
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -60,7 +60,7 @@ def maybe_save_checkpoint(
     optimizer: torch.optim.Optimizer,
     checkpointing_config: CheckpointingConfig,
     checkpoint_id: str = "",
-) -> Optional[Union[Future[Uri], Uri]]:
+) -> Optional[Future[Uri] | Uri]:
     """
     Save the model and optimizer checkpoints if specified in the training configuration.
 

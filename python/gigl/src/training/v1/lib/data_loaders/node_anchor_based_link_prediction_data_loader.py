@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch_geometric.data
@@ -45,9 +45,7 @@ class NodeAnchorBasedLinkPredictionBatch:
             default_factory=dict
         )  # maps root nodes to edge features for or negative positive edges
 
-    graph: Union[
-        torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
-    ]  # batch-coalesced graph data used for message passing
+    graph: torch_geometric.data.Data | torch_geometric.data.hetero_data.HeteroData  # batch-coalesced graph data used for message passing
     root_node_indices: (
         torch.LongTensor
     )  # lists root node indices within the batch for whom to compute loss
@@ -235,10 +233,9 @@ class NodeAnchorBasedLinkPredictionBatch:
             process_raw_sample_fn=preprocess_raw_sample_fn,
             seed=config.seed,
         )
-        iterable_training_dataset: Union[
-            LoopyIterableDataset[NodeAnchorBasedLinkPredictionSample],
-            TfRecordsIterableDataset[NodeAnchorBasedLinkPredictionSample],
-        ]
+        iterable_training_dataset: LoopyIterableDataset[
+            NodeAnchorBasedLinkPredictionSample
+        ] | TfRecordsIterableDataset[NodeAnchorBasedLinkPredictionSample]
         if config.should_loop:
             iterable_training_dataset = LoopyIterableDataset(
                 iterable_dataset=_iterable_training_dataset

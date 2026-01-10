@@ -2,7 +2,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Callable, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Callable, NamedTuple, Optional, Sequence, Tuple
 
 import psutil
 import tensorflow as tf
@@ -43,7 +43,7 @@ class SerializedTFRecordInfo:
     # Feature dimension of current entity
     feature_dim: int
     # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.
-    entity_key: Union[str, Tuple[str, str]]
+    entity_key: str | Tuple[str, str]
     # Name of the label columns for the current entity, defaults to an empty list.
     label_keys: Sequence[str] = field(default_factory=list)
     # The regex pattern to match the TFRecord files at the specified prefix

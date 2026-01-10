@@ -1,4 +1,4 @@
-from typing import Callable, Union
+from typing import Callable
 
 import torch
 import torch.nn as nn
@@ -400,7 +400,7 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
     def phase(self) -> ModelPhase:
         return self.encoder_model.phase
 
-    def forward(self, batch: Union[EdgeBatch, NodeBatch]) -> tuple[torch.Tensor, tuple]:
+    def forward(self, batch: EdgeBatch | NodeBatch) -> tuple[torch.Tensor, tuple]:
         """
         If the batch is an EdgeBatch, compute the loss and return it along with
         the logits and labels.

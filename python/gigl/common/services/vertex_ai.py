@@ -62,7 +62,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Final, Optional, Union
+from typing import Final, Optional
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -257,7 +257,7 @@ class VertexAIService:
             compute_pool_job_config, env_vars
         )
 
-        worker_pool_specs: list[Union[WorkerPoolSpec, dict]] = []
+        worker_pool_specs: list[WorkerPoolSpec | dict] = []
 
         leader_worker_spec = WorkerPoolSpec(
             machine_spec=compute_machine_spec,
@@ -289,7 +289,7 @@ class VertexAIService:
 
     def _submit_job(
         self,
-        worker_pool_specs: Union[list[WorkerPoolSpec], list[dict]],
+        worker_pool_specs: list[WorkerPoolSpec] | list[dict],
         job_config: VertexAiJobConfig,
     ) -> aiplatform.CustomJob:
         """Submit a job to Vertex AI and wait for it to complete."""

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional
 
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import GcsUri, HttpUri
@@ -16,7 +16,7 @@ from gigl.src.data_preprocessor.lib.types import (
 class TransformedFeaturesInfo:
     # TODO: (svij-sc): refactor to have a EdgeTransformedFeaturesInfo and a NodeTransformedFeaturesInfo
     feature_type: FeatureTypes
-    entity_type: Union[NodeType, EdgeType]
+    entity_type: NodeType | EdgeType
     visualized_facets_file_path: GcsUri
     stats_file_path: GcsUri
     raw_data_schema_file_path: GcsUri
@@ -25,9 +25,7 @@ class TransformedFeaturesInfo:
     transformed_features_schema_path: GcsUri
     transform_directory_path: GcsUri
     dataflow_console_uri: Optional[HttpUri] = None
-    identifier_output: Optional[
-        Union[NodeOutputIdentifier, EdgeOutputIdentifier]
-    ] = None
+    identifier_output: Optional[NodeOutputIdentifier | EdgeOutputIdentifier] = None
     features_outputs: Optional[list[str]] = None
     label_outputs: Optional[list[str]] = None
     feature_dim_output: Optional[int] = None
@@ -37,7 +35,7 @@ class TransformedFeaturesInfo:
         self,
         applied_task_identifier: AppliedTaskIdentifier,
         feature_type: FeatureTypes,
-        entity_type: Union[NodeType, EdgeType],
+        entity_type: NodeType | EdgeType,
         custom_identifier: str = "",
     ) -> None:
         self.feature_type = feature_type

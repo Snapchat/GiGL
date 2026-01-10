@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Set, Union
+from typing import Set
 
 import torch
 import torch.nn as nn
@@ -33,13 +33,11 @@ from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader 
 
 
 def infer_training_batch(
-    model: Union[torch.nn.parallel.DistributedDataParallel, nn.Module],
-    training_batch: Union[
-        NodeAnchorBasedLinkPredictionBatch,
-        RootedNodeNeighborhoodBatch,
-        Data,
-        HeteroData,
-    ],
+    model: torch.nn.parallel.DistributedDataParallel | nn.Module,
+    training_batch: NodeAnchorBasedLinkPredictionBatch
+    | RootedNodeNeighborhoodBatch
+    | Data
+    | HeteroData,
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     device: torch.device,
 ) -> dict[CondensedNodeType, torch.Tensor]:
@@ -73,8 +71,8 @@ def infer_training_batch(
 
 
 def infer_root_embeddings(
-    model: Union[torch.nn.parallel.DistributedDataParallel, nn.Module],
-    graph: Union[Data, HeteroData],
+    model: torch.nn.parallel.DistributedDataParallel | nn.Module,
+    graph: Data | HeteroData,
     root_node_indices: torch.LongTensor,
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     device: torch.device,
@@ -101,7 +99,7 @@ def infer_root_embeddings(
 
 
 def infer_task_inputs(
-    model: Union[torch.nn.parallel.DistributedDataParallel, nn.Module],
+    model: torch.nn.parallel.DistributedDataParallel | nn.Module,
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     main_batch: NodeAnchorBasedLinkPredictionBatch,
     random_neg_batch: RootedNodeNeighborhoodBatch,

@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 import torch
@@ -62,7 +62,7 @@ def cast_graph_for_training(
     preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
     batch_type: str,
     should_register_edge_features: Optional[bool],
-) -> Union[Data, HeteroData]:
+) -> Data | HeteroData:
     """
     Casts the PygGraphData object into a Data or HeteroData object. Also fills in any missing fields from graph
     builder with empty tensors in cases where there are no edges for a graph or given edge type.

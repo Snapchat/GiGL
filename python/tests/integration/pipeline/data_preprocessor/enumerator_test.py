@@ -1,5 +1,5 @@
 import unittest
-from typing import Any, Tuple, Union
+from typing import Any, Tuple
 
 import google.cloud.bigquery as bigquery
 import pandas as pd
@@ -97,7 +97,7 @@ _EDGE_NUM_SHARDS = 3
 class EnumeratorTest(unittest.TestCase):
     def __upload_records_to_bq(
         self,
-        data_reference: Union[BigqueryEdgeDataReference, BigqueryNodeDataReference],
+        data_reference: BigqueryEdgeDataReference | BigqueryNodeDataReference,
         records: list[dict[str, Any]],
     ):
         self.__bq_utils.create_or_empty_bq_table(bq_path=data_reference.reference_uri)

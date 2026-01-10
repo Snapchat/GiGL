@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from gigl.common.types.uri.uri import Uri
 
@@ -14,7 +14,7 @@ class GcsUri(Uri):
         uri (Union[str, Path, GcsUri]): The URI string or path to initialize the GcsUri object.
     """
 
-    def __init__(self, uri: Union[str, Path, GcsUri]) -> None:
+    def __init__(self, uri: str | Path | GcsUri) -> None:
         self.is_valid(uri=self._token_to_string(uri), raise_exception=True)
         super().__init__(uri=uri)
 
@@ -27,16 +27,16 @@ class GcsUri(Uri):
         return "/".join(self.uri.split("/")[3:])
 
     @classmethod
-    def _has_valid_prefix(cls, uri: Union[str, Path, Uri]) -> bool:
+    def _has_valid_prefix(cls, uri: str | Path | Uri) -> bool:
         return cls._token_to_string(uri).startswith("gs://")
 
     @classmethod
-    def _has_no_backslash(cls, uri: Union[str, Path, Uri]) -> bool:
+    def _has_no_backslash(cls, uri: str | Path | Uri) -> bool:
         return cls._token_to_string(uri).count("\\") == 0
 
     @classmethod
     def is_valid(
-        cls, uri: Union[str, Path, Uri], raise_exception: Optional[bool] = False
+        cls, uri: str | Path | Uri, raise_exception: Optional[bool] = False
     ) -> bool:
         """
         Check if the given URI is valid.

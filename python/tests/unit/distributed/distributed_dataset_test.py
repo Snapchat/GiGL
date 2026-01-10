@@ -1,6 +1,6 @@
 import unittest
 from collections.abc import Mapping
-from typing import Any, Optional, Type, Union
+from typing import Any, Optional, Type
 
 import torch
 from graphlearn_torch.data import Feature
@@ -52,10 +52,8 @@ from tests.test_assets.distributed.utils import assert_tensor_equality
 class _PassthroughSplitter:
     def __init__(
         self,
-        splits: Union[
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-            dict[EdgeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        ],
+        splits: tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        | dict[EdgeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ):
         """Splitter that passes through input splits when called."""
         self.splits = splits
@@ -82,8 +80,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
     def assert_tensor_equal(
         self,
-        actual: Optional[Union[torch.Tensor, Mapping[Any, torch.Tensor]]],
-        expected: Optional[Union[torch.Tensor, Mapping[Any, torch.Tensor]]],
+        actual: Optional[torch.Tensor | Mapping[Any, torch.Tensor]],
+        expected: Optional[torch.Tensor | Mapping[Any, torch.Tensor]],
     ):
         if type(actual) != type(expected):
             self.fail(f"Expected type {type(expected)} but got {type(actual)}")
@@ -156,8 +154,8 @@ class DistributedDatasetTestCase(unittest.TestCase):
         partitioner_class: Type[DistPartitioner],
         mocked_dataset_info: MockedDatasetInfo,
         expected_node_id_type: Type,
-        expected_node_feature_info: Union[FeatureInfo, dict[NodeType, FeatureInfo]],
-        expected_edge_feature_info: Union[FeatureInfo, dict[EdgeType, FeatureInfo]],
+        expected_node_feature_info: FeatureInfo | dict[NodeType, FeatureInfo],
+        expected_edge_feature_info: FeatureInfo | dict[EdgeType, FeatureInfo],
     ):
         port = gigl.distributed.utils.get_free_port()
         dataset = run_distributed_dataset(

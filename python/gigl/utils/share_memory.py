@@ -1,5 +1,5 @@
 from collections import abc
-from typing import Optional, TypeVar, Union
+from typing import Optional, TypeVar
 
 import torch
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
@@ -9,12 +9,10 @@ _KeyType = TypeVar("_KeyType")  # Generic Key Type
 
 def share_memory(
     entity: Optional[
-        Union[
-            torch.Tensor,
-            PartitionBook,
-            dict[_KeyType, torch.Tensor],
-            dict[_KeyType, PartitionBook],
-        ]
+        torch.Tensor
+        | PartitionBook
+        | dict[_KeyType, torch.Tensor]
+        | dict[_KeyType, PartitionBook]
     ],
 ) -> None:
     """

@@ -2,7 +2,7 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
-from typing import IO, AnyStr, Optional, Sequence, Tuple, Type, Union, cast
+from typing import IO, AnyStr, Optional, Sequence, Tuple, Type, cast
 
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -250,7 +250,7 @@ class FileLoader:
                 f"Uri type not supported, got {uri_prefix} in type {type(uri_prefix)}"
             )
 
-    def does_uri_exist(self, uri: Union[str, Uri]) -> bool:
+    def does_uri_exist(self, uri: str | Uri) -> bool:
         """""
         Check if a URI exists
 

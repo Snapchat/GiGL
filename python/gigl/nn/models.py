@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -35,10 +35,10 @@ class LinkPredictionGNN(nn.Module):
 
     def forward(
         self,
-        data: Union[Data, HeteroData],
+        data: Data | HeteroData,
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
+    ) -> torch.Tensor | dict[NodeType, torch.Tensor]:
         if isinstance(data, HeteroData):
             if output_node_types is None:
                 raise ValueError(
@@ -158,7 +158,7 @@ class LightGCN(nn.Module):
 
     def __init__(
         self,
-        node_type_to_num_nodes: Union[int, dict[NodeType, int]],
+        node_type_to_num_nodes: int | dict[NodeType, int],
         embedding_dim: int = 64,
         num_layers: int = 2,
         device: torch.device = torch.device("cpu"),
@@ -213,11 +213,11 @@ class LightGCN(nn.Module):
 
     def forward(
         self,
-        data: Union[Data, HeteroData],
+        data: Data | HeteroData,
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
         anchor_node_ids: Optional[torch.Tensor] = None,
-    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
+    ) -> torch.Tensor | dict[NodeType, torch.Tensor]:
         """
         Forward pass of the LightGCN model.
 

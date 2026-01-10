@@ -1,6 +1,5 @@
 import unittest
 from collections.abc import Mapping
-from typing import Union
 
 import torch
 import torch.multiprocessing as mp
@@ -48,7 +47,7 @@ def _run_splitter_distributed(
     init_method: str,
     tensors: list[torch.Tensor],
     expected: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    splitter: Union[DistNodeSplitter, DistNodeAnchorLinkSplitter],
+    splitter: DistNodeSplitter | DistNodeAnchorLinkSplitter,
 ):
     """Run the splitter in a distributed setting and check the results.
     Args:

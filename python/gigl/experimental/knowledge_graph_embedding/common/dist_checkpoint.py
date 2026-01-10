@@ -5,7 +5,7 @@ using the Torch Distributed Checkpointing API.
 
 import tempfile
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Optional, Union
+from typing import Optional
 
 import torch.distributed.checkpoint as dcp
 import torch.nn as nn
@@ -97,7 +97,7 @@ def save_checkpoint_to_uri(
     state_dict: STATE_DICT_TYPE,
     checkpoint_id: Uri,
     should_save_asynchronously: bool = False,
-) -> Union[Future[Uri], Uri]:
+) -> Future[Uri] | Uri:
     """
     Saves the state_dict to a specified checkpoint_id URI using the Torch Distributed Checkpointing API.
 

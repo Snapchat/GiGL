@@ -1,5 +1,5 @@
 import ast
-from typing import Any, Union
+from typing import Any
 
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType
@@ -45,7 +45,7 @@ def _validate_parsed_hops(parsed_fanout: Any) -> None:
         raise ValueError(f"Fanout must contain integers, got {parsed_fanout}")
 
 
-def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]:
+def parse_fanout(fanout_str: str) -> list[int] | dict[EdgeType, list[int]]:
     """
     Parses fanout from a string. The fanout string should be equivalent to a str(list[int]) or a
     str(dict[tuple[str, str, str], list[int]]), where each item in the tuple corresponds to the source node type, relation, and destination node type, respectively.

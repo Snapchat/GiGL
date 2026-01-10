@@ -4,7 +4,7 @@ import tempfile
 import typing
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
-from typing import IO, AnyStr, Iterable, Optional, Tuple, Union
+from typing import IO, AnyStr, Iterable, Optional, Tuple
 
 import google.cloud.exceptions as google_exceptions
 import google.cloud.storage as storage
@@ -333,7 +333,7 @@ class GcsUtils:
         """
         self._delete_files_in_bucket_dir(gcs_path=gcs_path)
 
-    def delete_files(self, gcs_files: Iterable[Union[GcsUri, storage.Blob]]) -> None:
+    def delete_files(self, gcs_files: Iterable[GcsUri | storage.Blob]) -> None:
         matching_blobs: list[storage.Blob] = list()
         for gcs_file in gcs_files:
             if not isinstance(gcs_file, storage.Blob):

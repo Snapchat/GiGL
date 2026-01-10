@@ -9,7 +9,6 @@ from typing import (
     Protocol,
     Sequence,
     Tuple,
-    Union,
     overload,
     runtime_checkable,
 )
@@ -65,10 +64,10 @@ class NodeAnchorLinkSplitter(Protocol):
 
     def __call__(
         self, *args, **kwargs
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    ]:
+    ) -> (
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        | Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    ):
         ...
 
     @property
@@ -102,10 +101,10 @@ class NodeSplitter(Protocol):
 
     def __call__(
         self, *args, **kwargs
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    ]:
+    ) -> (
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        | Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    ):
         ...
 
 
@@ -185,7 +184,7 @@ class DistNodeAnchorLinkSplitter:
 
     def __init__(
         self,
-        sampling_direction: Union[Literal["in", "out"], str],
+        sampling_direction: Literal["in", "out"] | str,
         num_val: float = 0.1,
         num_test: float = 0.1,
         hash_function: Callable[[torch.Tensor], torch.Tensor] = _fast_hash,
@@ -270,13 +269,11 @@ class DistNodeAnchorLinkSplitter:
 
     def __call__(
         self,
-        edge_index: Union[
-            torch.Tensor, Mapping[EdgeType, torch.Tensor]
-        ],  # 2 x N (num_edges)
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    ]:
+        edge_index: torch.Tensor | Mapping[EdgeType, torch.Tensor],  # 2 x N (num_edges)
+    ) -> (
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        | Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    ):
         # Validate distributed process group
         if not torch.distributed.is_initialized():
             raise RuntimeError(
@@ -455,11 +452,11 @@ class DistNodeSplitter:
 
     def __call__(
         self,
-        node_ids: Union[torch.Tensor, Mapping[NodeType, torch.Tensor]],
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    ]:
+        node_ids: torch.Tensor | Mapping[NodeType, torch.Tensor],
+    ) -> (
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        | Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    ):
         # Validate distributed process group
         if not torch.distributed.is_initialized():
             raise RuntimeError(
@@ -695,7 +692,7 @@ def _assert_sampling_direction(sampling_direction: str):
 
 
 def _assert_valid_split_ratios(
-    val_percentage: Union[float, int], test_percentage: Union[float, int]
+    val_percentage: float | int, test_percentage: float | int
 ):
     """Checks that the val and test percentages make sense, e.g. we can still have train nodes, and they are non-negative."""
     if val_percentage < 0:

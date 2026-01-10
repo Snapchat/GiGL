@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -49,7 +49,7 @@ class HGTConv(MessagePassing):
 
     def __init__(
         self,
-        in_channels: Union[int, dict[str, int]],
+        in_channels: int | dict[str, int],
         out_channels: int,
         metadata: Metadata,
         heads: int = 1,

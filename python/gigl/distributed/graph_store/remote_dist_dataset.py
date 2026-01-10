@@ -1,6 +1,6 @@
 import time
 from multiprocessing.managers import DictProxy
-from typing import Literal, Optional, Union
+from typing import Literal, Optional
 
 import torch
 from graphlearn_torch.distributed import async_request_server, request_server
@@ -58,7 +58,7 @@ class RemoteDistDataset:
 
     def get_node_feature_info(
         self,
-    ) -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
+    ) -> FeatureInfo | dict[NodeType, FeatureInfo] | None:
         """Get node feature information from the registered dataset.
 
         Returns:
@@ -74,7 +74,7 @@ class RemoteDistDataset:
 
     def get_edge_feature_info(
         self,
-    ) -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:
+    ) -> FeatureInfo | dict[EdgeType, FeatureInfo] | None:
         """Get edge feature information from the registered dataset.
 
         Returns:
@@ -88,7 +88,7 @@ class RemoteDistDataset:
             get_edge_feature_info,
         )
 
-    def get_edge_dir(self) -> Union[str, Literal["in", "out"]]:
+    def get_edge_dir(self) -> str | Literal["in", "out"]:
         """Get the edge direction from the registered dataset.
 
         Returns:

@@ -1,5 +1,3 @@
-from typing import Union
-
 from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
 
 from gigl.common.logger import Logger
@@ -139,12 +137,9 @@ def check_if_trainer_resource_config_valid(
         wrapper.trainer_config
     ), "Invalid 'trainer_config'; must provide trainer_config."
 
-    trainer_config: Union[
-        gigl_resource_config_pb2.LocalResourceConfig,
-        gigl_resource_config_pb2.VertexAiResourceConfig,
-        gigl_resource_config_pb2.KFPResourceConfig,
-        gigl_resource_config_pb2.VertexAiGraphStoreConfig,
-    ] = wrapper.trainer_config
+    trainer_config: gigl_resource_config_pb2.LocalResourceConfig | gigl_resource_config_pb2.VertexAiResourceConfig | gigl_resource_config_pb2.KFPResourceConfig | gigl_resource_config_pb2.VertexAiGraphStoreConfig = (
+        wrapper.trainer_config
+    )
     _validate_machine_config(config=trainer_config)
 
 
@@ -173,10 +168,8 @@ def _validate_vertex_ai_resource_config(
 
 
 def _validate_accelerator_type(
-    proto_config: Union[
-        gigl_resource_config_pb2.VertexAiResourceConfig,
-        gigl_resource_config_pb2.KFPResourceConfig,
-    ],
+    proto_config: gigl_resource_config_pb2.VertexAiResourceConfig
+    | gigl_resource_config_pb2.KFPResourceConfig,
 ) -> None:
     """
     Checks if the provided accelerator type is valid.
@@ -194,10 +187,8 @@ def _validate_accelerator_type(
 
 
 def _validate_cloud_machine_config(
-    config: Union[
-        gigl_resource_config_pb2.VertexAiResourceConfig,
-        gigl_resource_config_pb2.KFPResourceConfig,
-    ]
+    config: gigl_resource_config_pb2.VertexAiResourceConfig
+    | gigl_resource_config_pb2.KFPResourceConfig,
 ) -> None:
     """
     Checks if the provided cloud machine configuration is valid.
@@ -211,13 +202,11 @@ def _validate_cloud_machine_config(
 
 
 def _validate_machine_config(
-    config: Union[
-        gigl_resource_config_pb2.LocalResourceConfig,
-        gigl_resource_config_pb2.VertexAiResourceConfig,
-        gigl_resource_config_pb2.KFPResourceConfig,
-        gigl_resource_config_pb2.VertexAiGraphStoreConfig,
-        gigl_resource_config_pb2.DataflowResourceConfig,
-    ]
+    config: gigl_resource_config_pb2.LocalResourceConfig
+    | gigl_resource_config_pb2.VertexAiResourceConfig
+    | gigl_resource_config_pb2.KFPResourceConfig
+    | gigl_resource_config_pb2.VertexAiGraphStoreConfig
+    | gigl_resource_config_pb2.DataflowResourceConfig,
 ) -> None:
     if isinstance(config, gigl_resource_config_pb2.LocalResourceConfig):
         assert_proto_field_value_is_truthy(proto=config, field_name="num_workers")

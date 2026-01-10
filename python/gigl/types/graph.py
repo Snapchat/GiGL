@@ -1,7 +1,7 @@
 import gc
 from collections import abc
 from dataclasses import dataclass
-from typing import Literal, Optional, TypeVar, Union, overload
+from typing import Literal, Optional, TypeVar, overload
 
 import torch
 from graphlearn_torch.partition import PartitionBook
@@ -59,43 +59,39 @@ class GraphPartitionData:
 @dataclass
 class PartitionOutput:
     # Node partition book
-    node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
+    node_partition_book: PartitionBook | dict[NodeType, PartitionBook]
 
     # Edge partition book
-    edge_partition_book: Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]
+    edge_partition_book: Optional[PartitionBook | dict[EdgeType, PartitionBook]]
 
     # Partitioned edge index on current rank. This field will always be populated after partitioning. However, we may set this
     # field to None during dataset.build() in order to minimize the peak memory usage, and as a result type this as Optional.
     partitioned_edge_index: Optional[
-        Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]
+        GraphPartitionData | dict[EdgeType, GraphPartitionData]
     ]
 
     # Node features on current rank, May be None if node features are not partitioned
     partitioned_node_features: Optional[
-        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+        FeaturePartitionData | dict[NodeType, FeaturePartitionData]
     ]
 
     # Edge features on current rank, May be None if edge features are not partitioned
     partitioned_edge_features: Optional[
-        Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
+        FeaturePartitionData | dict[EdgeType, FeaturePartitionData]
     ]
 
     # Positive edge indices on current rank, May be None if positive edge labels are not partitioned
-    partitioned_positive_labels: Optional[
-        Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    ]
+    partitioned_positive_labels: Optional[torch.Tensor | dict[EdgeType, torch.Tensor]]
 
     # Negative edge indices on current rank, May be None if negative edge labels are not partitioned
-    partitioned_negative_labels: Optional[
-        Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-    ]
+    partitioned_negative_labels: Optional[torch.Tensor | dict[EdgeType, torch.Tensor]]
 
     # Partitioned node labels, May be None if node labels are not partitioned.
     # In practice, we require the IDS of the partitioned node labels field to be equal to the ids of the partitioned node features field, if it exists.
     # This is because the partitioned node labels should be partitioned along with the node features so that we don't need to track two separate node ID stores,
     # which saves a lot of memory.
     partitioned_node_labels: Optional[
-        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+        FeaturePartitionData | dict[NodeType, FeaturePartitionData]
     ]
 
 
@@ -136,19 +132,19 @@ def _get_label_edges(
 @dataclass
 class LoadedGraphTensors:
     # Unpartitioned Node Ids
-    node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    node_ids: torch.Tensor | dict[NodeType, torch.Tensor]
     # Unpartitioned Node Features
-    node_features: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
+    node_features: Optional[torch.Tensor | dict[NodeType, torch.Tensor]]
     # Unpartitioned Node Labels
-    node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
+    node_labels: Optional[torch.Tensor | dict[NodeType, torch.Tensor]]
     # Unpartitioned Edge Index
-    edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    edge_index: torch.Tensor | dict[EdgeType, torch.Tensor]
     # Unpartitioned Edge Features
-    edge_features: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    edge_features: Optional[torch.Tensor | dict[EdgeType, torch.Tensor]]
     # Unpartitioned Positive Edge Label
-    positive_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    positive_label: Optional[torch.Tensor | dict[EdgeType, torch.Tensor]]
     # Unpartitioned Negative Edge Label
-    negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    negative_label: Optional[torch.Tensor | dict[EdgeType, torch.Tensor]]
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
@@ -400,13 +396,13 @@ def to_heterogeneous_node(x: None) -> None:
 
 @overload
 def to_heterogeneous_node(
-    x: Union[_GraphEntity, dict[NodeType, _GraphEntity]]
+    x: _GraphEntity | dict[NodeType, _GraphEntity]
 ) -> dict[NodeType, _GraphEntity]:
     ...
 
 
 def to_heterogeneous_node(
-    x: Optional[Union[_GraphEntity, dict[NodeType, _GraphEntity]]]
+    x: Optional[_GraphEntity | dict[NodeType, _GraphEntity]]
 ) -> Optional[dict[NodeType, _GraphEntity]]:
     """Convert a value to a heterogeneous node representation.
 
@@ -434,13 +430,13 @@ def to_heterogeneous_edge(x: None) -> None:
 
 @overload
 def to_heterogeneous_edge(
-    x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]]
+    x: _GraphEntity | dict[EdgeType, _GraphEntity]
 ) -> dict[EdgeType, _GraphEntity]:
     ...
 
 
 def to_heterogeneous_edge(
-    x: Optional[Union[_GraphEntity, dict[EdgeType, _GraphEntity]]]
+    x: Optional[_GraphEntity | dict[EdgeType, _GraphEntity]]
 ) -> Optional[dict[EdgeType, _GraphEntity]]:
     """Convert a value to a heterogeneous edge representation.
 
@@ -483,11 +479,9 @@ def to_homogeneous(x: _GraphEntity) -> _GraphEntity:
 
 def to_homogeneous(
     x: Optional[
-        Union[
-            _GraphEntity,
-            abc.Mapping[NodeType, _GraphEntity],
-            abc.Mapping[EdgeType, _GraphEntity],
-        ]
+        _GraphEntity
+        | abc.Mapping[NodeType, _GraphEntity]
+        | abc.Mapping[EdgeType, _GraphEntity]
     ]
 ) -> Optional[_GraphEntity]:
     """Convert a value to a homogeneous representation.

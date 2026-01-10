@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
-from typing import Set, Union
+from typing import Set
 
 import torch
 import torch_geometric.data
@@ -33,9 +33,7 @@ from snapchat.research.gbml import graph_schema_pb2, training_samples_schema_pb2
 
 @dataclass
 class RootedNodeNeighborhoodBatch:
-    graph: Union[
-        torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
-    ]  # batch-coalesced graph data used for message passing
+    graph: torch_geometric.data.Data | torch_geometric.data.hetero_data.HeteroData  # batch-coalesced graph data used for message passing
     condensed_node_type_to_root_node_indices_map: dict[
         CondensedNodeType, torch.LongTensor
     ]  # maps condensed node type to root node indices within the batch for whom to compute loss

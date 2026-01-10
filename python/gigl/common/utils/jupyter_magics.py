@@ -5,7 +5,7 @@ import pathlib
 from collections import defaultdict
 from difflib import unified_diff
 from enum import Enum
-from typing import Optional, Type, Union
+from typing import Optional, Type
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -101,10 +101,8 @@ class PbVisualizer:
 
     def plot_pb(
         self,
-        pb: Union[
-            training_samples_schema_pb2.RootedNodeNeighborhood,
-            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-        ],
+        pb: training_samples_schema_pb2.RootedNodeNeighborhood
+        | training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
         layout_mode: GraphVisualizerLayoutMode = GraphVisualizerLayoutMode.BIPARTITE,
     ):
         if not pb:
@@ -180,16 +178,12 @@ class PbVisualizer:
         unenumerated_node_type: str,
         from_output: PbVisualizerFromOutput,
         pb_type: Type[
-            Union[
-                training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-                training_samples_schema_pb2.RootedNodeNeighborhood,
-            ]
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+            | training_samples_schema_pb2.RootedNodeNeighborhood
         ],
     ) -> Optional[
-        Union[
-            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-            training_samples_schema_pb2.RootedNodeNeighborhood,
-        ]
+        training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+        | training_samples_schema_pb2.RootedNodeNeighborhood
     ]:
         tfrecord_uri_prefix: str
         if from_output == PbVisualizerFromOutput.SGS:
@@ -269,17 +263,13 @@ class PbVisualizer:
 
         ds = tf.data.TFRecordDataset(tf.io.gfile.glob(uri)).as_numpy_iterator()
         pb: Optional[
-            Union[
-                training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-                training_samples_schema_pb2.RootedNodeNeighborhood,
-            ]
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+            | training_samples_schema_pb2.RootedNodeNeighborhood
         ] = None
         print(f" Looking for node {search_node_id} in {uri}")
         pb_output: Optional[
-            Union[
-                training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
-                training_samples_schema_pb2.RootedNodeNeighborhood,
-            ]
+            training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
+            | training_samples_schema_pb2.RootedNodeNeighborhood
         ] = None
         for bytestr in ds:
             try:

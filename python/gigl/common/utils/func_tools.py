@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Callable, Optional, TypeVar, Union, no_type_check, overload
+from typing import Any, Callable, Optional, TypeVar, no_type_check, overload
 
 RT = TypeVar("RT", bound=Callable[..., Any])
 
@@ -18,8 +18,8 @@ def lru_cache(maxsize: Optional[int], typed: bool = False) -> Callable[[RT], RT]
 
 @overload
 def lru_cache(
-    maxsize: Union[Callable[..., RT], Optional[int]], typed: bool = False
-) -> Union[Callable[..., RT], Callable[[RT], RT]]:
+    maxsize: Callable[..., RT] | Optional[int], typed: bool = False
+) -> Callable[..., RT] | Callable[[RT], RT]:
     ...
 
 

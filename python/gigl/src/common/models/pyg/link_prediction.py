@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -40,9 +40,7 @@ class LinkPredictionGNN(nn.Module):
 
     def forward(
         self,
-        data: Union[
-            torch_geometric.data.Data, torch_geometric.data.hetero_data.HeteroData
-        ],
+        data: torch_geometric.data.Data | torch_geometric.data.hetero_data.HeteroData,
         output_node_types: list[NodeType],
         device: torch.device,
     ) -> dict[NodeType, torch.Tensor]:

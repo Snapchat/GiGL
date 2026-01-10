@@ -2,7 +2,7 @@
 
 import unittest
 from collections import abc, defaultdict
-from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union
+from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type
 
 import graphlearn_torch as glt
 import torch
@@ -43,21 +43,19 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def _assert_data_type_correctness(
         self,
-        output_data: Union[
-            torch.Tensor,
-            dict[NodeType, torch.Tensor],
-            dict[EdgeType, torch.Tensor],
-            PartitionBook,
-            dict[NodeType, PartitionBook],
-            dict[EdgeType, PartitionBook],
-            FeaturePartitionData,
-            dict[NodeType, FeaturePartitionData],
-            dict[EdgeType, FeaturePartitionData],
-            GraphPartitionData,
-            dict[EdgeType, GraphPartitionData],
-        ],
+        output_data: torch.Tensor
+        | dict[NodeType, torch.Tensor]
+        | dict[EdgeType, torch.Tensor]
+        | PartitionBook
+        | dict[NodeType, PartitionBook]
+        | dict[EdgeType, PartitionBook]
+        | FeaturePartitionData
+        | dict[NodeType, FeaturePartitionData]
+        | dict[EdgeType, FeaturePartitionData]
+        | GraphPartitionData
+        | dict[EdgeType, GraphPartitionData],
         is_heterogeneous: bool,
-        expected_entity_types: Union[list[EdgeType], list[NodeType]],
+        expected_entity_types: list[EdgeType] | list[NodeType],
     ):
         """
         Checks that each item in the provided output data is correctly typed and, if heterogeneous, that edge types and node types are as expected.
@@ -92,13 +90,11 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         rank: int,
         is_heterogeneous: bool,
         should_assign_edges_by_src_node: bool,
-        output_node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        output_node_partition_book: PartitionBook | dict[NodeType, PartitionBook],
         output_edge_partition_book: Optional[
-            Union[PartitionBook, dict[EdgeType, PartitionBook]]
+            PartitionBook | dict[EdgeType, PartitionBook]
         ],
-        output_edge_index: Union[
-            GraphPartitionData, dict[EdgeType, GraphPartitionData]
-        ],
+        output_edge_index: GraphPartitionData | dict[EdgeType, GraphPartitionData],
         expected_node_types: list[NodeType],
         expected_edge_types: list[EdgeType],
         expected_pb_dtype: torch.dtype,
@@ -270,10 +266,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         is_heterogeneous: bool,
         is_range_based_partition: bool,
         should_assign_edges_by_src_node: bool,
-        output_graph: Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]],
-        output_node_data: Union[
-            FeaturePartitionData, dict[NodeType, FeaturePartitionData]
-        ],
+        output_graph: GraphPartitionData | dict[EdgeType, GraphPartitionData],
+        output_node_data: FeaturePartitionData | dict[NodeType, FeaturePartitionData],
         expected_node_types: list[NodeType],
         expected_edge_types: list[EdgeType],
         entity_name: Literal["features", "labels"],
@@ -396,10 +390,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         is_heterogeneous: bool,
         is_range_based_partition: bool,
         should_assign_edges_by_src_node: bool,
-        output_graph: Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]],
-        output_edge_feat: Union[
-            FeaturePartitionData, dict[EdgeType, FeaturePartitionData]
-        ],
+        output_graph: GraphPartitionData | dict[EdgeType, GraphPartitionData],
+        output_edge_feat: FeaturePartitionData | dict[EdgeType, FeaturePartitionData],
         expected_edge_types: list[EdgeType],
     ) -> None:
         """
@@ -516,8 +508,8 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         rank: int,
         is_heterogeneous: bool,
         should_assign_edges_by_src_node: bool,
-        output_node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
-        output_labeled_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        output_node_partition_book: PartitionBook | dict[NodeType, PartitionBook],
+        output_labeled_edge_index: torch.Tensor | dict[EdgeType, torch.Tensor],
         expected_edge_types: list[EdgeType],
         expected_pb_dtype: torch.dtype,
     ) -> None:
@@ -1148,7 +1140,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
         ]
     )
     def test_partitioning_invalid_node_ids(
-        self, _, node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        self, _, node_ids: torch.Tensor | dict[NodeType, torch.Tensor]
     ) -> None:
         # We expect node IDs across all machines to be contiguous starting from 0 to total_num_nodes - 1.
         # This test checks that the partitioner raises an error when this assumption is not met.
@@ -1165,7 +1157,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             should_assign_edges_by_src_node=True,
         )
 
-        node_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        node_features: torch.Tensor | dict[NodeType, torch.Tensor]
 
         if isinstance(node_ids, torch.Tensor):
             node_features = torch.ones(node_ids.shape[0], 2)

@@ -1,5 +1,3 @@
-from typing import Union
-
 import torch
 import torch.nn.functional as F
 
@@ -93,7 +91,7 @@ def average_pos_neg_scores(
 def hit_rate_at_k(
     scores: torch.Tensor,
     labels: torch.Tensor,
-    ks: Union[int, list[int]],
+    ks: int | list[int],
 ) -> torch.Tensor:
     """
     Computes HitRate@K using pure tensor operations.

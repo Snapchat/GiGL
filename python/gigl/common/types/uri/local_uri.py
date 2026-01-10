@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from gigl.common.types.uri.uri import Uri
 
@@ -12,7 +12,7 @@ class LocalUri(Uri, os.PathLike):
 
     @classmethod
     def is_valid(
-        cls, uri: Union[str, Path, Uri], raise_exception: Optional[bool] = False
+        cls, uri: str | Path | Uri, raise_exception: Optional[bool] = False
     ) -> bool:
         """Checks if the given URI is valid.
 

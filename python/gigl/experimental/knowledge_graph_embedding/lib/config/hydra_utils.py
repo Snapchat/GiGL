@@ -1,8 +1,8 @@
 from enum import Enum
-from typing import Any, Type, Union
+from typing import Any, Type
 
 
-def get_fully_qualified_name(cls_or_obj: Union[Type, Any]) -> str:
+def get_fully_qualified_name(cls_or_obj: Type | Any) -> str:
     """
     Returns the fully qualified name (module.ClassName) for a class or object.
 

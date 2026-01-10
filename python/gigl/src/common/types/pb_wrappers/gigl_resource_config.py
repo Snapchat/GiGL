@@ -1,7 +1,7 @@
 import argparse
 import os
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional
 
 import gigl.src.common.constants.resource_config as resource_config_constants
 from gigl.common import GcsUri, UriFactory
@@ -50,25 +50,19 @@ class GiglResourceConfigWrapper:
     resource_config: GiglResourceConfig
     _loaded_shared_resource_config: Optional[SharedResourceConfig] = None
     _trainer_config: Optional[
-        Union[
-            VertexAiResourceConfig,
-            KFPResourceConfig,
-            LocalResourceConfig,
-            VertexAiGraphStoreConfig,
-        ]
+        VertexAiResourceConfig
+        | KFPResourceConfig
+        | LocalResourceConfig
+        | VertexAiGraphStoreConfig
     ] = None
     _inference_config: Optional[
-        Union[
-            DataflowResourceConfig,
-            VertexAiResourceConfig,
-            LocalResourceConfig,
-            VertexAiGraphStoreConfig,
-        ]
+        DataflowResourceConfig
+        | VertexAiResourceConfig
+        | LocalResourceConfig
+        | VertexAiGraphStoreConfig
     ] = None
 
-    _split_gen_config: Union[
-        SparkResourceConfig, DataflowResourceConfig
-    ] = None  # type: ignore
+    _split_gen_config: SparkResourceConfig | DataflowResourceConfig = None  # type: ignore
 
     @property
     def shared_resource_config(self) -> SharedResourceConfig:
@@ -282,12 +276,12 @@ class GiglResourceConfigWrapper:
     @property
     def trainer_config(
         self,
-    ) -> Union[
-        VertexAiResourceConfig,
-        KFPResourceConfig,
-        LocalResourceConfig,
-        VertexAiGraphStoreConfig,
-    ]:
+    ) -> (
+        VertexAiResourceConfig
+        | KFPResourceConfig
+        | LocalResourceConfig
+        | VertexAiGraphStoreConfig
+    ):
         """
         Returns the trainer config specified in the resource config. (e.g. Vertex AI, KFP, Local)
         """
@@ -304,12 +298,7 @@ class GiglResourceConfigWrapper:
                 deprecated_config: DistributedTrainerConfig = (
                     self.resource_config.trainer_config
                 )
-                _trainer_config: Union[
-                    VertexAiResourceConfig,
-                    KFPResourceConfig,
-                    LocalResourceConfig,
-                    VertexAiGraphStoreConfig,
-                ]
+                _trainer_config: VertexAiResourceConfig | KFPResourceConfig | LocalResourceConfig | VertexAiGraphStoreConfig
                 if deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD) == _VERTEX_AI_TRAINER_CONFIG:  # type: ignore[arg-type]
                     logger.info(
                         f"Casting VertexAiTrainerConfig: ({deprecated_config.vertex_ai_trainer_config}) to VertexAiResourceConfig"
@@ -367,12 +356,12 @@ class GiglResourceConfigWrapper:
     @property
     def inferencer_config(
         self,
-    ) -> Union[
-        DataflowResourceConfig,
-        VertexAiResourceConfig,
-        LocalResourceConfig,
-        VertexAiGraphStoreConfig,
-    ]:
+    ) -> (
+        DataflowResourceConfig
+        | VertexAiResourceConfig
+        | LocalResourceConfig
+        | VertexAiGraphStoreConfig
+    ):
         """
         Returns the inferencer config specified in the resource config. (Dataflow)
         """
