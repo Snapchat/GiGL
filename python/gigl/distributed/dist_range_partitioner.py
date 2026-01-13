@@ -3,10 +3,8 @@ import time
 from typing import Optional, Union
 
 import torch
-
-# from gigl.distributed.rpc import all_gather
 from graphlearn_torch.distributed.rpc import all_gather
-from graphlearn_torch.partition import PartitionBook
+from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
@@ -295,12 +293,17 @@ class DistRangePartitioner(DistPartitioner):
             all_gather((self._rank, partitioned_edge_index.size(1))).values(),
             key=lambda x: x[0],
         )
-        all_edges = sum([num_edges for _, num_edges in num_edges_on_each_rank])
-        edge_partition_book = build_range_partition_book(
-            all_edges, self._rank, self._world_size
-        )
+        partition_ranges: list[tuple[int, int]] = []
+        start = 0
+        for _, num_edges in num_edges_on_each_rank:
+            end = start + num_edges
+            partition_ranges.append((start, end))
+            start = end
 
         if edge_feat_dim is not None:
+            edge_partition_book = RangePartitionBook(
+                partition_ranges=partition_ranges, partition_idx=self._rank
+            )
             partitioned_edge_ids = get_ids_on_rank(
                 partition_book=edge_partition_book, rank=self._rank
             )
