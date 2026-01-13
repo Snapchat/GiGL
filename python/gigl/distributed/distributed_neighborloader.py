@@ -19,7 +19,8 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
-    DatasetMetadata,
+    DatasetSchema,
+    SamplingClusterSetup,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     set_missing_features,
@@ -73,7 +74,8 @@ class DistNeighborLoader(DistLoader):
         https://pytorch-geometric.readthedocs.io/en/2.5.2/_modules/torch_geometric/distributed/dist_neighbor_loader.html#DistNeighborLoader
 
         Args:
-            dataset (DistDataset | RemoteDistDataset): The dataset to sample from. Must be a "RemoteDistDataset" if using Graph Store mode.
+            dataset (DistDataset | RemoteDistDataset): The dataset to sample from.
+            If this is a `RemoteDistDataset`, then we assumed to be in "Graph Store" mode.
             num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
@@ -82,7 +84,7 @@ class DistNeighborLoader(DistLoader):
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
-            input_nodes (Tenor | Tuple[NodeType, Tenor] | list[Tenor] | Tuple[NodeType, list[Tenor]]):
+            input_nodes (Tensor | Tuple[NodeType, Tensor] | list[Tensor] | Tuple[NodeType, list[Tensor]]):
                 The nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
                 If set to `None` for homogeneous settings, all nodes will be considered.
@@ -91,6 +93,8 @@ class DistNeighborLoader(DistLoader):
                 For Graph Store mode, this must be a tuple of (NodeType, list[Tenor]) or list[Tenor].
                 Where each Tensor in the list is the node ids to sample from, for each server.
                 e.g. [[10, 20], [30, 40]] means sample from nodes 10 and 20 on server 0, and nodes 30 and 40 on server 1.
+                If a Graph Store input (e.g. list[Tensor]) is provided to colocated mode, or colocated input (e.g. Tensor) is provided to Graph Store mode,
+                then an error will be raised.
             num_workers (int): How many workers to use (subprocesses to spwan) for
                     distributed neighbor sampling of the current process. (default: ``1``).
             batch_size (int, optional): how many samples per batch to load
@@ -194,7 +198,11 @@ class DistNeighborLoader(DistLoader):
             local_process_rank,
             local_process_world_size,
         )  # delete deprecated vars so we don't accidentally use them.
-
+        if isinstance(dataset, RemoteDistDataset):
+            sampling_cluster_setup = SamplingClusterSetup.GRAPH_STORE
+        else:
+            sampling_cluster_setup = SamplingClusterSetup.COLOCATED
+        logger.info(f"Sampling cluster setup: {sampling_cluster_setup.value}")
         device = (
             pin_memory_device
             if pin_memory_device
@@ -204,8 +212,10 @@ class DistNeighborLoader(DistLoader):
         )
 
         # Determines if the node ids passed in are heterogeneous or homogeneous.
-        self._is_labeled_heterogeneous = False
-        if isinstance(dataset, DistDataset):
+        if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
+            assert isinstance(
+                dataset, DistDataset
+            ), "When using colocated mode, dataset must be a DistDataset."
             input_data, worker_options, dataset_metadata = self._setup_for_colocated(
                 input_nodes,
                 dataset,
@@ -221,7 +231,10 @@ class DistNeighborLoader(DistLoader):
                 channel_size,
                 num_cpu_threads,
             )
-        else:  # RemoteDistDataset
+        else:  # Graph Store mode
+            assert isinstance(
+                dataset, RemoteDistDataset
+            ), "When using Graph Store mode, dataset must be a RemoteDistDataset."
             input_data, worker_options, dataset_metadata = self._setup_for_graph_store(
                 input_nodes,
                 dataset,
@@ -233,10 +246,10 @@ class DistNeighborLoader(DistLoader):
         self._edge_feature_info = dataset_metadata.edge_feature_info
 
         num_neighbors = patch_fanout_for_sampling(
-            list(dataset_metadata.edge_feature_info.keys())
+            edge_types=list(dataset_metadata.edge_feature_info.keys())
             if isinstance(dataset_metadata.edge_feature_info, dict)
             else None,
-            num_neighbors,
+            num_neighbors=num_neighbors,
         )
 
         sampling_config = SamplingConfig(
@@ -259,7 +272,7 @@ class DistNeighborLoader(DistLoader):
             )
             torch.distributed.destroy_process_group()
 
-        if isinstance(dataset, DistDataset):
+        if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             super().__init__(
                 dataset if isinstance(dataset, DistDataset) else None,
                 input_data,
@@ -271,11 +284,47 @@ class DistNeighborLoader(DistLoader):
             # For Graph Store mode, we need to start the communcation between compute and storage nodes sequentially, by compute node.
             # E.g. intialize connections between compute node 0 and storage nodes 0, 1, 2, 3, then compute node 1 and storage nodes 0, 1, 2, 3, etc.
             # Note that each compute node may have multiple connections to each storage node, once per compute process.
-            # E.g. if there are 4 gpus per compute node, then there will be 4 connections to each storage node.
+            # It's important to distinguish "compute node" (e.g. physical compute machine) from "compute process" (e.g. process running on the compute node).
+            # Since in practice we have multiple compute processes per compute node, and each compute process needs to initialize the connection to the storage nodes.
+            # E.g. if there are 4 gpus per compute node, then there will be 4 connections from each compute node to each storage node.
             # We need to this because if we don't, then there is a race condition when initalizing the samplers on the storage nodes [1]
             # Where since the lock is per *server* (e.g. per storage node), if we try to start one connection from compute node 0, and compute node 1
             # Then we deadlock and fail.
+            # Specifically, the race condition happens in `DistLoader.__init__` when it initializes the sampling producers on the storage nodes. [2]
             # [1]: https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py#L129-L167
+            # [2]: https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_loader.py#L187-L193
+
+            # See below for a connection setup.
+            # ╔═══════════════════════════════════════════════════════════════════════════════════════╗
+            # ║                         COMPUTE TO STORAGE NODE CONNECTIONS                            ║
+            # ╚═══════════════════════════════════════════════════════════════════════════════════════╝
+
+            #      COMPUTE NODES                                              STORAGE NODES
+            #      ═════════════                                              ═════════════
+
+            #   ┌──────────────────────┐          (1)                      ┌───────────────┐
+            #   │    COMPUTE NODE 0    │                                   │               │
+            #   │  ┌────┬────┬────┬────┤ ══════════════════════════════════│   STORAGE 0   │
+            #   │  │GPU │GPU │GPU │GPU │                                 ╱ │               │
+            #   │  │ 0  │ 1  │ 2  │ 3  │ ════════════════════╲         ╱   └───────────────┘
+            #   │  └────┴────┴────┴────┤          (2)          ╲     ╱
+            #   └──────────────────────┘                         ╲ ╱
+            #                                                     ╳
+            #                                           (3)     ╱   ╲     (4)
+            #   ┌──────────────────────┐                      ╱       ╲    ┌───────────────┐
+            #   │    COMPUTE NODE 1    │                    ╱           ╲  │               │
+            #   │  ┌────┬────┬────┬────┤ ═════════════════╱               ═│   STORAGE 1   │
+            #   │  │GPU │GPU │GPU │GPU │                                   │               │
+            #   │  │ 0  │ 1  │ 2  │ 3  │ ══════════════════════════════════│               │
+            #   │  └────┴────┴────┴────┤                                   └───────────────┘
+            #   └──────────────────────┘
+
+            #   ┌─────────────────────────────────────────────────────────────────────────────┐
+            #   │  (1) Compute Node 0  →  Storage 0   (4 connections, one per GPU)            │
+            #   │  (2) Compute Node 0  →  Storage 1   (4 connections, one per GPU)            │
+            #   │  (3) Compute Node 1  →  Storage 0   (4 connections, one per GPU)            │
+            #   │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
+            #   └─────────────────────────────────────────────────────────────────────────────┘
             node_rank = dataset.cluster_info.compute_node_rank
             for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
                 if node_rank == target_node_rank:
@@ -302,7 +351,7 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
-    ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetMetadata]:
+    ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
             raise ValueError(
                 f"When using Graph Store mode, input nodes must be provided, received {input_nodes}"
@@ -367,7 +416,7 @@ class DistNeighborLoader(DistLoader):
                 len(edge_feature_info) == 1
                 and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_feature_info
             ):
-                input_type: NodeType | None = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
             else:
                 input_type = fallback_input_type
         elif require_edge_feature_info:
@@ -377,6 +426,15 @@ class DistNeighborLoader(DistLoader):
         else:
             input_type = None
 
+        if (
+            input_type is not None
+            and isinstance(node_feature_info, dict)
+            and input_type not in node_feature_info.keys()
+        ):
+            raise ValueError(
+                f"Input type {input_type} is not in node node types: {node_feature_info.keys()}"
+            )
+
         input_data = [
             NodeSamplerInput(node=node, input_type=input_type) for node in nodes
         ]
@@ -384,7 +442,7 @@ class DistNeighborLoader(DistLoader):
         return (
             input_data,
             worker_options,
-            DatasetMetadata(
+            DatasetSchema(
                 is_labeled_heterogeneous=is_labeled_heterogeneous,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
@@ -414,7 +472,7 @@ class DistNeighborLoader(DistLoader):
         worker_concurrency: int,
         channel_size: str,
         num_cpu_threads: Optional[int],
-    ) -> tuple[NodeSamplerInput, MpDistSamplingWorkerOptions, DatasetMetadata]:
+    ) -> tuple[NodeSamplerInput, MpDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -530,7 +588,7 @@ class DistNeighborLoader(DistLoader):
         return (
             input_data,
             worker_options,
-            DatasetMetadata(
+            DatasetSchema(
                 is_labeled_heterogeneous=is_labeled_heterogeneous,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,

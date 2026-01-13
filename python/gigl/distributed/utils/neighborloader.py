@@ -2,6 +2,7 @@
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal, Optional, TypeVar, Union
 
 import torch
@@ -16,8 +17,17 @@ logger = Logger()
 _GraphType = TypeVar("_GraphType", Data, HeteroData)
 
 
+class SamplingClusterSetup(Enum):
+    """
+    The setup of the sampling cluster.
+    """
+
+    COLOCATED = "colocated"
+    GRAPH_STORE = "graph_store"
+
+
 @dataclass(frozen=True)
-class DatasetMetadata:
+class DatasetSchema:
     """
     Shared metadata between the local and remote datasets.
     """
