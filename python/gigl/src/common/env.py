@@ -12,4 +12,8 @@ def get_component() -> GiGLComponents:
     Raises:
         ValueError: If the component is not valid.
     """
+    if GIGL_COMPONENT_ENV_KEY not in os.environ:
+        raise KeyError(
+            f"Environment variable {GIGL_COMPONENT_ENV_KEY} is not set. Cannot determine the component of the current job. Please set the environment variable like `export GIGL_COMPONENT=trainer`."
+        )
     return GiGLComponents(os.environ[GIGL_COMPONENT_ENV_KEY])
