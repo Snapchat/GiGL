@@ -184,6 +184,7 @@ class RemoteDistDataset:
         Get free ports from the storage master node.
 
         This *must* be used with a torch.distributed process group initialized, for the *entire* training cluster.
+        E.g. if your training machines have 4 GPUs each, then the world size is probably number training machines * 4.
 
         All compute ranks will receive the same free ports.
 
@@ -194,11 +195,7 @@ class RemoteDistDataset:
             raise ValueError(
                 "torch.distributed process group must be initialized for the entire training cluster"
             )
-        compute_cluster_rank = (
-            self.cluster_info.compute_node_rank
-            * self.cluster_info.num_processes_per_compute
-            + self._local_rank
-        )
+        compute_cluster_rank = torch.distributed.get_rank()
         if compute_cluster_rank == 0:
             ports = request_server(
                 0,
