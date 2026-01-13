@@ -8,9 +8,9 @@ COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: Final[
     str
 ] = "COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"
 
-# Environment variable to indicate the type of job.
+# Environment variable to indicate the component of the job.
 # Values: "train", "inference"
-JOB_TYPE_ENV_KEY: Final[str] = "GIGL_JOB_TYPE"
+GIGL_COMPONENT_ENV_KEY: Final[str] = "GIGL_COMPONENT"
 
 
 @dataclass(frozen=True)

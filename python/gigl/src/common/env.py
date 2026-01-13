@@ -1,6 +1,6 @@
 import os
 
-from gigl.env.distributed import JOB_TYPE_ENV_KEY
+from gigl.env.distributed import GIGL_COMPONENT_ENV_KEY
 from gigl.src.common.constants.components import GiGLComponents
 
 
@@ -12,4 +12,4 @@ def get_component() -> GiGLComponents:
     Raises:
         ValueError: If the component is not valid.
     """
-    return GiGLComponents(os.environ[JOB_TYPE_ENV_KEY])
+    return GiGLComponents(os.environ[GIGL_COMPONENT_ENV_KEY])

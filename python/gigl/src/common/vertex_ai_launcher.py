@@ -14,7 +14,7 @@ from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
-    JOB_TYPE_ENV_KEY,
+    GIGL_COMPONENT_ENV_KEY,
 )
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -81,7 +81,7 @@ def launch_single_pool_job(
         vertex_ai_resource_config=vertex_ai_resource_config,
         env_vars=[
             env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
-            env_var.EnvVar(name=JOB_TYPE_ENV_KEY, value=component.value),
+            env_var.EnvVar(name=GIGL_COMPONENT_ENV_KEY, value=component.value),
         ],
         labels=resource_config_wrapper.get_resource_labels(component=component),
     )
@@ -155,7 +155,7 @@ def launch_graph_store_enabled_job(
             name=COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
             value=str(num_compute_processes),
         ),
-        env_var.EnvVar(name=JOB_TYPE_ENV_KEY, value=component.value),
+        env_var.EnvVar(name=GIGL_COMPONENT_ENV_KEY, value=component.value),
     ]
 
     labels = resource_config_wrapper.get_resource_labels(component=component)
