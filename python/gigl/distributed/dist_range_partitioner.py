@@ -3,13 +3,18 @@ import time
 from typing import Optional, Union
 
 import torch
+
+# from gigl.distributed.rpc import all_gather
 from graphlearn_torch.distributed.rpc import all_gather
-from graphlearn_torch.partition import PartitionBook, RangePartitionBook
+from graphlearn_torch.partition import PartitionBook
 from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_partitioner import DistPartitioner
-from gigl.distributed.utils.partition_book import get_ids_on_rank
+from gigl.distributed.utils.partition_book import (
+    build_range_partition_book,
+    get_ids_on_rank,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homogeneous
 
@@ -110,23 +115,8 @@ class DistRangePartitioner(DistPartitioner):
 
         num_nodes = self._num_nodes[node_type]
 
-        per_node_num, remainder = divmod(num_nodes, self._world_size)
-
-        # We set `remainder` number of partitions to have at most one more item.
-
-        start = 0
-        partition_ranges: list[tuple[int, int]] = []
-        for partition_index in range(self._world_size):
-            if partition_index < remainder:
-                end = start + per_node_num + 1
-            else:
-                end = start + per_node_num
-            partition_ranges.append((start, end))
-            start = end
-
-        # Store and return partitioned ranges as GLT's RangePartitionBook
-        node_partition_book = RangePartitionBook(
-            partition_ranges=partition_ranges, partition_idx=self._rank
+        node_partition_book = build_range_partition_book(
+            num_nodes, self._rank, self._world_size
         )
 
         logger.info(
@@ -305,18 +295,12 @@ class DistRangePartitioner(DistPartitioner):
             all_gather((self._rank, partitioned_edge_index.size(1))).values(),
             key=lambda x: x[0],
         )
-
-        partition_ranges: list[tuple[int, int]] = []
-        start = 0
-        for _, num_edges in num_edges_on_each_rank:
-            end = start + num_edges
-            partition_ranges.append((start, end))
-            start = end
+        all_edges = sum([num_edges for _, num_edges in num_edges_on_each_rank])
+        edge_partition_book = build_range_partition_book(
+            all_edges, self._rank, self._world_size
+        )
 
         if edge_feat_dim is not None:
-            edge_partition_book = RangePartitionBook(
-                partition_ranges=partition_ranges, partition_idx=self._rank
-            )
             partitioned_edge_ids = get_ids_on_rank(
                 partition_book=edge_partition_book, rank=self._rank
             )
