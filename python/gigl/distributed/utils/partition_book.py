@@ -70,11 +70,13 @@ def get_total_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
         )
 
 
-def build_range_partition_book(
+def build_balanced_range_parition_book(
     num_entities: int, rank: int, world_size: int
 ) -> RangePartitionBook:
     """
     Builds a range-based partition book for a given number of entities, rank, and world size.
+
+    The partition book is balanced, i.e. the difference between the number of entities in any two partitions is at most 1.
 
     Examples:
         num_entities = 10, world_size = 2, rank = 0

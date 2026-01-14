@@ -17,7 +17,7 @@ from gigl.distributed.graph_store.storage_main import storage_node_process
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.distributed.utils.partition_book import (
-    build_range_partition_book,
+    build_balanced_range_parition_book,
     get_ids_on_rank,
 )
 from gigl.env.distributed import (
@@ -187,7 +187,7 @@ def _get_expected_input_nodes_by_rank(
     Returns:
         dict[int, list[torch.Tensor]]: The expected sampler input for each compute rank.
     """
-    partition_book = build_range_partition_book(
+    partition_book = build_balanced_range_parition_book(
         num_entities=num_nodes, rank=0, world_size=cluster_info.num_storage_nodes
     )
     expected_sampler_input = collections.defaultdict(list)
