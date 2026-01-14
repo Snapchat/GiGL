@@ -2,6 +2,7 @@ import collections
 import os
 import socket
 import unittest
+from typing import Optional
 from unittest import mock
 
 import torch
@@ -27,6 +28,7 @@ from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
 )
+from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
@@ -64,6 +66,7 @@ def _run_client_process(
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: dict[str, torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
+    expected_edge_types: Optional[list[EdgeType]],
 ) -> None:
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
@@ -110,6 +113,11 @@ def _run_client_process(
         mp_sharing_dict=None,
     ).get_node_ids()
     _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
+
+    assert (
+        remote_dist_dataset.get_edge_types() == expected_edge_types
+    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.get_edge_types()}"
+
     torch.distributed.barrier()
 
     # Test the DistNeighborLoader
@@ -143,6 +151,7 @@ def _client_process(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     expected_sampler_input: dict[int, list[torch.Tensor]],
+    expected_edge_types: Optional[list[EdgeType]],
 ) -> None:
     logger.info(
         f"Initializing client node {client_rank} / {cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {client_rank}"
@@ -160,6 +169,7 @@ def _client_process(
                 cluster_info,  # cluster_info
                 mp_sharing_dict,  # mp_sharing_dict
                 expected_sampler_input,  # expected_sampler_input
+                expected_edge_types,  # expected_edge_types
             ],
         )
         client_processes.append(client_process)
@@ -230,7 +240,7 @@ def _get_expected_input_nodes_by_rank(
     return dict(expected_sampler_input)
 
 
-class TestUtils(unittest.TestCase):
+class GraphStoreIntegrationTest(unittest.TestCase):
     def test_graph_store_locally(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
@@ -288,6 +298,7 @@ class TestUtils(unittest.TestCase):
                         i,  # client_rank
                         cluster_info,  # cluster_info
                         expected_sampler_input,  # expected_sampler_input
+                        None,  # expected_edge_types - None for homogeneous dataset
                     ],
                 )
                 client_process.start()
