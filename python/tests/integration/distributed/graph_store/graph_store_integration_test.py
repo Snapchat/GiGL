@@ -19,6 +19,10 @@ from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.graph_store.storage_main import storage_node_process
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_ports
+from gigl.distributed.utils.partition_book import (
+    build_balanced_range_parition_book,
+    get_ids_on_rank,
+)
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
@@ -212,14 +216,12 @@ def _get_expected_input_nodes_by_rank(
     Returns:
         dict[int, list[torch.Tensor]]: The expected sampler input for each compute rank.
     """
+    partition_book = build_balanced_range_parition_book(
+        num_entities=num_nodes, rank=0, world_size=cluster_info.num_storage_nodes
+    )
     expected_sampler_input = collections.defaultdict(list)
-    all_nodes = torch.arange(num_nodes, dtype=torch.int64)
     for server_rank in range(cluster_info.num_storage_nodes):
-        server_node_start = server_rank * num_nodes // cluster_info.num_storage_nodes
-        server_node_end = (
-            (server_rank + 1) * num_nodes // cluster_info.num_storage_nodes
-        )
-        server_nodes = all_nodes[server_node_start:server_node_end]
+        server_nodes = get_ids_on_rank(partition_book, server_rank)
         for compute_rank in range(cluster_info.num_compute_nodes):
             generated_nodes = shard_nodes_by_process(
                 server_nodes, compute_rank, cluster_info.num_processes_per_compute
