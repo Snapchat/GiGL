@@ -9,10 +9,7 @@ from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_partitioner import DistPartitioner
-from gigl.distributed.utils.partition_book import (
-    build_balanced_range_parition_book,
-    get_ids_on_rank,
-)
+from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homogeneous
 
@@ -113,7 +110,7 @@ class DistRangePartitioner(DistPartitioner):
 
         num_nodes = self._num_nodes[node_type]
 
-        node_partition_book = build_balanced_range_parition_book(
+        node_partition_book = build_partition_book(
             num_nodes, self._rank, self._world_size
         )
 
