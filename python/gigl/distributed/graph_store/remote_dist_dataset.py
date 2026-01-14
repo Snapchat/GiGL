@@ -9,6 +9,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.graph_store.storage_utils import (
     get_edge_dir,
     get_edge_feature_info,
+    get_edge_types,
     get_node_feature_info,
     get_node_ids_for_rank,
 )
@@ -184,7 +185,6 @@ class RemoteDistDataset:
         Get free ports from the storage master node.
 
         This *must* be used with a torch.distributed process group initialized, for the *entire* training cluster.
-        E.g. if your training machines have 4 GPUs each, then the world size is probably number training machines * 4.
 
         All compute ranks will receive the same free ports.
 
@@ -195,7 +195,11 @@ class RemoteDistDataset:
             raise ValueError(
                 "torch.distributed process group must be initialized for the entire training cluster"
             )
-        compute_cluster_rank = torch.distributed.get_rank()
+        compute_cluster_rank = (
+            self.cluster_info.compute_node_rank
+            * self.cluster_info.num_processes_per_compute
+            + self._local_rank
+        )
         if compute_cluster_rank == 0:
             ports = request_server(
                 0,
@@ -210,3 +214,14 @@ class RemoteDistDataset:
         torch.distributed.broadcast_object_list(ports, src=0)
         logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
         return ports
+
+    def get_edge_types(self) -> Optional[list[EdgeType]]:
+        """Get the edge types from the registered dataset.
+
+        Returns:
+            The edge types in the dataset, None if the dataset is homogeneous.
+        """
+        return request_server(
+            0,
+            get_edge_types,
+        )
