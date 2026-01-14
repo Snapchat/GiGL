@@ -1,7 +1,6 @@
 import logging
 import os
 import pathlib
-import sys
 from datetime import datetime
 from typing import Any, MutableMapping, Optional
 
@@ -72,5 +71,4 @@ class Logger(logging.LoggerAdapter):
         return msg, kwargs
 
     def __getattr__(self, name: str):
-        sys.stdout.flush()
         return getattr(self._logger, name)

@@ -9,6 +9,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.graph_store.storage_utils import (
     get_edge_dir,
     get_edge_feature_info,
+    get_edge_types,
     get_node_feature_info,
     get_node_ids_for_rank,
 )
@@ -213,3 +214,14 @@ class RemoteDistDataset:
         torch.distributed.broadcast_object_list(ports, src=0)
         logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
         return ports
+
+    def get_edge_types(self) -> Optional[list[EdgeType]]:
+        """Get the edge types from the registered dataset.
+
+        Returns:
+            The edge types.
+        """
+        return request_server(
+            0,
+            get_edge_types,
+        )

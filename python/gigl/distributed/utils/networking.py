@@ -168,11 +168,12 @@ def get_internal_ip_from_node(
         # Other nodes will receive the master's IP via broadcast
         ip_list = [None]
 
-    device = torch.device("cpu" if not torch.cuda.is_available() else "cuda")
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
     node_ip = ip_list[0]
-    logger.info(f"Rank {rank} received master node's internal IP: {node_ip}")
+    logger.info(
+        f"Rank {rank} received master node's internal IP: {node_ip} on device {device}"
+    )
     assert node_ip is not None, "Could not retrieve master node's internal IP"
     return node_ip
 
@@ -244,15 +245,21 @@ def get_graph_store_info() -> GraphStoreInfo:
     compute_cluster_master_ip = cluster_master_ip
     storage_cluster_master_ip = get_internal_ip_from_node(node_rank=num_compute_nodes)
 
+    # Cluster master is by convention rank 0.
+    cluster_master_rank = 0
     (
         cluster_master_port,
         compute_cluster_master_port,
-    ) = get_free_ports_from_node(num_ports=2, node_rank=0)
+    ) = get_free_ports_from_node(num_ports=2, node_rank=cluster_master_rank)
+
+    # Since we structure the cluster as [compute0, ..., computeN, storage0, ..., storageN], the storage master is the first storage node.
+    # And it's rank is the number of compute nodes.
+    storage_master_rank = num_compute_nodes
     (
         storage_cluster_master_port,
         storage_rpc_port,
         storage_rpc_wait_port,
-    ) = get_free_ports_from_node(num_ports=3, node_rank=num_compute_nodes)
+    ) = get_free_ports_from_node(num_ports=3, node_rank=storage_master_rank)
 
     num_processes_per_compute = int(
         os.environ.get(COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY, "1")

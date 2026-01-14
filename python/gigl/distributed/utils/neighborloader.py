@@ -2,6 +2,7 @@
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal, Optional, TypeVar, Union
 
 import torch
@@ -16,14 +17,25 @@ logger = Logger()
 _GraphType = TypeVar("_GraphType", Data, HeteroData)
 
 
+class SamplingClusterSetup(Enum):
+    """
+    The setup of the sampling cluster.
+    """
+
+    COLOCATED = "colocated"
+    GRAPH_STORE = "graph_store"
+
+
 @dataclass(frozen=True)
-class DatasetMetadata:
+class DatasetSchema:
     """
     Shared metadata between the local and remote datasets.
     """
 
     # If the dataset is labeled heterogeneous. E.g. one node type, one edge type, and "label" edges.
     is_labeled_heterogeneous: bool
+    # List of all edge types in the graph.
+    edge_types: Optional[list[EdgeType]]
     # Node feature info.
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
     # Edge feature info.

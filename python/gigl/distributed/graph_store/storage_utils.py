@@ -141,3 +141,17 @@ def get_node_ids_for_rank(
             f"Node ids must be a torch.Tensor or a dict[NodeType, torch.Tensor], got {type(_dataset.node_ids)}"
         )
     return shard_nodes_by_process(nodes, rank, world_size)
+
+
+def get_edge_types() -> Optional[list[EdgeType]]:
+    """Get the edge types from the registered dataset.
+
+    Returns:
+        The edge types.
+    """
+    if _dataset is None:
+        raise _NO_DATASET_ERROR
+    if isinstance(_dataset.graph, dict):
+        return list(_dataset.graph.keys())
+    else:
+        return None
