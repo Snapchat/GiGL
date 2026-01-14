@@ -34,6 +34,8 @@ class DatasetSchema:
 
     # If the dataset is labeled heterogeneous. E.g. one node type, one edge type, and "label" edges.
     is_labeled_heterogeneous: bool
+    # List of all edge types in the graph.
+    edge_types: Optional[list[EdgeType]]
     # Node feature info.
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
     # Edge feature info.

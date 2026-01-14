@@ -199,10 +199,10 @@ class DistNeighborLoader(DistLoader):
             local_process_world_size,
         )  # delete deprecated vars so we don't accidentally use them.
         if isinstance(dataset, RemoteDistDataset):
-            sampling_cluster_setup = SamplingClusterSetup.GRAPH_STORE
+            self._sampling_cluster_setup = SamplingClusterSetup.GRAPH_STORE
         else:
-            sampling_cluster_setup = SamplingClusterSetup.COLOCATED
-        logger.info(f"Sampling cluster setup: {sampling_cluster_setup.value}")
+            self._sampling_cluster_setup = SamplingClusterSetup.COLOCATED
+        logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
         device = (
             pin_memory_device
             if pin_memory_device
@@ -245,13 +245,14 @@ class DistNeighborLoader(DistLoader):
         self._node_feature_info = dataset_metadata.node_feature_info
         self._edge_feature_info = dataset_metadata.edge_feature_info
 
+        logger.info(f"num_neighbors before patch: {num_neighbors}")
         num_neighbors = patch_fanout_for_sampling(
-            edge_types=list(dataset_metadata.edge_feature_info.keys())
-            if isinstance(dataset_metadata.edge_feature_info, dict)
-            else None,
+            edge_types=dataset_metadata.edge_types,
             num_neighbors=num_neighbors,
         )
-
+        logger.info(
+            f"num_neighbors: {num_neighbors}, edge_types: {dataset_metadata.edge_types}"
+        )
         sampling_config = SamplingConfig(
             sampling_type=SamplingType.NODE,
             num_neighbors=num_neighbors,
@@ -444,6 +445,7 @@ class DistNeighborLoader(DistLoader):
             worker_options,
             DatasetSchema(
                 is_labeled_heterogeneous=is_labeled_heterogeneous,
+                edge_types=dataset.get_edge_types(),
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
                 edge_dir=dataset.get_edge_dir(),
@@ -585,11 +587,17 @@ class DistNeighborLoader(DistLoader):
             pin_memory=device.type == "cuda",
         )
 
+        if isinstance(dataset.graph, dict):
+            edge_types = list(dataset.graph.keys())
+        else:
+            edge_types = None
+
         return (
             input_data,
             worker_options,
             DatasetSchema(
                 is_labeled_heterogeneous=is_labeled_heterogeneous,
+                edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
                 edge_dir=dataset.edge_dir,
