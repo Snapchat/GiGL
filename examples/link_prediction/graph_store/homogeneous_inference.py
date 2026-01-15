@@ -1,9 +1,64 @@
 """
-This file contains an example for how to run homogeneous inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
-GLT (GraphLearn-for-PyTorch) bindings that GiGL has. Note that example should be applied to use cases which already have
-some pretrained `nn.Module` and are looking to utilize cost-savings with distributed inference. While `run_example_inference` is coupled with
-GiGL orchestration, the `_inference_process` function is generic and can be used as references
-for writing inference for pipelines not dependent on GiGL orchestration.
+This file contains an example for how to run homogeneous inference in **graph store mode** using GiGL.
+
+Graph Store Mode vs Standard Mode:
+----------------------------------
+Graph store mode uses a heterogeneous cluster architecture with two distinct sub-clusters:
+  1. **Storage Cluster (graph_store_pool)**: Dedicated machines for storing and serving the graph
+     data. These are typically high-memory machines without GPUs (e.g., n2-highmem-32).
+  2. **Compute Cluster (compute_pool)**: Dedicated machines for running model inference/training.
+     These typically have GPUs attached (e.g., n1-standard-16 with NVIDIA_TESLA_T4).
+
+This separation allows for:
+  - Independent scaling of storage and compute resources
+  - Better memory utilization (graph data stays on storage nodes)
+  - Cost optimization by using appropriate hardware for each role
+
+In contrast, the standard inference mode (see `examples/link_prediction/homogeneous_inference.py`)
+uses a homogeneous cluster where each machine handles both graph storage and computation.
+
+Key Implementation Differences:
+-------------------------------
+This file (graph store mode):
+  - Uses `RemoteDistDataset` to connect to a remote graph store cluster
+  - Uses `init_compute_process` to initialize the compute node connection to storage
+  - Obtains cluster topology via `get_graph_store_info()` which returns `GraphStoreInfo`
+  - Uses `mp_sharing_dict` for efficient tensor sharing between local processes
+
+Standard mode (`homogeneous_inference.py`):
+  - Uses `DistDataset` with `build_dataset_from_task_config_uri` where each node loads its partition
+  - Manually manages distributed process groups with master IP and port
+  - Each machine stores its own partition of the graph data
+
+Resource Configuration:
+-----------------------
+Graph store mode requires a different resource config structure. Compare:
+
+**Graph Store Mode** (e2e_glt_gs_resource_config.yaml):
+```yaml
+inferencer_resource_config:
+  vertex_ai_graph_store_inferencer_config:
+    graph_store_pool:
+      machine_type: n2-highmem-32      # High memory for graph storage
+      gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+      gpu_limit: 0
+      num_replicas: 2
+    compute_pool:
+      machine_type: n1-standard-16     # Standard machines with GPUs
+      gpu_type: NVIDIA_TESLA_T4
+      gpu_limit: 2
+      num_replicas: 2
+```
+
+**Standard Mode** (e2e_glt_resource_config.yaml):
+```yaml
+inferencer_resource_config:
+  vertex_ai_inferencer_config:
+    machine_type: n1-highmem-32
+    gpu_type: NVIDIA_TESLA_T4
+    gpu_limit: 2
+    num_replicas: 2
+```
 
 To run this file with GiGL orchestration, set the fields similar to below:
 
@@ -12,9 +67,12 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.link_prediction.homogeneous_inference
+  command: python -m examples.link_prediction.graph_store.homogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
+
+Note: Ensure you use a resource config with `vertex_ai_graph_store_inferencer_config` when
+running in graph store mode.
 
 You can run this example in a full pipeline with `make run_hom_cora_sup_test` from GiGL root.
 """
