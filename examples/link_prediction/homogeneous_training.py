@@ -26,7 +26,6 @@ import argparse
 import statistics
 import time
 from collections.abc import Iterator
-import sys
 from typing import Literal, Optional
 
 import torch
@@ -320,10 +319,7 @@ def _training_process(
     logger.info(f"---Rank {rank}  training process set device {device}")
 
     logger.info(f"---Rank {rank} training process group initialized")
-    logger.info(f"graph: {dataset.graph=}")
-    logger.info(f"Node IDs: {dataset.node_ids=}")
-    logger.info(f"Num neighbors: {num_neighbors=}")
-    sys.stdout.flush()
+
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
@@ -713,24 +709,6 @@ def _run_example_training(
         num_val_batches={num_val_batches}, \
         val_every_n_batch={val_every_n_batch}"
     )
-    print(
-        f"Got training args local_world_size={local_world_size}, \
-        num_neighbors={num_neighbors}, \
-        sampling_workers_per_process={sampling_workers_per_process}, \
-        main_batch_size={main_batch_size}, \
-        random_batch_size={random_batch_size}, \
-        hid_dim={hid_dim}, \
-        out_dim={out_dim}, \
-        sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, \
-        process_start_gap_seconds={process_start_gap_seconds}, \
-        log_every_n_batch={log_every_n_batch}, \
-        learning_rate={learning_rate}, \
-        weight_decay={weight_decay}, \
-        num_max_train_batches={num_max_train_batches}, \
-        num_val_batches={num_val_batches}, \
-        val_every_n_batch={val_every_n_batch}"
-    )
-
 
     # This `init_process_group` is only called to get the master_ip_address, master port, and rank/world_size fields which help with partitioning, sampling,
     # and distributed training/testing. We can use `gloo` here since these fields we are extracting don't require GPU capabilities provided by `nccl`.
