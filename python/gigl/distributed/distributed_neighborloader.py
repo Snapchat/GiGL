@@ -275,7 +275,7 @@ class DistNeighborLoader(DistLoader):
 
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             super().__init__(
-                dataset if isinstance(dataset, DistDataset) else None,
+                dataset,  # Pass in the dataset for colocated mode.
                 input_data,
                 sampling_config,
                 device,
@@ -330,7 +330,7 @@ class DistNeighborLoader(DistLoader):
             for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
                 if node_rank == target_node_rank:
                     super().__init__(
-                        dataset if isinstance(dataset, DistDataset) else None,
+                        None,  # Pass in None for Graph Store mode.
                         input_data,
                         sampling_config,
                         device,
@@ -371,6 +371,7 @@ class DistNeighborLoader(DistLoader):
         is_labeled_heterogeneous = False
         node_feature_info = dataset.get_node_feature_info()
         edge_feature_info = dataset.get_edge_feature_info()
+        edge_types = dataset.get_edge_types()
         node_rank = dataset.cluster_info.compute_node_rank
 
         # Get sampling ports for compute-storage connections.
@@ -408,33 +409,17 @@ class DistNeighborLoader(DistLoader):
             )
 
         # Determine input_type based on edge_feature_info
-        if isinstance(edge_feature_info, dict):
-            if len(edge_feature_info) == 0:
-                raise ValueError(
-                    "When using Graph Store mode, edge feature info must be provided for heterogeneous graphs."
-                )
-            elif (
-                len(edge_feature_info) == 1
-                and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_feature_info
-            ):
+        if isinstance(edge_types, list):
+            if edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
             else:
                 input_type = fallback_input_type
         elif require_edge_feature_info:
             raise ValueError(
-                "When using Graph Store mode, edge feature info must be provided for heterogeneous graphs."
+                "When using Graph Store mode, edge types must be provided for heterogeneous graphs."
             )
         else:
             input_type = None
-
-        if (
-            input_type is not None
-            and isinstance(node_feature_info, dict)
-            and input_type not in node_feature_info.keys()
-        ):
-            raise ValueError(
-                f"Input type {input_type} is not in node node types: {node_feature_info.keys()}"
-            )
 
         input_data = [
             NodeSamplerInput(node=node, input_type=input_type) for node in nodes
@@ -445,7 +430,7 @@ class DistNeighborLoader(DistLoader):
             worker_options,
             DatasetSchema(
                 is_labeled_heterogeneous=is_labeled_heterogeneous,
-                edge_types=dataset.get_edge_types(),
+                edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
                 edge_dir=dataset.get_edge_dir(),
