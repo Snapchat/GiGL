@@ -147,7 +147,7 @@ def get_edge_types() -> Optional[list[EdgeType]]:
     """Get the edge types from the registered dataset.
 
     Returns:
-        The edge types.
+        The edge types in the dataset, None if the dataset is homogeneous.
     """
     if _dataset is None:
         raise _NO_DATASET_ERROR

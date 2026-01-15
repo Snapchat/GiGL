@@ -219,7 +219,7 @@ class RemoteDistDataset:
         """Get the edge types from the registered dataset.
 
         Returns:
-            The edge types.
+            The edge types in the dataset, None if the dataset is homogeneous.
         """
         return request_server(
             0,

@@ -68,3 +68,45 @@ def get_total_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
             f"Unsupported partition book type: {type(partition_book)}. "
             "Expected torch.Tensor or RangePartitionBook."
         )
+
+
+def build_partition_book(
+    num_entities: int, rank: int, world_size: int
+) -> RangePartitionBook:
+    """
+    Builds a range-based partition book for a given number of entities, rank, and world size.
+
+    The partition book is balanced, i.e. the difference between the number of entities in any two partitions is at most 1.
+
+    Examples:
+        num_entities = 10, world_size = 2, rank = 0
+        -> RangePartitionBook(partition_ranges=[5, 10], partition_idx=0)
+
+        num_entities = 7, world_size = 3, rank = 0
+        -> RangePartitionBook(partition_ranges=[2, 4, 7], partition_idx=0)
+    Args:
+        num_entities (int): Number of entities
+        rank (int): Rank of current machine
+        world_size (int): Total number of machines
+    Returns:
+        RangePartitionBook: Range-based partition book
+    """
+    per_entity_num, remainder = divmod(num_entities, world_size)
+
+    # We set `remainder` number of partitions to have at most one more item.
+
+    start = 0
+    partition_ranges: list[tuple[int, int]] = []
+    for partition_index in range(world_size):
+        if partition_index < remainder:
+            end = start + per_entity_num + 1
+        else:
+            end = start + per_entity_num
+        partition_ranges.append((start, end))
+        start = end
+
+    # Store and return partitioned ranges as GLT's RangePartitionBook
+    partition_book = RangePartitionBook(
+        partition_ranges=partition_ranges, partition_idx=rank
+    )
+    return partition_book
