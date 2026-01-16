@@ -1,4 +1,5 @@
 import unittest
+from typing import Optional
 
 import torch
 
@@ -10,8 +11,15 @@ from gigl.types.graph import (
     FeaturePartitionData,
     GraphPartitionData,
     PartitionOutput,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.distributed.utils import (
+    MockNodeAnchorLinkSplitter,
+    assert_tensor_equality,
+    create_test_process_group,
+    destroy_test_process_group,
+)
 
 _USER = NodeType("user")
 _STORY = NodeType("story")
@@ -21,12 +29,15 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
 class TestRemoteDataset(unittest.TestCase):
     def setUp(self) -> None:
-        """Reset the global dataset before each test."""
+        """Reset the global dataset and initialize process group before each test."""
         storage_utils._dataset = None
+        # Create process group for tests that need it
+        create_test_process_group()
 
     def tearDown(self) -> None:
         """Clean up after each test."""
         storage_utils._dataset = None
+        destroy_test_process_group()
 
     def _create_heterogeneous_dataset(self) -> DistDataset:
         """Helper method to create a heterogeneous test dataset."""
@@ -94,6 +105,129 @@ class TestRemoteDataset(unittest.TestCase):
         )
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
+        return dataset
+
+    def _create_heterogeneous_dataset_with_labels(
+        self,
+        positive_labels: dict[int, list[int]],
+        negative_labels: Optional[dict[int, list[int]]],
+        train_user_ids: list[int],
+        val_user_ids: list[int],
+        test_user_ids: list[int],
+    ) -> DistDataset:
+        """Helper method to create a heterogeneous test dataset with label edges and splits.
+
+        Creates a dataset with:
+        - USER nodes: [0, 1, 2, 3, 4]
+        - STORY nodes: [0, 1, 2, 3, 4]
+        - Message passing edges: USER -> STORY
+        - Positive label edges: USER -[to_gigl_positive]-> STORY (from positive_labels)
+        - Negative label edges (optional): USER -[to_gigl_negative]-> STORY (from negative_labels)
+        - Train/val/test splits for USER nodes
+
+        Args:
+            positive_labels: Mapping of user_id -> list of positive story_ids.
+            negative_labels: Mapping of user_id -> list of negative story_ids, or None.
+            train_user_ids: List of user IDs in the train split.
+            val_user_ids: List of user IDs in the val split.
+            test_user_ids: List of user IDs in the test split.
+
+        Raises:
+            ValueError: If any user ID in train/val/test is not in positive_labels.
+        """
+        # Validate that all split user IDs have positive labels
+        all_split_user_ids = (
+            set(train_user_ids) | set(val_user_ids) | set(test_user_ids)
+        )
+        missing_users = all_split_user_ids - set(positive_labels.keys())
+        if missing_users:
+            raise ValueError(
+                f"User IDs {missing_users} are in train/val/test splits but not in positive_labels"
+            )
+
+        positive_label_edge_type = message_passing_to_positive_label(_USER_TO_STORY)
+        negative_label_edge_type = message_passing_to_negative_label(_USER_TO_STORY)
+
+        # Convert positive_labels dict to COO edge index
+        pos_src, pos_dst = [], []
+        for user_id, story_ids in positive_labels.items():
+            for story_id in story_ids:
+                pos_src.append(user_id)
+                pos_dst.append(story_id)
+        positive_label_edge_index = torch.tensor([pos_src, pos_dst])
+
+        # Set up edge partition books and edge indices
+        edge_partition_book = {
+            _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
+            _STORY_TO_USER: torch.zeros(5, dtype=torch.int64),
+            positive_label_edge_type: torch.zeros(len(pos_src), dtype=torch.int64),
+        }
+        partitioned_edge_index = {
+            _USER_TO_STORY: GraphPartitionData(
+                edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+                edge_ids=None,
+            ),
+            _STORY_TO_USER: GraphPartitionData(
+                edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+                edge_ids=None,
+            ),
+            positive_label_edge_type: GraphPartitionData(
+                edge_index=positive_label_edge_index,
+                edge_ids=None,
+            ),
+        }
+
+        if negative_labels is not None:
+            # Convert negative_labels dict to COO edge index
+            neg_src, neg_dst = [], []
+            for user_id, story_ids in negative_labels.items():
+                for story_id in story_ids:
+                    neg_src.append(user_id)
+                    neg_dst.append(story_id)
+            negative_label_edge_index = torch.tensor([neg_src, neg_dst])
+            edge_partition_book[negative_label_edge_type] = torch.zeros(
+                len(neg_src), dtype=torch.int64
+            )
+            partitioned_edge_index[negative_label_edge_type] = GraphPartitionData(
+                edge_index=negative_label_edge_index,
+                edge_ids=None,
+            )
+
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(5, dtype=torch.int64),
+                _STORY: torch.zeros(5, dtype=torch.int64),
+            },
+            edge_partition_book=edge_partition_book,
+            partitioned_edge_index=partitioned_edge_index,
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(5, 2), ids=torch.arange(5)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(5, 2), ids=torch.arange(5)
+                ),
+            },
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+
+        # Create splitter with pre-defined splits for USER nodes
+        splitter = MockNodeAnchorLinkSplitter(
+            heterogeneous_splits={
+                _USER: (
+                    torch.tensor(train_user_ids, dtype=torch.int64),
+                    torch.tensor(val_user_ids, dtype=torch.int64),
+                    torch.tensor(test_user_ids, dtype=torch.int64),
+                ),
+            },
+            should_convert_labels_to_edges=False,  # Labels are already edges in graph
+        )
+
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output, splitter=splitter)
         return dataset
 
     def test_register_dataset(self) -> None:
@@ -309,6 +443,206 @@ class TestRemoteDataset(unittest.TestCase):
             edge_types,
             [(_USER, Relation("to"), _STORY), (_STORY, Relation("to"), _USER)],
         )
+
+    def test_get_training_input(self) -> None:
+        """Test get_training_input returns correct labels for each split."""
+        # Define the labels explicitly: user_id -> list of story_ids
+        positive_labels = {
+            0: [0, 1],  # User 0 likes Story 0 and Story 1
+            1: [1, 2],  # User 1 likes Story 1 and Story 2
+            2: [2, 3],  # User 2 likes Story 2 and Story 3
+            3: [3, 4],  # User 3 likes Story 3 and Story 4
+            4: [4, 0],  # User 4 likes Story 4 and Story 0
+        }
+        negative_labels = {
+            0: [2],  # User 0 dislikes Story 2
+            1: [3],  # User 1 dislikes Story 3
+            2: [4],  # User 2 dislikes Story 4
+            3: [0],  # User 3 dislikes Story 0
+            4: [1],  # User 4 dislikes Story 1
+        }
+
+        # Define user IDs for each split
+        split_to_user_ids = {
+            "train": [0, 1, 2],
+            "val": [3],
+            "test": [4],
+        }
+
+        dataset = self._create_heterogeneous_dataset_with_labels(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_user_ids=split_to_user_ids["train"],
+            val_user_ids=split_to_user_ids["val"],
+            test_user_ids=split_to_user_ids["test"],
+        )
+        storage_utils.register_dataset(dataset)
+
+        for split, expected_user_ids in split_to_user_ids.items():
+            with self.subTest(split=split):
+                anchor_nodes, pos_labels, neg_labels = storage_utils.get_training_input(
+                    split=split,
+                    rank=0,
+                    world_size=1,
+                    node_type=_USER,
+                    supervision_edge_type=_USER_TO_STORY,
+                )
+
+                # Verify anchor nodes match expected users
+                assert_tensor_equality(anchor_nodes, torch.tensor(expected_user_ids))
+
+                # Verify positive labels (order may vary due to CSR representation)
+                expected_positive = [positive_labels[uid] for uid in expected_user_ids]
+                assert_tensor_equality(
+                    pos_labels, torch.tensor(expected_positive), dim=1
+                )
+
+                # Verify negative labels
+                expected_negative = [negative_labels[uid] for uid in expected_user_ids]
+                assert neg_labels is not None
+                assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
+
+    def test_get_training_input_multiple_ranks(self) -> None:
+        """Test get_training_input with multiple ranks to verify sharding."""
+        positive_labels = {
+            0: [0, 1],
+            1: [1, 2],
+            2: [2, 3],
+            3: [3, 4],
+            4: [4, 0],
+        }
+        negative_labels = {
+            0: [2],
+            1: [3],
+            2: [4],
+            3: [0],
+            4: [1],
+        }
+        train_user_ids = [0, 1, 2, 3]
+
+        dataset = self._create_heterogeneous_dataset_with_labels(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_user_ids=train_user_ids,
+            val_user_ids=[4],
+            test_user_ids=[],
+        )
+        storage_utils.register_dataset(dataset)
+
+        # Get training input for rank 0 of 2
+        anchor_nodes_0, pos_labels_0, neg_labels_0 = storage_utils.get_training_input(
+            split="train",
+            rank=0,
+            world_size=2,
+            node_type=_USER,
+            supervision_edge_type=_USER_TO_STORY,
+        )
+
+        # Get training input for rank 1 of 2
+        anchor_nodes_1, pos_labels_1, neg_labels_1 = storage_utils.get_training_input(
+            split="train",
+            rank=1,
+            world_size=2,
+            node_type=_USER,
+            supervision_edge_type=_USER_TO_STORY,
+        )
+
+        # Train nodes [0, 1, 2, 3] should be split across ranks
+        rank_0_user_ids = [0, 1]
+        rank_1_user_ids = [2, 3]
+        assert_tensor_equality(anchor_nodes_0, torch.tensor(rank_0_user_ids))
+        assert_tensor_equality(anchor_nodes_1, torch.tensor(rank_1_user_ids))
+
+        # Verify positive labels for each rank (order may vary due to CSR representation)
+        expected_positive_0 = [positive_labels[uid] for uid in rank_0_user_ids]
+        expected_positive_1 = [positive_labels[uid] for uid in rank_1_user_ids]
+        assert_tensor_equality(pos_labels_0, torch.tensor(expected_positive_0), dim=1)
+        assert_tensor_equality(pos_labels_1, torch.tensor(expected_positive_1), dim=1)
+
+        # Verify negative labels for each rank
+        expected_negative_0 = [negative_labels[uid] for uid in rank_0_user_ids]
+        expected_negative_1 = [negative_labels[uid] for uid in rank_1_user_ids]
+        assert neg_labels_0 is not None
+        assert neg_labels_1 is not None
+        assert_tensor_equality(neg_labels_0, torch.tensor(expected_negative_0))
+        assert_tensor_equality(neg_labels_1, torch.tensor(expected_negative_1))
+
+    def test_get_training_input_without_registered_dataset(self) -> None:
+        """Test get_training_input raises ValueError when no dataset is registered."""
+        with self.assertRaises(ValueError) as context:
+            storage_utils.get_training_input(
+                split="train",
+                rank=0,
+                world_size=1,
+                node_type=_USER,
+                supervision_edge_type=_USER_TO_STORY,
+            )
+
+        self.assertIn("Dataset not registered", str(context.exception))
+
+    def test_get_training_input_invalid_split(self) -> None:
+        """Test get_training_input raises ValueError with invalid split."""
+        positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
+        negative_labels = {0: [1], 1: [2], 2: [3], 3: [4], 4: [0]}
+
+        dataset = self._create_heterogeneous_dataset_with_labels(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_user_ids=[0, 1, 2],
+            val_user_ids=[3],
+            test_user_ids=[4],
+        )
+        storage_utils.register_dataset(dataset)
+
+        with self.assertRaises(ValueError) as context:
+            storage_utils.get_training_input(
+                split="invalid",  # type: ignore
+                rank=0,
+                world_size=1,
+                node_type=_USER,
+                supervision_edge_type=_USER_TO_STORY,
+            )
+
+        self.assertIn("Invalid split", str(context.exception))
+
+    def test_get_training_input_without_negative_labels(self) -> None:
+        """Test get_training_input when no negative labels exist in the dataset."""
+        # Define only positive labels, no negative labels
+        positive_labels = {
+            0: [0, 1],  # User 0 likes Story 0 and Story 1
+            1: [1, 2],  # User 1 likes Story 1 and Story 2
+            2: [2, 3],  # User 2 likes Story 2 and Story 3
+            3: [3, 4],  # User 3 likes Story 3 and Story 4
+            4: [4, 0],  # User 4 likes Story 4 and Story 0
+        }
+        train_user_ids = [0, 1, 2]
+
+        dataset = self._create_heterogeneous_dataset_with_labels(
+            positive_labels=positive_labels,
+            negative_labels=None,  # No negative labels
+            train_user_ids=train_user_ids,
+            val_user_ids=[3],
+            test_user_ids=[4],
+        )
+        storage_utils.register_dataset(dataset)
+
+        anchor_nodes, pos_labels, neg_labels = storage_utils.get_training_input(
+            split="train",
+            rank=0,
+            world_size=1,
+            node_type=_USER,
+            supervision_edge_type=_USER_TO_STORY,
+        )
+
+        # Verify train split returns the expected users
+        assert_tensor_equality(anchor_nodes, torch.tensor(train_user_ids))
+
+        # Positive labels should still work
+        expected_positive = [positive_labels[uid] for uid in train_user_ids]
+        assert_tensor_equality(pos_labels, torch.tensor(expected_positive), dim=1)
+
+        # Negative labels should be None
+        self.assertIsNone(neg_labels)
 
 
 if __name__ == "__main__":
