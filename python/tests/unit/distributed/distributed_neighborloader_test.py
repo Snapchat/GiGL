@@ -39,6 +39,7 @@ from tests.test_assets.distributed.run_distributed_dataset import (
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
+    destroy_test_process_group,
 )
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -307,11 +308,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         self._world_size = 1
 
     def tearDown(self):
-        if torch.distributed.is_initialized():
-            print("Destroying process group")
-            # Ensure the process group is destroyed after each test
-            # to avoid interference with subsequent tests
-            torch.distributed.destroy_process_group()
+        # Ensure the process group is destroyed after each test
+        # to avoid interference with subsequent tests
+        destroy_test_process_group()
         super().tearDown()
 
     def test_distributed_neighbor_loader(self):

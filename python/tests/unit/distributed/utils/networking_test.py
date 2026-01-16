@@ -22,7 +22,10 @@ from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
 )
-from tests.test_assets.distributed.utils import get_process_group_init_method
+from tests.test_assets.distributed.utils import (
+    destroy_test_process_group,
+    get_process_group_init_method,
+)
 
 
 def _test_fetching_free_ports_in_dist_context(
@@ -59,7 +62,7 @@ def _test_fetching_free_ports_in_dist_context(
             for ports_gathered_at_rank_k in gathered_ports_across_ranks
         ), "All ranks should receive the same ports from master (rank 0)"
     finally:
-        dist.destroy_process_group()
+        destroy_test_process_group()
 
 
 def _test_fetching_free_ports_from_node(
@@ -114,7 +117,7 @@ def _test_fetching_free_ports_from_node(
             for ports_gathered_at_rank_k in gathered_ports_across_ranks
         ), "All ranks should receive the same ports from master (rank 0)"
     finally:
-        dist.destroy_process_group()
+        destroy_test_process_group()
 
 
 def _test_get_internal_ip_from_master_node_in_dist_context(
@@ -136,7 +139,7 @@ def _test_get_internal_ip_from_master_node_in_dist_context(
             master_ip == expected_ip
         ), f"Expected master IP to be {expected_ip}, but got {master_ip}"
     finally:
-        dist.destroy_process_group()
+        destroy_test_process_group()
 
 
 def _test_get_internal_ip_from_node(
@@ -169,16 +172,15 @@ def _test_get_internal_ip_from_node(
             master_ip == expected_ip
         ), f"Expected master IP to be {expected_ip}, but got {master_ip}"
     finally:
-        dist.destroy_process_group()
+        destroy_test_process_group()
 
 
 class TestDistributedNetworkingUtils(unittest.TestCase):
     def tearDown(self):
-        if dist.is_initialized():
-            print("Destroying process group")
-            # Ensure the process group is destroyed after each test
-            # to avoid interference with subsequent tests
-            dist.destroy_process_group()
+        # Ensure the process group is destroyed after each test
+        # to avoid interference with subsequent tests
+
+        destroy_test_process_group()
 
     @parameterized.expand(
         [
@@ -425,7 +427,7 @@ def _test_get_graph_store_info_in_dist_context(
                     info == graph_store_info
                 ), f"Rank {i} should have same GraphStoreInfo. Got {info} but expected {graph_store_info}"
         finally:
-            dist.destroy_process_group()
+            destroy_test_process_group()
 
 
 def _get_cluster_spec_for_test(
@@ -451,8 +453,7 @@ class TestGetGraphStoreInfo(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after each test."""
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        destroy_test_process_group()
 
     def test_get_graph_store_info_fails_when_not_running_in_vertex_ai_job(self):
         """Test that get_graph_store_info fails when not running in a Vertex AI job."""

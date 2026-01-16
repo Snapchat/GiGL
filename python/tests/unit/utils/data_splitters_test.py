@@ -22,6 +22,7 @@ from gigl.utils.data_splitters import (
 )
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
+    destroy_test_process_group,
     get_process_group_init_method,
 )
 
@@ -71,11 +72,10 @@ def _run_splitter_distributed(
 
 class TestDataSplitters(unittest.TestCase):
     def tearDown(self):
-        if torch.distributed.is_initialized():
-            print("Destroying process group")
-            # Ensure the process group is destroyed after each test
-            # to avoid interference with subsequent tests
-            torch.distributed.destroy_process_group()
+        # Ensure the process group is destroyed after each test
+        # to avoid interference with subsequent tests
+
+        destroy_test_process_group()
         super().tearDown()
 
     @parameterized.expand(

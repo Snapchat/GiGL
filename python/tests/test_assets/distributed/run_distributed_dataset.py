@@ -17,6 +17,7 @@ from gigl.src.mocking.lib.versioning import (
     get_mocked_dataset_artifact_metadata,
 )
 from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeSplitter
+from tests.test_assets.distributed.utils import destroy_test_process_group
 
 
 def convert_mocked_dataset_info_to_serialized_graph_metadata(
@@ -101,8 +102,7 @@ def run_distributed_dataset(
             splitter=splitter,
         )
     finally:
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        destroy_test_process_group()
 
     if output_dict is not None:
         output_dict[rank] = dataset

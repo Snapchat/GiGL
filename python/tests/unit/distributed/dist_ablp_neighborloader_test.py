@@ -38,6 +38,7 @@ from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
+    destroy_test_process_group,
 )
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -415,11 +416,10 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 
 class DistABLPLoaderTest(unittest.TestCase):
     def tearDown(self):
-        if torch.distributed.is_initialized():
-            print("Destroying process group")
-            # Ensure the process group is destroyed after each test
-            # to avoid interference with subsequent tests
-            torch.distributed.destroy_process_group()
+        # Ensure the process group is destroyed after each test
+        # to avoid interference with subsequent tests
+
+        destroy_test_process_group()
         super().tearDown()
 
     @parameterized.expand(

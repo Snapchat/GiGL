@@ -16,6 +16,8 @@ from gigl.src.common.types.graph_data import NodeType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
+    create_test_process_group,
+    destroy_test_process_group,
     get_process_group_init_method,
 )
 
@@ -68,6 +70,12 @@ class TestLinkPredictionGNN(unittest.TestCase):
     def setUp(self):
         self.device = torch.device("cpu")
 
+    def tearDown(self):
+        # Ensure the process group is destroyed after each test
+        # to avoid interference with subsequent tests
+        destroy_test_process_group()
+        super().tearDown()
+
     def test_forward_homogeneous(self):
         encoder = DummyEncoder()
         decoder = DummyDecoder()
@@ -119,10 +127,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
         self.assertIs(model.decoder, decoder)
 
     def test_for_ddp(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
-        self.addCleanup(torch.distributed.destroy_process_group)
+        create_test_process_group()
         encoder = DummyEncoder()
         decoder = DummyDecoder()
         model = LinkPredictionGNN(encoder, decoder)
@@ -134,10 +139,8 @@ class TestLinkPredictionGNN(unittest.TestCase):
         self.assertTrue(hasattr(ddp_model.decoder, "module"))
 
     def test_unwrap_from_ddp(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
-        self.addCleanup(torch.distributed.destroy_process_group)
+        create_test_process_group()
+        self.addCleanup(destroy_test_process_group)
         encoder = DummyEncoder()
         decoder = DummyDecoder()
         model = LinkPredictionGNN(encoder, decoder)
@@ -194,8 +197,7 @@ class TestLightGCN(unittest.TestCase):
 
     def tearDown(self):
         """Clean up distributed process group after each test."""
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        destroy_test_process_group()
         super().tearDown()
 
     def _create_lightgcn_model(
@@ -425,8 +427,7 @@ def _run_dmp_multiprocess_test(
 
     finally:
         # Cleanup process group for this spawned process
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        destroy_test_process_group()
 
 
 if __name__ == "__main__":
