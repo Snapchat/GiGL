@@ -22,6 +22,7 @@ from gigl.utils.data_splitters import (
 )
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
+    create_test_process_group,
     destroy_test_process_group,
     get_process_group_init_method,
 )
@@ -197,9 +198,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         splitter = DistNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
             hash_function=_IdentityHash(),
@@ -415,9 +414,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
 
         splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in",
@@ -581,9 +578,7 @@ class TestDataSplitters(unittest.TestCase):
         edges,
         edge_types_to_split,
     ):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         with self.assertRaises(ValueError):
             splitter = DistNodeAnchorLinkSplitter(
                 sampling_direction="in",
@@ -821,9 +816,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         splitter = DistNodeSplitter(
             hash_function=_IdentityHash(),
             num_val=val_num,
@@ -921,9 +914,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
 
         splitter = DistNodeSplitter(
             hash_function=_IdentityHash(),
@@ -967,9 +958,7 @@ class TestDataSplitters(unittest.TestCase):
         ]
     )
     def test_hashed_node_splitter_invalid_inputs(self, _, node_ids):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         splitter = DistNodeSplitter()
         with self.assertRaises(ValueError):
             splitter(node_ids)
