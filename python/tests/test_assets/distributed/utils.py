@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Callable, Optional, overload
+from typing import Callable, Optional, Union, overload
 
 import torch
 
@@ -125,10 +125,10 @@ class MockNodeAnchorLinkSplitter:
     def __call__(
         self,
         edge_index: torch.Tensor | Mapping[EdgeType, torch.Tensor],
-    ) -> (
-        tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-        | Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
-    ):
+    ) -> Union[
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    ]:
         """Return the pre-defined splits.
 
         Args:
