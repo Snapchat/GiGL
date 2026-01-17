@@ -8,6 +8,10 @@ COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: Final[
     str
 ] = "COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"
 
+# Environment variable to indicate the component of the job.
+# Values: "train", "inference"
+GIGL_COMPONENT_ENV_KEY: Final[str] = "GIGL_COMPONENT"
+
 
 @dataclass(frozen=True)
 class DistributedContext:

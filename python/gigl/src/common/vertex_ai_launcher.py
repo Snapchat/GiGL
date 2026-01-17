@@ -12,7 +12,10 @@ from gigl.common.constants import (
 )
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
-from gigl.env.distributed import COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY
+from gigl.env.distributed import (
+    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
+    GIGL_COMPONENT_ENV_KEY,
+)
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
@@ -67,7 +70,6 @@ def launch_single_pool_job(
     cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
     cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
     container_uri = cpu_docker_uri if is_cpu_execution else cuda_docker_uri
-
     job_config = _build_job_config(
         job_name=job_name,
         task_config_uri=task_config_uri,
@@ -77,7 +79,10 @@ def launch_single_pool_job(
         use_cuda=is_cpu_execution,
         container_uri=container_uri,
         vertex_ai_resource_config=vertex_ai_resource_config,
-        env_vars=[env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3")],
+        env_vars=[
+            env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
+            env_var.EnvVar(name=GIGL_COMPONENT_ENV_KEY, value=component.value),
+        ],
         labels=resource_config_wrapper.get_resource_labels(component=component),
     )
     logger.info(f"Launching {component.value} job with config: {job_config}")
@@ -150,10 +155,10 @@ def launch_graph_store_enabled_job(
             name=COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
             value=str(num_compute_processes),
         ),
+        env_var.EnvVar(name=GIGL_COMPONENT_ENV_KEY, value=component.value),
     ]
 
     labels = resource_config_wrapper.get_resource_labels(component=component)
-
     # Create compute pool job config
     compute_job_config = _build_job_config(
         job_name=job_name,
@@ -221,7 +226,6 @@ def _build_job_config(
 
     Args:
         job_name (str): The base name for the job. Will be prefixed with "gigl_train_" or "gigl_infer_".
-        is_inference (bool): Whether this is an inference job (True) or training job (False).
         task_config_uri (Uri): URI to the task configuration file.
         resource_config_uri (Uri): URI to the resource configuration file.
         command_str (str): The command to run in the container (will be split on spaces).
