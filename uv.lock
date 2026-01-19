@@ -735,7 +735,7 @@ wheels = [
 
 [[package]]
 name = "gigl"
-version = "0.1.0"
+version = "0.1.0.dev20260119191146"
 source = { editable = "." }
 dependencies = [
     { name = "argo-workflows" },
@@ -4373,7 +4373,7 @@ dependencies = [
     { name = "tqdm", marker = "sys_platform != 'darwin'" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/cpu/torchrec-1.3.0%2Bcpu-py3-none-any.whl", hash = "sha256:be2b572625792feac1656afcac19e35448df5447d215575a4b8cb22d9220d2cf" },
+    { url = "https://d21usjoq99fcb9.cloudfront.net/whl/cpu/torchrec-1.3.0%2Bcpu-py3-none-any.whl", hash = "sha256:be2b572625792feac1656afcac19e35448df5447d215575a4b8cb22d9220d2cf" },
 ]
 
 [[package]]
@@ -4389,7 +4389,7 @@ dependencies = [
     { name = "tqdm" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/cu128/torchrec-1.3.0%2Bcu128-py3-none-any.whl", hash = "sha256:6de7e4a70a6e95815a8f06b1dec4d982cea4d32fa7d86a10a8bb4c52b8a749b9" },
+    { url = "https://d21usjoq99fcb9.cloudfront.net/whl/cu128/torchrec-1.3.0%2Bcu128-py3-none-any.whl", hash = "sha256:6de7e4a70a6e95815a8f06b1dec4d982cea4d32fa7d86a10a8bb4c52b8a749b9" },
 ]
 
 [[package]]
