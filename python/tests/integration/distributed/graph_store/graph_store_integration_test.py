@@ -111,6 +111,7 @@ def _run_client_process(
     ).get_node_ids()
     _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
+    # Check that the edge types are correct
     assert (
         remote_dist_dataset.get_edge_types() == expected_edge_types
     ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.get_edge_types()}"
