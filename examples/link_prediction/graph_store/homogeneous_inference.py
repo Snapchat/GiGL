@@ -401,7 +401,6 @@ def _run_example_inference(
 
     cluster_info = get_graph_store_info()
     logger.info(f"Cluster info: {cluster_info}")
-    torch.distributed.destroy_process_group()
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
@@ -468,6 +467,7 @@ def _run_example_inference(
             )
             gcs_utils.delete_files_in_bucket_dir(embedding_output_gcs_folder)
     torch.distributed.barrier()
+    torch.distributed.destroy_process_group()
 
     inference_start_time = time.time()
     # We don't see logs for graph store mode for whatever reason.
