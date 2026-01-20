@@ -457,7 +457,7 @@ def _run_example_inference(
             local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
     mp_sharing_dict = mp.Manager().dict()
-    if torch.distributed.get_rank() == 0:
+    if cluster_info.compute_node_rank == 0:
         gcs_utils = GcsUtils()
         num_files_at_gcs_path = gcs_utils.count_blobs_in_gcs_path(
             embedding_output_gcs_folder
