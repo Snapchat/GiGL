@@ -74,7 +74,7 @@ featureFlags:
 Note: Ensure you use a resource config with `vertex_ai_graph_store_inferencer_config` when
 running in graph store mode.
 
-You can run this example in a full pipeline with `make run_hom_cora_sup_test` from GiGL root.
+You can run this example in a full pipeline with `make run_hom_cora_sup_gs_test` from GiGL root.
 """
 
 import argparse
@@ -200,9 +200,6 @@ def _inference_process(
         f"Local rank {local_rank} in machine {cluster_info.compute_node_rank} has rank {rank}/{world_size} and using device {device} for inference"
     )
     input_nodes = dataset.get_node_ids()
-    print(
-        f"input_nodes: {[(node.shape, f'{node[0],node[-1]}') for node in input_nodes]}"
-    )
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[node.shape for node in input_nodes]}"
     )
@@ -215,7 +212,7 @@ def _inference_process(
         num_neighbors=num_neighbors,
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
-        input_nodes=input_nodes,  # Since homogeneous, `None` defaults to using all nodes for inference loop
+        input_nodes=input_nodes,  # Since homogeneous,
         num_workers=sampling_workers_per_inference_process,
         batch_size=inference_batch_size,
         pin_memory_device=device,
