@@ -1,3 +1,4 @@
+import os
 from typing import Callable, Optional
 
 import torch
@@ -67,3 +68,10 @@ def create_test_process_group() -> None:
         world_size=1,
         init_method=get_process_group_init_method(),
     )
+
+
+def on_google_cloud_build() -> bool:
+    """
+    Returns True if the test is running on Google Cloud Build.
+    """
+    return os.environ.get("IS_GIGL_CLOUD_BUILD", "false").lower() == "true"
