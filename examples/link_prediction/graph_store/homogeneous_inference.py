@@ -144,7 +144,7 @@ def _inference_process(
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of inference processes spawned by each machine
         distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
-        embedding_gcs_path (GcsUri): GCS path to load embeddings from
+        embedding_gcs_path (GcsUri): GCS path to write embeddings to
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
         hid_dim (int): Hidden dimension of the model
@@ -188,6 +188,8 @@ def _inference_process(
 
     log_every_n_batch = int(inferencer_args.get("log_every_n_batch", "50"))
 
+    # Note: This is a *critical* step in Graph Store mode. It initializes the connection to the storage cluster.
+    # If this is not done, the dataloader will not be able to sample from the graph store and will crash.
     init_compute_process(local_rank, cluster_info)
     dataset = RemoteDistDataset(
         cluster_info, local_rank, mp_sharing_dict=mp_sharing_dict
@@ -204,6 +206,8 @@ def _inference_process(
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[node.shape for node in input_nodes]}"
     )
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
     sys.stdout.flush()
 
     data_loader = gigl.distributed.DistNeighborLoader(
@@ -260,9 +264,11 @@ def _inference_process(
     # to only flushing when flush_embeddings() is called explicitly or after exiting via a context manager.
     exporter = EmbeddingExporter(export_dir=gcs_base_uri)
 
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
+    sys.stdout.flush()
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
-    sys.stdout.flush()
     torch.distributed.barrier()
 
     t = time.time()
@@ -305,6 +311,8 @@ def _inference_process(
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
+            # We don't see logs for graph store mode for whatever reason.
+            # TOOD(#442): Revert this once the GCP issues are resolved.
             sys.stdout.flush()
             t = time.time()
             cumulative_data_loading_time = 0
@@ -324,6 +332,8 @@ def _inference_process(
     logger.info(
         f"--- Rank {rank} wrote embeddings to GCS at {gcs_base_uri} over batches"
     )
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
     sys.stdout.flush()
     # We first call barrier to ensure that all machines and processes have finished inference.
     # Only once all machines have finished inference is it safe to shutdown the data loader.
@@ -358,6 +368,8 @@ def _inference_process(
             table_id=bq_table_name,
         )
 
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
     sys.stdout.flush()
 
 
@@ -401,9 +413,6 @@ def _run_example_inference(
     output_bq_table_path = InferenceAssets.get_enumerated_embedding_table_path(
         gbml_config_pb_wrapper, graph_metadata.homogeneous_node_type
     )
-    bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
-        bq_table_path=output_bq_table_path
-    )
     # We write embeddings to a temporary GCS path during the inference loop, since writing directly to bigquery for each embedding is slow.
     # After inference has finished, we then load all embeddings to bigquery from GCS.
     embedding_output_gcs_folder = InferenceAssets.get_gcs_asset_write_path_prefix(
@@ -423,7 +432,6 @@ def _run_example_inference(
     hid_dim = int(inferencer_args.get("hid_dim", "16"))
     out_dim = int(inferencer_args.get("out_dim", "16"))
 
-    local_world_size: int
     arg_local_world_size = inferencer_args.get("local_world_size")
     if arg_local_world_size is not None:
         local_world_size = int(arg_local_world_size)
@@ -449,8 +457,21 @@ def _run_example_inference(
             local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
     mp_sharing_dict = mp.Manager().dict()
+    if torch.distributed.get_rank() == 0:
+        gcs_utils = GcsUtils()
+        num_files_at_gcs_path = gcs_utils.count_blobs_in_gcs_path(
+            embedding_output_gcs_folder
+        )
+        if num_files_at_gcs_path > 0:
+            logger.warning(
+                f"{num_files_at_gcs_path} files already detected at base gcs path {embedding_output_gcs_folder}. Cleaning up files at path ... "
+            )
+            gcs_utils.delete_files_in_bucket_dir(embedding_output_gcs_folder)
+    torch.distributed.barrier()
 
     inference_start_time = time.time()
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
     sys.stdout.flush()
     # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
     mp.spawn(

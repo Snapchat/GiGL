@@ -1,3 +1,12 @@
+# Example resource config for graph store mode
+# Diffs from ../configs/example_resource_config.yaml:
+# - Swap vertex_ai_inferencer_config for vertex_ai_graph_store_inferencer_config
+# You should swap out the following fields with your own resources:
+# - project: "USER_PROVIDED_PROJECT"
+# - temp_assets_bucket: "gs://USER_PROVIDED_TEMP_ASSETS_BUCKET"
+# - temp_regional_assets_bucket: "gs://USER_PROVIDED_TEMP_ASSETS_BUCKET"
+# - perm_assets_bucket: "gs://USER_PROVIDED_PERM_ASSETS_BUCKET"
+# - gcp_service_account_email: "USER_PROVIDED_SA@USER_PROVIDED_PROJECT.iam.gserviceaccount.com"
 shared_resource_config:
   resource_labels:
   # These are compute labels that we will try to attach to the resources created by GiGL components.

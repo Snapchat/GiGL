@@ -1,3 +1,5 @@
+# Diffs from e2e_glt_resource_config.yaml
+# - Swap vertex_ai_inferencer_config for vertex_ai_graph_store_inferencer_config
 shared_resource_config:
   resource_labels:
     cost_resource_group_tag: dev_experiments_COMPONENT

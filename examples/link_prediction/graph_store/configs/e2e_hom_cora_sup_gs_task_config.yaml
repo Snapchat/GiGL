@@ -1,4 +1,7 @@
-# This config is used to run homogeneous CORA supervised training and inference using in memory GiGL SGS. This can be run with `make run_hom_cora_sup_test`.
+# This config is used to run homogeneous CORA supervised training and inference using in memory GiGL SGS using the Graph Store mode.
+# This can be run with `make run_hom_cora_sup_gs_test`.
+# Diffs from ../configs/e2e_hom_cora_sup_task_config.yaml:
+# - None (currently) - we detect that "Graph Store" mode should be employed from the resource config
 graphMetadata:
   edgeTypes:
   - dstNodeType: paper
