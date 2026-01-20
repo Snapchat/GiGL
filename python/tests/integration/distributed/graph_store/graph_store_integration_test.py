@@ -1,14 +1,17 @@
 import collections
 import os
+import socket
 import unittest
 from typing import Optional
 from unittest import mock
 
 import torch
 import torch.multiprocessing as mp
+from torch_geometric.data import Data
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
     shutdown_compute_proccess,
@@ -108,10 +111,37 @@ def _run_client_process(
     ).get_node_ids()
     _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
+    # Check that the edge types are correct
     assert (
         remote_dist_dataset.get_edge_types() == expected_edge_types
     ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.get_edge_types()}"
 
+    torch.distributed.barrier()
+
+    # Test the DistNeighborLoader
+    loader = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+        input_nodes=sampler_input,
+        num_workers=2,
+        worker_concurrency=2,
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        count += 1
+    torch.distributed.barrier()
+    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} batches")
+    # Verify that we sampled all nodes.
+    count_tensor = torch.tensor(count, dtype=torch.int64)
+    all_node_count = 0
+    for rank_expected_sampler_input in expected_sampler_input.values():
+        all_node_count += sum(len(nodes) for nodes in rank_expected_sampler_input)
+    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
+    assert (
+        count_tensor.item() == all_node_count
+    ), f"Expected {all_node_count} total nodes, got {count_tensor.item()}"
     shutdown_compute_proccess()
 
 
@@ -186,6 +216,7 @@ def _get_expected_input_nodes_by_rank(
     ],
     }
 
+
     Args:
         num_nodes (int): The number of nodes in the graph.
         cluster_info (GraphStoreInfo): The cluster information.
@@ -220,17 +251,22 @@ class GraphStoreIntegrationTest(unittest.TestCase):
             storage_cluster_master_port,
             compute_cluster_master_port,
             master_port,
-        ) = get_free_ports(num_ports=4)
+            rpc_master_port,
+            rpc_wait_port,
+        ) = get_free_ports(num_ports=6)
+        host_ip = socket.gethostbyname(socket.gethostname())
         cluster_info = GraphStoreInfo(
             num_storage_nodes=2,
             num_compute_nodes=2,
             num_processes_per_compute=2,
-            cluster_master_ip="localhost",
-            storage_cluster_master_ip="localhost",
-            compute_cluster_master_ip="localhost",
+            cluster_master_ip=host_ip,
+            storage_cluster_master_ip=host_ip,
+            compute_cluster_master_ip=host_ip,
             cluster_master_port=cluster_master_port,
             storage_cluster_master_port=storage_cluster_master_port,
             compute_cluster_master_port=compute_cluster_master_port,
+            rpc_master_port=rpc_master_port,
+            rpc_wait_port=rpc_wait_port,
         )
 
         num_cora_nodes = 2708
@@ -244,7 +280,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
             with mock.patch.dict(
                 os.environ,
                 {
-                    "MASTER_ADDR": "localhost",
+                    "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i),
                     "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),
@@ -271,7 +307,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
             with mock.patch.dict(
                 os.environ,
                 {
-                    "MASTER_ADDR": "localhost",
+                    "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i + cluster_info.num_compute_nodes),
                     "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),
