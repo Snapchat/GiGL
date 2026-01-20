@@ -5,6 +5,10 @@ options:
 steps:
   - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:51af343c1c298ab465a96ecffd4e50ea6dffacb7.88.1
     entrypoint: /bin/bash
+    env:
+      # This is used to determine if the test is running on Google Cloud Build.
+      # See: tests/test_assets/distributed/utils.py
+      - "IS_GIGL_CLOUD_BUILD=true"
     args:
       - -c
       - |

@@ -39,6 +39,7 @@ from tests.test_assets.distributed.run_distributed_dataset import (
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
+    on_google_cloud_build,
 )
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -349,7 +350,9 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
         )
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
+    @unittest.skipIf(
+        on_google_cloud_build(), "Failing on Google Cloud Build - skiping for now"
+    )
     def test_distributed_neighbor_loader_heterogeneous(self):
         expected_data_count = 4057
 
