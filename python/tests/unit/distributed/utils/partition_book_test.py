@@ -2,9 +2,10 @@ import unittest
 
 import torch
 from graphlearn_torch.partition import RangePartitionBook
+from parameterized import param, parameterized
 
 from gigl.distributed.utils.partition_book import (
-    build_balanced_range_parition_book,
+    build_partition_book,
     get_ids_on_rank,
     get_total_ids,
 )
@@ -12,19 +13,40 @@ from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
 class TestGetIdsOnRank(unittest.TestCase):
-    def test_tensor_partition_book(self):
-        # Nodes 0,2 on rank 0; nodes 1,3 on rank 1
-        partition_book = torch.tensor([0, 1, 0, 1])
-        assert_tensor_equality(get_ids_on_rank(partition_book, 0), torch.tensor([0, 2]))
-        assert_tensor_equality(get_ids_on_rank(partition_book, 1), torch.tensor([1, 3]))
-
-    def test_range_partition_book(self):
-        # Nodes 0-4 on rank 0; nodes 5-9 on rank 1
-        range_pb = RangePartitionBook(
-            partition_ranges=[(0, 5), (5, 10)], partition_idx=0
-        )
-        assert_tensor_equality(get_ids_on_rank(range_pb, 0), torch.arange(0, 5))
-        assert_tensor_equality(get_ids_on_rank(range_pb, 1), torch.arange(5, 10))
+    @parameterized.expand(
+        [
+            param(
+                "tensor_partition_book",
+                partition_book=torch.tensor([0, 1, 0, 1]),
+                rank=0,
+                expected=torch.tensor([0, 2]),
+            ),
+            param(
+                "tensor_partition_book_rank_1",
+                partition_book=torch.tensor([0, 1, 0, 1]),
+                rank=1,
+                expected=torch.tensor([1, 3]),
+            ),
+            param(
+                "range_partition_book",
+                partition_book=RangePartitionBook(
+                    partition_ranges=[(0, 5), (5, 10)], partition_idx=0
+                ),
+                rank=0,
+                expected=torch.arange(0, 5),
+            ),
+            param(
+                "range_partition_book_rank_1",
+                partition_book=RangePartitionBook(
+                    partition_ranges=[(0, 5), (5, 10)], partition_idx=0
+                ),
+                rank=1,
+                expected=torch.arange(5, 10),
+            ),
+        ]
+    )
+    def test_get_ids_on_rank(self, _, partition_book, rank, expected):
+        assert_tensor_equality(get_ids_on_rank(partition_book, rank), expected)
 
     def test_invalid_tensor_partition_book(self):
         invalid_pb = torch.tensor([[0, 1], [0, 1]])  # 2D tensor
@@ -33,15 +55,24 @@ class TestGetIdsOnRank(unittest.TestCase):
 
 
 class TestGetTotalIds(unittest.TestCase):
-    def test_tensor_partition_book(self):
-        partition_book = torch.tensor([0, 1, 0, 1, 0])
-        self.assertEqual(get_total_ids(partition_book), 5)
-
-    def test_range_partition_book(self):
-        range_pb = RangePartitionBook(
-            partition_ranges=[(0, 5), (5, 10)], partition_idx=0
-        )
-        self.assertEqual(get_total_ids(range_pb), 10)
+    @parameterized.expand(
+        [
+            param(
+                "tensor_partition_book",
+                partition_book=torch.tensor([0, 1, 0, 1, 0]),
+                expected=5,
+            ),
+            param(
+                "range_partition_book",
+                partition_book=RangePartitionBook(
+                    partition_ranges=[(0, 5), (5, 10)], partition_idx=0
+                ),
+                expected=10,
+            ),
+        ]
+    )
+    def test_get_total_ids(self, _, partition_book, expected):
+        self.assertEqual(get_total_ids(partition_book), expected)
 
     def test_invalid_tensor_partition_book(self):
         invalid_pb = torch.tensor([[0, 1], [0, 1]])  # 2D tensor
@@ -49,16 +80,28 @@ class TestGetTotalIds(unittest.TestCase):
             get_total_ids(invalid_pb)
 
 
-class TestBuildBalancedRangePartitionBook(unittest.TestCase):
-    def test_divides_evenly(self):
-        # 10 entities, 2 partitions -> 5 each
-        pb = build_balanced_range_parition_book(num_entities=10, rank=0, world_size=2)
-        assert_tensor_equality(pb.partition_bounds, torch.tensor([5, 10]))
-
-    def test_divides_unevenly(self):
-        # 7 entities, 3 partitions -> 3, 2, 2 (remainder distributed to first partitions)
-        pb = build_balanced_range_parition_book(num_entities=7, rank=0, world_size=3)
-        assert_tensor_equality(pb.partition_bounds, torch.tensor([3, 5, 7]))
+class TestBuildPartitionBook(unittest.TestCase):
+    @parameterized.expand(
+        [
+            param(
+                "divides_evenly",
+                num_entities=10,
+                world_size=2,
+                expected_bounds=torch.tensor([5, 10]),
+            ),
+            param(
+                "divides_unevenly",
+                num_entities=7,
+                world_size=3,
+                expected_bounds=torch.tensor([3, 5, 7]),
+            ),
+        ]
+    )
+    def test_build_partition_book(self, _, num_entities, world_size, expected_bounds):
+        pb = build_partition_book(
+            num_entities=num_entities, rank=0, world_size=world_size
+        )
+        assert_tensor_equality(pb.partition_bounds, expected_bounds)
 
 
 if __name__ == "__main__":

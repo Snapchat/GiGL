@@ -70,7 +70,7 @@ def get_total_ids(partition_book: Union[torch.Tensor, PartitionBook]) -> int:
         )
 
 
-def build_balanced_range_parition_book(
+def build_partition_book(
     num_entities: int, rank: int, world_size: int
 ) -> RangePartitionBook:
     """
