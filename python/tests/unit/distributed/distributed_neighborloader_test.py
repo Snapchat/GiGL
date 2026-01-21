@@ -316,7 +316,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def _test_distributed_neighbor_loader(self):
+    def test_distributed_neighbor_loader(self):
         expected_data_count = 2708
 
         dataset = run_distributed_dataset(
@@ -330,7 +330,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, expected_data_count),
         )
 
-    def _test_infinite_distributed_neighbor_loader(self):
+    def test_infinite_distributed_neighbor_loader(self):
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
@@ -352,7 +352,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def _test_distributed_neighbor_loader_heterogeneous(self):
+    def test_distributed_neighbor_loader_heterogeneous(self):
         expected_data_count = 4057
 
         dataset = run_distributed_dataset(
@@ -366,7 +366,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, expected_data_count),
         )
 
-    def _test_random_loading_labeled_homogeneous(self):
+    def test_random_loading_labeled_homogeneous(self):
         create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
@@ -399,7 +399,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, to_homogeneous(dataset.node_ids).size(0)),
         )
 
-    def _test_multiple_neighbor_loader(self):
+    def test_multiple_neighbor_loader(self):
         expected_data_count = 2708
 
         dataset = run_distributed_dataset(
@@ -413,7 +413,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, expected_data_count),
         )
 
-    def _test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
+    def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(5),
             edge_partition_book=torch.zeros(5),
@@ -441,7 +441,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def _test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
+    def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(5),
@@ -490,7 +490,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def _test_cora_supervised_node_classification(self):
+    def test_cora_supervised_node_classification(self):
         """Test CORA dataset for supervised node classification task."""
         create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -525,7 +525,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         )
 
-    def _test_isolated_heterogeneous_neighbor_loader(
+    def test_isolated_heterogeneous_neighbor_loader(
         self,
     ):
         partition_output = PartitionOutput(
@@ -552,7 +552,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 18),
         )
 
-    def _test_isolated_homogeneous_neighbor_loader(
+    def test_isolated_homogeneous_neighbor_loader(
         self,
     ):
         partition_output = PartitionOutput(
