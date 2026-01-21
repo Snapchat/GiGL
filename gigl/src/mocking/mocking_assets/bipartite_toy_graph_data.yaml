@@ -115,7 +115,7 @@ nodes:
   story: # 19 story nodes
     - src: 0
       features: [0.0, 0]
-    - src: 1  
+    - src: 1
       features: [0.1, 1]
     - src: 2
       features: [0.2, 2]

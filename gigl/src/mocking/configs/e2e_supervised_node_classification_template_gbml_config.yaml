@@ -39,4 +39,3 @@ trainerConfig:
     num_epochs: '1'
     out_dim: '7'
   trainerClsPath: gigl.src.common.modeling_task_specs.node_classification_modeling_task_spec.NodeClassificationModelingTaskSpec
-

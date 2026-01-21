@@ -1,5 +1,5 @@
 graph:
-  node_types: 
+  node_types:
     - user
   edge_types:
     user_friend_user:
