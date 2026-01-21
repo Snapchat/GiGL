@@ -1,6 +1,6 @@
 import ast
-from collections import Counter, abc, defaultdict
 import time
+from collections import Counter, abc, defaultdict
 from typing import Optional, Union
 
 import torch

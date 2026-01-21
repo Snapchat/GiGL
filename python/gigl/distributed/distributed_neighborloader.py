@@ -1,5 +1,5 @@
-from collections import Counter, abc
 import time
+from collections import Counter, abc
 from typing import Optional, Tuple, Union
 
 import torch
