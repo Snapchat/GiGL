@@ -102,6 +102,10 @@ message VertexAiResourceConfig {
   // The available options are in the GCP docs:
   // https://docs.cloud.google.com/python/docs/reference/aiplatform/latest/google.cloud.aiplatform_v1.types.Scheduling.Strategy
   string scheduling_strategy = 7;
+
+  // Boot disk size in GB for the job.
+  // If unset or zero, will use the default of 100 GB.
+  uint32 boot_disk_size_gb = 8;
  }
 
  // Configuration for KFP job resources
