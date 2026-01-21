@@ -415,22 +415,25 @@ class VertexAIService:
                 aiplatform.gapic.PipelineState.PIPELINE_STATE_FAILED,
                 aiplatform.gapic.PipelineState.PIPELINE_STATE_CANCELLED,
             ):
-                logger.warning(f"Vertex AI run stopped with status: {state.name}.")
-                logger.warning(
-                    f"See run at: {VertexAIService.get_pipeline_run_url(run.project, run.location, run.name)}"
+                run_link = VertexAIService.get_pipeline_run_url(
+                    run.project, run.location, run.name
                 )
-                raise RuntimeError(f"Vertex AI run stopped with status: {state.name}.")
+                raise RuntimeError(
+                    f"Vertex AI run {run.name} stopped with status: {state.name}. See run at: {run_link}"
+                )
             time.sleep(polling_period_s)
 
         else:
-            logger.warning("Timeout reached. Stopping the run.")
             logger.warning(
-                f"See run at: {VertexAIService.get_pipeline_run_url(run.project, run.location, run.name)}"
+                f"Timeout ({timeout} seconds) reached. Canceling the run {run.name}."
+            )
+            run_link = VertexAIService.get_pipeline_run_url(
+                run.project, run.location, run.name
             )
             run.cancel()
             raise RuntimeError(
-                f"Vertex AI run stopped with status: {run.state}. "
-                f"Please check the Vertex AI page to trace down the error."
+                f"Vertex AI run {run.name} timed out after {timeout} seconds. Canceled the run. "
+                f"Please check the Vertex AI page {run_link} to trace down the error."
             )
 
 
