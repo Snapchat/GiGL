@@ -5,6 +5,7 @@ Derivved from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/exampl
 """
 import argparse
 import os
+from distutils.util import strtobool
 
 import torch
 
@@ -21,21 +22,23 @@ if __name__ == "__main__":
     parser.add_argument("--task_config_uri", type=str, required=True)
     parser.add_argument("--resource_config_uri", type=str, required=True)
     parser.add_argument("--job_name", type=str, required=True)
-    parser.add_argument("--is_inference", action="store_true")
+    parser.add_argument("--is_inference", type=str, required=True)
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
+    is_inference = bool(strtobool(args.is_inference))
     torch.distributed.init_process_group(backend="gloo")
     cluster_info = get_graph_store_info()
     logger.info(f"Cluster info: {cluster_info}")
     logger.info(
         f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
     )
+    logger.info(f"Is inference: {is_inference}")
     # Tear down the """"global""" process group so we can have a server-specific process group.
     torch.distributed.destroy_process_group()
     storage_node_process(
         storage_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,
         task_config_uri=UriFactory.create_uri(args.task_config_uri),
-        is_inference=args.is_inference,
+        is_inference=is_inference,
     )
