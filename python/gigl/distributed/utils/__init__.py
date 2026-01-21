@@ -6,6 +6,7 @@ __all__ = [
     "GraphStoreInfo",
     "get_available_device",
     "get_free_port",
+    "get_free_ports",
     "get_free_ports_from_master_node",
     "get_free_ports_from_node",
     "get_graph_store_info",
@@ -24,6 +25,7 @@ from .init_neighbor_loader_worker import (
 from .networking import (
     GraphStoreInfo,
     get_free_port,
+    get_free_ports,
     get_free_ports_from_master_node,
     get_free_ports_from_node,
     get_graph_store_info,

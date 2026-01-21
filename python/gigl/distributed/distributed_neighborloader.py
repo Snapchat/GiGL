@@ -51,8 +51,8 @@ class DistNeighborLoader(DistLoader):
             Union[
                 torch.Tensor,
                 Tuple[NodeType, torch.Tensor],
-                list[torch.Tensor],
-                Tuple[NodeType, list[torch.Tensor]],
+                abc.Mapping[int, torch.Tensor],
+                Tuple[NodeType, abc.Mapping[int, torch.Tensor]],
             ]
         ] = None,
         num_workers: int = 1,
@@ -85,15 +85,15 @@ class DistNeighborLoader(DistLoader):
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
-            input_nodes (Tensor | Tuple[NodeType, Tensor] | list[Tensor] | Tuple[NodeType, list[Tensor]]):
+            input_nodes (Tensor | Tuple[NodeType, Tensor] | dict[int, Tensor] | Tuple[NodeType, dict[int, Tensor]]):
                 The nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
                 If set to `None` for homogeneous settings, all nodes will be considered.
                 In heterogeneous graphs, this flag must be passed in as a tuple that holds
                 the node type and node indices. (default: `None`)
-                For Graph Store mode, this must be a tuple of (NodeType, list[Tenor]) or list[Tenor].
-                Where each Tensor in the list is the node ids to sample from, for each server.
-                e.g. [[10, 20], [30, 40]] means sample from nodes 10 and 20 on server 0, and nodes 30 and 40 on server 1.
+                For Graph Store mode, this must be a tuple of (NodeType, dict[int, Tensor]) or dict[int, Tensor].
+                Where each Tensor in the dict is the node ids to sample from, by server.
+                e.g. {0: [10, 20], 1: [30, 40]} means sample from nodes 10 and 20 on server 0, and nodes 30 and 40 on server 1.
                 If a Graph Store input (e.g. list[Tensor]) is provided to colocated mode, or colocated input (e.g. Tensor) is provided to Graph Store mode,
                 then an error will be raised.
             num_workers (int): How many workers to use (subprocesses to spwan) for
@@ -357,8 +357,8 @@ class DistNeighborLoader(DistLoader):
             Union[
                 torch.Tensor,
                 Tuple[NodeType, torch.Tensor],
-                list[torch.Tensor],
-                Tuple[NodeType, list[torch.Tensor]],
+                abc.Mapping[int, torch.Tensor],
+                Tuple[NodeType, abc.Mapping[int, torch.Tensor]],
             ]
         ],
         dataset: RemoteDistDataset,
@@ -370,13 +370,13 @@ class DistNeighborLoader(DistLoader):
             )
         elif isinstance(input_nodes, torch.Tensor):
             raise ValueError(
-                f"When using Graph Store mode, input nodes must be of type (list[Tensor] | (NodeType, list[torch.Tensor]), received {type(input_nodes)}"
+                f"When using Graph Store mode, input nodes must be of type (abc.Mapping[int, torch.Tensor] | (NodeType, abc.Mapping[int, torch.Tensor]), received {type(input_nodes)}"
             )
         elif isinstance(input_nodes, tuple) and isinstance(
             input_nodes[1], torch.Tensor
         ):
             raise ValueError(
-                f"When using Graph Store mode, input nodes must be of type (list[torch.Tensor] | (NodeType, list[torch.Tensor])), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
+                f"When using Graph Store mode, input nodes must be of type (dict[int, torch.Tensor] | (NodeType, dict[int, torch.Tensor])), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
             )
 
         is_labeled_heterogeneous = False
@@ -406,11 +406,11 @@ class DistNeighborLoader(DistLoader):
         # Setup input data for the dataloader.
 
         # Determine nodes list and fallback input_type based on input_nodes structure
-        if isinstance(input_nodes, list):
+        if isinstance(input_nodes, abc.Mapping):
             nodes = input_nodes
             fallback_input_type = None
             require_edge_feature_info = False
-        elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], list):
+        elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], abc.Mapping):
             nodes = input_nodes[1]
             fallback_input_type = input_nodes[0]
             require_edge_feature_info = True
@@ -432,10 +432,24 @@ class DistNeighborLoader(DistLoader):
         else:
             input_type = None
 
-        input_data = [
-            NodeSamplerInput(node=node, input_type=input_type) for node in nodes
-        ]
-
+        # Convert from dict to list which is what the GLT DistNeighborLoader expects.
+        servers = nodes.keys()
+        if max(servers) >= dataset.cluster_info.num_storage_nodes or min(servers) < 0:
+            raise ValueError(
+                f"When using Graph Store mode, the server ranks must be less than the number of storage nodes and greater than 0, received inputs for servers: {list(nodes.keys())}"
+            )
+        input_data: list[NodeSamplerInput] = []
+        for server_rank in range(dataset.cluster_info.num_storage_nodes):
+            if server_rank in nodes:
+                input_data.append(
+                    NodeSamplerInput(node=nodes[server_rank], input_type=input_type)
+                )
+            else:
+                input_data.append(
+                    NodeSamplerInput(
+                        node=torch.empty(0, dtype=torch.long), input_type=input_type
+                    )
+                )
         return (
             input_data,
             worker_options,
@@ -454,8 +468,8 @@ class DistNeighborLoader(DistLoader):
             Union[
                 torch.Tensor,
                 Tuple[NodeType, torch.Tensor],
-                list[torch.Tensor],
-                Tuple[NodeType, list[torch.Tensor]],
+                abc.Mapping[int, torch.Tensor],
+                Tuple[NodeType, abc.Mapping[int, torch.Tensor]],
             ]
         ],
         dataset: DistDataset,
@@ -480,11 +494,11 @@ class DistNeighborLoader(DistLoader):
                     f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
                 )
             input_nodes = dataset.node_ids
-        if isinstance(input_nodes, list):
+        if isinstance(input_nodes, abc.Mapping):
             raise ValueError(
                 f"When using Colocated mode, input nodes must be of type (torch.Tensor | (NodeType, torch.Tensor)), received {type(input_nodes)}"
             )
-        elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], list):
+        elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], abc.Mapping):
             raise ValueError(
                 f"When using Colocated mode, input nodes must be of type (torch.Tensor | (NodeType, torch.Tensor)), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
             )
