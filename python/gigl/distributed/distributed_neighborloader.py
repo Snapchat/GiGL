@@ -278,7 +278,7 @@ class DistNeighborLoader(DistLoader):
             # The current hypothesis is making connections across machines require a lot of memory.
             # If we start all data loaders in all processes simultaneously, the spike of memory
             # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
-            # to smooth the memory usage. The definition of group is discussed below.
+            # to smooth the memory usage. The definition of group is discussed in init_neighbor_loader_worker.
             logger.info(
                 f"---Machine {rank} local process number {local_rank} preparing to sleep for {process_start_gap_seconds * local_rank} seconds"
             )
@@ -338,6 +338,8 @@ class DistNeighborLoader(DistLoader):
             node_rank = dataset.cluster_info.compute_node_rank
             for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
                 if node_rank == target_node_rank:
+                    # TODO: (kmontemayor2-sc) Evaluate if we need to stagger the initialization of the data loaders
+                    # to smooth the memory usage.
                     super().__init__(
                         None,  # Pass in None for Graph Store mode.
                         input_data,
