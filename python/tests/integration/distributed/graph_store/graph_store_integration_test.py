@@ -59,7 +59,7 @@ def _assert_sampler_input(
     torch.distributed.barrier()
 
 
-def _run_client_process(
+def _run_compute_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: dict[str, torch.Tensor],
@@ -67,6 +67,10 @@ def _run_client_process(
     expected_sampler_input: dict[int, list[torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
 ) -> None:
+    """
+    Process target for "compute" nodes.
+    Each "Client Process" (e.g. cluster_info.num_compute_nodes) will spawn as a process for each "num_processes_per_compute"
+    """
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
     remote_dist_dataset = RemoteDistDataset(
@@ -172,7 +176,7 @@ def _client_process(
     logger.info("Starting client processes")
     for i in range(cluster_info.num_processes_per_compute):
         client_process = mp_context.Process(
-            target=_run_client_process,
+            target=_run_compute_tests,
             args=[
                 i,  # client_rank
                 cluster_info,  # cluster_info
@@ -295,7 +299,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                     "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i),
-                    "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
                     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
                         cluster_info.num_processes_per_compute
                     ),
@@ -323,7 +327,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                     "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i + cluster_info.num_compute_nodes),
-                    "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
                     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
                         cluster_info.num_processes_per_compute
                     ),
@@ -396,7 +400,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                     "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i),
-                    "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
                     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
                         cluster_info.num_processes_per_compute
                     ),
@@ -424,7 +428,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                     "MASTER_ADDR": host_ip,
                     "MASTER_PORT": str(master_port),
                     "RANK": str(i + cluster_info.num_compute_nodes),
-                    "WORLD_SIZE": str(cluster_info.compute_cluster_world_size),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
                     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
                         cluster_info.num_processes_per_compute
                     ),
