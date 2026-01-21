@@ -31,8 +31,6 @@ class TestRemoteDataset(unittest.TestCase):
     def setUp(self) -> None:
         """Reset the global dataset and initialize process group before each test."""
         storage_utils._dataset = None
-        # Create process group for tests that need it
-        create_test_process_group()
 
     def tearDown(self) -> None:
         """Clean up after each test."""
@@ -466,6 +464,7 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_training_input(self) -> None:
         """Test get_training_input returns correct labels for each split."""
+        create_test_process_group()
         # Define the labels explicitly: user_id -> list of story_ids
         positive_labels = {
             0: [0, 1],  # User 0 likes Story 0 and Story 1
@@ -524,6 +523,7 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_training_input_multiple_ranks(self) -> None:
         """Test get_training_input with multiple ranks to verify sharding."""
+        create_test_process_group()
         positive_labels = {
             0: [0, 1],
             1: [1, 2],

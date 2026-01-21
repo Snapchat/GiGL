@@ -172,6 +172,9 @@ def get_training_input(
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Get the training input for a specific rank in distributed processing.
 
+    Note: rank and world_size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
+    e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+
     Args:
         split: The split to get the training input for.
         rank: The rank of the process requesting the training input.
