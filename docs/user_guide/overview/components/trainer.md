@@ -31,14 +31,14 @@ following steps:
 - We start model training as indicated by the `BaseTrainer` instance. This may look something like:
 
   - We initialize training and validation dataloaders (See: `NodeAnchorBasedLinkPredictionDatasetDataloaders` in
-    [dataset_metadata_utils.py](../../../../python/gigl/src/common/types/pb_wrappers/dataset_metadata_utils.py))
+    [dataset_metadata_utils.py](../../../../gigl/src/common/types/pb_wrappers/dataset_metadata_utils.py))
   - Follow a standard distributed training scheme: each worker loads a batch of data and performs the normal forward and
     backward passes for model training in a distributed way.
   - Every fixed number of training batches(`val_every_num_batches`), we evaluate the current model on the validation set
     with a fixed number of validation batches (`num_val_batches`)
   - We follow a standard early-stopping strategy on the validation performances on offline metrics, with a configurable
     patience parameter (`early_stop_patience`) or see `EarlyStopper` utility class in
-    [early_stop.py](../../../../python/gigl/src/common/modeling_task_specs/utils/early_stop.py)
+    [early_stop.py](../../../../gigl/src/common/modeling_task_specs/utils/early_stop.py)
   - When early-stopping is triggered to end the training process, we reload the saved model at the best validation
     batch, and run evaluation (test) it with a fixed number of test batches (`num_test_batches`).
   - At the end, we return the model and its test performance (offline metrics) back to the Trainer.
@@ -124,9 +124,9 @@ If you would like to view the logs locally, you can also use:
 
 We provide some base class implementations for training. See:
 
-- `python/gigl/src/common/modeling_task_specs/graphsage_template_modeling_spec.py`
-- `python/gigl/src/common/modeling_task_specs/node_anchor_based_link_prediction_modeling_task_spec.py`
-- `python/gigl/src/common/modeling_task_specs/node_classification_modeling_task_spec.py`
+- `gigl/src/common/modeling_task_specs/graphsage_template_modeling_spec.py`
+- `gigl/src/common/modeling_task_specs/node_anchor_based_link_prediction_modeling_task_spec.py`
+- `gigl/src/common/modeling_task_specs/node_classification_modeling_task_spec.py`
 
 \*\*\*\* Note: many training/model params require dep on using the right model / training setup i.e. specific
 configurations may not be supported - see individual implementations to understand how each param is used. Training
@@ -154,7 +154,7 @@ coasses above for more exhaustive list.
 - Modifying the GNN model:
 
   - Specified by arg `gnn_model_class_path`
-    - Some Sample GNN models are defined [here](/python/gigl/src/common/models/pyg/homogeneous.py) and initialized in
+    - Some Sample GNN models are defined [here](/gigl/src/common/models/pyg/homogeneous.py) and initialized in
       the `init_model` function in ModelingTaskSpec. When trying different GNN models, it is recommended to also include
       the new GNN architectures under the same file and declare them as is currently done. This cannot currently be done
       from the default `GbmlConfig` yaml.

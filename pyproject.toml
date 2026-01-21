@@ -232,7 +232,7 @@ requires      = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["python"]  # list of folders that contain the packages
+where = ["."]  # list of folders that contain the packages
 include = ["gigl*", "snapchat*"]  # Include only packages that match the specified patterns
 
 [project.urls]
@@ -266,7 +266,7 @@ skip_gitignore = true
 exclude =  [
     # Skip generated proto files. If we run autoflake on generated protos
     # their descriptor gets removed and they break, see below.
-    #   File "python/snapchat/research/gbml/gbml_config_pb2.py", line 17, in <module>
+    #   File "snapchat/research/gbml/gbml_config_pb2.py", line 17, in <module>
     #   DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(...)
     #   TypeError: Couldn't build proto file into descriptor pool!
     #   Invalid proto descriptor for file "snapchat/research/gbml/gbml_config.proto":

@@ -561,7 +561,7 @@ class GbmlConfig(google.protobuf.message.Message):
         """Command to use for launching inference job"""
         inference_batch_size: builtins.int
         """Optional. If set, will be used to batch inference samples to a specific size before call for inference is made
-        Defaults to setting in python/gigl/src/inference/gnn_inferencer.py
+        Defaults to setting in gigl/src/inference/gnn_inferencer.py
         """
         def __init__(
             self,

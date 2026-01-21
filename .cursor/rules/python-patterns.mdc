@@ -124,7 +124,7 @@ class DataPreprocessorConfig(ABC):
 ### Protocol Buffer Handling
 
 - Import protocol buffer types from `snapchat.research.gbml`
-- Use wrapper classes for protocol buffer operations located in `python/gigl/src/common/types/pb_wrappers`
+- Use wrapper classes for protocol buffer operations located in `gigl/src/common/types/pb_wrappers`
   - `GbmlConfigPbWrapper` is used for `gbml_config_pb2.GbmlConfig`, otherwise known as task config, or template task
     config
   - `GiglResourceConfigWrapper` is used for `gigl_resource_config_pb2.GiglResourceConfig`

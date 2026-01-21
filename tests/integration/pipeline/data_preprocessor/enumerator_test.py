@@ -26,8 +26,8 @@ from gigl.src.data_preprocessor.lib.ingest.bigquery import (
 logger = Logger()
 
 # TODO: (svij-sc) Clean up the graph definition here; maybe using some changes
-# Likely using something like: `python/tests/test_assets/dataset_mocking/visualization_test/visualize.py`
-# Sample yaml that defines the graph: python/tests/test_assets/dataset_mocking/visualization_test/graph_config.yaml
+# Likely using something like: `tests/test_assets/dataset_mocking/visualization_test/visualize.py`
+# Sample yaml that defines the graph: tests/test_assets/dataset_mocking/visualization_test/graph_config.yaml
 _PERSON_NODE_TYPE = NodeType("person")
 _MESSAGES_RELATION = Relation("messages")
 _MESSAGES_EDGE_TYPE = EdgeType(

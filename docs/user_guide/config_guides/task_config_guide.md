@@ -59,7 +59,7 @@ using the `NodeAnchorBasedLinkPredictionTaskMetadata` task.
 ```
 
 ```{note}
-An example of `NodeBasedTaskMetadata` can be found in `python/gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml`
+An example of `NodeBasedTaskMetadata` can be found in `gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml`
 ```
 
 ### SharedConfig
@@ -124,7 +124,7 @@ class implement the protocol defined @ {py:class}`gigl.src.inference.v1.lib.base
 
 GiGL makes use of custom [Omegaconf resolvers](https://omegaconf.readthedocs.io/en/latest/custom_resolvers.html) to
 allow us to expose macros that are resolved at runtime instead of being hardcoded. Our resolvers are defined in
-[omegaconf_resolvers.py](python/gigl/common/omegaconf_resolvers.py)
+[omegaconf_resolvers.py](gigl/common/omegaconf_resolvers.py)
 
 ```{note}
 In tabularized GiGL: Subgraph Sampler, and Split Generator do not have support for custom resolvers. In most cases this should not be a problem as the Config Populator should populate any needed custom resolution to your frozen configs.

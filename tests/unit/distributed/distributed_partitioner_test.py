@@ -1,4 +1,4 @@
-# Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
+# Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/test_dist_random_partitioner.py
 
 import unittest
 from collections import abc, defaultdict
