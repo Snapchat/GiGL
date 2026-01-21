@@ -133,7 +133,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
-    is_inference = args.is_inference
     torch.distributed.init_process_group(backend="gloo")
     cluster_info = get_graph_store_info()
     logger.info(f"Cluster info: {cluster_info}")
