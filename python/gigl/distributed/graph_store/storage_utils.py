@@ -163,7 +163,7 @@ def get_edge_types() -> Optional[list[EdgeType]]:
         return None
 
 
-def get_training_input(
+def get_ablp_input(
     split: Union[Literal["train", "val", "test"], str],
     rank: int,
     world_size: int,

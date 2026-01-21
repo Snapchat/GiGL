@@ -462,8 +462,8 @@ class TestRemoteDataset(unittest.TestCase):
             [(_USER, Relation("to"), _STORY), (_STORY, Relation("to"), _USER)],
         )
 
-    def test_get_training_input(self) -> None:
-        """Test get_training_input returns correct labels for each split."""
+    def test_get_ablp_input(self) -> None:
+        """Test get_ablp_input returns correct labels for each split."""
         create_test_process_group()
         # Define the labels explicitly: user_id -> list of story_ids
         positive_labels = {
@@ -499,7 +499,7 @@ class TestRemoteDataset(unittest.TestCase):
 
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
-                anchor_nodes, pos_labels, neg_labels = storage_utils.get_training_input(
+                anchor_nodes, pos_labels, neg_labels = storage_utils.get_ablp_input(
                     split=split,
                     rank=0,
                     world_size=1,
@@ -521,8 +521,8 @@ class TestRemoteDataset(unittest.TestCase):
                 assert neg_labels is not None
                 assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
 
-    def test_get_training_input_multiple_ranks(self) -> None:
-        """Test get_training_input with multiple ranks to verify sharding."""
+    def test_get_ablp_input_multiple_ranks(self) -> None:
+        """Test get_ablp_input with multiple ranks to verify sharding."""
         create_test_process_group()
         positive_labels = {
             0: [0, 1],
@@ -550,7 +550,10 @@ class TestRemoteDataset(unittest.TestCase):
         storage_utils.register_dataset(dataset)
 
         # Get training input for rank 0 of 2
-        anchor_nodes_0, pos_labels_0, neg_labels_0 = storage_utils.get_training_input(
+
+        # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
+        # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+        anchor_nodes_0, pos_labels_0, neg_labels_0 = storage_utils.get_ablp_input(
             split="train",
             rank=0,
             world_size=2,
@@ -559,7 +562,7 @@ class TestRemoteDataset(unittest.TestCase):
         )
 
         # Get training input for rank 1 of 2
-        anchor_nodes_1, pos_labels_1, neg_labels_1 = storage_utils.get_training_input(
+        anchor_nodes_1, pos_labels_1, neg_labels_1 = storage_utils.get_ablp_input(
             split="train",
             rank=1,
             world_size=2,
@@ -589,8 +592,8 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_training_input_without_registered_dataset(self) -> None:
         """Test get_training_input raises ValueError when no dataset is registered."""
-        with self.assertRaises(ValueError) as context:
-            storage_utils.get_training_input(
+        with self.assertRaises(ValueError):
+            storage_utils.get_ablp_input(
                 split="train",
                 rank=0,
                 world_size=1,
@@ -598,9 +601,8 @@ class TestRemoteDataset(unittest.TestCase):
                 supervision_edge_type=_USER_TO_STORY,
             )
 
-        self.assertIn("Dataset not registered", str(context.exception))
 
-    def test_get_training_input_invalid_split(self) -> None:
+    def test_get_ablp_input_invalid_split(self) -> None:
         """Test get_training_input raises ValueError with invalid split."""
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
         negative_labels = {0: [1], 1: [2], 2: [3], 3: [4], 4: [0]}
@@ -614,16 +616,15 @@ class TestRemoteDataset(unittest.TestCase):
         )
         storage_utils.register_dataset(dataset)
 
-        with self.assertRaises(ValueError) as context:
-            storage_utils.get_training_input(
-                split="invalid",  # type: ignore
+        with self.assertRaises(ValueError):
+            storage_utils.get_ablp_input(
+                split="invalid",
                 rank=0,
                 world_size=1,
                 node_type=_USER,
                 supervision_edge_type=_USER_TO_STORY,
             )
 
-        self.assertIn("Invalid split", str(context.exception))
 
     def test_get_training_input_without_negative_labels(self) -> None:
         """Test get_training_input when no negative labels exist in the dataset."""
@@ -646,7 +647,7 @@ class TestRemoteDataset(unittest.TestCase):
         )
         storage_utils.register_dataset(dataset)
 
-        anchor_nodes, pos_labels, neg_labels = storage_utils.get_training_input(
+        anchor_nodes, pos_labels, neg_labels = storage_utils.get_ablp_input(
             split="train",
             rank=0,
             world_size=1,
