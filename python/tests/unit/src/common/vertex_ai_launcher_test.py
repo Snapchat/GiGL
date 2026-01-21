@@ -147,6 +147,8 @@ class TestVertexAILauncher(unittest.TestCase):
             process_command=process_command,
             process_runtime_args=process_runtime_args,
             resource_config_wrapper=resource_config_wrapper,
+            storage_command="python -m gigl.distributed.graph_store.storage_main",
+            storage_args={},
             cpu_docker_uri=cpu_docker_uri,
             cuda_docker_uri=cuda_docker_uri,
             component=component,

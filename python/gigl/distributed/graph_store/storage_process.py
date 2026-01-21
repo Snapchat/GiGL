@@ -3,64 +3,21 @@
 Derivved from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/examples/distributed/server_client_mode/sage_supervised_server.py
 
 """
-import argparse
 import os
 from typing import Optional
 
 import graphlearn_torch as glt
 import torch
 
-from gigl.common import Uri, UriFactory
+from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.distributed import build_dataset_from_task_config_uri
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.storage_utils import register_dataset
-from gigl.distributed.utils import get_graph_store_info
 from gigl.distributed.utils.networking import get_free_ports_from_master_node
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
-
-
-def _run_storage_process(
-    storage_rank: int,
-    cluster_info: GraphStoreInfo,
-    dataset: DistDataset,
-    torch_process_port: int,
-    storage_world_backend: Optional[str],
-) -> None:
-    register_dataset(dataset)
-    cluster_master_ip = cluster_info.storage_cluster_master_ip
-    logger.info(
-        f"Initializing GLT server for storage node process group {storage_rank} / {cluster_info.num_storage_nodes} on {cluster_master_ip}:{cluster_info.rpc_master_port}"
-    )
-    # Initialize the GLT server before starting the Torch Distributed process group.
-    # Otherwise, we saw intermittent hangs when initializing the server.
-    glt.distributed.init_server(
-        num_servers=cluster_info.num_storage_nodes,
-        server_rank=storage_rank,
-        dataset=dataset,
-        master_addr=cluster_master_ip,
-        master_port=cluster_info.rpc_master_port,
-        num_clients=cluster_info.compute_cluster_world_size,
-    )
-
-    init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{torch_process_port}"
-    logger.info(
-        f"Initializing storage node process group {storage_rank} / {cluster_info.num_storage_nodes} with backend {storage_world_backend} on {init_method}"
-    )
-    torch.distributed.init_process_group(
-        backend=storage_world_backend,
-        world_size=cluster_info.num_storage_nodes,
-        rank=storage_rank,
-        init_method=init_method,
-    )
-
-    logger.info(
-        f"Waiting for storage node {storage_rank} / {cluster_info.num_storage_nodes} to exit"
-    )
-    glt.distributed.wait_and_shutdown_server()
-    logger.info(f"Storage node {storage_rank} exited")
 
 
 def storage_node_process(
@@ -125,24 +82,42 @@ def storage_node_process(
         server_process.join()
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--task_config_uri", type=str, required=True)
-    parser.add_argument("--resource_config_uri", type=str, required=True)
-    parser.add_argument("--job_name", type=str, required=True)
-    args = parser.parse_args()
-    logger.info(f"Running storage node with arguments: {args}")
-
-    torch.distributed.init_process_group(backend="gloo")
-    cluster_info = get_graph_store_info()
-    logger.info(f"Cluster info: {cluster_info}")
+def _run_storage_process(
+    storage_rank: int,
+    cluster_info: GraphStoreInfo,
+    dataset: DistDataset,
+    torch_process_port: int,
+    storage_world_backend: Optional[str],
+) -> None:
+    register_dataset(dataset)
+    cluster_master_ip = cluster_info.storage_cluster_master_ip
     logger.info(
-        f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
+        f"Initializing GLT server for storage node process group {storage_rank} / {cluster_info.num_storage_nodes} on {cluster_master_ip}:{cluster_info.rpc_master_port}"
     )
-    # Tear down the """"global""" process group so we can have a server-specific process group.
-    torch.distributed.destroy_process_group()
-    storage_node_process(
-        storage_rank=cluster_info.storage_node_rank,
-        cluster_info=cluster_info,
-        task_config_uri=UriFactory.create_uri(args.task_config_uri),
+    # Initialize the GLT server before starting the Torch Distributed process group.
+    # Otherwise, we saw intermittent hangs when initializing the server.
+    glt.distributed.init_server(
+        num_servers=cluster_info.num_storage_nodes,
+        server_rank=storage_rank,
+        dataset=dataset,
+        master_addr=cluster_master_ip,
+        master_port=cluster_info.rpc_master_port,
+        num_clients=cluster_info.compute_cluster_world_size,
     )
+
+    init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{torch_process_port}"
+    logger.info(
+        f"Initializing storage node process group {storage_rank} / {cluster_info.num_storage_nodes} with backend {storage_world_backend} on {init_method}"
+    )
+    torch.distributed.init_process_group(
+        backend=storage_world_backend,
+        world_size=cluster_info.num_storage_nodes,
+        rank=storage_rank,
+        init_method=init_method,
+    )
+
+    logger.info(
+        f"Waiting for storage node {storage_rank} / {cluster_info.num_storage_nodes} to exit"
+    )
+    glt.distributed.wait_and_shutdown_server()
+    logger.info(f"Storage node {storage_rank} exited")

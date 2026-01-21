@@ -17,7 +17,7 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_proccess,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.graph_store.storage_main import storage_node_process
+from gigl.distributed.graph_store.storage_process import storage_node_process
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank

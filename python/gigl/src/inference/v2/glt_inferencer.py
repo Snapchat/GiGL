@@ -83,6 +83,8 @@ class GLTInferencer:
                 resource_config_uri=resource_config_uri,
                 process_command=inference_process_command,
                 process_runtime_args=inference_process_runtime_args,
+                storage_command=gbml_config_pb_wrapper.inferencer_config.graph_store_storage_config.storage_command,
+                storage_args=gbml_config_pb_wrapper.inferencer_config.graph_store_storage_config.storage_args,
                 resource_config_wrapper=resource_config_wrapper,
                 cpu_docker_uri=cpu_docker_uri,
                 cuda_docker_uri=cuda_docker_uri,
