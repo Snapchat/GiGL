@@ -123,7 +123,9 @@ def _run_compute_tests(
 
     torch.distributed.barrier()
     if node_type is not None:
-        input_nodes: Union[list[torch.Tensor], tuple[NodeType, list[torch.Tensor]]] = (
+        input_nodes: Union[
+            dict[int, torch.Tensor], tuple[NodeType, dict[int, torch.Tensor]]
+        ] = (
             node_type,
             sampler_input,
         )
