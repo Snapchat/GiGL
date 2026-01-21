@@ -84,15 +84,15 @@ class DistNeighborLoader(DistLoader):
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
-            input_nodes (Tensor | Tuple[NodeType, Tensor] | list[Tensor] | Tuple[NodeType, list[Tensor]]):
+            input_nodes (Tensor | Tuple[NodeType, Tensor] | dict[int, Tensor] | Tuple[NodeType, dict[int, Tensor]]):
                 The nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
                 If set to `None` for homogeneous settings, all nodes will be considered.
                 In heterogeneous graphs, this flag must be passed in as a tuple that holds
                 the node type and node indices. (default: `None`)
-                For Graph Store mode, this must be a tuple of (NodeType, list[Tenor]) or list[Tenor].
-                Where each Tensor in the list is the node ids to sample from, for each server.
-                e.g. [[10, 20], [30, 40]] means sample from nodes 10 and 20 on server 0, and nodes 30 and 40 on server 1.
+                For Graph Store mode, this must be a tuple of (NodeType, dict[int, Tensor]) or dict[int, Tensor].
+                Where each Tensor in the dict is the node ids to sample from, by server.
+                e.g. {0: [10, 20], 1: [30, 40]} means sample from nodes 10 and 20 on server 0, and nodes 30 and 40 on server 1.
                 If a Graph Store input (e.g. list[Tensor]) is provided to colocated mode, or colocated input (e.g. Tensor) is provided to Graph Store mode,
                 then an error will be raised.
             num_workers (int): How many workers to use (subprocesses to spwan) for
@@ -422,13 +422,13 @@ class DistNeighborLoader(DistLoader):
             input_type = None
 
         # Convert from dict to list which is what the GLT DistNeighborLoader expects.
-        servers = sorted(nodes.keys())
+        servers = nodes.keys()
         if max(servers) >= dataset.cluster_info.num_storage_nodes or min(servers) < 0:
             raise ValueError(
                 f"When using Graph Store mode, the server ranks must be less than the number of storage nodes and greater than 0, received inputs for servers: {list(nodes.keys())}"
             )
         input_data: list[NodeSamplerInput] = []
-        for server_rank in servers:
+        for server_rank in range(dataset.cluster_info.num_storage_nodes):
             if server_rank in nodes:
                 input_data.append(
                     NodeSamplerInput(node=nodes[server_rank], input_type=input_type)

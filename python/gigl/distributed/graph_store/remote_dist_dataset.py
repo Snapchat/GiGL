@@ -143,7 +143,7 @@ class RemoteDistDataset:
         As such, the input tensors may be duplicated across all processes on a given compute machine.
         In order to save on cpu memory, pass in `mp_sharing_dict` to the `RemoteDistDataset` constructor.
 
-        Then, for compute rank 0 (node 0, process 0), the returned list will be:
+        Then, for compute rank 0 (node 0, process 0), the returned dict will be:
             {
                 0: [0, 1, 3, 4], # From storage rank 0
                 1: [8, 9, 10, 11] # From storage rank 1
@@ -154,7 +154,7 @@ class RemoteDistDataset:
             Must be provided for heterogeneous datasets.
 
         Returns:
-            dict[int, torch.Tensor]: A dict of node IDs for the given node type, by storage rank.
+            dict[int, torch.Tensor]: A dict storage rank to node ids.
         """
 
         def server_key(server_rank: int) -> str:
