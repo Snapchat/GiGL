@@ -105,6 +105,7 @@ def get_edge_dir() -> Literal["in", "out"]:
     return _dataset.edge_dir
 
 
+# TODO(kmonte): Migrate this to be `get_node_ids(split?, shard?)`
 def get_node_ids_for_rank(
     rank: int,
     world_size: int,
@@ -170,7 +171,7 @@ def get_ablp_input(
     node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
     supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    """Get the training input for a specific rank in distributed processing.
+    """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
 
     Note: rank and world_size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
     e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
@@ -189,6 +190,8 @@ def get_ablp_input(
     Raises:
         ValueError: If no dataset has been registered or if the split is invalid.
     """
+
+    # TODO(kmonte): Migrate this part to use some `get_node_ids` method on the dataset.
     if _dataset is None:
         raise _NO_DATASET_ERROR
 

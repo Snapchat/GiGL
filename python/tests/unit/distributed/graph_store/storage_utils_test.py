@@ -601,7 +601,6 @@ class TestRemoteDataset(unittest.TestCase):
                 supervision_edge_type=_USER_TO_STORY,
             )
 
-
     def test_get_ablp_input_invalid_split(self) -> None:
         """Test get_training_input raises ValueError with invalid split."""
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
@@ -624,7 +623,6 @@ class TestRemoteDataset(unittest.TestCase):
                 node_type=_USER,
                 supervision_edge_type=_USER_TO_STORY,
             )
-
 
     def test_get_training_input_without_negative_labels(self) -> None:
         """Test get_training_input when no negative labels exist in the dataset."""
