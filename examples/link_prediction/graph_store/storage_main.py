@@ -21,7 +21,7 @@ if __name__ == "__main__":
     parser.add_argument("--task_config_uri", type=str, required=True)
     parser.add_argument("--resource_config_uri", type=str, required=True)
     parser.add_argument("--job_name", type=str, required=True)
-    parser.add_argument("--is_inference", type=bool, required=True, action="store_true")
+    parser.add_argument("--is_inference", action="store_true")
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
