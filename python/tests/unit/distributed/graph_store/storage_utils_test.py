@@ -14,8 +14,8 @@ from gigl.types.graph import (
     message_passing_to_negative_label,
     message_passing_to_positive_label,
 )
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
 from tests.test_assets.distributed.utils import (
-    MockNodeAnchorLinkSplitter,
     assert_tensor_equality,
     create_test_process_group,
     destroy_test_process_group,
@@ -125,12 +125,22 @@ class TestRemoteDataset(unittest.TestCase):
         - Negative label edges (optional): USER -[to_gigl_negative]-> STORY (from negative_labels)
         - Train/val/test splits for USER nodes
 
+        The splits are achieved using DistNodeAnchorLinkSplitter with an identity-like hash
+        function (hash(x) = x + 1). This produces deterministic splits where:
+        - Nodes with lower IDs go to train
+        - Nodes with middle IDs go to val
+        - Nodes with higher IDs go to test
+
+        The split ratios are calculated as:
+        - num_val = len(val_user_ids) / total_users
+        - num_test = len(test_user_ids) / total_users
+
         Args:
             positive_labels: Mapping of user_id -> list of positive story_ids.
             negative_labels: Mapping of user_id -> list of negative story_ids, or None.
-            train_user_ids: List of user IDs in the train split.
-            val_user_ids: List of user IDs in the val split.
-            test_user_ids: List of user IDs in the test split.
+            train_user_ids: List of user IDs in the train split (must be the lowest IDs).
+            val_user_ids: List of user IDs in the val split (must be middle IDs).
+            test_user_ids: List of user IDs in the test split (must be the highest IDs).
 
         Raises:
             ValueError: If any user ID in train/val/test is not in positive_labels.
@@ -214,16 +224,26 @@ class TestRemoteDataset(unittest.TestCase):
             partitioned_node_labels=None,
         )
 
-        # Create splitter with pre-defined splits for USER nodes
-        splitter = MockNodeAnchorLinkSplitter(
-            heterogeneous_splits={
-                _USER: (
-                    torch.tensor(train_user_ids, dtype=torch.int64),
-                    torch.tensor(val_user_ids, dtype=torch.int64),
-                    torch.tensor(test_user_ids, dtype=torch.int64),
-                ),
-            },
-            should_convert_labels_to_edges=False,  # Labels are already edges in graph
+        # Calculate split ratios based on provided user IDs.
+        # With identity hash (x + 1), nodes are split by their ID values:
+        # - Lower IDs -> train, middle IDs -> val, higher IDs -> test
+        total_users = len(positive_labels)
+        num_val = len(val_user_ids) / total_users
+        num_test = len(test_user_ids) / total_users
+
+        # Identity-like hash function for deterministic splits based on node ID ordering.
+        # Adding 1 ensures hash(0) != 0 and creates proper normalization boundaries.
+        def _identity_hash(x: torch.Tensor) -> torch.Tensor:
+            return x.clone().to(torch.int64) + 1
+
+        # Create splitter that will produce splits based on node ID ordering
+        splitter = DistNodeAnchorLinkSplitter(
+            sampling_direction="out",
+            num_val=num_val,
+            num_test=num_test,
+            hash_function=_identity_hash,
+            supervision_edge_types=[_USER_TO_STORY],
+            should_convert_labels_to_edges=True,  # Derives positive/negative edge types from supervision edge type
         )
 
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
