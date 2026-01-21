@@ -27,6 +27,8 @@ class TestGraphStoreInfo(unittest.TestCase):
             cluster_master_port=1234,
             storage_cluster_master_port=1235,
             compute_cluster_master_port=1236,
+            rpc_master_port=1237,
+            rpc_wait_port=1238,
         )
 
     def test_num_cluster_nodes(self):
