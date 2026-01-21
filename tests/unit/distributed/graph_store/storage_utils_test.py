@@ -293,6 +293,23 @@ class TestRemoteDataset(unittest.TestCase):
         edge_feature_info = storage_utils.get_edge_feature_info()
         self.assertEqual(edge_feature_info, dataset.edge_feature_info)
 
+    def test_get_edge_types_homogeneous(self) -> None:
+        """Test get_edge_types with a homogeneous dataset."""
+        dataset = self._create_homogeneous_dataset()
+        storage_utils.register_dataset(dataset)
+        edge_types = storage_utils.get_edge_types()
+        self.assertIsNone(edge_types)
+
+    def test_get_edge_types_heterogeneous(self) -> None:
+        """Test get_edge_types with a heterogeneous dataset."""
+        dataset = self._create_heterogeneous_dataset()
+        storage_utils.register_dataset(dataset)
+        edge_types = storage_utils.get_edge_types()
+        self.assertEqual(
+            edge_types,
+            [(_USER, Relation("to"), _STORY), (_STORY, Relation("to"), _USER)],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

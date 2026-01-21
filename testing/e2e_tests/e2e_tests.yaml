@@ -19,3 +19,6 @@ tests:
   het_dblp_sup_test:
     task_config_uri: "examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml"
     resource_config_uri: "${oc.env:GIGL_TEST_IN_MEMORY_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_glt_resource_config.yaml}"
+  hom_cora_sup_gs_test:
+    task_config_uri: "examples/link_prediction/graph_store/configs/e2e_hom_cora_sup_gs_task_config.yaml"
+    resource_config_uri: "${oc.env:GIGL_TEST_IN_MEMORY_DEFAULT_GRAPH_STORE_RESOURCE_CONFIG,deployment/configs/e2e_glt_gs_resource_config.yaml}"

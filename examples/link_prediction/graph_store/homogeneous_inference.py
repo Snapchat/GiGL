@@ -1,10 +1,64 @@
-# Based on https://github.com/Snapchat/GiGL/blob/v0.0.4/examples/link_prediction/homogeneous_inference.py
 """
-This file contains an example for how to run homogeneous inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
-GLT (GraphLearn-for-PyTorch) bindings that GiGL has. Note that example should be applied to use cases which already have
-some pretrained `nn.Module` and are looking to utilize cost-savings with distributed inference. While `run_example_inference` is coupled with
-GiGL orchestration, the `_inference_process` function is generic and can be used as references
-for writing inference for pipelines not dependent on GiGL orchestration.
+This file contains an example for how to run homogeneous inference in **graph store mode** using GiGL.
+
+Graph Store Mode vs Standard Mode:
+----------------------------------
+Graph store mode uses a heterogeneous cluster architecture with two distinct sub-clusters:
+  1. **Storage Cluster (graph_store_pool)**: Dedicated machines for storing and serving the graph
+     data. These are typically high-memory machines without GPUs (e.g., n2-highmem-32).
+  2. **Compute Cluster (compute_pool)**: Dedicated machines for running model inference/training.
+     These typically have GPUs attached (e.g., n1-standard-16 with NVIDIA_TESLA_T4).
+
+This separation allows for:
+  - Independent scaling of storage and compute resources
+  - Better memory utilization (graph data stays on storage nodes)
+  - Cost optimization by using appropriate hardware for each role
+
+In contrast, the standard inference mode (see `examples/link_prediction/homogeneous_inference.py`)
+uses a homogeneous cluster where each machine handles both graph storage and computation.
+
+Key Implementation Differences:
+-------------------------------
+This file (graph store mode):
+  - Uses `RemoteDistDataset` to connect to a remote graph store cluster
+  - Uses `init_compute_process` to initialize the compute node connection to storage
+  - Obtains cluster topology via `get_graph_store_info()` which returns `GraphStoreInfo`
+  - Uses `mp_sharing_dict` for efficient tensor sharing between local processes
+
+Standard mode (`homogeneous_inference.py`):
+  - Uses `DistDataset` with `build_dataset_from_task_config_uri` where each node loads its partition
+  - Manually manages distributed process groups with master IP and port
+  - Each machine stores its own partition of the graph data
+
+Resource Configuration:
+-----------------------
+Graph store mode requires a different resource config structure. Compare:
+
+**Graph Store Mode** (e2e_glt_gs_resource_config.yaml):
+```yaml
+inferencer_resource_config:
+  vertex_ai_graph_store_inferencer_config:
+    graph_store_pool:
+      machine_type: n2-highmem-32      # High memory for graph storage
+      gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+      gpu_limit: 0
+      num_replicas: 2
+    compute_pool:
+      machine_type: n1-standard-16     # Standard machines with GPUs
+      gpu_type: NVIDIA_TESLA_T4
+      gpu_limit: 2
+      num_replicas: 2
+```
+
+**Standard Mode** (e2e_glt_resource_config.yaml):
+```yaml
+inferencer_resource_config:
+  vertex_ai_inferencer_config:
+    machine_type: n1-highmem-32
+    gpu_type: NVIDIA_TESLA_T4
+    gpu_limit: 2
+    num_replicas: 2
+```
 
 To run this file with GiGL orchestration, set the fields similar to below:
 
@@ -13,21 +67,25 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m api_test_inference
+  command: python -m examples.link_prediction.graph_store.homogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 
-You can run this example in a full pipeline with `make run_hom_cora_sup_test` from GiGL root.
+Note: Ensure you use a resource config with `vertex_ai_graph_store_inferencer_config` when
+running in graph store mode.
+
+You can run this example in a full pipeline with `make run_hom_cora_sup_gs_test` from GiGL root.
 """
 
 import argparse
 import gc
+import os
+import sys
 import time
 
 import torch
 import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from graphlearn_torch.distributed import barrier, shutdown_rpc
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -35,8 +93,11 @@ from gigl.common import GcsUri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
-from gigl.nn.models import LinkPredictionGNN
+from gigl.distributed.graph_store.compute import init_compute_process
+from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.utils import get_graph_store_info
+from gigl.env.distributed import GraphStoreInfo
+from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -60,20 +121,18 @@ def _inference_process(
     # from [0, num_processes).
     local_rank: int,
     local_world_size: int,
-    machine_rank: int,
-    machine_world_size: int,
-    master_ip_address: str,
-    master_default_process_group_port: int,
     embedding_gcs_path: GcsUri,
     model_state_dict_uri: GcsUri,
     inference_batch_size: int,
     hid_dim: int,
     out_dim: int,
-    dataset: DistDataset,
+    cluster_info: GraphStoreInfo,
     inferencer_args: dict[str, str],
     inference_node_type: NodeType,
     node_feature_dim: int,
     edge_feature_dim: int,
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper,
+    mp_sharing_dict: dict[str, torch.Tensor],
 ):
     """
     This function is spawned by multiple processes per machine and is responsible for:
@@ -85,7 +144,7 @@ def _inference_process(
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of inference processes spawned by each machine
         distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
-        embedding_gcs_path (GcsUri): GCS path to load embeddings from
+        embedding_gcs_path (GcsUri): GCS path to write embeddings to
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
         hid_dim (int): Hidden dimension of the model
@@ -98,6 +157,15 @@ def _inference_process(
         edge_feature_dim (int): Input edge feature dimension for the model
     """
 
+    device = gigl.distributed.utils.get_available_device(
+        local_process_rank=local_rank,
+    )  # The device is automatically inferred based off the local process rank and the available devices
+    if torch.cuda.is_available():
+        # If using GPU, we set the device to the local process rank's GPU
+        logger.info(
+            f"Using GPU {device} with index {device.index} on local rank: {local_rank} for inference"
+        )
+        torch.cuda.set_device(device)
     # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified as a string of a list of integers, such as "[10, 10]".
     fanout = inferencer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
@@ -120,33 +188,31 @@ def _inference_process(
 
     log_every_n_batch = int(inferencer_args.get("log_every_n_batch", "50"))
 
-    device = gigl.distributed.utils.get_available_device(
-        local_process_rank=local_rank,
-    )  # The device is automatically inferred based off the local process rank and the available devices
-    if device.type == "cuda":
-        # If using GPU, we set the device to the local process rank's GPU
-        logger.info(
-            f"Using GPU {device} with index {device.index} on local rank: {local_rank} for inference"
-        )
-        torch.cuda.set_device(device)
-    rank = machine_rank * local_world_size + local_rank
-    world_size = machine_world_size * local_world_size
+    # Note: This is a *critical* step in Graph Store mode. It initializes the connection to the storage cluster.
+    # If this is not done, the dataloader will not be able to sample from the graph store and will crash.
+    init_compute_process(local_rank, cluster_info)
+    dataset = RemoteDistDataset(
+        cluster_info, local_rank, mp_sharing_dict=mp_sharing_dict
+    )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
     logger.info(
-        f"Local rank {local_rank} in machine {machine_rank} has rank {rank}/{world_size} and using device {device} for inference"
+        f"Local rank {local_rank} in machine {cluster_info.compute_node_rank} has rank {rank}/{world_size} and using device {device} for inference"
     )
-    torch.distributed.init_process_group(
-        backend="gloo" if device.type == "cpu" else "nccl",
-        init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
-        rank=rank,
-        world_size=world_size,
+    input_nodes = dataset.get_node_ids()
+    logger.info(
+        f"Rank {rank} got input nodes of shapes: {[node.shape for node in input_nodes]}"
     )
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
+    sys.stdout.flush()
 
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
         local_process_rank=local_rank,
         local_process_world_size=local_world_size,
-        input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
+        input_nodes=input_nodes,  # Since homogeneous,
         num_workers=sampling_workers_per_inference_process,
         batch_size=inference_batch_size,
         pin_memory_device=device,
@@ -175,7 +241,9 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = f"machine_{machine_rank}_local_process_{local_rank}"
+    embedding_filename = (
+        f"machine_{cluster_info.compute_node_rank}_local_process_{local_rank}"
+    )
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -190,13 +258,15 @@ def _inference_process(
 
     # GiGL class for exporting embeddings to GCS. This is achieved by writing ids and embeddings to an in-memory buffer which gets
     # flushed to GCS. Setting the min_shard_size_threshold_bytes field of this class sets the frequency of flushing to GCS, and defaults
-    # to only flushing when flush_records() is called explicitly or after exiting via a context manager.
+    # to only flushing when flush_embeddings() is called explicitly or after exiting via a context manager.
     exporter = EmbeddingExporter(export_dir=gcs_base_uri)
 
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
+    sys.stdout.flush()
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
-
-    barrier()
+    torch.distributed.barrier()
 
     t = time.time()
     data_loading_start_time = time.time()
@@ -238,6 +308,9 @@ def _inference_process(
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
+            # We don't see logs for graph store mode for whatever reason.
+            # TOOD(#442): Revert this once the GCP issues are resolved.
+            sys.stdout.flush()
             t = time.time()
             cumulative_data_loading_time = 0
             cumulative_inference_time = 0
@@ -253,22 +326,48 @@ def _inference_process(
     logger.info(
         f"--- Rank {rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
     )
+    logger.info(
+        f"--- Rank {rank} wrote embeddings to GCS at {gcs_base_uri} over batches"
+    )
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
+    sys.stdout.flush()
+    # We first call barrier to ensure that all machines and processes have finished inference.
+    # Only once all machines have finished inference is it safe to shutdown the data loader.
+    # Otherwise, processes which are still sampling *will* fail as the loaders they are trying to communicatate with will be shutdown.
+    # We then call `gc.collect()` to cleanup the memory used by the data_loader on the current machine.
 
-    # We first call barrier to ensure that all machines and processes have finished inference. Only once this is ensured is it safe to delete the data loader on the current
-    # machine + process -- otherwise we may fail on processes which are still doing on-the-fly subgraph sampling. We then call `gc.collect()` to cleanup the memory
-    # used by the data_loader on the current machine.
+    torch.distributed.barrier()
 
-    barrier()
-
-    del data_loader
+    data_loader.shutdown()
     gc.collect()
 
     logger.info(
         f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )
+    output_bq_table_path = InferenceAssets.get_enumerated_embedding_table_path(
+        gbml_config_pb_wrapper, inference_node_type
+    )
+    bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
+        bq_table_path=output_bq_table_path
+    )
+    # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
+    if rank == 0:
+        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
 
-    # Clean up for a graceful exit
-    shutdown_rpc()
+        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
+        # representing the load operation, which allows user to monitor and retrieve
+        # details about the job status and result.
+        _ = load_embeddings_to_bigquery(
+            gcs_folder=embedding_gcs_path,
+            project_id=bq_project_id,
+            dataset_id=bq_dataset_id,
+            table_id=bq_table_name,
+        )
+
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
+    sys.stdout.flush()
 
 
 def _run_example_inference(
@@ -293,10 +392,13 @@ def _run_example_inference(
     logger.info(
         f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
     )
+    logger.info(
+        f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
+    )
 
-    # We call a GiGL function to launch a process for loading TFRecords into memory, partitioning the graph across multiple machines,
-    # and registering that information to a DistDataset class.
-    dataset = build_dataset_from_task_config_uri(task_config_uri=task_config_uri)
+    cluster_info = get_graph_store_info()
+    logger.info(f"Cluster info: {cluster_info}")
+    torch.distributed.destroy_process_group()
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -308,9 +410,6 @@ def _run_example_inference(
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
     output_bq_table_path = InferenceAssets.get_enumerated_embedding_table_path(
         gbml_config_pb_wrapper, graph_metadata.homogeneous_node_type
-    )
-    bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
-        bq_table_path=output_bq_table_path
     )
     # We write embeddings to a temporary GCS path during the inference loop, since writing directly to bigquery for each embedding is slow.
     # After inference has finished, we then load all embeddings to bigquery from GCS.
@@ -331,7 +430,6 @@ def _run_example_inference(
     hid_dim = int(inferencer_args.get("hid_dim", "16"))
     out_dim = int(inferencer_args.get("out_dim", "16"))
 
-    local_world_size: int
     arg_local_world_size = inferencer_args.get("local_world_size")
     if arg_local_world_size is not None:
         local_world_size = int(arg_local_world_size)
@@ -356,60 +454,47 @@ def _run_example_inference(
             )
             local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
-    ## Inference Start
-    # Setup variables we can use to spin up training/inference processes and their respective process groups later.
-    master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
-    machine_rank = torch.distributed.get_rank()
-    machine_world_size = torch.distributed.get_world_size()
-    master_default_process_group_port = (
-        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
-    )
-    # Destroying the process group as one will be re-initialized in the inference process using ^ information
-    torch.distributed.destroy_process_group()
+    mp_sharing_dict = mp.Manager().dict()
+    if cluster_info.compute_node_rank == 0:
+        gcs_utils = GcsUtils()
+        num_files_at_gcs_path = gcs_utils.count_blobs_in_gcs_path(
+            embedding_output_gcs_folder
+        )
+        if num_files_at_gcs_path > 0:
+            logger.warning(
+                f"{num_files_at_gcs_path} files already detected at base gcs path {embedding_output_gcs_folder}. Cleaning up files at path ... "
+            )
+            gcs_utils.delete_files_in_bucket_dir(embedding_output_gcs_folder)
 
     inference_start_time = time.time()
-
+    # We don't see logs for graph store mode for whatever reason.
+    # TOOD(#442): Revert this once the GCP issues are resolved.
+    sys.stdout.flush()
     # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
     mp.spawn(
         fn=_inference_process,
         args=(
             local_world_size,  # local_world_size
-            machine_rank,  # machine_rank
-            machine_world_size,  # machine_world_size
-            master_ip_address,  # master_ip_address
-            master_default_process_group_port,  # master_default_process_group_port
             embedding_output_gcs_folder,  # embedding_gcs_path
             model_uri,  # model_state_dict_uri
             inference_batch_size,  # inference_batch_size
             hid_dim,  # hid_dim
             out_dim,  # out_dim
-            dataset,  # dataset
+            cluster_info,  # cluster_info
             inferencer_args,  # inferencer_args
             graph_metadata.homogeneous_node_type,  # inference_node_type
             node_feature_dim,  # node_feature_dim
             edge_feature_dim,  # edge_feature_dim
+            gbml_config_pb_wrapper,  # gbml_config_pb_wrapper
+            mp_sharing_dict,  # mp_sharing_dict
         ),
         nprocs=local_world_size,
         join=True,
     )
 
     logger.info(
-        f"--- Inference finished on rank {machine_rank}, which took {time.time()-inference_start_time:.2f} seconds"
+        f"--- Inference finished, which took {time.time()-inference_start_time:.2f} seconds"
     )
-
-    # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-    if machine_rank == 0:
-        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
-
-        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
-        # representing the load operation, which allows user to monitor and retrieve
-        # details about the job status and result.
-        _ = load_embeddings_to_bigquery(
-            gcs_folder=embedding_output_gcs_folder,
-            project_id=bq_project_id,
-            dataset_id=bq_dataset_id,
-            table_id=bq_table_name,
-        )
 
     logger.info(
         f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
@@ -430,7 +515,6 @@ if __name__ == "__main__":
     # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for distributed inference
     args, unused_args = parser.parse_known_args()
     logger.info(f"Unused arguments: {unused_args}")
-
     # We only need `job_name` and `task_config_uri` for running inference
     _run_example_inference(
         job_name=args.job_name,

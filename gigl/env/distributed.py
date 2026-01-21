@@ -55,6 +55,13 @@ class GraphStoreInfo:
     # https://snapchat.github.io/GiGL/docs/api/snapchat/research/gbml/gigl_resource_config_pb2/index.html#snapchat.research.gbml.gigl_resource_config_pb2.VertexAiGraphStoreConfig
     num_processes_per_compute: int
 
+    # Port of the master node for the RPC communication.
+    # NOTE: This should be on the *storage* master node, not the compute master node.
+    rpc_master_port: int
+    # Port of the master node for the RPC wait communication.
+    # NOTE: This should be on the *storage* master node, not the compute master node.
+    rpc_wait_port: int
+
     @property
     def num_cluster_nodes(self) -> int:
         return self.num_storage_nodes + self.num_compute_nodes
