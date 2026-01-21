@@ -37,7 +37,7 @@ logger = Logger()
 
 def _assert_sampler_input(
     cluster_info: GraphStoreInfo,
-    sampler_input: list[torch.Tensor],
+    sampler_input: dict[int, torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
     rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]

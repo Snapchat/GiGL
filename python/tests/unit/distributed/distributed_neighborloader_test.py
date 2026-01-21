@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
+from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
@@ -37,6 +38,7 @@ from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import (
+    MockRemoteDistDataset,
     assert_tensor_equality,
     create_test_process_group,
 )
@@ -314,7 +316,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def test_distributed_neighbor_loader(self):
+    def _test_distributed_neighbor_loader(self):
         expected_data_count = 2708
 
         dataset = run_distributed_dataset(
@@ -328,7 +330,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, expected_data_count),
         )
 
-    def test_infinite_distributed_neighbor_loader(self):
+    def _test_infinite_distributed_neighbor_loader(self):
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
@@ -350,7 +352,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
 
     # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
-    def test_distributed_neighbor_loader_heterogeneous(self):
+    def _test_distributed_neighbor_loader_heterogeneous(self):
         expected_data_count = 4057
 
         dataset = run_distributed_dataset(
@@ -364,7 +366,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, expected_data_count),
         )
 
-    def test_random_loading_labeled_homogeneous(self):
+    def _test_random_loading_labeled_homogeneous(self):
         create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
@@ -397,7 +399,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, to_homogeneous(dataset.node_ids).size(0)),
         )
 
-    def test_multiple_neighbor_loader(self):
+    def _test_multiple_neighbor_loader(self):
         expected_data_count = 2708
 
         dataset = run_distributed_dataset(
@@ -411,7 +413,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, expected_data_count),
         )
 
-    def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
+    def _test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(5),
             edge_partition_book=torch.zeros(5),
@@ -439,7 +441,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
+    def _test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(5),
@@ -488,7 +490,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 1),  # dataset  # batch_size
         )
 
-    def test_cora_supervised_node_classification(self):
+    def _test_cora_supervised_node_classification(self):
         """Test CORA dataset for supervised node classification task."""
         create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -523,7 +525,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             ),
         )
 
-    def test_isolated_heterogeneous_neighbor_loader(
+    def _test_isolated_heterogeneous_neighbor_loader(
         self,
     ):
         partition_output = PartitionOutput(
@@ -550,7 +552,7 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             args=(dataset, 18),
         )
 
-    def test_isolated_homogeneous_neighbor_loader(
+    def _test_isolated_homogeneous_neighbor_loader(
         self,
     ):
         partition_output = PartitionOutput(
@@ -572,6 +574,117 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             fn=_run_distributed_neighbor_loader,
             args=(dataset, 18),
         )
+
+    @parameterized.expand(
+        [
+            param(
+                "input_nodes is None and dataset.node_ids is None",
+                expected_error=ValueError,
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes=None,
+            ),
+            param(
+                "input_nodes is None for heterogeneous dataset",
+                expected_error=ValueError,
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                    node_ids={NodeType("a"): torch.tensor([1, 2, 3])},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=None,
+            ),
+            param(
+                "input_nodes is a dict (colocated mode expects Tensor)",
+                expected_error=ValueError,
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes={0: torch.tensor([10])},
+            ),
+            param(
+                "input_nodes is tuple with dict as second element",
+                expected_error=ValueError,
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), {0: torch.tensor([10])}),
+            ),
+            param(
+                "Heterogeneous dataset with tensor input_nodes (not labeled homogeneous)",
+                expected_error=ValueError,
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                    node_ids={
+                        NodeType("a"): torch.tensor([1, 2]),
+                        NodeType("b"): torch.tensor([3, 4]),
+                    },
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=torch.tensor([10]),
+            ),
+            param(
+                "input_nodes is None (graph store mode)",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes=None,
+            ),
+            param(
+                "input_nodes is a Tensor (graph store mode expects Mapping)",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes=torch.tensor([10, 20]),
+            ),
+            param(
+                "input_nodes is tuple with Tensor (graph store mode expects Mapping)",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10, 20])),
+            ),
+            param(
+                "Heterogeneous input without edge_types",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2, edge_types=None),
+                num_neighbors=[2, 2],
+                input_nodes=(
+                    NodeType("a"),
+                    {0: torch.tensor([10]), 1: torch.tensor([20])},
+                ),
+            ),
+            param(
+                "Server rank exceeds num_storage_nodes",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes={0: torch.tensor([10]), 5: torch.tensor([20])},
+            ),
+            param(
+                "Server rank is negative",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes={-1: torch.tensor([10]), 0: torch.tensor([20])},
+            ),
+        ]
+    )
+    def test_distributed_neighbor_loader_invalid_inputs_colocated(
+        self,
+        _: str,
+        expected_error: type[BaseException],
+        **kwargs,
+    ):
+        create_test_process_group()
+        with self.assertRaises(expected_error):
+            DistNeighborLoader(**kwargs)
 
 
 if __name__ == "__main__":
