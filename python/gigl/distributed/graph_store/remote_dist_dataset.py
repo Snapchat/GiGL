@@ -1,4 +1,5 @@
 import time
+from collections.abc import MutableMapping
 from multiprocessing.managers import DictProxy
 from typing import Literal, Optional, Union
 
@@ -26,7 +27,7 @@ class RemoteDistDataset:
         self,
         cluster_info: GraphStoreInfo,
         local_rank: int,
-        mp_sharing_dict: Optional[dict[str, torch.Tensor]] = None,
+        mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]] = None,
     ):
         """
         Represents a dataset that is stored on a difference storage cluster.
@@ -37,7 +38,7 @@ class RemoteDistDataset:
         Args:
             cluster_info (GraphStoreInfo): The cluster information.
             local_rank (int): The local rank of the process on the compute node.
-            mp_sharing_dict (Optional[dict[str, torch.Tensor]]):
+            mp_sharing_dict (Optional[MutableMapping[str, torch.Tensor]]):
                 (Optional) If provided, will be used to share tensors across the local machine.
                 e.g. for `get_node_ids`.
                 If provided, *must* be a `DictProxy` e.g. the return value of a mp.Manager.

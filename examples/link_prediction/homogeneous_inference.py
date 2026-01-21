@@ -23,6 +23,7 @@ import argparse
 import gc
 import time
 from dataclasses import dataclass
+from typing import Union
 
 import torch
 import torch.multiprocessing as mp
@@ -37,7 +38,7 @@ from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
 from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
@@ -78,7 +79,10 @@ class InferenceProcessArgs:
     # Inference config
     embedding_gcs_path: GcsUri
     inference_batch_size: int
-    inferencer_args: dict[str, str]
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
+    sampling_workers_per_inference_process: int
+    sampling_worker_shared_channel_size: str
+    log_every_n_batch: int
 
 
 @torch.no_grad()
@@ -98,28 +102,6 @@ def _inference_process(
         local_rank (int): Process number on the current machine
         args (InferenceProcessArgs): Dataclass containing all inference process arguments
     """
-
-    # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified as a string of a list of integers, such as "[10, 10]".
-    fanout = args.inferencer_args.get("num_neighbors", "[10, 10]")
-    num_neighbors = parse_fanout(fanout)
-
-    # While the ideal value for `sampling_workers_per_inference_process` has been identified to be between `2` and `4`, this may need some tuning depending on the
-    # pipeline. We default this value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may not have enough parallelization for
-    # sampling, which would slow down inference, while a value which is too large may slow down each sampling process due to competing resources, which would also
-    # then slow down inference.
-    sampling_workers_per_inference_process: int = int(
-        args.inferencer_args.get("sampling_workers_per_inference_process", "4")
-    )
-
-    # This value represents the the shared-memory buffer size (bytes) allocated for the channel during sampling, and
-    # is the place to store pre-fetched data, so if it is too small then prefetching is limited, causing sampling slowdown. This parameter is a string
-    # with `{numeric_value}{storage_size}`, where storage size could be `MB`, `GB`, etc. We default this value to 4GB,
-    # but in production may need some tuning.
-    sampling_worker_shared_channel_size: str = args.inferencer_args.get(
-        "sampling_worker_shared_channel_size", "4GB"
-    )
-
-    log_every_n_batch = int(args.inferencer_args.get("log_every_n_batch", "50"))
 
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=local_rank,
@@ -144,15 +126,15 @@ def _inference_process(
 
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=args.dataset,
-        num_neighbors=num_neighbors,
+        num_neighbors=args.num_neighbors,
         local_process_rank=local_rank,
         local_process_world_size=args.local_world_size,
         input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
-        num_workers=sampling_workers_per_inference_process,
+        num_workers=args.sampling_workers_per_inference_process,
         batch_size=args.inference_batch_size,
         pin_memory_device=device,
-        worker_concurrency=sampling_workers_per_inference_process,
-        channel_size=sampling_worker_shared_channel_size,
+        worker_concurrency=args.sampling_workers_per_inference_process,
+        channel_size=args.sampling_worker_shared_channel_size,
         # For large-scale settings, consider setting this field to 30-60 seconds to ensure dataloaders
         # don't compete for memory during initialization, causing OOM
         process_start_gap_seconds=0,
@@ -232,10 +214,10 @@ def _inference_process(
 
         cumulative_inference_time += time.time() - inference_start_time
 
-        if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
+        if batch_idx > 0 and batch_idx % args.log_every_n_batch == 0:
             logger.info(
                 f"rank {rank} processed {batch_idx} batches. "
-                f"{log_every_n_batch} batches took {time.time() - t:.2f} seconds. "
+                f"{args.log_every_n_batch} batches took {time.time() - t:.2f} seconds. "
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
@@ -368,6 +350,31 @@ def _run_example_inference(
 
     inference_start_time = time.time()
 
+    # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified
+    # as a string of a list of integers, such as "[10, 10]".
+    num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
+
+    # While the ideal value for `sampling_workers_per_inference_process` has been identified to be
+    # between `2` and `4`, this may need some tuning depending on the pipeline. We default this
+    # value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may
+    # not have enough parallelization for sampling, which would slow down inference, while a value
+    # which is too large may slow down each sampling process due to competing resources, which
+    # would also then slow down inference.
+    sampling_workers_per_inference_process = int(
+        inferencer_args.get("sampling_workers_per_inference_process", "4")
+    )
+
+    # This value represents the shared-memory buffer size (bytes) allocated for the channel during
+    # sampling, and is the place to store pre-fetched data, so if it is too small then prefetching
+    # is limited, causing sampling slowdown. This parameter is a string with
+    # `{numeric_value}{storage_size}`, where storage size could be `MB`, `GB`, etc. We default
+    # this value to 4GB, but in production may need some tuning.
+    sampling_worker_shared_channel_size = inferencer_args.get(
+        "sampling_worker_shared_channel_size", "4GB"
+    )
+
+    log_every_n_batch = int(inferencer_args.get("log_every_n_batch", "50"))
+
     # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
     inference_args = InferenceProcessArgs(
         local_world_size=local_world_size,
@@ -384,7 +391,10 @@ def _run_example_inference(
         edge_feature_dim=edge_feature_dim,
         embedding_gcs_path=embedding_output_gcs_folder,
         inference_batch_size=inference_batch_size,
-        inferencer_args=inferencer_args,
+        num_neighbors=num_neighbors,
+        sampling_workers_per_inference_process=sampling_workers_per_inference_process,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+        log_every_n_batch=log_every_n_batch,
     )
 
     mp.spawn(
