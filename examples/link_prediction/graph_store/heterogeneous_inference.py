@@ -57,8 +57,6 @@ def _inference_process(
     # from [0, num_processes).
     local_rank: int,
     local_world_size: int,
-    machine_rank: int,
-    machine_world_size: int,
     cluster_info: GraphStoreInfo,
     embedding_gcs_path: GcsUri,
     model_state_dict_uri: GcsUri,
@@ -80,10 +78,7 @@ def _inference_process(
     Args:
         local_rank (int): Process number on the current machine
         local_world_size (int): Number of inference processes spawned by each machine
-        machine_rank (int): Machine number in the distributed setup
-        machine_world_size (int): Total number of machines in the distributed setup
-        master_ip_address (str): IP address of the master node in the distributed setup
-        master_default_process_group_port (int): Port on the master node in the distributed setup to setup Torch process group on
+        cluster_info (GraphStoreInfo): Cluster information
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
         model_state_dict_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
@@ -128,8 +123,6 @@ def _inference_process(
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
-    rank = machine_rank * local_world_size + local_rank
-    world_size = machine_world_size * local_world_size
     if torch.cuda.is_available():
         torch.cuda.set_device(
             device
@@ -140,6 +133,9 @@ def _inference_process(
     dataset = RemoteDistDataset(
         cluster_info, local_rank, mp_sharing_dict=mp_sharing_dict
     )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+    machine_rank = cluster_info.compute_node_rank
     logger.info(
         f"Local rank {local_rank} in machine {machine_rank} has rank {rank}/{world_size} and using device {device} for inference"
     )
@@ -367,13 +363,6 @@ def _run_example_inference(
             f"Number of inference processes per machine ({num_inference_processes_per_machine}) must not be more than the number of GPUs: ({torch.cuda.device_count()})"
         )
 
-    master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
-    machine_rank = torch.distributed.get_rank()
-    machine_world_size = torch.distributed.get_world_size()
-    master_default_process_group_port = (
-        gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
-    )
-
     ## Inference Start
 
     inference_start_time = time.time()
@@ -413,9 +402,7 @@ def _run_example_inference(
             fn=_inference_process,
             args=(
                 num_inference_processes_per_machine,  # local_world_size
-                machine_rank,  # machine_rank
                 cluster_info,  # cluster_info
-                master_default_process_group_port,  # master_default_process_group_port
                 embedding_output_gcs_folder,  # embedding_gcs_path
                 model_uri,  # model_state_dict_uri
                 inference_batch_size,  # inference_batch_size
@@ -432,11 +419,11 @@ def _run_example_inference(
         )
 
         logger.info(
-            f"--- Inference finished on rank {machine_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
+            f"--- Inference finished on rank {cluster_info.compute_node_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
         )
 
         # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-        if machine_rank == 0:
+        if cluster_info.compute_node_rank == 0:
             logger.info(
                 f"--- Machine 0 triggers loading embeddings from GCS to BigQuery for node type {inference_node_type}"
             )
