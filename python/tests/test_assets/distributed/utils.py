@@ -3,7 +3,7 @@ from typing import Callable, Optional
 import torch
 
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.utils import get_free_port
+from gigl.distributed.utils import get_free_port, get_free_ports
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType
 
@@ -192,4 +192,4 @@ class MockRemoteDistDataset(RemoteDistDataset):
 
     def get_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """Returns a list of mock port numbers starting at 20000."""
-        return list(range(20000, 20000 + num_ports))
+        return get_free_ports(num_ports=num_ports)
