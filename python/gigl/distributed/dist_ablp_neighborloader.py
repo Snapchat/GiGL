@@ -1,5 +1,6 @@
 import ast
 from collections import Counter, abc, defaultdict
+import time
 from typing import Optional, Union
 
 import torch
@@ -405,7 +406,6 @@ class DistABLPLoader(DistLoader):
             should_use_cpu_workers=should_use_cpu_workers,
             # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
-            process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
             f"Finished initializing neighbor loader worker: {local_rank}/{local_world_size}"
@@ -527,6 +527,15 @@ class DistABLPLoader(DistLoader):
             self.worker_options,
             self._channel,
         )
+        # When initiating data loader(s), there will be a spike of memory usage lasting for ~30s.
+        # The current hypothesis is making connections across machines require a lot of memory.
+        # If we start all data loaders in all processes simultaneously, the spike of memory
+        # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
+        # to smooth the memory usage. The definition of group is discussed below.
+        logger.info(
+            f"---Machine {rank} local process number {local_rank} preparing to sleep for {process_start_gap_seconds * local_rank} seconds"
+        )
+        time.sleep(process_start_gap_seconds * local_rank)
         self._mp_producer.init()
 
     def _get_labels(

@@ -1,4 +1,5 @@
 from collections import Counter, abc
+import time
 from typing import Optional, Tuple, Union
 
 import torch
@@ -225,7 +226,6 @@ class DistNeighborLoader(DistLoader):
                 master_ip_address,
                 node_rank,
                 node_world_size,
-                process_start_gap_seconds,
                 num_workers,
                 worker_concurrency,
                 channel_size,
@@ -274,6 +274,15 @@ class DistNeighborLoader(DistLoader):
             torch.distributed.destroy_process_group()
 
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
+            # When initiating data loader(s), there will be a spike of memory usage lasting for ~30s.
+            # The current hypothesis is making connections across machines require a lot of memory.
+            # If we start all data loaders in all processes simultaneously, the spike of memory
+            # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
+            # to smooth the memory usage. The definition of group is discussed below.
+            logger.info(
+                f"---Machine {rank} local process number {local_rank} preparing to sleep for {process_start_gap_seconds * local_rank} seconds"
+            )
+            time.sleep(process_start_gap_seconds * local_rank)
             super().__init__(
                 dataset,  # Pass in the dataset for colocated mode.
                 input_data,
@@ -454,7 +463,6 @@ class DistNeighborLoader(DistLoader):
         master_ip_address: str,
         node_rank: int,
         node_world_size: int,
-        process_start_gap_seconds: float,
         num_workers: int,
         worker_concurrency: int,
         channel_size: str,
@@ -540,7 +548,6 @@ class DistNeighborLoader(DistLoader):
             should_use_cpu_workers=should_use_cpu_workers,
             # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
-            process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
             f"Finished initializing neighbor loader worker:  {local_rank}/{local_world_size}"
