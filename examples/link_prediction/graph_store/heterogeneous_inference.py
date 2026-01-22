@@ -99,7 +99,7 @@ def _inference_process(
     # In the case of the latter, the keys should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE).
     # For the default example, we make a decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`.
     # To see an example of a 'fanout' with different behaviors per edge type, refer to `examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
-
+    print(f"Rank {local_rank} doing inference for node type {inference_node_type}")
     fanout = inferencer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
 
@@ -141,6 +141,7 @@ def _inference_process(
     )
 
     input_nodes = dataset.get_node_ids(inference_node_type)
+    sys.stdout.flush()
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -155,6 +156,8 @@ def _inference_process(
         # don't compete for memory during initialization, causing OOM
         process_start_gap_seconds=0,
     )
+    print(f"Rank {local_rank} initialized the data loader for node type {inference_node_type}")
+    sys.stdout.flush()
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
@@ -277,6 +280,7 @@ def _inference_process(
         f"--- All machines local rank {local_rank} finished inference for node type {inference_node_type}. Deleted data loader"
     )
 
+    sys.stdout.flush()
 
 def _run_example_inference(
     job_name: str,
@@ -396,7 +400,7 @@ def _run_example_inference(
                     f"{num_files_at_gcs_path} files already detected at base gcs path {embedding_output_gcs_folder}. Cleaning up files at path ... "
                 )
                 gcs_utils.delete_files_in_bucket_dir(embedding_output_gcs_folder)
-
+        sys.stdout.flush()
         # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
         mp.spawn(
             fn=_inference_process,
