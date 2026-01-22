@@ -9,7 +9,7 @@ PATH_GIGL_PKG_INIT_FILE: Final[Path] = Path.joinpath(
     GIGL_ROOT_DIR, "gigl", "__init__.py"
 )
 PATH_BASE_IMAGES_VARIABLE_FILE: Final[Path] = Path.joinpath(
-    GIGL_ROOT_DIR, "dep_vars.env"
+    GIGL_ROOT_DIR, "gigl", "dep_vars.env"
 ).absolute()
 
 

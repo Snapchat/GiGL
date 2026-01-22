@@ -8,7 +8,7 @@ WORKDIR /gigl
 COPY MANIFEST.in MANIFEST.in
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
-COPY dep_vars.env dep_vars.env
+COPY gigl/dep_vars.env gigl/dep_vars.env
 COPY deployment deployment
 COPY gigl gigl
 COPY snapchat snapchat

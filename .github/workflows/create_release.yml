@@ -130,7 +130,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         cmd: |
-            source dep_vars.env && make \
+            source gigl/dep_vars.env && make \
             DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU \
             DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA \
             DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=\$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU \
