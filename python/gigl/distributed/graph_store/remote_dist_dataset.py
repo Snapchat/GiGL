@@ -38,7 +38,7 @@ class RemoteDistDataset:
         Args:
             cluster_info (GraphStoreInfo): The cluster information.
             local_rank (int): The local rank of the process on the compute node.
-            mp_sharing_dict (Optional[MutableMapping[str, torch.Tensor]]):
+            mp_sharing_dict (Optional[dict[str, torch.Tensor]]):
                 (Optional) If provided, will be used to share tensors across the local machine.
                 e.g. for `get_node_ids`.
                 If provided, *must* be a `DictProxy` e.g. the return value of a mp.Manager.
@@ -47,13 +47,13 @@ class RemoteDistDataset:
         self._cluster_info = cluster_info
         self._local_rank = local_rank
         self._mp_sharing_dict = mp_sharing_dict
-
         # We accept mp_sharing_dict as a `MutableMapping` as if we directly annotate as `DictProxy` (which is what we want)
         # Then we will have runtime failures e.g.:
         #   File "/.../GiGL/python/gigl/distributed/graph_store/remote_dist_dataset.py", line 30, in RemoteDistDataset
         #   mp_sharing_dict: Optional[DictProxy[str, torch.Tensor]] = None,
         #                              ~~~~~~~~~^^^^^^^^^^^^^^^^^^^
         # TypeError: type 'DictProxy' is not subscriptable
+
         if self._mp_sharing_dict is not None and not isinstance(
             self._mp_sharing_dict, DictProxy
         ):
@@ -108,7 +108,9 @@ class RemoteDistDataset:
             get_edge_dir,
         )
 
-    def _get_node_ids(self, node_type: Optional[NodeType] = None) -> list[torch.Tensor]:
+    def _get_node_ids(
+        self, node_type: Optional[NodeType] = None
+    ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         futures: list[torch.futures.Future[torch.Tensor]] = []
         rank = self.cluster_info.compute_node_rank
@@ -128,12 +130,12 @@ class RemoteDistDataset:
                 )
             )
             node_ids = torch.futures.wait_all(futures)
-        return node_ids
+        return {server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)}
 
     def get_node_ids(
         self,
         node_type: Optional[NodeType] = None,
-    ) -> list[torch.Tensor]:
+    ) -> dict[int, torch.Tensor]:
         """
         Fetches node ids from the storage nodes for the current compute node (machine).
 
@@ -149,18 +151,18 @@ class RemoteDistDataset:
         As such, the input tensors may be duplicated across all processes on a given compute machine.
         In order to save on cpu memory, pass in `mp_sharing_dict` to the `RemoteDistDataset` constructor.
 
-        Then, for compute rank 0 (node 0, process 0), the returned list will be:
-            [
-                [0, 1, 3, 4], # From storage rank 0
-                [8, 9, 10, 11] # From storage rank 1
-            ]
+        Then, for compute rank 0 (node 0, process 0), the returned dict will be:
+            {
+                0: [0, 1, 3, 4], # From storage rank 0
+                1: [8, 9, 10, 11] # From storage rank 1
+            }
 
         Args:
             node_type (Optional[NodeType]): The type of nodes to get.
             Must be provided for heterogeneous datasets.
 
         Returns:
-            list[torch.Tensor]: A list of node IDs for the given node type.
+            dict[int, torch.Tensor]: A dict storage rank to node ids.
         """
 
         def server_key(server_rank: int) -> str:
@@ -173,17 +175,17 @@ class RemoteDistDataset:
                     f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
                 )
                 node_ids = self._get_node_ids(node_type)
-                for server_rank, node_id in enumerate(node_ids):
+                for server_rank, node_id in node_ids.items():
                     node_id.share_memory_()
                     self._mp_sharing_dict[server_key(server_rank)] = node_id
                 logger.info(
                     f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
                 )
             torch.distributed.barrier()
-            node_ids = [
-                self._mp_sharing_dict[server_key(server_rank)]
+            node_ids = {
+                server_rank: self._mp_sharing_dict[server_key(server_rank)]
                 for server_rank in range(self.cluster_info.num_storage_nodes)
-            ]
+            }
             return node_ids
         else:
             return self._get_node_ids(node_type)
