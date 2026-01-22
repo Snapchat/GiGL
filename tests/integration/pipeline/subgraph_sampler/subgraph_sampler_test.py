@@ -1206,8 +1206,8 @@ class SubgraphSamplerTest(unittest.TestCase):
     def test_nablp_sgs_on_heterogeneous_toy_graph(
         self,
     ):
-        # See python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml for graph def
-        # and python/gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.png for visualization
+        # See gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml for graph def
+        # and gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.png for visualization
         subgraph_sampling_strategy_pb = subgraph_sampling_strategy_pb2.SubgraphSamplingStrategy(
             message_passing_paths=subgraph_sampling_strategy_pb2.MessagePassingPathStrategy(
                 paths=[

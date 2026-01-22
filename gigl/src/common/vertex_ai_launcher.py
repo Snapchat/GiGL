@@ -264,7 +264,7 @@ def _build_job_config(
         else None,
         # This should be `aiplatform.gapic.Scheduling.Strategy[inferencer_resource_config.scheduling_strategy]`
         # But mypy complains otherwise...
-        # python/gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
+        # gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
         # TODO(kmonte): Fix this
         scheduling_strategy=getattr(
             Scheduling.Strategy,

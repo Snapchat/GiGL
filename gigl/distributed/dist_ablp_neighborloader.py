@@ -565,7 +565,7 @@ class DistABLPLoader(DistLoader):
         positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         # We update metadata with sepcial POSITIVE_LABEL_METADATA_KEY and NEGATIVE_LABEL_METADATA_KEY keys
-        # in python/gigl/distributed/dist_neighbor_sampler.py.
+        # in gigl/distributed/dist_neighbor_sampler.py.
         # We need to encode the tuples as strings because GLT requires the keys to be strings.
         # As such, we decode the strings back into tuples,
         # And then pop those keys out of the metadata as they are not needed otherwise.
