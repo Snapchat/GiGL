@@ -200,6 +200,9 @@ class RemoteDistDataset:
 
         Args:
             num_ports (int): Number of free ports to get.
+
+        Returns:
+            list[int]: A list of free port numbers on the storage master node.
         """
         if not torch.distributed.is_initialized():
             raise ValueError(
