@@ -226,8 +226,7 @@ make format_scala
 make format_md
 ```
 
-All unit tests are organized in `tests/unit` folder, with the python entry point being
-`tests/unit/main.py`
+All unit tests are organized in `tests/unit` folder, with the python entry point being `tests/unit/main.py`
 
 </details>
 

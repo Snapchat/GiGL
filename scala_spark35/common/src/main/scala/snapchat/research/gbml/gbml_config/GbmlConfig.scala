@@ -4067,7 +4067,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     *   Path to modeling task spec class path to construct model for inference. Used for the subgraph-sampling-based inference process.
     * @param inferenceBatchSize
     *   Optional. If set, will be used to batch inference samples to a specific size before call for inference is made
-    *   Defaults to setting in igl/src/inference/gnn_inferencer.py
+    *   Defaults to setting in gigl/src/inference/gnn_inferencer.py
     */
   @SerialVersionUID(0L)
   final case class InferencerConfig(

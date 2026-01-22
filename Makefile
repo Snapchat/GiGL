@@ -311,11 +311,13 @@ clean_build_files: clean_build_files_py clean_build_files_scala
 # We intentionally rebuild *all* protos with one commmand as they should all be in sync.
 # Run `make install_dev_deps` to setup the correct protoc versions.
 compile_protos:
+
+	PROTOC_GEN_MYPY_PATH=$$(uv run which protoc-gen-mypy); \
 	tools/python_protoc/bin/protoc \
 	--proto_path=proto \
-	--python_out=./python \
-	--mypy_out=./python \
-	--plugin=protoc-gen-mypy=.venv/bin/protoc-gen-mypy \
+	--python_out=. \
+	--mypy_out=. \
+	--plugin=protoc-gen-mypy=$$PROTOC_GEN_MYPY_PATH \
 	proto/snapchat/research/gbml/*.proto
 
 	tools/scalapbc/scalapbc-0.11.11/bin/scalapbc \
