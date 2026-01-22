@@ -6,7 +6,7 @@ from typing import Final
 GIGL_ROOT_DIR: Final[Path] = Path(__file__).resolve().parent.parent.parent
 
 PATH_GIGL_PKG_INIT_FILE: Final[Path] = Path.joinpath(
-    GIGL_ROOT_DIR, "python", "gigl", "__init__.py"
+    GIGL_ROOT_DIR, "gigl", "__init__.py"
 )
 PATH_BASE_IMAGES_VARIABLE_FILE: Final[Path] = Path.joinpath(
     GIGL_ROOT_DIR, "dep_vars.env"

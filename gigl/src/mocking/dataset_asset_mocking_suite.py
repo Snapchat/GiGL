@@ -29,7 +29,7 @@ _HOMOGENEOUS_TOY_GRAPH_CONFIG = str(
     GIGL_ROOT_DIR / "examples/toy_visual_example/graph_config.yaml"
 )
 _BIPARTITE_TOY_GRAPH_CONFIG = (
-    GIGL_ROOT_DIR / "src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
+    GIGL_ROOT_DIR / "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
 )
 
 
