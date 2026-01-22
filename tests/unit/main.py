@@ -8,7 +8,7 @@ from gigl.common.utils.test_utils import parse_args, run_tests
 def run(pattern: str = "*_test.py") -> bool:
     return run_tests(
         start_dir=LocalUri.join(
-            local_fs_constants.get_python_project_root_path(), "tests", "unit"
+            local_fs_constants.get_project_root_directory(), "tests", "unit"
         ),
         pattern=pattern,
         use_sequential_execution=True,

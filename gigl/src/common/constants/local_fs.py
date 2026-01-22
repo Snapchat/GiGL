@@ -5,25 +5,17 @@ from pathlib import Path
 from gigl.common import LocalUri
 from gigl.src.common.types import AppliedTaskIdentifier
 
-
+# TODO: (svij) Look to deprecating these in favour of GiGL/gigl/common/constants.py
 def get_gigl_root_directory() -> LocalUri:
     """Returns gigl source root folder."""
     with pkg_resources.path("gigl", "__init__.py") as path:
         root_directory = path.parent
     return LocalUri(root_directory)
 
-
-def get_python_project_root_path() -> LocalUri:
-    """Returns project root folder."""
-    file_path = Path(__file__)
-    path = LocalUri(file_path.parents[4])
-    return path
-
-
 def get_project_root_directory() -> LocalUri:
     """Returns the parent directory of GiGL"""
     file_path = Path(__file__)
-    path = LocalUri(file_path.parents[5])
+    path = LocalUri(file_path.parents[4])
     return path
 
 
