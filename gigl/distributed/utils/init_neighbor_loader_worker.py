@@ -1,4 +1,3 @@
-import time
 from functools import lru_cache
 from typing import Optional
 
@@ -39,7 +38,6 @@ def init_neighbor_loader_worker(
     device: torch.device,
     should_use_cpu_workers: bool = False,
     num_cpu_threads: Optional[int] = None,
-    process_start_gap_seconds: float = 60.0,
 ) -> None:
     """
     Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
@@ -55,24 +53,12 @@ def init_neighbor_loader_worker(
         should_use_cpu_workers (bool): Whether we should do CPU training or inference.
         num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training or inference.
             Must be set if should_use_cpu_workers is True.
-        process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales, it is recommended to set
-            this value to be between 60 and 120 seconds -- otherwise multiple processes may attempt to initialize dataloaders at overlapping timesß,
-            which can cause CPU memory OOM.
     Returns:
         torch.device: Device which current worker is assigned to
     """
 
     global _is_cpu_env_initialized
 
-    # When initiating data loader(s), there will be a spike of memory usage lasting for ~30s.
-    # The current hypothesis is making connections across machines require a lot of memory.
-    # If we start all data loaders in all processes simultaneously, the spike of memory
-    # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
-    # to smooth the memory usage. The definition of group is discussed below.
-    logger.info(
-        f"---Machine {rank} local process number {local_process_rank} preparing to sleep for {process_start_gap_seconds * local_process_rank} seconds"
-    )
-    time.sleep(process_start_gap_seconds * local_process_rank)
     logger.info(f"---Machine {rank} local process number {local_process_rank} started")
     if not should_use_cpu_workers:
         assert (
