@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.distributed import shutdown_rpc
+from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
@@ -37,6 +38,7 @@ from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
 from tests.test_assets.distributed.utils import (
+    MockRemoteDistDataset,
     assert_tensor_equality,
     create_test_process_group,
 )
@@ -572,6 +574,117 @@ class DistributedNeighborLoaderTest(unittest.TestCase):
             fn=_run_distributed_neighbor_loader,
             args=(dataset, 18),
         )
+
+    @parameterized.expand(
+        [
+            param(
+                "input_nodes is None and dataset.node_ids is None",
+                expected_error=ValueError,
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes=None,
+            ),
+            param(
+                "input_nodes is None for heterogeneous dataset",
+                expected_error=ValueError,
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                    node_ids={NodeType("a"): torch.tensor([1, 2, 3])},
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=None,
+            ),
+            param(
+                "input_nodes is a dict (colocated mode expects Tensor)",
+                expected_error=ValueError,
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes={0: torch.tensor([10])},
+            ),
+            param(
+                "input_nodes is tuple with dict as second element",
+                expected_error=ValueError,
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), {0: torch.tensor([10])}),
+            ),
+            param(
+                "Heterogeneous dataset with tensor input_nodes (not labeled homogeneous)",
+                expected_error=ValueError,
+                dataset=DistDataset(
+                    rank=0,
+                    world_size=1,
+                    edge_dir="out",
+                    graph_partition={},
+                    node_partition_book={},
+                    node_ids={
+                        NodeType("a"): torch.tensor([1, 2]),
+                        NodeType("b"): torch.tensor([3, 4]),
+                    },
+                ),
+                num_neighbors=[2, 2],
+                input_nodes=torch.tensor([10]),
+            ),
+            param(
+                "input_nodes is None (graph store mode)",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes=None,
+            ),
+            param(
+                "input_nodes is a Tensor (graph store mode expects Mapping)",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes=torch.tensor([10, 20]),
+            ),
+            param(
+                "input_nodes is tuple with Tensor (graph store mode expects Mapping)",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes=(NodeType("a"), torch.tensor([10, 20])),
+            ),
+            param(
+                "Heterogeneous input without edge_types",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2, edge_types=None),
+                num_neighbors=[2, 2],
+                input_nodes=(
+                    NodeType("a"),
+                    {0: torch.tensor([10]), 1: torch.tensor([20])},
+                ),
+            ),
+            param(
+                "Server rank exceeds num_storage_nodes",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes={0: torch.tensor([10]), 5: torch.tensor([20])},
+            ),
+            param(
+                "Server rank is negative",
+                expected_error=ValueError,
+                dataset=MockRemoteDistDataset(num_storage_nodes=2),
+                num_neighbors=[2, 2],
+                input_nodes={-1: torch.tensor([10]), 0: torch.tensor([20])},
+            ),
+        ]
+    )
+    def test_distributed_neighbor_loader_invalid_inputs_colocated(
+        self,
+        _: str,
+        expected_error: type[BaseException],
+        **kwargs,
+    ):
+        create_test_process_group()
+        with self.assertRaises(expected_error):
+            DistNeighborLoader(**kwargs)
 
 
 if __name__ == "__main__":

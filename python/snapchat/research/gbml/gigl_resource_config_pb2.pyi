@@ -218,6 +218,7 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     TIMEOUT_FIELD_NUMBER: builtins.int
     GCP_REGION_OVERRIDE_FIELD_NUMBER: builtins.int
     SCHEDULING_STRATEGY_FIELD_NUMBER: builtins.int
+    BOOT_DISK_SIZE_GB_FIELD_NUMBER: builtins.int
     machine_type: builtins.str
     """Machine type for job"""
     gpu_type: builtins.str
@@ -244,6 +245,10 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     The available options are in the GCP docs:
     https://docs.cloud.google.com/python/docs/reference/aiplatform/latest/google.cloud.aiplatform_v1.types.Scheduling.Strategy
     """
+    boot_disk_size_gb: builtins.int
+    """Boot disk size in GB for the job.
+    If unset or zero, will use the default of 100 GB.
+    """
     def __init__(
         self,
         *,
@@ -254,8 +259,9 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
         timeout: builtins.int = ...,
         gcp_region_override: builtins.str = ...,
         scheduling_strategy: builtins.str = ...,
+        boot_disk_size_gb: builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing_extensions.Literal["gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "scheduling_strategy", b"scheduling_strategy", "timeout", b"timeout"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["boot_disk_size_gb", b"boot_disk_size_gb", "gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "scheduling_strategy", b"scheduling_strategy", "timeout", b"timeout"]) -> None: ...
 
 global___VertexAiResourceConfig = VertexAiResourceConfig
 

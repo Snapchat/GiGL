@@ -272,6 +272,9 @@ def _build_job_config(
         )
         if vertex_ai_resource_config.scheduling_strategy
         else None,
+        boot_disk_size_gb=vertex_ai_resource_config.boot_disk_size_gb
+        if vertex_ai_resource_config.boot_disk_size_gb
+        else 100,  # Default to 100 GB for backward compatibility
     )
     return job_config
 
