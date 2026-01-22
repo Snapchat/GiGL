@@ -38,7 +38,7 @@ logger = Logger()
 
 def _assert_sampler_input(
     cluster_info: GraphStoreInfo,
-    sampler_input: dict[int, torch.Tensor],
+    sampler_input: list[torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
     rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]
@@ -123,9 +123,7 @@ def _run_compute_tests(
 
     torch.distributed.barrier()
     if node_type is not None:
-        input_nodes: Union[
-            dict[int, torch.Tensor], tuple[NodeType, dict[int, torch.Tensor]]
-        ] = (
+        input_nodes: Union[list[torch.Tensor], tuple[NodeType, list[torch.Tensor]]] = (
             node_type,
             sampler_input,
         )

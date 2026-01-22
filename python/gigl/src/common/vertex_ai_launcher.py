@@ -98,6 +98,8 @@ def launch_graph_store_enabled_job(
     resource_config_uri: Uri,
     process_command: str,
     process_runtime_args: Mapping[str, str],
+    storage_command: str,
+    storage_args: Mapping[str, str],
     resource_config_wrapper: GiglResourceConfigWrapper,
     cpu_docker_uri: Optional[str],
     cuda_docker_uri: Optional[str],
@@ -112,6 +114,8 @@ def launch_graph_store_enabled_job(
         resource_config_uri: URI to the resource configuration
         process_command: Command to run in the compute container
         process_runtime_args: Runtime arguments for the process
+        storage_command: Command to run in the storage container
+        storage_args: Arguments to pass to the storage command
         resource_config_wrapper: Wrapper for the resource configuration
         cpu_docker_uri: Docker image URI for CPU execution
         cuda_docker_uri: Docker image URI for GPU execution
@@ -173,8 +177,8 @@ def launch_graph_store_enabled_job(
         job_name=job_name,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
-        command_str=f"python -m gigl.distributed.graph_store.storage_main",
-        args={},  # No extra args for storage pool
+        command_str=storage_command,
+        args=storage_args,
         use_cuda=is_cpu_execution,
         container_uri=container_uri,
         vertex_ai_resource_config=storage_pool_config,
@@ -272,9 +276,6 @@ def _build_job_config(
         )
         if vertex_ai_resource_config.scheduling_strategy
         else None,
-        boot_disk_size_gb=vertex_ai_resource_config.boot_disk_size_gb
-        if vertex_ai_resource_config.boot_disk_size_gb
-        else 100,  # Default to 100 GB for backward compatibility
     )
     return job_config
 
