@@ -58,7 +58,7 @@ COPY uv.lock uv.lock
 COPY dep_vars.env dep_vars.env
 COPY requirements requirements
 # Needed to install GLT
-COPY python/gigl/scripts python/gigl/scripts
+COPY gigl/scripts gigl/scripts
 
 
 COPY .python-version tmp/.python-version

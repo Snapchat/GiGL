@@ -95,7 +95,7 @@ def assert_even(x: int):
 
 ### Integration Testing
 
-For integration tests that require cloud resources, add them to the `python/tests/integration` directory
+For integration tests that require cloud resources, add them to the `tests/integration` directory
 
 ### Mocking External Dependencies
 
@@ -180,7 +180,7 @@ Use the following commands to evaluate a test:
 - unit test: `make unit_test_py`
   - Set PY_TEST_FILES=\<TEST_FILE_NAME_GLOB> to test a specifc file.
   - Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
-  - By default, runs all tests under python/tests/unit.
+  - By default, runs all tests under tests/unit.
 - integration test: `make integration_test PY_TEST_FILES="some_test.py"`
   - ensure to use `PY_TEST_FILES` and run integration tests one at a time as they take a long time to run
 
