@@ -203,7 +203,7 @@ message GbmlConfig {
       string command = 101;
     }
     // Optional. If set, will be used to batch inference samples to a specific size before call for inference is made
-    // Defaults to setting in python/gigl/src/inference/gnn_inferencer.py
+    // Defaults to setting in gigl/src/inference/gnn_inferencer.py
     uint32 inference_batch_size = 5;
   }
 

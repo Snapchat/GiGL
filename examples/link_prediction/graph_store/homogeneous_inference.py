@@ -200,7 +200,7 @@ def _inference_process(
     )
     input_nodes = dataset.get_node_ids()
     logger.info(
-        f"Rank {rank} got input nodes of shapes: {[node.shape for node in input_nodes]}"
+        f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
     )
     # We don't see logs for graph store mode for whatever reason.
     # TOOD(#442): Revert this once the GCP issues are resolved.

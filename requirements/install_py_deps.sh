@@ -151,7 +151,7 @@ install_gigl_lib_deps() {
     if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
     then
         SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-        uv run python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
+        uv run python $SCRIPT_DIR/../gigl/scripts/post_install.py
     fi
 }
 
