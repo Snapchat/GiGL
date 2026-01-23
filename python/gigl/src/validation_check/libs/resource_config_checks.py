@@ -274,7 +274,7 @@ def check_if_trainer_graph_store_storage_command_valid(
     )
     trainer_config = gbml_config_pb_wrapper.gbml_config_pb.trainer_config
     if trainer_config.HasField("graph_store_storage_config"):
-        storage_command = trainer_config.graph_store_storage_config.storage_command
+        storage_command = trainer_config.graph_store_storage_config.command
         if not storage_command:
             raise AssertionError(
                 "GbmlConfig.trainer_config.graph_store_storage_config.storage_command must be set "
@@ -299,7 +299,7 @@ def check_if_inferencer_graph_store_storage_command_valid(
     )
     inferencer_config = gbml_config_pb_wrapper.gbml_config_pb.inferencer_config
     if inferencer_config.HasField("graph_store_storage_config"):
-        storage_command = inferencer_config.graph_store_storage_config.storage_command
+        storage_command = inferencer_config.graph_store_storage_config.command
         if not storage_command:
             raise AssertionError(
                 "GbmlConfig.inferencer_config.graph_store_storage_config.storage_command must be set "

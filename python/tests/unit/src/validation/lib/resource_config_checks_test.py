@@ -761,9 +761,7 @@ def _create_gbml_config_with_trainer_graph_store(
 ) -> GbmlConfigPbWrapper:
     """Create a GbmlConfig with graph_store_storage_config set for trainer."""
     gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.trainer_config.graph_store_storage_config.storage_command = (
-        storage_command
-    )
+    gbml_config.trainer_config.graph_store_storage_config.command = storage_command
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
 
@@ -779,9 +777,7 @@ def _create_gbml_config_with_inferencer_graph_store(
 ) -> GbmlConfigPbWrapper:
     """Create a GbmlConfig with graph_store_storage_config set for inferencer."""
     gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.inferencer_config.graph_store_storage_config.storage_command = (
-        storage_command
-    )
+    gbml_config.inferencer_config.graph_store_storage_config.command = storage_command
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
 
