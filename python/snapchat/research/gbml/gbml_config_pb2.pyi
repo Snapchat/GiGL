@@ -497,9 +497,9 @@ class GbmlConfig(google.protobuf.message.Message):
             ) -> None: ...
             def ClearField(self, field_name: typing_extensions.Literal["key", b"key", "value", b"value"]) -> None: ...
 
-        STORAGE_COMMAND_FIELD_NUMBER: builtins.int
+        COMMAND_FIELD_NUMBER: builtins.int
         STORAGE_ARGS_FIELD_NUMBER: builtins.int
-        storage_command: builtins.str
+        command: builtins.str
         """Command to use for launching storage job.
         e.g. "python -m gigl.distributed.graph_store.storage_main".
         """
@@ -512,10 +512,10 @@ class GbmlConfig(google.protobuf.message.Message):
         def __init__(
             self,
             *,
-            storage_command: builtins.str = ...,
+            command: builtins.str = ...,
             storage_args: collections.abc.Mapping[builtins.str, builtins.str] | None = ...,
         ) -> None: ...
-        def ClearField(self, field_name: typing_extensions.Literal["storage_args", b"storage_args", "storage_command", b"storage_command"]) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["command", b"command", "storage_args", b"storage_args"]) -> None: ...
 
     class TrainerConfig(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
@@ -558,6 +558,8 @@ class GbmlConfig(google.protobuf.message.Message):
         def graph_store_storage_config(self) -> global___GbmlConfig.GraphStoreStorageConfig:
             """Configuration for GraphStore storage.
             If setup, then GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config must be set.
+            e.g. With separte job configs for storage and compute jobs.
+            See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
             """
         def __init__(
             self,
@@ -615,6 +617,8 @@ class GbmlConfig(google.protobuf.message.Message):
         def graph_store_storage_config(self) -> global___GbmlConfig.GraphStoreStorageConfig:
             """Configuration for GraphStore storage.
             If setup, then GiGLResourceConfig.inferencer_resource_config.vertex_ai_graph_store_inferencer_config must be set.
+            e.g. With separte job configs for storage and compute jobs.
+            See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
             """
         def __init__(
             self,

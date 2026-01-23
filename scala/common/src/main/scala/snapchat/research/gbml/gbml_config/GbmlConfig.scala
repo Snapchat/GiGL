@@ -3657,7 +3657,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
 
   /** Configuration for GraphStore storage.
     *
-    * @param storageCommand
+    * @param command
     *   Command to use for launching storage job.
     *   e.g. "python -m gigl.distributed.graph_store.storage_main".
     * @param storageArgs
@@ -3667,7 +3667,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     */
   @SerialVersionUID(0L)
   final case class GraphStoreStorageConfig(
-      storageCommand: _root_.scala.Predef.String = "",
+      command: _root_.scala.Predef.String = "",
       storageArgs: _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String] = _root_.scala.collection.immutable.Map.empty,
       unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
       ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[GraphStoreStorageConfig] {
@@ -3677,7 +3677,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         var __size = 0
 
         {
-          val __value = storageCommand
+          val __value = command
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
@@ -3700,7 +3700,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
-          val __v = storageCommand
+          val __v = command
           if (!__v.isEmpty) {
             _output__.writeString(1, __v)
           }
@@ -3713,7 +3713,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         };
         unknownFields.writeTo(_output__)
       }
-      def withStorageCommand(__v: _root_.scala.Predef.String): GraphStoreStorageConfig = copy(storageCommand = __v)
+      def withCommand(__v: _root_.scala.Predef.String): GraphStoreStorageConfig = copy(command = __v)
       def clearStorageArgs = copy(storageArgs = _root_.scala.collection.immutable.Map.empty)
       def addStorageArgs(__vs: (_root_.scala.Predef.String, _root_.scala.Predef.String) *): GraphStoreStorageConfig = addAllStorageArgs(__vs)
       def addAllStorageArgs(__vs: Iterable[(_root_.scala.Predef.String, _root_.scala.Predef.String)]): GraphStoreStorageConfig = copy(storageArgs = storageArgs ++ __vs)
@@ -3723,7 +3723,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
         (__fieldNumber: @_root_.scala.unchecked) match {
           case 1 => {
-            val __t = storageCommand
+            val __t = command
             if (__t != "") __t else null
           }
           case 2 => storageArgs.iterator.map(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig._typemapper_storageArgs.toBase(_)).toSeq
@@ -3732,7 +3732,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
         _root_.scala.Predef.require(__field.containingMessage eq companion.scalaDescriptor)
         (__field.number: @_root_.scala.unchecked) match {
-          case 1 => _root_.scalapb.descriptors.PString(storageCommand)
+          case 1 => _root_.scalapb.descriptors.PString(command)
           case 2 => _root_.scalapb.descriptors.PRepeated(storageArgs.iterator.map(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig._typemapper_storageArgs.toBase(_).toPMessage).toVector)
         }
       }
@@ -3744,7 +3744,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
   object GraphStoreStorageConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig = {
-      var __storageCommand: _root_.scala.Predef.String = ""
+      var __command: _root_.scala.Predef.String = ""
       val __storageArgs: _root_.scala.collection.mutable.Builder[(_root_.scala.Predef.String, _root_.scala.Predef.String), _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = _root_.scala.collection.immutable.Map.newBuilder[_root_.scala.Predef.String, _root_.scala.Predef.String]
       var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
       var _done__ = false
@@ -3753,7 +3753,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         _tag__ match {
           case 0 => _done__ = true
           case 10 =>
-            __storageCommand = _input__.readStringRequireUtf8()
+            __command = _input__.readStringRequireUtf8()
           case 18 =>
             __storageArgs += snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig._typemapper_storageArgs.toCustom(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.StorageArgsEntry](_input__))
           case tag =>
@@ -3764,7 +3764,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         }
       }
       snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig(
-          storageCommand = __storageCommand,
+          command = __command,
           storageArgs = __storageArgs.result(),
           unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
       )
@@ -3773,7 +3773,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       case _root_.scalapb.descriptors.PMessage(__fieldsMap) =>
         _root_.scala.Predef.require(__fieldsMap.keys.forall(_.containingMessage eq scalaDescriptor), "FieldDescriptor does not match message type.")
         snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig(
-          storageCommand = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
+          command = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
           storageArgs = __fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).map(_.as[_root_.scala.Seq[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.StorageArgsEntry]]).getOrElse(_root_.scala.Seq.empty).iterator.map(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig._typemapper_storageArgs.toCustom(_)).toMap
         )
       case _ => throw new RuntimeException("Expected PMessage")
@@ -3793,7 +3793,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       )
     def enumCompanionForFieldNumber(__fieldNumber: _root_.scala.Int): _root_.scalapb.GeneratedEnumCompanion[_] = throw new MatchError(__fieldNumber)
     lazy val defaultInstance = snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig(
-      storageCommand = "",
+      command = "",
       storageArgs = _root_.scala.collection.immutable.Map.empty
     )
     @SerialVersionUID(0L)
@@ -3941,18 +3941,18 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     }
 
     implicit class GraphStoreStorageConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig](_l) {
-      def storageCommand: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.storageCommand)((c_, f_) => c_.copy(storageCommand = f_))
+      def command: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.command)((c_, f_) => c_.copy(command = f_))
       def storageArgs: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.storageArgs)((c_, f_) => c_.copy(storageArgs = f_))
     }
-    final val STORAGE_COMMAND_FIELD_NUMBER = 1
+    final val COMMAND_FIELD_NUMBER = 1
     final val STORAGE_ARGS_FIELD_NUMBER = 2
     @transient
     private[gbml_config] val _typemapper_storageArgs: _root_.scalapb.TypeMapper[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.StorageArgsEntry, (_root_.scala.Predef.String, _root_.scala.Predef.String)] = implicitly[_root_.scalapb.TypeMapper[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.StorageArgsEntry, (_root_.scala.Predef.String, _root_.scala.Predef.String)]]
     def of(
-      storageCommand: _root_.scala.Predef.String,
+      command: _root_.scala.Predef.String,
       storageArgs: _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]
     ): _root_.snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig = _root_.snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig(
-      storageCommand,
+      command,
       storageArgs
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.GraphStoreStorageConfig])
@@ -3968,6 +3968,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     * @param graphStoreStorageConfig
     *   Configuration for GraphStore storage.
     *   If setup, then GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config must be set.
+    *   e.g. With separte job configs for storage and compute jobs.
+    *   See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
     */
   @SerialVersionUID(0L)
   final case class TrainerConfig(
@@ -4406,6 +4408,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     * @param graphStoreStorageConfig
     *   Configuration for GraphStore storage.
     *   If setup, then GiGLResourceConfig.inferencer_resource_config.vertex_ai_graph_store_inferencer_config must be set.
+    *   e.g. With separte job configs for storage and compute jobs.
+    *   See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
     */
   @SerialVersionUID(0L)
   final case class InferencerConfig(
