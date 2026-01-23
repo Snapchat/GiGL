@@ -72,14 +72,6 @@ def create_test_process_group() -> None:
     )
 
 
-def destroy_test_process_group() -> None:
-    """
-    Destroys the test process group if it exists.
-    """
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
-
-
 class MockGraphStoreInfo(GraphStoreInfo):
     """
     A mock wrapper around GraphStoreInfo that allows overriding the compute_node_rank property.

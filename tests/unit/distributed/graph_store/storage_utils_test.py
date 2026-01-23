@@ -18,7 +18,6 @@ from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
-    destroy_test_process_group,
 )
 
 _USER = NodeType("user")
@@ -29,13 +28,14 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
 class TestRemoteDataset(unittest.TestCase):
     def setUp(self) -> None:
-        """Reset the global dataset and initialize process group before each test."""
+        """Reset the global dataset before each test."""
         storage_utils._dataset = None
 
     def tearDown(self) -> None:
         """Clean up after each test."""
         storage_utils._dataset = None
-        destroy_test_process_group()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
     def _create_heterogeneous_dataset(self) -> DistDataset:
         """Helper method to create a heterogeneous test dataset."""
