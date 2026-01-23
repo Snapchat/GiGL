@@ -32,7 +32,7 @@ import statistics
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import torch
 import torch.distributed
@@ -80,7 +80,7 @@ def _setup_dataloaders(
     dataset: DistDataset,
     split: Literal["train", "val", "test"],
     supervision_edge_type: EdgeType,
-    num_neighbors: list[int] | dict[EdgeType, list[int]],
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -284,39 +284,45 @@ class TrainingProcessArgs:
     """Arguments for the heterogeneous training process."""
 
     # Distributed context
-    local_world_size: int
-    machine_rank: int
-    machine_world_size: int
-    master_ip_address: str
-    master_default_process_group_port: int
+    local_world_size: int  # Number of training processes spawned by each machine
+    machine_rank: int  # Rank of the current machine in the cluster
+    machine_world_size: int  # Total number of machines in the cluster
+    master_ip_address: str  # IP address of the master node for process group initialization
+    master_default_process_group_port: int  # Port for the default process group
 
     # Data
-    dataset: DistDataset
-    supervision_edge_type: EdgeType
+    dataset: DistDataset  # Loaded Distributed Dataset for training and testing
+    supervision_edge_type: EdgeType  # The supervision edge type for training (query_node -> relation -> labeled_node)
 
     # Model
-    model_uri: Uri
-    hid_dim: int
-    out_dim: int
-    node_type_to_feature_dim: dict[NodeType, int]
-    edge_type_to_feature_dim: dict[EdgeType, int]
+    model_uri: Uri  # URI to save/load the trained model state dict
+    hid_dim: int  # Hidden dimension of the model
+    out_dim: int  # Output dimension of the model
+    node_type_to_feature_dim: dict[
+        NodeType, int
+    ]  # Mapping of node types to their feature dimensions
+    edge_type_to_feature_dim: dict[
+        EdgeType, int
+    ]  # Mapping of edge types to their feature dimensions
 
     # Sampling config
-    num_neighbors: list[int] | dict[EdgeType, list[int]]
-    sampling_workers_per_process: int
-    sampling_worker_shared_channel_size: str
-    process_start_gap_seconds: int
+    num_neighbors: Union[
+        list[int], dict[EdgeType, list[int]]
+    ]  # Fanout for subgraph sampling
+    sampling_workers_per_process: int  # Number of sampling workers per training/testing process
+    sampling_worker_shared_channel_size: str  # Shared-memory buffer size for sampling channel (e.g., "4GB")
+    process_start_gap_seconds: int  # Time to sleep between dataloader initializations to reduce peak memory
 
     # Training hyperparameters
-    main_batch_size: int
-    random_batch_size: int
-    learning_rate: float
-    weight_decay: float
-    num_max_train_batches: int
-    num_val_batches: int
-    val_every_n_batch: int
-    log_every_n_batch: int
-    should_skip_training: bool
+    main_batch_size: int  # Batch size for main dataloader with query and labeled nodes
+    random_batch_size: int  # Batch size for random negative dataloader
+    learning_rate: float  # Learning rate for the optimizer
+    weight_decay: float  # Weight decay for the optimizer
+    num_max_train_batches: int  # Maximum number of training batches across all processes
+    num_val_batches: int  # Number of validation batches across all processes
+    val_every_n_batch: int  # Frequency to run validation during training
+    log_every_n_batch: int  # Frequency to log batch information during training
+    should_skip_training: bool  # If True, skip training and only run testing
 
 
 def _training_process(

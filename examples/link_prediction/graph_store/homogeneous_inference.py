@@ -123,28 +123,32 @@ class InferenceProcessArgs:
     """Arguments for the inference process spawned by mp.spawn."""
 
     # Distributed context
-    local_world_size: int
-    cluster_info: GraphStoreInfo
+    local_world_size: int  # Number of inference processes spawned by each machine
+    cluster_info: GraphStoreInfo  # Cluster topology info for graph store mode
 
     # Data paths
-    embedding_gcs_path: GcsUri
-    model_state_dict_uri: Uri
+    embedding_gcs_path: GcsUri  # GCS path to write embeddings to
+    model_state_dict_uri: Uri  # URI to load the trained model state dict from
 
     # Model configuration
-    hid_dim: int
-    out_dim: int
-    node_feature_dim: int
-    edge_feature_dim: int
+    hid_dim: int  # Hidden dimension of the model
+    out_dim: int  # Output dimension of the model
+    node_feature_dim: int  # Input node feature dimension for the model
+    edge_feature_dim: int  # Input edge feature dimension for the model
 
     # Inference configuration
-    inference_batch_size: int
-    num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
-    sampling_workers_per_inference_process: int
-    sampling_worker_shared_channel_size: str
-    log_every_n_batch: int
-    inference_node_type: NodeType
-    gbml_config_pb_wrapper: GbmlConfigPbWrapper
-    mp_sharing_dict: MutableMapping[str, torch.Tensor]
+    inference_batch_size: int  # Batch size to use for inference
+    num_neighbors: Union[
+        list[int], dict[EdgeType, list[int]]
+    ]  # Fanout for subgraph sampling
+    sampling_workers_per_inference_process: int  # Number of sampling workers per inference process
+    sampling_worker_shared_channel_size: str  # Shared-memory buffer size for sampling channel (e.g., "4GB")
+    log_every_n_batch: int  # Frequency to log batch information during inference
+    inference_node_type: NodeType  # Node type that embeddings should be generated for
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper  # Wrapper containing GBML configuration
+    mp_sharing_dict: MutableMapping[
+        str, torch.Tensor
+    ]  # Shared dict for tensor sharing between local processes
 
 
 @torch.no_grad()
@@ -162,19 +166,7 @@ def _inference_process(
 
     Args:
         local_rank (int): Process number on the current machine
-        local_world_size (int): Number of inference processes spawned by each machine
-        distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
-        embedding_gcs_path (GcsUri): GCS path to write embeddings to
-        model_state_dict_uri (GcsUri): GCS path to load model from
-        inference_batch_size (int): Batch size to use for inference
-        hid_dim (int): Hidden dimension of the model
-        out_dim (int): Output dimension of the model
-        dataset (DistDataset): Loaded Distributed Dataset for inference
-        inferencer_args (dict[str, str]): Additional arguments for inferencer
-        inference_node_type (NodeType): Node Type that embeddings should be generated for. This is used to
-            tag the embeddings written to GCS.
-        node_feature_dim (int): Input node feature dimension for the model
-        edge_feature_dim (int): Input edge feature dimension for the model
+        args (InferenceProcessArgs): Dataclass containing all inference process arguments
     """
 
     device = gigl.distributed.utils.get_available_device(
