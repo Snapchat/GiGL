@@ -154,9 +154,9 @@ coasses above for more exhaustive list.
 - Modifying the GNN model:
 
   - Specified by arg `gnn_model_class_path`
-    - Some Sample GNN models are defined [here](/gigl/src/common/models/pyg/homogeneous.py) and initialized in
-      the `init_model` function in ModelingTaskSpec. When trying different GNN models, it is recommended to also include
-      the new GNN architectures under the same file and declare them as is currently done. This cannot currently be done
+    - Some Sample GNN models are defined [here](/gigl/src/common/models/pyg/homogeneous.py) and initialized in the
+      `init_model` function in ModelingTaskSpec. When trying different GNN models, it is recommended to also include the
+      new GNN architectures under the same file and declare them as is currently done. This cannot currently be done
       from the default `GbmlConfig` yaml.
 
 - Non Exhaustive list of Model parameters:

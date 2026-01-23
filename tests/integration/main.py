@@ -13,7 +13,7 @@ def run(pattern: str = "*_test.py") -> bool:
     )
     return run_tests(
         start_dir=LocalUri.join(
-            local_fs_constants.get_python_project_root_path(), "tests", "integration"
+            local_fs_constants.get_project_root_directory(), "tests", "integration"
         ),
         pattern=pattern,
         use_sequential_execution=True,

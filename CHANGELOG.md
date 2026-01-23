@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Removed `GiGL/python` directory: all contained folders have been moved up to the `GiGL` root directory by @svij-sc in
+  https://github.com/Snapchat/GiGL/pull/449
+
 ## [0.1.0] - Dec 18, 2025
 
 ### Deprecations
