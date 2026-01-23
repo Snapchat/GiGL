@@ -8,6 +8,10 @@ These are the current environments supported by GiGL
 | ------ | --------------- | --------- | ---------- | ------- | --- |
 | 3.9    | Partial Support | Supported | 12.1       | 2.5     | 2.5 |
 
+## Available Versions
+
+You can see the available wheels for GiGL [here](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)
+
 ## Install Prerequisites - setting up your dev machine
 
 Below we provide two ways to bootstrap an environment for using and/or developing GiGL
