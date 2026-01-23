@@ -234,7 +234,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages
-include = ["gigl*", "snapchat*", "examples*"]  # Include only packages that match the specified patterns
+include = ["gigl*", "snapchat*"]  # Include only packages that match the specified patterns
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"
