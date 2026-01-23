@@ -244,7 +244,7 @@ gigl-post-install = "gigl.scripts.post_install:main"
 
 [tool.setuptools.package-data]
 # Include dep_vars.env from the root directory
-"gigl" = ["dep_vars.env"]
+"gigl" = ["dep_vars.env", "**/*.yaml"]
 "gigl.scripts" = ["*.sh"]
 
 
