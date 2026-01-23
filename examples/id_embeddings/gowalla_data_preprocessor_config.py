@@ -101,7 +101,7 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
     Data preprocessor configuration for the Gowalla bipartite graph dataset.
 
     NOTE: The gowalla dataset we are using [1] has pre-split edges. As such we use their split in this pre-processor.
-    Those edges were uploaded to BQ with GiGL/python/gigl/scripts/load_gowalla_to_bq.py
+    Those edges were uploaded to BQ with GiGL/gigl/scripts/load_gowalla_to_bq.py
 
     [1]: https://github.com/xiangwang1223/neural_graph_collaborative_filtering/tree/master/Data/gowalla
 
