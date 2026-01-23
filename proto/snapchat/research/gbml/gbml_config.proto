@@ -177,7 +177,7 @@ message GbmlConfig {
   message GraphStoreStorageConfig {
     // Command to use for launching storage job.
     // e.g. "python -m gigl.distributed.graph_store.storage_main".
-    string storage_command = 1;
+    string command = 1;
     // Arguments to instantiate concrete BaseStorage instance with.
     // Will be appended to the storage_command.
     // e.g. {"my_dataset_uri": "gs://my_dataset"} -> "python -m gigl.distributed.graph_store.storage_main --my_dataset_uri=gs://my_dataset"
@@ -202,6 +202,8 @@ message GbmlConfig {
 
     // Configuration for GraphStore storage.
     // If setup, then GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config must be set.
+    // e.g. With separte job configs for storage and compute jobs.
+    // See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
     GraphStoreStorageConfig graph_store_storage_config = 13;
   }
 
@@ -223,6 +225,8 @@ message GbmlConfig {
 
     // Configuration for GraphStore storage.
     // If setup, then GiGLResourceConfig.inferencer_resource_config.vertex_ai_graph_store_inferencer_config must be set.
+    // e.g. With separte job configs for storage and compute jobs.
+    // See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
     GraphStoreStorageConfig graph_store_storage_config = 6;
   }
 
