@@ -27,7 +27,6 @@ from typing import Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from gigl.examples.link_prediction.models import init_example_gigl_heterogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -36,6 +35,7 @@ from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigque
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
+from gigl.examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType

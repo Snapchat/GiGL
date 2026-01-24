@@ -36,7 +36,6 @@ from typing import Literal, Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from gigl.examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from torch_geometric.data import HeteroData
 
 import gigl.distributed.utils
@@ -50,6 +49,7 @@ from gigl.distributed import (
 )
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_available_device
+from gigl.examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from gigl.nn import LinkPredictionGNN, RetrievalLoss
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper

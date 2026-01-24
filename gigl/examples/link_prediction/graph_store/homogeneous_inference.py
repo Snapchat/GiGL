@@ -85,7 +85,6 @@ import time
 
 import torch
 import torch.multiprocessing as mp
-from gigl.examples.link_prediction.models import init_example_gigl_homogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -97,6 +96,7 @@ from gigl.distributed.graph_store.compute import init_compute_process
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
+from gigl.examples.link_prediction.models import init_example_gigl_homogeneous_model
 from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
