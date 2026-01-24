@@ -6,9 +6,9 @@
 # python -m \
 #    gigl.src.config_populator.config_populator \
 #    --job_name="example_job_name" \
-#    --template_uri="examples/tutorial/KDD_2025/task_config.yaml" \
-#    --resource_config_uri="examples/tutorial/KDD_2025/resource_config.yaml" \
-#    --output_file_path_frozen_gbml_config_uri="examples/tutorial/KDD_2025/example_output_path.yaml"
+#    --template_uri="gigl/examples/tutorial/KDD_2025/task_config.yaml" \
+#    --resource_config_uri="gigl/examples/tutorial/KDD_2025/resource_config.yaml" \
+#    --output_file_path_frozen_gbml_config_uri="gigl/examples/tutorial/KDD_2025/example_output_path.yaml"
 
 # ========
 # TaskMetadata:
@@ -64,7 +64,7 @@ trainerConfig:
     ssl_positive_label_percentage: "0.7"
     num_val: "0.3"
     num_test: "0.3"
-  command: python -m examples.tutorial.KDD_2025.heterogeneous_training
+  command: python -m gigl.examples.tutorial.KDD_2025.heterogeneous_training
 # ========
 # InferencerConfig:
 # specifies the inference configuration. This includes the inferencer command and the arguments to pass to it
@@ -73,7 +73,7 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 4
-  command: python -m examples.tutorial.KDD_2025.heterogeneous_inference
+  command: python -m gigl.examples.tutorial.KDD_2025.heterogeneous_inference
 # ========
 # FeatureFlags:
 # any additional flags which we should specify for the training + inference job. We currently use this to

@@ -169,12 +169,12 @@ def _create_valid_live_subgraph_sampling_task_config() -> gbml_config_pb2.GbmlCo
     )
     # Trainer config
     trainer_config = gbml_config_pb2.GbmlConfig.TrainerConfig(
-        command="python -m examples.link_prediction.homogeneous_training",
+        command="python -m gigl.examples.link_prediction.homogeneous_training",
     )
 
     # Inferencer config
     inferencer_config = gbml_config_pb2.GbmlConfig.InferencerConfig(
-        command="python -m examples.link_prediction.homogeneous_inference",
+        command="python -m gigl.examples.link_prediction.homogeneous_inference",
     )
 
     return gbml_config_pb2.GbmlConfig(

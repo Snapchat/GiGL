@@ -56,7 +56,7 @@ fossa*.zip
 
 # ==================== Miscellaneous folders
 proto/
-examples/MAG240M/downloads/
+gigl/examples/MAG240M/downloads/
 graphlearn_torch/
 graphlearn_torch.egg-info/
 do_not_open_source

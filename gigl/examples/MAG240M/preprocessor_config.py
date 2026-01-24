@@ -4,8 +4,8 @@ from typing import Callable
 
 import tensorflow as tf
 import tensorflow_transform as tft
-from examples.MAG240M.common import NUM_PAPER_FEATURES, TOTAL_NUM_PAPERS
-from examples.MAG240M.queries import (
+from gigl.examples.MAG240M.common import NUM_PAPER_FEATURES, TOTAL_NUM_PAPERS
+from gigl.examples.MAG240M.queries import (
     query_template_cast_to_homogeneous_edge_table,
     query_template_cast_to_intermediary_homogeneous_node_table,
     query_template_computed_node_degree_table,

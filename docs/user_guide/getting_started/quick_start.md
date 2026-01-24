@@ -103,4 +103,4 @@ data, and general customization:
   [components page](../overview/architecture.md)
 
 - **Examples**: For easy references and make your next steps easier, various example walkthroughs are available on the
-  examples page. See [here](../examples/index.md)
+  examples page. See [here](../gigl/examples/index.md)

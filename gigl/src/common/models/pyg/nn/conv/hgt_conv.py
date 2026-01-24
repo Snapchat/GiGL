@@ -27,7 +27,7 @@ class HGTConv(MessagePassing):
 
     .. note::
 
-        For an example of using HGT, see `examples/hetero/hgt_dblp.py
+        For an example of using HGT, see `gigl/examples/hetero/hgt_dblp.py
         <https://github.com/pyg-team/pytorch_geometric/blob/master/examples/
         hetero/hgt_dblp.py>`_.
 

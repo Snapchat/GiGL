@@ -12,7 +12,7 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.link_prediction.heterogeneous_inference
+  command: python -m gigl.examples.link_prediction.heterogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 
@@ -27,7 +27,7 @@ from typing import Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_heterogeneous_model
+from gigl.examples.link_prediction.models import init_example_gigl_heterogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
@@ -100,7 +100,7 @@ def _inference_process(
     # to each edge type in the graph, or as string of format dict[(tuple[str, str, str])), list[int]] which will specify fanouts per edge type.
     # In the case of the latter, the keys should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE).
     # For the default example, we make a decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`.
-    # To see an example of a 'fanout' with different behaviors per edge type, refer to `examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
+    # To see an example of a 'fanout' with different behaviors per edge type, refer to `gigl/examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
 
     fanout = inferencer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)

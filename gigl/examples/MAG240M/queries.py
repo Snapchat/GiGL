@@ -1,4 +1,4 @@
-from examples.MAG240M.common import NUM_PAPER_FEATURES
+from gigl.examples.MAG240M.common import NUM_PAPER_FEATURES
 
 query_template_reindex_author_writes_paper_table = """
 -- Firstly, we reindex the author to the same node space as papers

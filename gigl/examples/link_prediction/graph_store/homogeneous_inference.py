@@ -14,7 +14,7 @@ This separation allows for:
   - Better memory utilization (graph data stays on storage nodes)
   - Cost optimization by using appropriate hardware for each role
 
-In contrast, the standard inference mode (see `examples/link_prediction/homogeneous_inference.py`)
+In contrast, the standard inference mode (see `gigl/examples/link_prediction/homogeneous_inference.py`)
 uses a homogeneous cluster where each machine handles both graph storage and computation.
 
 Key Implementation Differences:
@@ -67,7 +67,7 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.link_prediction.graph_store.homogeneous_inference
+  command: python -m gigl.examples.link_prediction.graph_store.homogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 
@@ -85,7 +85,7 @@ import time
 
 import torch
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
+from gigl.examples.link_prediction.models import init_example_gigl_homogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils

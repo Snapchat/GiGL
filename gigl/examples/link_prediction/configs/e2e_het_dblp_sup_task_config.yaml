@@ -48,7 +48,7 @@ trainerConfig:
         ("paper", "to", "author"): [15, 15],
         ("author", "to", "paper"): [20, 20]
       }
-  command: python -m examples.link_prediction.heterogeneous_training
+  command: python -m gigl.examples.link_prediction.heterogeneous_training
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
@@ -64,7 +64,7 @@ inferencerConfig:
         ("author", "to", "paper"): [20, 20]
       }
   inferenceBatchSize: 512
-  command: python -m examples.link_prediction.heterogeneous_inference
+  command: python -m gigl.examples.link_prediction.heterogeneous_inference
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false

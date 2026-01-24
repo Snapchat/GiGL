@@ -32,7 +32,7 @@ from typing import Literal, Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
+from gigl.examples.link_prediction.models import init_example_gigl_homogeneous_model
 from torch_geometric.data import Data
 
 import gigl.distributed.utils

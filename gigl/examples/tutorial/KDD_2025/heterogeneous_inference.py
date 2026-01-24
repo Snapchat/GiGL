@@ -5,9 +5,9 @@ It initializes a model, loads the state from a saved URI, and performs inference
 It also exports the embeddings to a specified output URI, which can be a GCS bucket or a local directory.
 
 Example usage:
-    python -m examples.tutorial.KDD_2025.heterogeneous_inference --task_config_uri <path_to_frozen_task_config>
+    python -m gigl.examples.tutorial.KDD_2025.heterogeneous_inference --task_config_uri <path_to_frozen_task_config>
 
-To generate a frozen config from a template task config, see instructions at top of `examples/tutorial/KDD_2025/task_config.yaml`.
+To generate a frozen config from a template task config, see instructions at top of `gigl/examples/tutorial/KDD_2025/task_config.yaml`.
 
 Args:
     --task_config_uri: Path to the task config URI.
@@ -32,7 +32,7 @@ import fastavro
 import pandas as pd
 import torch
 import torch.multiprocessing.spawn
-from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
+from gigl.examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 
 from gigl.common import Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter

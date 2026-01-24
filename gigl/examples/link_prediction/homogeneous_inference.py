@@ -12,7 +12,7 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.link_prediction.homogeneous_inference
+  command: python -m gigl.examples.link_prediction.homogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 
@@ -25,7 +25,7 @@ import time
 
 import torch
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
+from gigl.examples.link_prediction.models import init_example_gigl_homogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
