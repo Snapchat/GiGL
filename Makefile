@@ -21,7 +21,7 @@ DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
-PYTHON_DIRS:=.github/scripts examples python scripts testing
+PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts testing
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -73,15 +73,14 @@ assert_yaml_configs_parse:
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
-# By default, runs all tests under python/tests/unit.
-# See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
+# By default, runs all tests under tests/unit.
+# See the help text for "--test_file_pattern" in tests/test_args.py for more details.
 unit_test_py: clean_build_files_py type_check
-	( cd python ; \
 	uv run python -m tests.unit.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
-	)
+
 
 unit_test_scala: clean_build_files_scala
 	( cd scala; sbt test )
@@ -114,22 +113,20 @@ check_format: check_format_py check_format_scala check_format_md
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
-# By default, runs all tests under python/tests/integration.
-# See the help text for "--test_file_pattern" in python/tests/test_args.py for more details.
+# By default, runs all tests under tests/integration.
+# See the help text for "--test_file_pattern" in tests/test_args.py for more details.
 integration_test:
-	( \
-	cd python ;\
 	uv run python -m tests.integration.main \
-	--env=test \
-	--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
-	--test_file_pattern=$(PY_TEST_FILES) \
-	)
+		--env=test \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+		--test_file_pattern=$(PY_TEST_FILES) \
+
 
 notebooks_test:
 	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m testing.notebooks_test
 
 mock_assets:
-	( cd python ; uv run python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test)
+	uv run python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test
 
 format_py:
 	uv run autoflake --config pyproject.toml ${PYTHON_DIRS}
@@ -159,10 +156,10 @@ compile_jars:
 	@echo "Compiling jars..."
 	@uv run python -m scripts.scala_packager
 
-# Removes local jar files from python/deps directory
+# Removes local jar files from deps directory
 remove_jars:
 	@echo "Removing jars..."
-	rm -rf python/deps/scala/subgraph_sampler/jars/*
+	rm -rf deps/scala/subgraph_sampler/jars/*
 
 push_cpu_docker_image:
 	@uv run python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}
@@ -314,11 +311,13 @@ clean_build_files: clean_build_files_py clean_build_files_scala
 # We intentionally rebuild *all* protos with one commmand as they should all be in sync.
 # Run `make install_dev_deps` to setup the correct protoc versions.
 compile_protos:
+
+	PROTOC_GEN_MYPY_PATH=$$(uv run which protoc-gen-mypy); \
 	tools/python_protoc/bin/protoc \
 	--proto_path=proto \
-	--python_out=./python \
-	--mypy_out=./python \
-	--plugin=protoc-gen-mypy=.venv/bin/protoc-gen-mypy \
+	--python_out=. \
+	--mypy_out=. \
+	--plugin=protoc-gen-mypy=$$PROTOC_GEN_MYPY_PATH \
 	proto/snapchat/research/gbml/*.proto
 
 	tools/scalapbc/scalapbc-0.11.11/bin/scalapbc \

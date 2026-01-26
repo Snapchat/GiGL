@@ -2,7 +2,7 @@
 This script is used to run end-to-end (e2e) tests for the GiGL project.
 
 Usage:
-    python -m python.tests.e2e_tests.e2e_test \
+    uv run python -m tests.e2e_tests.e2e_test \
         --compiled_pipeline_path <path_to_compiled_pipeline.yaml> \
         --test_spec_uri <path_to_test_specs.yaml>
 
@@ -33,14 +33,14 @@ The test_spec_uri is a yaml file of the following format:
 
 Examples:
     # Run all tests from combined config
-    python -m python.tests.e2e_tests.e2e_test \
+    uv run python -m tests.e2e_tests.e2e_test \
         --compiled_pipeline_path=/tmp/gigl/my_pipeline.yaml \
-        --test_spec_uri=python/tests/e2e_tests/configs/e2e_tests.yaml \
+        --test_spec_uri=tests/e2e_tests/configs/e2e_tests.yaml \
 
     # Run specific tests by name
-    python -m python.tests.e2e_tests.e2e_test \
+    uv run python -m tests.e2e_tests.e2e_test \
         --compiled_pipeline_path=/tmp/gigl/my_pipeline.yaml \
-        --test_spec_uri=python/tests/e2e_tests/configs/e2e_tests.yaml \
+        --test_spec_uri=tests/e2e_tests/configs/e2e_tests.yaml \
         --test_names=cora_nalp --test_names=dblp_nalp
 """
 

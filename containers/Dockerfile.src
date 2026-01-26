@@ -14,7 +14,9 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY dep_vars.env dep_vars.env
 COPY deployment deployment
-COPY python python
+COPY gigl gigl
+COPY snapchat snapchat
+COPY tests tests
 COPY examples examples
 
 RUN uv pip install -e .
