@@ -242,6 +242,14 @@ run_hom_cora_sup_gs_e2e_test:
 		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_gs_test"
 
+run_het_dblp_sup_gs_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_het_dblp_sup_gs_e2e_test: compile_gigl_kubeflow_pipeline
+run_het_dblp_sup_gs_e2e_test:
+	uv run python testing/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_names="het_dblp_sup_gs_test"
+
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
@@ -280,7 +288,7 @@ _skip_build_deps:
 # 	job_name=... \ , and other params
 # 	compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" \
 # 	run_dev_gnn_kubeflow_pipeline
-run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, compile_jars push_new_docker_images)
+run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, push_new_docker_images)
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		$(if $(compiled_pipeline_path),,--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}) \
 		$(if $(compiled_pipeline_path),,--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}) \
