@@ -18,7 +18,7 @@ shared_resource_config:
   # {pre|sgs|spl|tra|inf|pos} standing for: {Preprocessor | Subgraph Sampler | Split Generator | Trainer
   # | Inference | Post  Processor} so we can get more accurate cost measurements of each component.
   # See implementation:
-  # `python/gigl/src/common/types/pb_wrappers/gigl_resource_config.py#GiglResourceConfigWrapper.get_resource_labels`
+  # `gigl/src/common/types/pb_wrappers/gigl_resource_config.py#GiglResourceConfigWrapper.get_resource_labels`
 
     cost_resource_group_tag: dev_experiments_COMPONENT
     cost_resource_group: gigl_platform
