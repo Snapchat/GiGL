@@ -10,7 +10,7 @@ The local runner provides a simple interface to kick off an end to end GiGL pipe
 
 1. Create a {py:class}`gigl.orchestration.local.runner.PipelineConfig`.
 
-```{literalinclude} ../../../python/gigl/orchestration/local/runner.py
+```{literalinclude} ../../../gigl/orchestration/local/runner.py
 :language: python
 :pyobject: PipelineConfig
 ```

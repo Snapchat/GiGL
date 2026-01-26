@@ -226,8 +226,7 @@ make format_scala
 make format_md
 ```
 
-All unit tests are organized in `python/tests/unit` folder, with the python entry point being
-`python/tests/unit/main.py`
+All unit tests are organized in `tests/unit` folder, with the python entry point being `tests/unit/main.py`
 
 </details>
 
@@ -251,8 +250,8 @@ If you want to run individual integration tests you can do so as follows:
 make integration_test PY_TEST_FILES="file_loader_test.py"
 ```
 
-All integration tests are organized in `python/tests/integration` folder with the python entry point being
-`python/tests/integration/main.py`
+All integration tests are organized in `tests/integration` folder with the python entry point being
+`tests/integration/main.py`
 
 </details>
 
