@@ -1,5 +1,5 @@
 import unittest
-from typing import Optional
+from typing import Final, Optional
 
 import torch
 
@@ -25,6 +25,17 @@ _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
+# Default edge indices for test graphs (COO format: [2, num_edges])
+# Homogeneous: 10-node ring graph where node i connects to node (i+1) % 10
+_DEFAULT_HOMOGENEOUS_EDGE_INDEX: Final[torch.Tensor] = torch.tensor(
+    [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]]
+)
+# Heterogeneous: 5 users, 5 stories with identity mapping (user i <-> story i)
+_DEFAULT_HETEROGENEOUS_EDGE_INDICES: Final[dict[EdgeType, torch.Tensor]] = {
+    _USER_TO_STORY: torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+    _STORY_TO_USER: torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+}
+
 
 class TestRemoteDataset(unittest.TestCase):
     def setUp(self) -> None:
@@ -37,64 +48,88 @@ class TestRemoteDataset(unittest.TestCase):
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
 
-    def _create_heterogeneous_dataset(self) -> DistDataset:
-        """Helper method to create a heterogeneous test dataset."""
+    def _create_heterogeneous_dataset(
+        self,
+        edge_indices: dict[EdgeType, torch.Tensor],
+    ) -> DistDataset:
+        """Helper method to create a heterogeneous test dataset.
+
+        Args:
+            edge_indices: Mapping of EdgeType -> COO format edge index [2, num_edges].
+        """
+        # Derive node counts from edge indices by collecting max node ID per node type
+        node_counts: dict[NodeType, int] = {}
+        for edge_type, edge_index in edge_indices.items():
+            src_type, _, dst_type = edge_type
+            src_max = edge_index[0].max().item() + 1
+            dst_max = edge_index[1].max().item() + 1
+            node_counts[src_type] = int(max(node_counts.get(src_type, 0), src_max))
+            node_counts[dst_type] = int(max(node_counts.get(dst_type, 0), dst_max))
+
+        # Partition books filled with zeros assign all nodes/edges to partition 0 (rank 0 - we only have 1 rank in the test)
+        node_partition_book = {
+            node_type: torch.zeros(count, dtype=torch.int64)
+            for node_type, count in node_counts.items()
+        }
+        edge_partition_book = {
+            edge_type: torch.zeros(edge_index.shape[1], dtype=torch.int64)
+            for edge_type, edge_index in edge_indices.items()
+        }
+        partitioned_edge_index = {
+            edge_type: GraphPartitionData(edge_index=edge_index, edge_ids=None)
+            for edge_type, edge_index in edge_indices.items()
+        }
+        partitioned_node_features = {
+            node_type: FeaturePartitionData(
+                feats=torch.zeros(count, 2), ids=torch.arange(count)
+            )
+            for node_type, count in node_counts.items()
+        }
+        partitioned_node_labels = {
+            node_type: FeaturePartitionData(
+                feats=torch.arange(count).unsqueeze(1), ids=torch.arange(count)
+            )
+            for node_type, count in node_counts.items()
+        }
+
         partition_output = PartitionOutput(
-            node_partition_book={
-                _USER: torch.zeros(5, dtype=torch.int64),
-                _STORY: torch.zeros(5, dtype=torch.int64),
-            },
-            edge_partition_book={
-                _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
-                _STORY_TO_USER: torch.zeros(5, dtype=torch.int64),
-            },
-            partitioned_edge_index={
-                _USER_TO_STORY: GraphPartitionData(
-                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
-                    edge_ids=None,
-                ),
-                _STORY_TO_USER: GraphPartitionData(
-                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
-                    edge_ids=None,
-                ),
-            },
-            partitioned_node_features={
-                _USER: FeaturePartitionData(
-                    feats=torch.zeros(5, 2), ids=torch.arange(5)
-                ),
-                _STORY: FeaturePartitionData(
-                    feats=torch.zeros(5, 2), ids=torch.arange(5)
-                ),
-            },
+            node_partition_book=node_partition_book,
+            edge_partition_book=edge_partition_book,
+            partitioned_edge_index=partitioned_edge_index,
+            partitioned_node_features=partitioned_node_features,
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
-            partitioned_node_labels={
-                _USER: FeaturePartitionData(
-                    feats=torch.arange(5).unsqueeze(1), ids=torch.arange(5)
-                ),
-                _STORY: FeaturePartitionData(
-                    feats=torch.arange(5).unsqueeze(1), ids=torch.arange(5)
-                ),
-            },
+            partitioned_node_labels=partitioned_node_labels,
         )
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
         return dataset
 
-    def _create_homogeneous_dataset(self) -> DistDataset:
-        """Helper method to create a homogeneous test dataset."""
+    def _create_homogeneous_dataset(
+        self,
+        edge_index: torch.Tensor,
+    ) -> DistDataset:
+        """Helper method to create a homogeneous test dataset.
+
+        Args:
+            edge_index: COO format edge index [2, num_edges].
+        """
+
+        # Derive counts from edge index
+        num_nodes = int(edge_index.max().item() + 1)
+        num_edges = int(edge_index.shape[1])
+
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(10, dtype=torch.int64),
-            edge_partition_book=torch.zeros(10, dtype=torch.int64),
+            # Partition books filled with zeros assign all nodes/edges to partition 0 (rank 0 - we only have 1 rank in the test)
+            node_partition_book=torch.zeros(num_nodes, dtype=torch.int64),
+            edge_partition_book=torch.zeros(num_edges, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
-                edge_index=torch.tensor(
-                    [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]]
-                ),
+                edge_index=edge_index,
                 edge_ids=None,
             ),
             partitioned_node_features=FeaturePartitionData(
-                feats=torch.zeros(10, 3), ids=torch.arange(10)
+                feats=torch.zeros(num_nodes, 3), ids=torch.arange(num_nodes)
             ),
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
@@ -112,13 +147,14 @@ class TestRemoteDataset(unittest.TestCase):
         train_user_ids: list[int],
         val_user_ids: list[int],
         test_user_ids: list[int],
+        edge_indices: dict[EdgeType, torch.Tensor],
     ) -> DistDataset:
         """Helper method to create a heterogeneous test dataset with label edges and splits.
 
         Creates a dataset with:
-        - USER nodes: [0, 1, 2, 3, 4]
-        - STORY nodes: [0, 1, 2, 3, 4]
-        - Message passing edges: USER -> STORY
+        - USER nodes (count derived from edge indices)
+        - STORY nodes (count derived from edge indices)
+        - Message passing edges from edge_indices
         - Positive label edges: USER -[to_gigl_positive]-> STORY (from positive_labels)
         - Negative label edges (optional): USER -[to_gigl_negative]-> STORY (from negative_labels)
         - Train/val/test splits for USER nodes
@@ -139,6 +175,7 @@ class TestRemoteDataset(unittest.TestCase):
             train_user_ids: List of user IDs in the train split (must be the lowest IDs).
             val_user_ids: List of user IDs in the val split (must be middle IDs).
             test_user_ids: List of user IDs in the test split (must be the highest IDs).
+            edge_indices: Mapping of EdgeType -> COO format edge index [2, num_edges].
 
         Raises:
             ValueError: If any user ID in train/val/test is not in positive_labels.
@@ -164,26 +201,41 @@ class TestRemoteDataset(unittest.TestCase):
                 pos_dst.append(story_id)
         positive_label_edge_index = torch.tensor([pos_src, pos_dst])
 
+        # Derive node counts from edge indices by collecting max node ID per node type
+        node_counts: dict[NodeType, int] = {}
+        for edge_type, edge_index in edge_indices.items():
+            src_type, _, dst_type = edge_type
+            src_max = edge_index[0].max().item() + 1
+            dst_max = edge_index[1].max().item() + 1
+            node_counts[src_type] = int(max(node_counts.get(src_type, 0), src_max))
+            node_counts[dst_type] = int(max(node_counts.get(dst_type, 0), dst_max))
+        # Also account for nodes in positive labels
+        node_counts[_USER] = max(
+            node_counts.get(_USER, 0), max(positive_labels.keys()) + 1
+        )
+        node_counts[_STORY] = max(
+            node_counts.get(_STORY, 0),
+            max(max(stories) for stories in positive_labels.values()) + 1,
+        )
+
         # Set up edge partition books and edge indices
+        # Partition books filled with zeros assign all edges to partition 0 (single machine)
         edge_partition_book = {
-            _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
-            _STORY_TO_USER: torch.zeros(5, dtype=torch.int64),
-            positive_label_edge_type: torch.zeros(len(pos_src), dtype=torch.int64),
+            edge_type: torch.zeros(edge_index.shape[1], dtype=torch.int64)
+            for edge_type, edge_index in edge_indices.items()
         }
+        edge_partition_book[positive_label_edge_type] = torch.zeros(
+            len(pos_src), dtype=torch.int64
+        )
+
         partitioned_edge_index = {
-            _USER_TO_STORY: GraphPartitionData(
-                edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
-                edge_ids=None,
-            ),
-            _STORY_TO_USER: GraphPartitionData(
-                edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
-                edge_ids=None,
-            ),
-            positive_label_edge_type: GraphPartitionData(
-                edge_index=positive_label_edge_index,
-                edge_ids=None,
-            ),
+            edge_type: GraphPartitionData(edge_index=edge_index, edge_ids=None)
+            for edge_type, edge_index in edge_indices.items()
         }
+        partitioned_edge_index[positive_label_edge_type] = GraphPartitionData(
+            edge_index=positive_label_edge_index,
+            edge_ids=None,
+        )
 
         if negative_labels is not None:
             # Convert negative_labels dict to COO edge index
@@ -201,21 +253,23 @@ class TestRemoteDataset(unittest.TestCase):
                 edge_ids=None,
             )
 
+        # Partition books filled with zeros assign all nodes to partition 0 (single machine)
+        node_partition_book = {
+            node_type: torch.zeros(count, dtype=torch.int64)
+            for node_type, count in node_counts.items()
+        }
+        partitioned_node_features = {
+            node_type: FeaturePartitionData(
+                feats=torch.zeros(count, 2), ids=torch.arange(count)
+            )
+            for node_type, count in node_counts.items()
+        }
+
         partition_output = PartitionOutput(
-            node_partition_book={
-                _USER: torch.zeros(5, dtype=torch.int64),
-                _STORY: torch.zeros(5, dtype=torch.int64),
-            },
+            node_partition_book=node_partition_book,
             edge_partition_book=edge_partition_book,
             partitioned_edge_index=partitioned_edge_index,
-            partitioned_node_features={
-                _USER: FeaturePartitionData(
-                    feats=torch.zeros(5, 2), ids=torch.arange(5)
-                ),
-                _STORY: FeaturePartitionData(
-                    feats=torch.zeros(5, 2), ids=torch.arange(5)
-                ),
-            },
+            partitioned_node_features=partitioned_node_features,
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
@@ -250,7 +304,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_register_dataset(self) -> None:
         """Test that register_dataset correctly sets the global dataset."""
-        dataset = self._create_heterogeneous_dataset()
+        dataset = self._create_heterogeneous_dataset(
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
         storage_utils.register_dataset(dataset)
 
         # Verify the dataset was registered
@@ -259,7 +315,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_reregister_dataset_raises_error(self) -> None:
         """Test that reregistering a dataset raises an error."""
-        dataset = self._create_heterogeneous_dataset()
+        dataset = self._create_heterogeneous_dataset(
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
         storage_utils.register_dataset(dataset)
         with self.assertRaises(ValueError) as context:
             storage_utils.register_dataset(dataset)
@@ -267,7 +325,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_node_feature_info_with_heterogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a registered heterogeneous dataset."""
-        dataset = self._create_heterogeneous_dataset()
+        dataset = self._create_heterogeneous_dataset(
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
         storage_utils.register_dataset(dataset)
 
         node_feature_info = storage_utils.get_node_feature_info()
@@ -281,7 +341,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_node_feature_info_with_homogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a registered homogeneous dataset."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
 
         node_feature_info = storage_utils.get_node_feature_info()
@@ -300,7 +362,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_edge_feature_info_with_heterogeneous_dataset(self) -> None:
         """Test get_edge_feature_info with a registered heterogeneous dataset."""
-        dataset = self._create_heterogeneous_dataset()
+        dataset = self._create_heterogeneous_dataset(
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
         storage_utils.register_dataset(dataset)
 
         edge_feature_info = storage_utils.get_edge_feature_info()
@@ -310,7 +374,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_edge_feature_info_with_homogeneous_dataset(self) -> None:
         """Test get_edge_feature_info with a registered homogeneous dataset."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
 
         edge_feature_info = storage_utils.get_edge_feature_info()
@@ -328,7 +394,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_node_ids_for_rank_with_homogeneous_dataset(self) -> None:
         """Test get_node_ids_for_rank with a homogeneous dataset."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
 
         # Test with world_size=1, rank=0 (should get all nodes)
@@ -341,7 +409,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_node_ids_for_rank_with_heterogeneous_dataset(self) -> None:
         """Test get_node_ids_for_rank with a heterogeneous dataset."""
-        dataset = self._create_heterogeneous_dataset()
+        dataset = self._create_heterogeneous_dataset(
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
         storage_utils.register_dataset(dataset)
 
         # Test with USER node type
@@ -362,7 +432,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_node_ids_for_rank_with_multiple_ranks(self) -> None:
         """Test get_node_ids_for_rank with multiple ranks to verify sharding."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
 
         # Test with world_size=2
@@ -402,7 +474,9 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_node_ids_for_rank_with_homogeneous_dataset_and_node_type(self) -> None:
         """Test get_node_ids_for_rank with a homogeneous dataset and a node type."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
         with self.assertRaises(ValueError) as context:
             storage_utils.get_node_ids_for_rank(rank=0, world_size=1, node_type=_USER)
@@ -415,7 +489,9 @@ class TestRemoteDataset(unittest.TestCase):
         self,
     ) -> None:
         """Test get_node_ids_for_rank with a heterogeneous dataset and no node type."""
-        dataset = self._create_heterogeneous_dataset()
+        dataset = self._create_heterogeneous_dataset(
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
         storage_utils.register_dataset(dataset)
         with self.assertRaises(ValueError) as context:
             storage_utils.get_node_ids_for_rank(rank=0, world_size=1, node_type=None)
@@ -426,35 +502,45 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_edge_dir(self) -> None:
         """Test get_edge_dir with a registered dataset."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
         edge_dir = storage_utils.get_edge_dir()
         self.assertEqual(edge_dir, dataset.edge_dir)
 
     def test_get_node_feature_info(self) -> None:
         """Test get_node_feature_info with a registered dataset."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
         node_feature_info = storage_utils.get_node_feature_info()
         self.assertEqual(node_feature_info, dataset.node_feature_info)
 
     def test_get_edge_feature_info(self) -> None:
         """Test get_edge_feature_info with a registered dataset."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
         edge_feature_info = storage_utils.get_edge_feature_info()
         self.assertEqual(edge_feature_info, dataset.edge_feature_info)
 
     def test_get_edge_types_homogeneous(self) -> None:
         """Test get_edge_types with a homogeneous dataset."""
-        dataset = self._create_homogeneous_dataset()
+        dataset = self._create_homogeneous_dataset(
+            edge_index=_DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
         storage_utils.register_dataset(dataset)
         edge_types = storage_utils.get_edge_types()
         self.assertIsNone(edge_types)
 
     def test_get_edge_types_heterogeneous(self) -> None:
         """Test get_edge_types with a heterogeneous dataset."""
-        dataset = self._create_heterogeneous_dataset()
+        dataset = self._create_heterogeneous_dataset(
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
         storage_utils.register_dataset(dataset)
         edge_types = storage_utils.get_edge_types()
         self.assertEqual(
@@ -494,6 +580,7 @@ class TestRemoteDataset(unittest.TestCase):
             train_user_ids=split_to_user_ids["train"],
             val_user_ids=split_to_user_ids["val"],
             test_user_ids=split_to_user_ids["test"],
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
         storage_utils.register_dataset(dataset)
 
@@ -546,6 +633,7 @@ class TestRemoteDataset(unittest.TestCase):
             train_user_ids=train_user_ids,
             val_user_ids=[4],
             test_user_ids=[],
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
         storage_utils.register_dataset(dataset)
 
@@ -603,6 +691,7 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_ablp_input_invalid_split(self) -> None:
         """Test get_training_input raises ValueError with invalid split."""
+        create_test_process_group()
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
         negative_labels = {0: [1], 1: [2], 2: [3], 3: [4], 4: [0]}
 
@@ -612,6 +701,7 @@ class TestRemoteDataset(unittest.TestCase):
             train_user_ids=[0, 1, 2],
             val_user_ids=[3],
             test_user_ids=[4],
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
         storage_utils.register_dataset(dataset)
 
@@ -626,6 +716,7 @@ class TestRemoteDataset(unittest.TestCase):
 
     def test_get_training_input_without_negative_labels(self) -> None:
         """Test get_training_input when no negative labels exist in the dataset."""
+        create_test_process_group()
         # Define only positive labels, no negative labels
         positive_labels = {
             0: [0, 1],  # User 0 likes Story 0 and Story 1
@@ -642,6 +733,7 @@ class TestRemoteDataset(unittest.TestCase):
             train_user_ids=train_user_ids,
             val_user_ids=[3],
             test_user_ids=[4],
+            edge_indices=_DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
         storage_utils.register_dataset(dataset)
 

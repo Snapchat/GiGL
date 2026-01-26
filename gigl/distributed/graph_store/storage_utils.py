@@ -37,7 +37,7 @@ from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 logger = Logger()
 
 _NO_DATASET_ERROR = ValueError(
-    "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
+    "Dataset not registered! Register the dataset first with `gigl.distributed.graph_store.storage_utils.register_dataset`"
 )
 _dataset: Optional[DistDataset] = None
 
