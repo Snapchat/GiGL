@@ -64,8 +64,8 @@ myst_enable_extensions = [
 
 include_patterns = [
     "docs/**",
-    "python/gigl/**",
-    "python/snapchat/**",
+    "gigl/**",
+    "snapchat/**",
     "snapchat/**",
     "index.rst",
     "examples/**",

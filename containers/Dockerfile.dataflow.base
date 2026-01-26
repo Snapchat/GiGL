@@ -24,7 +24,7 @@ WORKDIR /gigl_deps
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY requirements requirements
-COPY python/gigl/scripts python/gigl/scripts
+COPY gigl/scripts gigl/scripts
 
 RUN bash ./requirements/install_py_deps.sh --skip-glt-post-install
 
