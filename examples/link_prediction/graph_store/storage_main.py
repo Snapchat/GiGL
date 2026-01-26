@@ -96,6 +96,16 @@ def _run_storage_process(
     """
     Runs a storage process.
 
+    This function does the following:
+
+    1. "Registers" the dataset so that gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset can access it.
+    2. Initialized the GLT server.
+        Under the hood this is synchronized with the clients initializing via gigl.distributed.graph_store.compute.init_compute_process,
+        and after this call there will be Torch RPC connections between the storage nodes and compute nodes.
+    3. Initializes the Torch Distributed process group for the storage node.
+    4. Waits for the server to exit.
+        Will wait until clients are also shutdown (with `gigl.distributed.graph_store.compute.shutdown_compute_proccess`)
+
     Args:
         storage_rank (int): The rank of the storage node.
         cluster_info (GraphStoreInfo): The cluster information.
@@ -128,6 +138,7 @@ def _run_storage_process(
 
     # Torch Distributed process group is needed so that the storage cluster can talk to each other.
     # This is needed for `RemoteDistDataset.get_free_ports_on_storage_cluster` to work.
+    # Note this is called on the *compute* cluster, but requires the storage cluster to have a process group initialized.
     torch.distributed.init_process_group(
         backend=storage_world_backend,
         world_size=cluster_info.num_storage_nodes,
