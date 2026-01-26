@@ -1,8 +1,68 @@
 """Built-in GiGL Graph Store Server.
 
-Derivved from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/examples/distributed/server_client_mode/sage_supervised_server.py
+Derived from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/examples/distributed/server_client_mode/sage_supervised_server.py
 
-# TODO(kmonte): Figure out how we should split out common utils from this file.
+TODO(kmonte): Figure out how we should split out common utils from this file.
+
+Cluster Setup
+=============
+
+In Graph Store mode, storage nodes hold the graph data and serve sampling requests from compute nodes.
+Each storage node initializes a GLT (GraphLearn-Torch) server and waits for connections from compute nodes.
+
+Storage nodes accept connections from compute nodes **sequentially, by compute node**. For example:
+- First, all connections from Compute Node 0 are established to Storage Nodes 0, 1, 2, ...
+- Then, all connections from Compute Node 1 are established to Storage Nodes 0, 1, 2, ...
+- And so on.
+
+It's important to distinguish between:
+- **Compute Node**: A physical machine in the compute cluster (e.g., a VM with multiple GPUs).
+- **Compute Process**: A process running on a compute node (typically one per GPU).
+
+Each compute node may have multiple compute processes (e.g., one per GPU), and each compute process
+establishes its own connection to every storage node. For example, if a compute node has 4 GPUs,
+it will establish 4 connections to each storage node.
+
+This sequential connection setup is required because the GLT server uses a per-server lock when
+initializing samplers. If connections from multiple compute nodes were established concurrently,
+it could cause a deadlock.
+
+Connection Diagram
+------------------
+
+╔═══════════════════════════════════════════════════════════════════════════════════════╗
+║                         COMPUTE TO STORAGE NODE CONNECTIONS                            ║
+╚═══════════════════════════════════════════════════════════════════════════════════════╝
+
+     COMPUTE NODES                                              STORAGE NODES
+     ═════════════                                              ═════════════
+
+  ┌──────────────────────┐          (1)                      ┌───────────────┐
+  │    COMPUTE NODE 0    │                                   │               │
+  │  ┌────┬────┬────┬────┤ ══════════════════════════════════│   STORAGE 0   │
+  │  │GPU │GPU │GPU │GPU │                                 ╱ │               │
+  │  │ 0  │ 1  │ 2  │ 3  │ ════════════════════╲         ╱   └───────────────┘
+  │  └────┴────┴────┴────┤          (2)          ╲     ╱
+  └──────────────────────┘                         ╲ ╱
+                                                    ╳
+                                          (3)     ╱   ╲     (4)
+  ┌──────────────────────┐                      ╱       ╲    ┌───────────────┐
+  │    COMPUTE NODE 1    │                    ╱           ╲  │               │
+  │  ┌────┬────┬────┬────┤ ═════════════════╱               ═│   STORAGE 1   │
+  │  │GPU │GPU │GPU │GPU │                                   │               │
+  │  │ 0  │ 1  │ 2  │ 3  │ ══════════════════════════════════│               │
+  │  └────┴────┴────┴────┤                                   └───────────────┘
+  └──────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  (1) Compute Node 0  →  Storage 0   (4 connections, one per GPU)            │
+  │  (2) Compute Node 0  →  Storage 1   (4 connections, one per GPU)            │
+  │  (3) Compute Node 1  →  Storage 0   (4 connections, one per GPU)            │
+  │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+Storage nodes wait for all compute processes to connect, then serve sampling requests until
+the compute processes signal shutdown via `gigl.distributed.graph_store.compute.shutdown_compute_process`.
 
 """
 import argparse
@@ -10,6 +70,7 @@ import os
 from distutils.util import strtobool
 from typing import Optional
 
+# TODO(kmonte): Remove GLT imports from this file.
 import graphlearn_torch as glt
 import torch
 
@@ -32,6 +93,18 @@ def _run_storage_process(
     torch_process_port: int,
     storage_world_backend: Optional[str],
 ) -> None:
+    """
+    Runs a storage process.
+
+    Args:
+        storage_rank (int): The rank of the storage node.
+        cluster_info (GraphStoreInfo): The cluster information.
+        dataset (DistDataset): The dataset.
+        torch_process_port (int): The port for the Torch process.
+        storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
+    """
+
+    # "Register" the dataset so that gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset can access it.
     register_dataset(dataset)
     cluster_master_ip = cluster_info.storage_cluster_master_ip
     logger.info(
@@ -52,6 +125,9 @@ def _run_storage_process(
     logger.info(
         f"Initializing storage node process group {storage_rank} / {cluster_info.num_storage_nodes} with backend {storage_world_backend} on {init_method}"
     )
+
+    # Torch Distributed process group is needed so that the storage cluster can talk to each other.
+    # This is needed for `RemoteDistDataset.get_free_ports_on_storage_cluster` to work.
     torch.distributed.init_process_group(
         backend=storage_world_backend,
         world_size=cluster_info.num_storage_nodes,
@@ -62,6 +138,8 @@ def _run_storage_process(
     logger.info(
         f"Waiting for storage node {storage_rank} / {cluster_info.num_storage_nodes} to exit"
     )
+    # Wait for the server to exit.
+    # Will wait until clients are also shutdown (with `gigl.distributed.graph_store.compute.shutdown_compute_proccess`)
     glt.distributed.wait_and_shutdown_server()
     logger.info(f"Storage node {storage_rank} exited")
 
@@ -137,6 +215,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
     is_inference = bool(strtobool(args.is_inference))
+
+    # Setup cluster-wide (e.g. storage and compute nodes) Torch Distributed process group.
+    # This is needed so we can get the cluster information (e.g. number of storage and compute nodes) and rank/world_size.
     torch.distributed.init_process_group(backend="gloo")
     cluster_info = get_graph_store_info()
     logger.info(f"Cluster info: {cluster_info}")
@@ -144,6 +225,7 @@ if __name__ == "__main__":
         f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
     )
     # Tear down the """"global""" process group so we can have a server-specific process group.
+
     torch.distributed.destroy_process_group()
     storage_node_process(
         storage_rank=cluster_info.storage_node_rank,

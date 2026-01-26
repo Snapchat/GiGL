@@ -1,6 +1,6 @@
 """Built-in GiGL Graph Store Server.
 
-Derivved from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/examples/distributed/server_client_mode/sage_supervised_server.py
+Derived from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/examples/distributed/server_client_mode/sage_supervised_server.py
 
 TODO(kmonte): Remove this, and only expose utils.
 We keep this around so we can use the utils in tests/integration/distributed/graph_store/graph_store_integration_test.py.
