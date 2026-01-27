@@ -165,10 +165,6 @@ class TestRemoteDataset(unittest.TestCase):
         - Nodes with middle IDs go to val
         - Nodes with higher IDs go to test
 
-        The split ratios are calculated as:
-        - num_val = len(val_user_ids) / total_users
-        - num_test = len(test_user_ids) / total_users
-
         Args:
             positive_labels: Mapping of user_id -> list of positive story_ids.
             negative_labels: Mapping of user_id -> list of negative story_ids, or None.
