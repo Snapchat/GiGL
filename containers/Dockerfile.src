@@ -17,6 +17,5 @@ COPY deployment deployment
 COPY gigl gigl
 COPY snapchat snapchat
 COPY tests tests
-COPY examples examples
 
 RUN uv pip install -e .

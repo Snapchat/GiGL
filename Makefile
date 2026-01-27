@@ -21,7 +21,7 @@ DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
-PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts testing
+PYTHON_DIRS:=.github/scripts gigl tests snapchat scripts testing
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -270,8 +270,8 @@ _skip_build_deps:
 # make \
   job_name="{alias}_run_dev_mag240m_kfp_pipeline" \
   start_at="config_populator" \
-  task_config_uri="examples/MAG240M/task_config.yaml" \
-  resource_config_uri="examples/MAG240M/resource_config.yaml" \
+  task_config_uri="gigl/examples/MAG240M/task_config.yaml" \
+  resource_config_uri="gigl/examples/MAG240M/resource_config.yaml" \
   run_dev_gnn_kubeflow_pipeline
 # If you have precompiled to some specified poth using `make compile_gigl_kubeflow_pipeline`
 # You can use it here instead of re-compiling by setting `compiled_pipeline_path`

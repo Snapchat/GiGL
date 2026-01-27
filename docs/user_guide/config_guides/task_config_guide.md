@@ -26,7 +26,7 @@ We will use the MAG240M task config to walk you through what a config may look l
 <details>
 <summary><bold>Full task config for reference:</bold></summary>
 
-```{literalinclude} ../../../examples/MAG240M/task_config.yaml
+```{literalinclude} ../../../gigl/examples/MAG240M/task_config.yaml
 :language: yaml
 ```
 
@@ -40,7 +40,7 @@ one edge type: `(paper_or_author, references, paper_or_author)`
 Note: In this example we have converted the hetrogeneous MAG240M dataset to a homogeneous one with just one edge and one
 node; which we will be doing self supervised learning on.
 
-```{literalinclude} ../../../examples/MAG240M/task_config.yaml
+```{literalinclude} ../../../gigl/examples/MAG240M/task_config.yaml
 :language: yaml
 :start-after: GraphMetadata
 :end-before: ========
@@ -52,7 +52,7 @@ Now we specify what type of learning task we want to do. In this case we want to
 Prediction to do self supervised learning on the edge: `(paper_or_author, references, paper_or_author)`. Thus, we are
 using the `NodeAnchorBasedLinkPredictionTaskMetadata` task.
 
-```{literalinclude} ../../../examples/MAG240M/task_config.yaml
+```{literalinclude} ../../../gigl/examples/MAG240M/task_config.yaml
 :language: yaml
 :start-after: TaskMetadata
 :end-before: ========
@@ -67,7 +67,7 @@ An example of `NodeBasedTaskMetadata` can be found in `gigl/src/mocking/configs/
 Shared config are parameters that are common and may be used across multiple components i.e. Trainer, Inferencer,
 SubgraphSampler, etc.
 
-```{literalinclude} ../../../examples/MAG240M/task_config.yaml
+```{literalinclude} ../../../gigl/examples/MAG240M/task_config.yaml
 :language: yaml
 :start-after: SharedConfig
 :end-before: ========
@@ -87,7 +87,7 @@ Once we have the data preprocessed, we will be tabularizing the data with the us
 Subsequently, we will be creating test/train/val splits based on the %'s specified, using
 [Split Generator](../overview/components/split_generator.md)
 
-```{literalinclude} ../../../examples/MAG240M/task_config.yaml
+```{literalinclude} ../../../gigl/examples/MAG240M/task_config.yaml
 :language: yaml
 :start-after: DatasetConfig
 :end-before: ========
@@ -102,7 +102,7 @@ defined @ {py:class}`gigl.src.training.v1.lib.base_trainer.BaseTrainer`.
 Some common sense pre-configured trainer implementations can be found in
 {py:class}`gigl.src.common.modeling_task_specs`. Although, you are recommended to implement your own.
 
-```{literalinclude} ../../../examples/MAG240M/task_config.yaml
+```{literalinclude} ../../../gigl/examples/MAG240M/task_config.yaml
 :language: yaml
 :start-after: TrainerConfig
 :end-before: ========
@@ -114,7 +114,7 @@ Similar to Trainer, the class specified by `inferencerClsPath` will be initializ
 `inferencerArgs` will be directly passed in `**kwargs` to your inferencer class. The only requirement is the inferencer
 class implement the protocol defined @ {py:class}`gigl.src.inference.v1.lib.base_inferencer.BaseInferencer`
 
-```{literalinclude} ../../../examples/MAG240M/task_config.yaml
+```{literalinclude} ../../../gigl/examples/MAG240M/task_config.yaml
 :language: yaml
 :start-after: InferencerConfig
 :end-before: ========

@@ -68,7 +68,6 @@ include_patterns = [
     "snapchat/**",
     "snapchat/**",
     "index.rst",
-    "examples/**",
 ]
 
 autodoc_default_options = {

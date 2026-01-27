@@ -59,7 +59,7 @@ trainerConfig:
     out_dim: "256"
     val_every_n_batch: "1000" # Decrease this number to do more frequent validation
     learning_rate: "0.005"
-  command: python -m examples.link_prediction.heterogeneous_training
+  command: python -m gigl.examples.link_prediction.heterogeneous_training
 # ========
 # InferencerConfig:
 # specifies the inference configuration. This includes the command and the arguments to pass to it
@@ -71,7 +71,7 @@ inferencerConfig:
     hid_dim: "256"
     out_dim: "256"
   inferenceBatchSize: 256 # Reduce batch size if Cuda OOM
-  command: python -m examples.link_prediction.heterogeneous_inference
+  command: python -m gigl.examples.link_prediction.heterogeneous_inference
 # ========
 # FeatureFlags:
 # any additional flags which we should specify for the training + inference job. We currently use this to

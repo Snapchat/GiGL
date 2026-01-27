@@ -1,4 +1,7 @@
-# This config is used to run homogeneous CORA supervised training and inference using in memory GiGL SGS. This can be run with `make run_hom_cora_sup_test`.
+# This config is used to run homogeneous CORA supervised training and inference using in memory GiGL SGS using the Graph Store mode.
+# This can be run with `make run_hom_cora_sup_gs_test`.
+# Diffs from ../configs/e2e_hom_cora_sup_task_config.yaml:
+# - None (currently) - we detect that "Graph Store" mode should be employed from the resource config
 graphMetadata:
   edgeTypes:
   - dstNodeType: paper
@@ -12,21 +15,22 @@ datasetConfig:
     dataPreprocessorArgs:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
+# TODO(kmonte): Add GS trainer
 trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
-  command: python -m examples.link_prediction.homogeneous_training
+  command: python -m gigl.examples.link_prediction.homogeneous_training
+# TODO(kmonte): Move to user-defined server code
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
   inferenceBatchSize: 512
-  command: python -m examples.link_prediction.homogeneous_inference
+  command: python -m gigl.examples.link_prediction.graph_store.homogeneous_inference
 sharedConfig:
-  shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false
   # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines. This will soon be added for in-mem SGS GiGL pipelines.
   shouldSkipModelEvaluation: true

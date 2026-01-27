@@ -67,7 +67,7 @@ class TestExampleNotebooks(unittest.TestCase):
             _NoteBookTestConfig(
                 name="cora",
                 notebook_path=str(
-                    GIGL_ROOT_DIR / "examples/link_prediction/cora.ipynb"
+                    GIGL_ROOT_DIR / "gigl/examples/link_prediction/cora.ipynb"
                 ),
                 env_overrides={"GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri},
             ),
@@ -75,7 +75,7 @@ class TestExampleNotebooks(unittest.TestCase):
             # _NoteBookTestConfig(
             #     name="dblp",
             #     notebook_path=str(
-            #         GIGL_ROOT_DIR / "examples/link_prediction/dblp.ipynb"
+            #         GIGL_ROOT_DIR / "gigl/examples/link_prediction/dblp.ipynb"
             #     ),
             #     env_overrides={
             #         "GIGL_TEST_DEFAULT_RESOURCE_CONFIG": gcs_uri.uri,
@@ -85,14 +85,14 @@ class TestExampleNotebooks(unittest.TestCase):
                 name="toy_example",
                 notebook_path=str(
                     GIGL_ROOT_DIR
-                    / "examples/toy_visual_example/toy_example_walkthrough.ipynb"
+                    / "gigl/examples/toy_visual_example/toy_example_walkthrough.ipynb"
                 ),
             ),
             _NoteBookTestConfig(
                 "kdd_2025_heterogeneous",
                 notebook_path=str(
                     GIGL_ROOT_DIR
-                    / "examples/tutorial/KDD_2025/heteregeneous_walkthrough.ipynb"
+                    / "gigl/examples/tutorial/KDD_2025/heteregeneous_walkthrough.ipynb"
                 ),
             ),
         ]

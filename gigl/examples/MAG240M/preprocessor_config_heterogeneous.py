@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from examples.MAG240M.common import NUM_PAPER_FEATURES
-from examples.MAG240M.queries import query_template_compute_average_features
 from google.cloud.bigquery.job import WriteDisposition
 
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
+from gigl.examples.MAG240M.common import NUM_PAPER_FEATURES
+from gigl.examples.MAG240M.queries import query_template_compute_average_features
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (

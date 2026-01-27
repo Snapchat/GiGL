@@ -5,9 +5,9 @@ Supports multi process/multi node training.
 Does not support GPU training.
 
 Run with:
-    python -m examples.tutorial.KDD_2025.heterogeneous_training --task_config_uri <path_to_frozen_task_config>
+    python -m gigl.examples.tutorial.KDD_2025.heterogeneous_training --task_config_uri <path_to_frozen_task_config>
 
-To generate a frozen config from a template task config, see instructions at top of `examples/tutorial/KDD_2025/task_config.yaml`.
+To generate a frozen config from a template task config, see instructions at top of `gigl/examples/tutorial/KDD_2025/task_config.yaml`.
 
 
 This example is meant to be run on the "toy graph" dataset,
@@ -40,7 +40,6 @@ from distutils.util import strtobool
 from typing import Literal
 
 import torch
-from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
@@ -52,6 +51,7 @@ from gigl.distributed import (
     build_dataset_from_task_config_uri,
 )
 from gigl.distributed.utils import get_free_port
+from gigl.examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import save_state_dict
