@@ -355,11 +355,11 @@ class DistPPRNeighborLoader(DistLoader):
     select the most relevant neighbors for each seed node. This can improve model
     quality by focusing on structurally important neighbors.
 
+    Note: Unlike standard neighbor loaders, this does not use a fixed fanout pattern.
+    Neighbor selection is entirely controlled by PPR parameters (alpha, eps, max_nodes).
+
     Args:
         dataset (DistDataset): The dataset to sample from.
-        num_neighbors (list[int] or dict[EdgeType, list[int]]):
-            The number of neighbors to sample for each node in each iteration.
-            Note: For PPR sampling, this is used as a fallback/compatibility parameter.
         input_nodes: The indices of seed nodes to start sampling from.
         ppr_alpha (float): Restart probability for PPR. Higher values keep samples
             closer to seeds. (default: 0.15)
@@ -381,7 +381,6 @@ class DistPPRNeighborLoader(DistLoader):
     def __init__(
         self,
         dataset: DistDataset,
-        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
@@ -507,9 +506,8 @@ class DistPPRNeighborLoader(DistLoader):
                 dataset.node_ids, abc.Mapping
             ), "Dataset must be heterogeneous if provided input nodes are a tuple."
 
-        num_neighbors = patch_fanout_for_sampling(
-            dataset.get_edge_types(), num_neighbors
-        )
+        # PPR sampling doesn't use num_neighbors fanout pattern - set to None.
+        num_neighbors = None
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,
