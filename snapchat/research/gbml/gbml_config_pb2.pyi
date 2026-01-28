@@ -15,6 +15,7 @@ import snapchat.research.gbml.postprocessed_metadata_pb2
 import snapchat.research.gbml.subgraph_sampling_strategy_pb2
 import snapchat.research.gbml.trained_model_metadata_pb2
 import sys
+import typing
 
 if sys.version_info >= (3, 8):
     import typing as typing_extensions
@@ -502,6 +503,7 @@ class GbmlConfig(google.protobuf.message.Message):
         command: builtins.str
         """Command to use for launching storage job.
         e.g. "python -m gigl.distributed.graph_store.storage_main".
+        Required.
         """
         @property
         def storage_args(self) -> google.protobuf.internal.containers.ScalarMap[builtins.str, builtins.str]:
@@ -555,12 +557,7 @@ class GbmlConfig(google.protobuf.message.Message):
         should_log_to_tensorboard: builtins.bool
         """Weather to log to tensorboard or not (defaults to false)"""
         @property
-        def graph_store_storage_config(self) -> global___GbmlConfig.GraphStoreStorageConfig:
-            """Configuration for GraphStore storage.
-            If setup, then GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config must be set.
-            e.g. With separte job configs for storage and compute jobs.
-            See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
-            """
+        def graph_store_storage_config(self) -> global___GbmlConfig.GraphStoreStorageConfig: ...
         def __init__(
             self,
             *,
@@ -571,9 +568,12 @@ class GbmlConfig(google.protobuf.message.Message):
             should_log_to_tensorboard: builtins.bool = ...,
             graph_store_storage_config: global___GbmlConfig.GraphStoreStorageConfig | None = ...,
         ) -> None: ...
-        def HasField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "should_log_to_tensorboard", b"should_log_to_tensorboard", "trainer_args", b"trainer_args", "trainer_cls_path", b"trainer_cls_path"]) -> None: ...
+        def HasField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "storage_config", b"storage_config"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "should_log_to_tensorboard", b"should_log_to_tensorboard", "storage_config", b"storage_config", "trainer_args", b"trainer_args", "trainer_cls_path", b"trainer_cls_path"]) -> None: ...
+        @typing.overload
         def WhichOneof(self, oneof_group: typing_extensions.Literal["executable", b"executable"]) -> typing_extensions.Literal["cls_path", "command"] | None: ...
+        @typing.overload
+        def WhichOneof(self, oneof_group: typing_extensions.Literal["storage_config", b"storage_config"]) -> typing_extensions.Literal["graph_store_storage_config"] | None: ...
 
     class InferencerConfig(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
@@ -614,12 +614,7 @@ class GbmlConfig(google.protobuf.message.Message):
         Defaults to setting in gigl/src/inference/gnn_inferencer.py
         """
         @property
-        def graph_store_storage_config(self) -> global___GbmlConfig.GraphStoreStorageConfig:
-            """Configuration for GraphStore storage.
-            If setup, then GiGLResourceConfig.inferencer_resource_config.vertex_ai_graph_store_inferencer_config must be set.
-            e.g. With separte job configs for storage and compute jobs.
-            See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
-            """
+        def graph_store_storage_config(self) -> global___GbmlConfig.GraphStoreStorageConfig: ...
         def __init__(
             self,
             *,
@@ -630,9 +625,12 @@ class GbmlConfig(google.protobuf.message.Message):
             inference_batch_size: builtins.int = ...,
             graph_store_storage_config: global___GbmlConfig.GraphStoreStorageConfig | None = ...,
         ) -> None: ...
-        def HasField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "inference_batch_size", b"inference_batch_size", "inferencer_args", b"inferencer_args", "inferencer_cls_path", b"inferencer_cls_path"]) -> None: ...
+        def HasField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "storage_config", b"storage_config"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "inference_batch_size", b"inference_batch_size", "inferencer_args", b"inferencer_args", "inferencer_cls_path", b"inferencer_cls_path", "storage_config", b"storage_config"]) -> None: ...
+        @typing.overload
         def WhichOneof(self, oneof_group: typing_extensions.Literal["executable", b"executable"]) -> typing_extensions.Literal["cls_path", "command"] | None: ...
+        @typing.overload
+        def WhichOneof(self, oneof_group: typing_extensions.Literal["storage_config", b"storage_config"]) -> typing_extensions.Literal["graph_store_storage_config"] | None: ...
 
     class PostProcessorConfig(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
