@@ -5,29 +5,26 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store import storage_utils
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.env.distributed import GraphStoreInfo
-from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
-from gigl.types.graph import (
-    FeatureInfo,
-    FeaturePartitionData,
-    GraphPartitionData,
-    PartitionOutput,
+from gigl.types.graph import FeatureInfo
+from tests.test_assets.distributed.test_dataset import (
+    DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+    STORY,
+    STORY_TO_USER,
+    USER,
+    USER_TO_STORY,
+    create_heterogeneous_dataset,
+    create_heterogeneous_dataset_with_labels,
+    create_homogeneous_dataset,
 )
 from tests.test_assets.distributed.utils import (
     MockGraphStoreInfo,
     assert_tensor_equality,
+    create_test_process_group,
     get_process_group_init_method,
 )
-
-_USER = NodeType("user")
-_STORY = NodeType("story")
-_USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
-_STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
-
-# TODO(kmonte): Add tests for get_node_ids with a split.
 
 
 def _mock_request_server(server_rank, func, *args, **kwargs):
@@ -65,70 +62,10 @@ def _create_mock_graph_store_info(
     return MockGraphStoreInfo(real_info, compute_node_rank)
 
 
-# TODO(kmonte): Move this to shared util.
-def _create_homogeneous_dataset() -> DistDataset:
-    """Helper method to create a homogeneous test dataset."""
-    partition_output = PartitionOutput(
-        node_partition_book=torch.zeros(10, dtype=torch.int64),
-        edge_partition_book=torch.zeros(10, dtype=torch.int64),
-        partitioned_edge_index=GraphPartitionData(
-            edge_index=torch.tensor(
-                [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]]
-            ),
-            edge_ids=None,
-        ),
-        partitioned_node_features=FeaturePartitionData(
-            feats=torch.zeros(10, 3), ids=torch.arange(10)
-        ),
-        partitioned_edge_features=None,
-        partitioned_positive_labels=None,
-        partitioned_negative_labels=None,
-        partitioned_node_labels=None,
-    )
-    dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
-    dataset.build(partition_output=partition_output)
-    return dataset
-
-
-def _create_heterogeneous_dataset() -> DistDataset:
-    """Helper method to create a heterogeneous test dataset."""
-    partition_output = PartitionOutput(
-        node_partition_book={
-            _USER: torch.zeros(5, dtype=torch.int64),
-            _STORY: torch.zeros(5, dtype=torch.int64),
-        },
-        edge_partition_book={
-            _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
-            _STORY_TO_USER: torch.zeros(5, dtype=torch.int64),
-        },
-        partitioned_edge_index={
-            _USER_TO_STORY: GraphPartitionData(
-                edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
-                edge_ids=None,
-            ),
-            _STORY_TO_USER: GraphPartitionData(
-                edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
-                edge_ids=None,
-            ),
-        },
-        partitioned_node_features={
-            _USER: FeaturePartitionData(feats=torch.zeros(5, 2), ids=torch.arange(5)),
-            _STORY: FeaturePartitionData(feats=torch.zeros(5, 2), ids=torch.arange(5)),
-        },
-        partitioned_edge_features=None,
-        partitioned_positive_labels=None,
-        partitioned_negative_labels=None,
-        partitioned_node_labels=None,
-    )
-    dataset = DistDataset(rank=0, world_size=1, edge_dir="in")
-    dataset.build(partition_output=partition_output)
-    return dataset
-
-
 class TestRemoteDistDataset(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
-        storage_utils.register_dataset(_create_homogeneous_dataset())
+        storage_utils.register_dataset(create_homogeneous_dataset())
 
     def tearDown(self) -> None:
         storage_utils._dataset = None
@@ -189,14 +126,14 @@ class TestRemoteDistDataset(unittest.TestCase):
     )
     def test_get_edge_types_heterogeneous(self, mock_request):
         storage_utils._dataset = None
-        storage_utils.register_dataset(_create_heterogeneous_dataset())
+        storage_utils.register_dataset(create_heterogeneous_dataset())
 
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
         result = remote_dataset.get_edge_types()
 
-        self.assertEqual(result, [_USER_TO_STORY, _STORY_TO_USER])
+        self.assertEqual(result, [USER_TO_STORY, STORY_TO_USER])
 
     def test_init_rejects_non_dict_proxy_for_mp_sharing_dict(self):
         cluster_info = _create_mock_graph_store_info()
@@ -252,7 +189,7 @@ class TestRemoteDistDataset(unittest.TestCase):
 class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
-        storage_utils.register_dataset(_create_heterogeneous_dataset())
+        storage_utils.register_dataset(create_heterogeneous_dataset())
 
     def tearDown(self) -> None:
         storage_utils._dataset = None
@@ -270,8 +207,8 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
         result = remote_dataset.get_node_feature_info()
 
         expected = {
-            _USER: FeatureInfo(dim=2, dtype=torch.float32),
-            _STORY: FeatureInfo(dim=2, dtype=torch.float32),
+            USER: FeatureInfo(dim=2, dtype=torch.float32),
+            STORY: FeatureInfo(dim=2, dtype=torch.float32),
         }
         self.assertEqual(result, expected)
 
@@ -285,7 +222,7 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
 
         result = remote_dataset.get_edge_dir()
 
-        self.assertEqual(result, "in")
+        self.assertEqual(result, "out")
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
@@ -297,11 +234,11 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
         # Get user nodes
-        result = remote_dataset.get_node_ids(node_type=_USER)
+        result = remote_dataset.get_node_ids(node_type=USER)
         assert_tensor_equality(result[0], torch.arange(5))
 
         # Get story nodes
-        result = remote_dataset.get_node_ids(node_type=_STORY)
+        result = remote_dataset.get_node_ids(node_type=STORY)
         assert_tensor_equality(result[0], torch.arange(5))
 
     @patch(
@@ -314,12 +251,141 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
         # Get first half of user nodes
-        result = remote_dataset.get_node_ids(rank=0, world_size=2, node_type=_USER)
+        result = remote_dataset.get_node_ids(rank=0, world_size=2, node_type=USER)
         assert_tensor_equality(result[0], torch.arange(2))
 
         # Get second half of user nodes
-        result = remote_dataset.get_node_ids(rank=1, world_size=2, node_type=_USER)
+        result = remote_dataset.get_node_ids(rank=1, world_size=2, node_type=USER)
         assert_tensor_equality(result[0], torch.arange(2, 5))
+
+
+class TestRemoteDistDatasetWithSplits(unittest.TestCase):
+    """Tests for get_node_ids with train/val/test splits."""
+
+    def setUp(self) -> None:
+        storage_utils._dataset = None
+
+    def tearDown(self) -> None:
+        storage_utils._dataset = None
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+    def _create_and_register_dataset_with_splits(self) -> None:
+        """Create and register a dataset with train/val/test splits."""
+        create_test_process_group()
+
+        positive_labels = {
+            0: [0, 1],
+            1: [1, 2],
+            2: [2, 3],
+            3: [3, 4],
+            4: [4, 0],
+        }
+        negative_labels = {
+            0: [2],
+            1: [3],
+            2: [4],
+            3: [0],
+            4: [1],
+        }
+
+        dataset = create_heterogeneous_dataset_with_labels(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_node_ids=[0, 1, 2],
+            val_node_ids=[3],
+            test_node_ids=[4],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
+        storage_utils.register_dataset(dataset)
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_node_ids_with_train_split(self, mock_async_request):
+        """Test get_node_ids returns only training nodes when split='train'."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        result = remote_dataset.get_node_ids(node_type=USER, split="train")
+
+        # Train split has nodes [0, 1, 2]
+        assert_tensor_equality(result[0], torch.tensor([0, 1, 2]))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_node_ids_with_val_split(self, mock_async_request):
+        """Test get_node_ids returns only validation nodes when split='val'."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        result = remote_dataset.get_node_ids(node_type=USER, split="val")
+
+        # Val split has node [3]
+        assert_tensor_equality(result[0], torch.tensor([3]))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_node_ids_with_test_split(self, mock_async_request):
+        """Test get_node_ids returns only test nodes when split='test'."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        result = remote_dataset.get_node_ids(node_type=USER, split="test")
+
+        # Test split has node [4]
+        assert_tensor_equality(result[0], torch.tensor([4]))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_node_ids_with_split_and_sharding(self, mock_async_request):
+        """Test get_node_ids with split and rank/world_size for sharding."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # Train split has [0, 1, 2], shard across 2 ranks
+        # Rank 0 gets first half: [0]
+        result_rank_0 = remote_dataset.get_node_ids(
+            rank=0, world_size=2, node_type=USER, split="train"
+        )
+        assert_tensor_equality(result_rank_0[0], torch.tensor([0]))
+
+        # Rank 1 gets second half: [1, 2]
+        result_rank_1 = remote_dataset.get_node_ids(
+            rank=1, world_size=2, node_type=USER, split="train"
+        )
+        assert_tensor_equality(result_rank_1[0], torch.tensor([1, 2]))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_node_ids_without_split_returns_all_nodes(self, mock_async_request):
+        """Test get_node_ids without split returns all nodes."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        result = remote_dataset.get_node_ids(node_type=USER, split=None)
+
+        # All 5 nodes should be returned
+        assert_tensor_equality(result[0], torch.arange(5))
 
 
 def _test_get_free_ports_on_storage_cluster(
@@ -367,7 +433,7 @@ def _test_get_free_ports_on_storage_cluster(
 class TestGetFreePortsOnStorageCluster(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
-        storage_utils.register_dataset(_create_homogeneous_dataset())
+        storage_utils.register_dataset(create_homogeneous_dataset())
 
     def tearDown(self) -> None:
         storage_utils._dataset = None
