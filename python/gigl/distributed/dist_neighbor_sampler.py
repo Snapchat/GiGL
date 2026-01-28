@@ -235,7 +235,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         alpha: float = 0.15,
         eps: float = 1e-5,
         max_ppr_nodes: int = 50,
-        default_node_id: int = PADDING_NODE,
+        default_node_id: int = -1,
         default_weight: float = 0.0,
         **kwargs,
     ):
@@ -320,7 +320,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             nodes_to_lookup_set: Set[int] = set()
             for i in range(batch_size):
                 for node_id in q[i]:
-                    if node_id not in neighbor_cache and node_id not in nodes_to_lookup_set:
+                    if (
+                        node_id not in neighbor_cache
+                        and node_id not in nodes_to_lookup_set
+                    ):
                         nodes_to_lookup.append(node_id)
                         nodes_to_lookup_set.add(node_id)
 
@@ -405,9 +408,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         for i in range(batch_size):
             # Use heapq.nlargest for O(n log k) instead of O(n log n) full sort
-            top_k = heapq.nlargest(
-                self.max_ppr_nodes, p[i].items(), key=lambda x: x[1]
-            )
+            top_k = heapq.nlargest(self.max_ppr_nodes, p[i].items(), key=lambda x: x[1])
 
             for j, (node_id, weight) in enumerate(top_k):
                 out_neighbor_ids[i, j] = node_id
