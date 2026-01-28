@@ -1,4 +1,4 @@
-"""Built-in GiGL Graph Store Server.
+"""GiGL Example Graph Store Server.
 
 Derived from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/examples/distributed/server_client_mode/sage_supervised_server.py
 
