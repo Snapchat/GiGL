@@ -104,7 +104,8 @@ def _inference_process(
     # In the case of the latter, the keys should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE).
     # For the default example, we make a decision to keep the fanouts for all edge types the same, specifying the `fanout` with a `list[int]`.
     # To see an example of a 'fanout' with different behaviors per edge type, refer to `examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
-    print(f"Rank {local_rank} doing inference for node type {inference_node_type}")
+    inference_node_types = sorted(inference_node_types) # Sort the inference node types to ensure consistent ordering across processes
+    print(f"Rank {local_rank} doing inference for node types {inference_node_types}")
     fanout = inferencer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
 
@@ -161,6 +162,7 @@ def _inference_process(
             bq_table_path=output_bq_table_path,
         )
         input_nodes = dataset.get_node_ids(node_type=inference_node_type)
+        logger.info(f"Rank {local_rank} has {[n.shape for n in input_nodes.values()]} input nodes for node type {inference_node_type}")
         sys.stdout.flush()
         data_loader = gigl.distributed.DistNeighborLoader(
             dataset=dataset,
@@ -176,8 +178,9 @@ def _inference_process(
             # don't compete for memory during initialization, causing OOM
             process_start_gap_seconds=0,
         )
-        print(f"Rank {local_rank} initialized the data loader for node type {inference_node_type}")
+        print(f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} initialized the data loader for node type {inference_node_type}")
         sys.stdout.flush()
+        torch.distributed.barrier()
         # Initialize a LinkPredictionGNN model and load parameters from
         # the saved model.
         model_state_dict = load_state_dict_from_uri(
@@ -258,7 +261,7 @@ def _inference_process(
 
             cumulative_inference_time += time.time() - inference_start_time
 
-            if batch_idx > 0 and batch_idx % log_every_n_batch == 0:
+            if batch_idx == 0 or (batch_idx > 0 and batch_idx % log_every_n_batch == 0):
                 # We don't see logs for graph store mode for whatever reason.
                 # TOOD(#442): Revert this once the GCP issues are resolved.
                 sys.stdout.flush()
