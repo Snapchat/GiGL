@@ -380,9 +380,9 @@ def _run_example_inference(
         for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
     }
 
-    inference_node_types = sorted(
+    inference_node_types = [sorted(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
-    )
+    )[0]]
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
 
