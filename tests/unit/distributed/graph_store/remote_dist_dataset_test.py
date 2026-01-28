@@ -29,6 +29,7 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
 # TODO(kmonte): Add tests for get_node_ids with a split.
 
+
 def _mock_request_server(server_rank, func, *args, **kwargs):
     """Mock request_server that directly calls the function."""
     return func(*args, **kwargs)
@@ -62,6 +63,7 @@ def _create_mock_graph_store_info(
         rpc_wait_port=12349,
     )
     return MockGraphStoreInfo(real_info, compute_node_rank)
+
 
 # TODO(kmonte): Move this to shared util.
 def _create_homogeneous_dataset() -> DistDataset:
