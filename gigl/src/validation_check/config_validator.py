@@ -15,6 +15,10 @@ from gigl.src.validation_check.libs.frozen_config_path_checks import (
     assert_subgraph_sampler_output_exists,
     assert_trained_model_exists,
 )
+from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_checks import (
+    check_inferencer_graph_store_compatibility,
+    check_trainer_graph_store_compatibility,
+)
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
@@ -191,6 +195,79 @@ RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_LIVE_SGS_BACKEND = [
 
 logger = Logger()
 
+# Map of start components to graph store compatibility checks to run
+# Only run trainer checks when starting at or before Trainer
+# Only run inferencer checks when starting at or before Inferencer
+START_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS = {
+    GiGLComponents.ConfigPopulator.value: [
+        check_trainer_graph_store_compatibility,
+        check_inferencer_graph_store_compatibility,
+    ],
+    GiGLComponents.DataPreprocessor.value: [
+        check_trainer_graph_store_compatibility,
+        check_inferencer_graph_store_compatibility,
+    ],
+    GiGLComponents.SubgraphSampler.value: [
+        check_trainer_graph_store_compatibility,
+        check_inferencer_graph_store_compatibility,
+    ],
+    GiGLComponents.SplitGenerator.value: [
+        check_trainer_graph_store_compatibility,
+        check_inferencer_graph_store_compatibility,
+    ],
+    GiGLComponents.Trainer.value: [
+        check_trainer_graph_store_compatibility,
+        check_inferencer_graph_store_compatibility,
+    ],
+    GiGLComponents.Inferencer.value: [
+        check_inferencer_graph_store_compatibility,
+    ],
+    # PostProcessor doesn't need graph store compatibility checks
+}
+
+# Map of (start, stop) component tuples to graph store compatibility checks
+
+STOP_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS_TO_SKIP = {
+    GiGLComponents.Trainer.value: [
+        check_inferencer_graph_store_compatibility,
+    ],
+}
+
+
+def _run_gbml_and_resource_config_compatibility_checks(
+    start_at: str,
+    stop_after: Optional[str],
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper,
+    resource_config_wrapper: GiglResourceConfigWrapper,
+) -> None:
+    """
+    Run compatibility checks between GbmlConfig and GiglResourceConfig.
+
+    These checks verify that graph store mode configurations are consistent
+    across both the template config (GbmlConfig) and resource config (GiglResourceConfig).
+
+    Args:
+        start_at: The component to start at.
+        stop_after: Optional component to stop after.
+        gbml_config_pb_wrapper: The GbmlConfig wrapper (template config).
+        resource_config_wrapper: The GiglResourceConfig wrapper (resource config).
+    """
+    # Get the appropriate compatibility checks based on start/stop components
+    compatibility_checks = set(
+        START_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS.get(start_at, [])
+    )
+    if stop_after in STOP_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS_TO_SKIP:
+        for skipped_check in STOP_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS_TO_SKIP[
+            stop_after
+        ]:
+            compatibility_checks.discard(skipped_check)
+
+    for check in compatibility_checks:
+        check(
+            gbml_config_pb_wrapper=gbml_config_pb_wrapper,
+            resource_config_wrapper=resource_config_wrapper,
+        )
+
 
 def kfp_validation_checks(
     job_name: str,
@@ -260,6 +337,15 @@ def kfp_validation_checks(
             logger.info(
                 f"Skipping resource config check {resource_config_check.__name__} because we are using live subgraph sampling backend."
             )
+
+    # check compatibility between template config and resource config for graph store mode
+    # These checks ensure that if graph store mode is enabled in one config, it's also enabled in the other
+    _run_gbml_and_resource_config_compatibility_checks(
+        start_at=start_at,
+        stop_after=stop_after,
+        gbml_config_pb_wrapper=gbml_config_pb_wrapper,
+        resource_config_wrapper=resource_config_wrapper,
+    )
 
     # check if trained model file exist when skipping training
     if gbml_config_pb.shared_config.should_skip_training == True:
