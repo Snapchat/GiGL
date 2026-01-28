@@ -56,35 +56,62 @@ DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
 
 @dataclass(frozen=True)
 class InferenceProcessArgs:
-    """Arguments for the homogeneous inference process."""
+    """
+    Arguments for the homogeneous inference process.
+
+    Contains all configuration needed to run distributed inference for homogeneous graph neural
+    networks, including distributed context, data configuration, model parameters, and inference
+    configuration.
+
+    Attributes:
+        local_world_size (int): Number of inference processes spawned by each machine.
+        machine_rank (int): Rank of the current machine in the cluster.
+        machine_world_size (int): Total number of machines in the cluster.
+        master_ip_address (str): IP address of the master node for process group initialization.
+        master_default_process_group_port (int): Port for the default process group.
+        dataset (DistDataset): Loaded Distributed Dataset for inference.
+        inference_node_type (NodeType): Node type that embeddings should be generated for.
+        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        hid_dim (int): Hidden dimension of the model.
+        out_dim (int): Output dimension of the model.
+        node_feature_dim (int): Input node feature dimension for the model.
+        edge_feature_dim (int): Input edge feature dimension for the model.
+        embedding_gcs_path (GcsUri): GCS path to write embeddings to.
+        inference_batch_size (int): Batch size to use for inference.
+        num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling,
+            where the ith item corresponds to the number of items to sample for the ith hop.
+        sampling_workers_per_inference_process (int): Number of sampling workers per inference
+            process.
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for
+            the channel during sampling (e.g., "4GB").
+        log_every_n_batch (int): Frequency to log batch information during inference.
+    """
 
     # Distributed context
-    local_world_size: int  # Number of inference processes spawned by each machine
-    machine_rank: int  # Rank of the current machine in the cluster
-    machine_world_size: int  # Total number of machines in the cluster
-    master_ip_address: str  # IP address of the master node for process group initialization
-    master_default_process_group_port: int  # Port for the default process group
+    local_world_size: int
+    machine_rank: int
+    machine_world_size: int
+    master_ip_address: str
+    master_default_process_group_port: int
 
     # Data
-    dataset: DistDataset  # Loaded Distributed Dataset for inference
-    inference_node_type: NodeType  # Node type that embeddings should be generated for
+    dataset: DistDataset
+    inference_node_type: NodeType
 
     # Model
-    model_state_dict_uri: Uri  # URI to load the trained model state dict from
-    hid_dim: int  # Hidden dimension of the model
-    out_dim: int  # Output dimension of the model
-    node_feature_dim: int  # Input node feature dimension for the model
-    edge_feature_dim: int  # Input edge feature dimension for the model
+    model_state_dict_uri: Uri
+    hid_dim: int
+    out_dim: int
+    node_feature_dim: int
+    edge_feature_dim: int
 
     # Inference config
-    embedding_gcs_path: GcsUri  # GCS path to write embeddings to
-    inference_batch_size: int  # Batch size to use for inference
-    num_neighbors: Union[
-        list[int], dict[EdgeType, list[int]]
-    ]  # Fanout for subgraph sampling
-    sampling_workers_per_inference_process: int  # Number of sampling workers per inference process
-    sampling_worker_shared_channel_size: str  # Shared-memory buffer size for sampling channel (e.g., "4GB")
-    log_every_n_batch: int  # Frequency to log batch information during inference
+    embedding_gcs_path: GcsUri
+    inference_batch_size: int
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
+    sampling_workers_per_inference_process: int
+    sampling_worker_shared_channel_size: str
+    log_every_n_batch: int
 
 
 @torch.no_grad()

@@ -120,35 +120,60 @@ DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
 
 @dataclass(frozen=True)
 class InferenceProcessArgs:
-    """Arguments for the inference process spawned by mp.spawn."""
+    """
+    Arguments for the homogeneous inference process in graph store mode.
+
+    Contains all configuration needed to run distributed inference for homogeneous graph neural
+    networks using the graph store architecture, where storage and compute are separated into
+    distinct clusters.
+
+    Attributes:
+        local_world_size (int): Number of inference processes spawned by each machine.
+        cluster_info (GraphStoreInfo): Cluster topology info for graph store mode, containing
+            information about storage and compute node ranks and addresses.
+        embedding_gcs_path (GcsUri): GCS path to write embeddings to.
+        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        hid_dim (int): Hidden dimension of the model.
+        out_dim (int): Output dimension of the model.
+        node_feature_dim (int): Input node feature dimension for the model.
+        edge_feature_dim (int): Input edge feature dimension for the model.
+        inference_batch_size (int): Batch size to use for inference.
+        num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling,
+            where the ith item corresponds to the number of items to sample for the ith hop.
+        sampling_workers_per_inference_process (int): Number of sampling workers per inference
+            process.
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for
+            the channel during sampling (e.g., "4GB").
+        log_every_n_batch (int): Frequency to log batch information during inference.
+        inference_node_type (NodeType): Node type that embeddings should be generated for.
+        gbml_config_pb_wrapper (GbmlConfigPbWrapper): Wrapper containing GBML configuration.
+        mp_sharing_dict (MutableMapping[str, torch.Tensor]): Shared dictionary for efficient tensor
+            sharing between local processes.
+    """
 
     # Distributed context
-    local_world_size: int  # Number of inference processes spawned by each machine
-    cluster_info: GraphStoreInfo  # Cluster topology info for graph store mode
+    local_world_size: int
+    cluster_info: GraphStoreInfo
 
     # Data paths
-    embedding_gcs_path: GcsUri  # GCS path to write embeddings to
-    model_state_dict_uri: Uri  # URI to load the trained model state dict from
+    embedding_gcs_path: GcsUri
+    model_state_dict_uri: Uri
 
     # Model configuration
-    hid_dim: int  # Hidden dimension of the model
-    out_dim: int  # Output dimension of the model
-    node_feature_dim: int  # Input node feature dimension for the model
-    edge_feature_dim: int  # Input edge feature dimension for the model
+    hid_dim: int
+    out_dim: int
+    node_feature_dim: int
+    edge_feature_dim: int
 
     # Inference configuration
-    inference_batch_size: int  # Batch size to use for inference
-    num_neighbors: Union[
-        list[int], dict[EdgeType, list[int]]
-    ]  # Fanout for subgraph sampling
-    sampling_workers_per_inference_process: int  # Number of sampling workers per inference process
-    sampling_worker_shared_channel_size: str  # Shared-memory buffer size for sampling channel (e.g., "4GB")
-    log_every_n_batch: int  # Frequency to log batch information during inference
-    inference_node_type: NodeType  # Node type that embeddings should be generated for
-    gbml_config_pb_wrapper: GbmlConfigPbWrapper  # Wrapper containing GBML configuration
-    mp_sharing_dict: MutableMapping[
-        str, torch.Tensor
-    ]  # Shared dict for tensor sharing between local processes
+    inference_batch_size: int
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
+    sampling_workers_per_inference_process: int
+    sampling_worker_shared_channel_size: str
+    log_every_n_batch: int
+    inference_node_type: NodeType
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper
+    mp_sharing_dict: MutableMapping[str, torch.Tensor]
 
 
 @torch.no_grad()
