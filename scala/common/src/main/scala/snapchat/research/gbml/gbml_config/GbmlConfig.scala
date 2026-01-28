@@ -3660,6 +3660,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     * @param command
     *   Command to use for launching storage job.
     *   e.g. "python -m gigl.distributed.graph_store.storage_main".
+    *   Required.
     * @param storageArgs
     *   Arguments to instantiate concrete BaseStorage instance with.
     *   Will be appended to the storage_command.
@@ -3965,11 +3966,6 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     *   Arguments to parameterize training process with.
     * @param shouldLogToTensorboard
     *   Weather to log to tensorboard or not (defaults to false)
-    * @param graphStoreStorageConfig
-    *   Configuration for GraphStore storage.
-    *   If setup, then GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config must be set.
-    *   e.g. With separte job configs for storage and compute jobs.
-    *   See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
     */
   @SerialVersionUID(0L)
   final case class TrainerConfig(
@@ -3977,7 +3973,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       trainerArgs: _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String] = _root_.scala.collection.immutable.Map.empty,
       executable: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty,
       shouldLogToTensorboard: _root_.scala.Boolean = false,
-      graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = _root_.scala.None,
+      storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty,
       unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
       ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[TrainerConfig] {
       @transient
@@ -4010,8 +4006,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(12, __value)
           }
         };
-        if (graphStoreStorageConfig.isDefined) {
-          val __value = graphStoreStorageConfig.get
+        if (storageConfig.graphStoreStorageConfig.isDefined) {
+          val __value = storageConfig.graphStoreStorageConfig.get
           __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
         };
         __size += unknownFields.serializedSize
@@ -4045,7 +4041,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             _output__.writeBool(12, __v)
           }
         };
-        graphStoreStorageConfig.foreach { __v =>
+        storageConfig.graphStoreStorageConfig.foreach { __v =>
           val __m = __v
           _output__.writeTag(13, 2)
           _output__.writeUInt32NoTag(__m.serializedSize)
@@ -4071,11 +4067,12 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def getCommand: _root_.scala.Predef.String = executable.command.getOrElse("")
       def withCommand(__v: _root_.scala.Predef.String): TrainerConfig = copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Command(__v))
       def withShouldLogToTensorboard(__v: _root_.scala.Boolean): TrainerConfig = copy(shouldLogToTensorboard = __v)
-      def getGraphStoreStorageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig = graphStoreStorageConfig.getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.defaultInstance)
-      def clearGraphStoreStorageConfig: TrainerConfig = copy(graphStoreStorageConfig = _root_.scala.None)
-      def withGraphStoreStorageConfig(__v: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig): TrainerConfig = copy(graphStoreStorageConfig = Option(__v))
+      def getGraphStoreStorageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig = storageConfig.graphStoreStorageConfig.getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.defaultInstance)
+      def withGraphStoreStorageConfig(__v: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig): TrainerConfig = copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.GraphStoreStorageConfig(__v))
       def clearExecutable: TrainerConfig = copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty)
       def withExecutable(__v: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable): TrainerConfig = copy(executable = __v)
+      def clearStorageConfig: TrainerConfig = copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty)
+      def withStorageConfig(__v: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig): TrainerConfig = copy(storageConfig = __v)
       def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
       def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
       def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -4091,7 +4088,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             val __t = shouldLogToTensorboard
             if (__t != false) __t else null
           }
-          case 13 => graphStoreStorageConfig.orNull
+          case 13 => storageConfig.graphStoreStorageConfig.orNull
         }
       }
       def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -4102,7 +4099,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           case 100 => executable.clsPath.map(_root_.scalapb.descriptors.PString(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 101 => executable.command.map(_root_.scalapb.descriptors.PString(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 12 => _root_.scalapb.descriptors.PBoolean(shouldLogToTensorboard)
-          case 13 => graphStoreStorageConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
+          case 13 => storageConfig.graphStoreStorageConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
         }
       }
       def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -4116,8 +4113,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       var __trainerClsPath: _root_.scala.Predef.String = ""
       val __trainerArgs: _root_.scala.collection.mutable.Builder[(_root_.scala.Predef.String, _root_.scala.Predef.String), _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = _root_.scala.collection.immutable.Map.newBuilder[_root_.scala.Predef.String, _root_.scala.Predef.String]
       var __shouldLogToTensorboard: _root_.scala.Boolean = false
-      var __graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = _root_.scala.None
       var __executable: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty
+      var __storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty
       var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
       var _done__ = false
       while (!_done__) {
@@ -4135,7 +4132,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           case 96 =>
             __shouldLogToTensorboard = _input__.readBool()
           case 106 =>
-            __graphStoreStorageConfig = Option(__graphStoreStorageConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
+            __storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.GraphStoreStorageConfig(__storageConfig.graphStoreStorageConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
           case tag =>
             if (_unknownFields__ == null) {
               _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -4147,8 +4144,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           trainerClsPath = __trainerClsPath,
           trainerArgs = __trainerArgs.result(),
           shouldLogToTensorboard = __shouldLogToTensorboard,
-          graphStoreStorageConfig = __graphStoreStorageConfig,
           executable = __executable,
+          storageConfig = __storageConfig,
           unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
       )
     }
@@ -4159,10 +4156,11 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           trainerClsPath = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
           trainerArgs = __fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).map(_.as[_root_.scala.Seq[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry]]).getOrElse(_root_.scala.Seq.empty).iterator.map(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig._typemapper_trainerArgs.toCustom(_)).toMap,
           shouldLogToTensorboard = __fieldsMap.get(scalaDescriptor.findFieldByNumber(12).get).map(_.as[_root_.scala.Boolean]).getOrElse(false),
-          graphStoreStorageConfig = __fieldsMap.get(scalaDescriptor.findFieldByNumber(13).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]]),
           executable = __fieldsMap.get(scalaDescriptor.findFieldByNumber(100).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Predef.String]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.ClsPath(_))
               .orElse[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable](__fieldsMap.get(scalaDescriptor.findFieldByNumber(101).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Predef.String]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Command(_)))
-              .getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty)
+              .getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty),
+          storageConfig = __fieldsMap.get(scalaDescriptor.findFieldByNumber(13).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.GraphStoreStorageConfig(_))
+              .getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty)
         )
       case _ => throw new RuntimeException("Expected PMessage")
     }
@@ -4185,8 +4183,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       trainerClsPath = "",
       trainerArgs = _root_.scala.collection.immutable.Map.empty,
       shouldLogToTensorboard = false,
-      graphStoreStorageConfig = _root_.scala.None,
-      executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty
+      executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty,
+      storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty
     )
     sealed trait Executable extends _root_.scalapb.GeneratedOneof {
       def isEmpty: _root_.scala.Boolean = false
@@ -4219,6 +4217,30 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         override def isCommand: _root_.scala.Boolean = true
         override def command: _root_.scala.Option[_root_.scala.Predef.String] = Some(value)
         override def number: _root_.scala.Int = 101
+      }
+    }
+    sealed trait StorageConfig extends _root_.scalapb.GeneratedOneof {
+      def isEmpty: _root_.scala.Boolean = false
+      def isDefined: _root_.scala.Boolean = true
+      def isGraphStoreStorageConfig: _root_.scala.Boolean = false
+      def graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = _root_.scala.None
+    }
+    object StorageConfig {
+      @SerialVersionUID(0L)
+      case object Empty extends snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig {
+        type ValueType = _root_.scala.Nothing
+        override def isEmpty: _root_.scala.Boolean = true
+        override def isDefined: _root_.scala.Boolean = false
+        override def number: _root_.scala.Int = 0
+        override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
+      }
+
+      @SerialVersionUID(0L)
+      final case class GraphStoreStorageConfig(value: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig) extends snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig {
+        type ValueType = snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig
+        override def isGraphStoreStorageConfig: _root_.scala.Boolean = true
+        override def graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = Some(value)
+        override def number: _root_.scala.Int = 13
       }
     }
     @SerialVersionUID(0L)
@@ -4371,9 +4393,9 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def clsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.getClsPath)((c_, f_) => c_.copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.ClsPath(f_)))
       def command: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.getCommand)((c_, f_) => c_.copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Command(f_)))
       def shouldLogToTensorboard: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Boolean] = field(_.shouldLogToTensorboard)((c_, f_) => c_.copy(shouldLogToTensorboard = f_))
-      def graphStoreStorageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = field(_.getGraphStoreStorageConfig)((c_, f_) => c_.copy(graphStoreStorageConfig = Option(f_)))
-      def optionalGraphStoreStorageConfig: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]] = field(_.graphStoreStorageConfig)((c_, f_) => c_.copy(graphStoreStorageConfig = f_))
+      def graphStoreStorageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = field(_.getGraphStoreStorageConfig)((c_, f_) => c_.copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.GraphStoreStorageConfig(f_)))
       def executable: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable] = field(_.executable)((c_, f_) => c_.copy(executable = f_))
+      def storageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig] = field(_.storageConfig)((c_, f_) => c_.copy(storageConfig = f_))
     }
     final val TRAINER_CLS_PATH_FIELD_NUMBER = 1
     final val TRAINER_ARGS_FIELD_NUMBER = 2
@@ -4388,13 +4410,13 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       trainerArgs: _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String],
       executable: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable,
       shouldLogToTensorboard: _root_.scala.Boolean,
-      graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]
+      storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig
     ): _root_.snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig = _root_.snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig(
       trainerClsPath,
       trainerArgs,
       executable,
       shouldLogToTensorboard,
-      graphStoreStorageConfig
+      storageConfig
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TrainerConfig])
   }
@@ -4405,11 +4427,6 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     * @param inferenceBatchSize
     *   Optional. If set, will be used to batch inference samples to a specific size before call for inference is made
     *   Defaults to setting in gigl/src/inference/gnn_inferencer.py
-    * @param graphStoreStorageConfig
-    *   Configuration for GraphStore storage.
-    *   If setup, then GiGLResourceConfig.inferencer_resource_config.vertex_ai_graph_store_inferencer_config must be set.
-    *   e.g. With separte job configs for storage and compute jobs.
-    *   See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
     */
   @SerialVersionUID(0L)
   final case class InferencerConfig(
@@ -4417,7 +4434,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       inferencerClsPath: _root_.scala.Predef.String = "",
       executable: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Empty,
       inferenceBatchSize: _root_.scala.Int = 0,
-      graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = _root_.scala.None,
+      storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.Empty,
       unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
       ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[InferencerConfig] {
       @transient
@@ -4450,8 +4467,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(5, __value)
           }
         };
-        if (graphStoreStorageConfig.isDefined) {
-          val __value = graphStoreStorageConfig.get
+        if (storageConfig.graphStoreStorageConfig.isDefined) {
+          val __value = storageConfig.graphStoreStorageConfig.get
           __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
         };
         __size += unknownFields.serializedSize
@@ -4485,7 +4502,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             _output__.writeUInt32(5, __v)
           }
         };
-        graphStoreStorageConfig.foreach { __v =>
+        storageConfig.graphStoreStorageConfig.foreach { __v =>
           val __m = __v
           _output__.writeTag(6, 2)
           _output__.writeUInt32NoTag(__m.serializedSize)
@@ -4511,11 +4528,12 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def getCommand: _root_.scala.Predef.String = executable.command.getOrElse("")
       def withCommand(__v: _root_.scala.Predef.String): InferencerConfig = copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Command(__v))
       def withInferenceBatchSize(__v: _root_.scala.Int): InferencerConfig = copy(inferenceBatchSize = __v)
-      def getGraphStoreStorageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig = graphStoreStorageConfig.getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.defaultInstance)
-      def clearGraphStoreStorageConfig: InferencerConfig = copy(graphStoreStorageConfig = _root_.scala.None)
-      def withGraphStoreStorageConfig(__v: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig): InferencerConfig = copy(graphStoreStorageConfig = Option(__v))
+      def getGraphStoreStorageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig = storageConfig.graphStoreStorageConfig.getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.defaultInstance)
+      def withGraphStoreStorageConfig(__v: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig): InferencerConfig = copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.GraphStoreStorageConfig(__v))
       def clearExecutable: InferencerConfig = copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Empty)
       def withExecutable(__v: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable): InferencerConfig = copy(executable = __v)
+      def clearStorageConfig: InferencerConfig = copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.Empty)
+      def withStorageConfig(__v: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig): InferencerConfig = copy(storageConfig = __v)
       def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
       def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
       def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -4531,7 +4549,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             val __t = inferenceBatchSize
             if (__t != 0) __t else null
           }
-          case 6 => graphStoreStorageConfig.orNull
+          case 6 => storageConfig.graphStoreStorageConfig.orNull
         }
       }
       def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -4542,7 +4560,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           case 100 => executable.clsPath.map(_root_.scalapb.descriptors.PString(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 101 => executable.command.map(_root_.scalapb.descriptors.PString(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 5 => _root_.scalapb.descriptors.PInt(inferenceBatchSize)
-          case 6 => graphStoreStorageConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
+          case 6 => storageConfig.graphStoreStorageConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
         }
       }
       def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -4556,8 +4574,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       val __inferencerArgs: _root_.scala.collection.mutable.Builder[(_root_.scala.Predef.String, _root_.scala.Predef.String), _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = _root_.scala.collection.immutable.Map.newBuilder[_root_.scala.Predef.String, _root_.scala.Predef.String]
       var __inferencerClsPath: _root_.scala.Predef.String = ""
       var __inferenceBatchSize: _root_.scala.Int = 0
-      var __graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = _root_.scala.None
       var __executable: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Empty
+      var __storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.Empty
       var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
       var _done__ = false
       while (!_done__) {
@@ -4575,7 +4593,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           case 40 =>
             __inferenceBatchSize = _input__.readUInt32()
           case 50 =>
-            __graphStoreStorageConfig = Option(__graphStoreStorageConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
+            __storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.GraphStoreStorageConfig(__storageConfig.graphStoreStorageConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
           case tag =>
             if (_unknownFields__ == null) {
               _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -4587,8 +4605,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           inferencerArgs = __inferencerArgs.result(),
           inferencerClsPath = __inferencerClsPath,
           inferenceBatchSize = __inferenceBatchSize,
-          graphStoreStorageConfig = __graphStoreStorageConfig,
           executable = __executable,
+          storageConfig = __storageConfig,
           unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
       )
     }
@@ -4599,10 +4617,11 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           inferencerArgs = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).map(_.as[_root_.scala.Seq[snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.InferencerArgsEntry]]).getOrElse(_root_.scala.Seq.empty).iterator.map(snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig._typemapper_inferencerArgs.toCustom(_)).toMap,
           inferencerClsPath = __fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
           inferenceBatchSize = __fieldsMap.get(scalaDescriptor.findFieldByNumber(5).get).map(_.as[_root_.scala.Int]).getOrElse(0),
-          graphStoreStorageConfig = __fieldsMap.get(scalaDescriptor.findFieldByNumber(6).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]]),
           executable = __fieldsMap.get(scalaDescriptor.findFieldByNumber(100).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Predef.String]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.ClsPath(_))
               .orElse[snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable](__fieldsMap.get(scalaDescriptor.findFieldByNumber(101).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Predef.String]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Command(_)))
-              .getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Empty)
+              .getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Empty),
+          storageConfig = __fieldsMap.get(scalaDescriptor.findFieldByNumber(6).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.GraphStoreStorageConfig(_))
+              .getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.Empty)
         )
       case _ => throw new RuntimeException("Expected PMessage")
     }
@@ -4625,8 +4644,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       inferencerArgs = _root_.scala.collection.immutable.Map.empty,
       inferencerClsPath = "",
       inferenceBatchSize = 0,
-      graphStoreStorageConfig = _root_.scala.None,
-      executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Empty
+      executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Empty,
+      storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.Empty
     )
     sealed trait Executable extends _root_.scalapb.GeneratedOneof {
       def isEmpty: _root_.scala.Boolean = false
@@ -4659,6 +4678,30 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
         override def isCommand: _root_.scala.Boolean = true
         override def command: _root_.scala.Option[_root_.scala.Predef.String] = Some(value)
         override def number: _root_.scala.Int = 101
+      }
+    }
+    sealed trait StorageConfig extends _root_.scalapb.GeneratedOneof {
+      def isEmpty: _root_.scala.Boolean = false
+      def isDefined: _root_.scala.Boolean = true
+      def isGraphStoreStorageConfig: _root_.scala.Boolean = false
+      def graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = _root_.scala.None
+    }
+    object StorageConfig {
+      @SerialVersionUID(0L)
+      case object Empty extends snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig {
+        type ValueType = _root_.scala.Nothing
+        override def isEmpty: _root_.scala.Boolean = true
+        override def isDefined: _root_.scala.Boolean = false
+        override def number: _root_.scala.Int = 0
+        override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
+      }
+
+      @SerialVersionUID(0L)
+      final case class GraphStoreStorageConfig(value: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig) extends snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig {
+        type ValueType = snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig
+        override def isGraphStoreStorageConfig: _root_.scala.Boolean = true
+        override def graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = Some(value)
+        override def number: _root_.scala.Int = 6
       }
     }
     @SerialVersionUID(0L)
@@ -4811,9 +4854,9 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def clsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.getClsPath)((c_, f_) => c_.copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.ClsPath(f_)))
       def command: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.getCommand)((c_, f_) => c_.copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable.Command(f_)))
       def inferenceBatchSize: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.inferenceBatchSize)((c_, f_) => c_.copy(inferenceBatchSize = f_))
-      def graphStoreStorageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = field(_.getGraphStoreStorageConfig)((c_, f_) => c_.copy(graphStoreStorageConfig = Option(f_)))
-      def optionalGraphStoreStorageConfig: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]] = field(_.graphStoreStorageConfig)((c_, f_) => c_.copy(graphStoreStorageConfig = f_))
+      def graphStoreStorageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = field(_.getGraphStoreStorageConfig)((c_, f_) => c_.copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig.GraphStoreStorageConfig(f_)))
       def executable: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable] = field(_.executable)((c_, f_) => c_.copy(executable = f_))
+      def storageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig] = field(_.storageConfig)((c_, f_) => c_.copy(storageConfig = f_))
     }
     final val INFERENCER_ARGS_FIELD_NUMBER = 1
     final val INFERENCER_CLS_PATH_FIELD_NUMBER = 2
@@ -4828,13 +4871,13 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       inferencerClsPath: _root_.scala.Predef.String,
       executable: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.Executable,
       inferenceBatchSize: _root_.scala.Int,
-      graphStoreStorageConfig: _root_.scala.Option[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig]
+      storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig.StorageConfig
     ): _root_.snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig = _root_.snapchat.research.gbml.gbml_config.GbmlConfig.InferencerConfig(
       inferencerArgs,
       inferencerClsPath,
       executable,
       inferenceBatchSize,
-      graphStoreStorageConfig
+      storageConfig
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.InferencerConfig])
   }

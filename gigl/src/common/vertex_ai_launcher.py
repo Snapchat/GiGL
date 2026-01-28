@@ -96,8 +96,10 @@ def launch_graph_store_enabled_job(
     job_name: str,
     task_config_uri: Uri,
     resource_config_uri: Uri,
-    process_command: str,
-    process_runtime_args: Mapping[str, str],
+    compute_commmand: str,
+    compute_runtime_args: Mapping[str, str],
+    storage_command: str,
+    storage_args: Mapping[str, str],
     resource_config_wrapper: GiglResourceConfigWrapper,
     cpu_docker_uri: Optional[str],
     cuda_docker_uri: Optional[str],
@@ -110,8 +112,10 @@ def launch_graph_store_enabled_job(
         job_name: Full name for the Vertex AI job
         task_config_uri: URI to the task configuration
         resource_config_uri: URI to the resource configuration
-        process_command: Command to run in the compute container
-        process_runtime_args: Runtime arguments for the process
+        compute_commmand: Command to run in the compute container
+        compute_runtime_args: Runtime arguments for the compute process
+        storage_command: Command to run in the storage container
+        storage_args: Arguments to pass to the storage command
         resource_config_wrapper: Wrapper for the resource configuration
         cpu_docker_uri: Docker image URI for CPU execution
         cuda_docker_uri: Docker image URI for GPU execution
@@ -132,7 +136,7 @@ def launch_graph_store_enabled_job(
     cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
     container_uri = cpu_docker_uri if is_cpu_execution else cuda_docker_uri
 
-    logger.info(f"Running {component.value} with command: {process_command}")
+    logger.info(f"Running {component.value} with command: {compute_commmand}")
 
     num_compute_processes = (
         vertex_ai_graph_store_config.compute_cluster_local_world_size
@@ -159,8 +163,8 @@ def launch_graph_store_enabled_job(
         job_name=job_name,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
-        command_str=process_command,
-        args=process_runtime_args,
+        command_str=compute_commmand,
+        args=compute_runtime_args,
         use_cuda=is_cpu_execution,
         container_uri=container_uri,
         vertex_ai_resource_config=compute_pool_config,
@@ -173,8 +177,8 @@ def launch_graph_store_enabled_job(
         job_name=job_name,
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
-        command_str=f"python -m gigl.distributed.graph_store.storage_main",
-        args={},  # No extra args for storage pool
+        command_str=storage_command,
+        args=storage_args,
         use_cuda=is_cpu_execution,
         container_uri=container_uri,
         vertex_ai_resource_config=storage_pool_config,
@@ -272,9 +276,6 @@ def _build_job_config(
         )
         if vertex_ai_resource_config.scheduling_strategy
         else None,
-        boot_disk_size_gb=vertex_ai_resource_config.boot_disk_size_gb
-        if vertex_ai_resource_config.boot_disk_size_gb
-        else 100,  # Default to 100 GB for backward compatibility
     )
     return job_config
 
