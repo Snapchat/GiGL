@@ -34,7 +34,7 @@ extensions = [
 ]
 
 autoapi_type = 'python'
-autoapi_dirs = ['python']
+autoapi_dirs = ['gigl', 'snapchat']
 autoapi_root = "docs/api"
 autoapi_ignore = [
     "*migrations*", # Default value: https://sphinx-autoapi.readthedocs.io/en/latest/reference/config.html#confval-autoapi_ignore
