@@ -35,7 +35,7 @@ inferencerConfig:
     # TODO(kmonte): Swap away from is_inference to unpack args, so we can directly use build_dataset.
     # See https://github.com/Snapchat/GiGL/pull/462/changes#r2728929487 for context.
     storageArgs:
-      is_inference: "True"
+      sample_edge_direction: "in"
 sharedConfig:
   shouldSkipInference: false
   # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines. This will soon be added for in-mem SGS GiGL pipelines.
