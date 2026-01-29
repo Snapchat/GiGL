@@ -12,7 +12,7 @@ from gigl.distributed.graph_store.storage_utils import (
     get_edge_feature_info,
     get_edge_types,
     get_node_feature_info,
-    get_node_ids_for_rank,
+    get_node_ids,
 )
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
@@ -109,23 +109,26 @@ class RemoteDistDataset:
         )
 
     def _get_node_ids(
-        self, node_type: Optional[NodeType] = None
+        self,
+        rank: Optional[int] = None,
+        world_size: Optional[int] = None,
+        node_type: Optional[NodeType] = None,
+        split: Optional[Literal["train", "val", "test"]] = None,
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         futures: list[torch.futures.Future[torch.Tensor]] = []
-        rank = self.cluster_info.compute_node_rank
-        world_size = self.cluster_info.num_storage_nodes
         logger.info(
-            f"Getting node ids for rank {rank} / {world_size} with node type {node_type}"
+            f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
         )
 
         for server_rank in range(self.cluster_info.num_storage_nodes):
             futures.append(
                 async_request_server(
                     server_rank,
-                    get_node_ids_for_rank,
+                    get_node_ids,
                     rank=rank,
                     world_size=world_size,
+                    split=split,
                     node_type=node_type,
                 )
             )
@@ -134,35 +137,79 @@ class RemoteDistDataset:
 
     def get_node_ids(
         self,
+        rank: Optional[int] = None,
+        world_size: Optional[int] = None,
+        split: Optional[Literal["train", "val", "test"]] = None,
         node_type: Optional[NodeType] = None,
     ) -> dict[int, torch.Tensor]:
         """
         Fetches node ids from the storage nodes for the current compute node (machine).
 
-        The returned list are the node ids for the current compute node, by storage rank.
-
-        For example, if there are two storage ranks, and two compute ranks, and 16 total nodes,
-        In this scenario, the node ids are sharded as follows:
-        Storage rank 0: [0, 1, 2, 3, 4, 5, 6, 7]
-        Storage rank 1: [8, 9, 10, 11, 12, 13, 14, 15]
-
-        NOTE: The GLT sampling enginer expects that all processes on a given compute machine
-        to have the same sampling input (node ids).
-        As such, the input tensors may be duplicated across all processes on a given compute machine.
-        In order to save on cpu memory, pass in `mp_sharing_dict` to the `RemoteDistDataset` constructor.
-
-        Then, for compute rank 0 (node 0, process 0), the returned dict will be:
-            {
-                0: [0, 1, 3, 4], # From storage rank 0
-                1: [8, 9, 10, 11] # From storage rank 1
-            }
+        The returned dict maps storage rank to the node ids stored on that storage node,
+        filtered and sharded according to the provided arguments.
 
         Args:
+            rank (Optional[int]): The rank of the process requesting node ids. Must be provided if world_size is provided.
+            world_size (Optional[int]): The total number of processes in the distributed setup. Must be provided if rank is provided.
+            split (Optional[Literal["train", "val", "test"]]):
+                The split of the dataset to get node ids from.
+                If provided, the dataset must have `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
             node_type (Optional[NodeType]): The type of nodes to get.
-            Must be provided for heterogeneous datasets.
+                Must be provided for heterogeneous datasets.
 
         Returns:
-            dict[int, torch.Tensor]: A dict storage rank to node ids.
+            dict[int, torch.Tensor]: A dict mapping storage rank to node ids.
+
+        Examples:
+            Suppose we have 2 storage nodes and 2 compute nodes, with 16 total nodes.
+            Nodes are partitioned across storage nodes, with splits defined as:
+
+                Storage rank 0: [0, 1, 2, 3, 4, 5, 6, 7]
+                    train=[0, 1, 2, 3], val=[4, 5], test=[6, 7]
+                Storage rank 1: [8, 9, 10, 11, 12, 13, 14, 15]
+                    train=[8, 9, 10, 11], val=[12, 13], test=[14, 15]
+
+            Get all nodes (no split filtering, no sharding):
+
+            >>> dataset.get_node_ids()
+            {
+                0: tensor([0, 1, 2, 3, 4, 5, 6, 7]),      # All 8 nodes from storage rank 0
+                1: tensor([8, 9, 10, 11, 12, 13, 14, 15]) # All 8 nodes from storage rank 1
+            }
+
+            Shard all nodes across 2 compute nodes (compute rank 0 gets first half from each storage):
+
+            >>> dataset.get_node_ids(rank=0, world_size=2)
+            {
+                0: tensor([0, 1, 2, 3]),   # First 4 of all 8 nodes from storage rank 0
+                1: tensor([8, 9, 10, 11])  # First 4 of all 8 nodes from storage rank 1
+            }
+
+            Get only training nodes (no sharding):
+
+            >>> dataset.get_node_ids(split="train")
+            {
+                0: tensor([0, 1, 2, 3]),   # 4 training nodes from storage rank 0
+                1: tensor([8, 9, 10, 11])  # 4 training nodes from storage rank 1
+            }
+
+            Combine split and sharding (training nodes, sharded for compute rank 0):
+
+            >>> dataset.get_node_ids(rank=0, world_size=2, split="train")
+            {
+                0: tensor([0, 1]),  # First 2 of 4 training nodes from storage rank 0
+                1: tensor([8, 9])   # First 2 of 4 training nodes from storage rank 1
+            }
+
+        Note:
+            When `split=None`, all nodes are queryable. This means nodes from any split
+            (train, val, or test) may be returned. This is useful when you need to sample
+            neighbors during inference, as neighbor nodes may belong to any split.
+
+            The GLT sampling engine expects all processes on a given compute machine to have
+            the same sampling input (node ids). As such, the input tensors may be duplicated
+            across all processes on a given compute machine. To save on CPU memory, pass
+            `mp_sharing_dict` to the `RemoteDistDataset` constructor.
         """
 
         def server_key(server_rank: int) -> str:
@@ -174,7 +221,7 @@ class RemoteDistDataset:
                 logger.info(
                     f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
                 )
-                node_ids = self._get_node_ids(node_type)
+                node_ids = self._get_node_ids(rank, world_size, node_type, split)
                 for server_rank, node_id in node_ids.items():
                     node_id.share_memory_()
                     self._mp_sharing_dict[server_key(server_rank)] = node_id
@@ -188,7 +235,7 @@ class RemoteDistDataset:
             }
             return node_ids
         else:
-            return self._get_node_ids(node_type)
+            return self._get_node_ids(rank, world_size, node_type, split)
 
     def get_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
