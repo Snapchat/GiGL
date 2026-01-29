@@ -12,7 +12,7 @@ from tests.test_assets.distributed.test_dataset import (
     USER,
     USER_TO_STORY,
     create_heterogeneous_dataset,
-    create_heterogeneous_dataset_with_labels,
+    create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
 from tests.test_assets.distributed.utils import (
@@ -235,7 +235,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -252,7 +252,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -269,7 +269,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -286,7 +286,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -380,7 +380,7 @@ class TestRemoteDataset(unittest.TestCase):
             "test": [4],
         }
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             train_node_ids=split_to_user_ids["train"],
@@ -433,7 +433,7 @@ class TestRemoteDataset(unittest.TestCase):
         }
         train_user_ids = [0, 1, 2, 3]
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             train_node_ids=train_user_ids,
@@ -501,7 +501,7 @@ class TestRemoteDataset(unittest.TestCase):
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
         negative_labels = {0: [1], 1: [2], 2: [3], 3: [4], 4: [0]}
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             train_node_ids=[0, 1, 2],
@@ -533,7 +533,7 @@ class TestRemoteDataset(unittest.TestCase):
         }
         train_user_ids = [0, 1, 2]
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=None,  # No negative labels
             train_node_ids=train_user_ids,

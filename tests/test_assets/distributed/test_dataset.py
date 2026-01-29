@@ -60,31 +60,26 @@ DEFAULT_HETEROGENEOUS_EDGE_INDICES: Final[dict[EdgeType, torch.Tensor]] = {
     STORY_TO_USER: torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
 }
 
-# =============================================================================
-# Default Feature Dimensions
-# =============================================================================
-
-DEFAULT_HOMOGENEOUS_NODE_FEATURE_DIM: Final[int] = 3
-DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM: Final[int] = 2
-
 
 def create_homogeneous_dataset(
     edge_index: torch.Tensor,
     node_features: Optional[torch.Tensor] = None,
-    node_feature_dim: int = DEFAULT_HOMOGENEOUS_NODE_FEATURE_DIM,
+    edge_features: Optional[torch.Tensor] = None,
+    node_labels: Optional[torch.Tensor] = None,
     rank: int = 0,
     world_size: int = 1,
     edge_dir: Literal["in", "out"] = "out",
 ) -> DistDataset:
     """Create a homogeneous test dataset.
 
-    Creates a single-partition DistDataset with the specified edge index and node features.
+    Creates a single-partition DistDataset with the specified edge index, node features,
+    edge features, and node labels.
 
     Args:
         edge_index: COO format edge index [2, num_edges].
-        node_features: Node feature tensor [num_nodes, feature_dim]. If None, creates zero
-            features with the specified dimension.
-        node_feature_dim: Dimension of node features if node_features is None.
+        node_features: Node feature tensor [num_nodes, feature_dim], or None.
+        edge_features: Edge feature tensor [num_edges, feature_dim], or None.
+        node_labels: Node label tensor [num_nodes, label_dim], or None.
         rank: Rank of the current process. Defaults to 0.
         world_size: Total number of processes. Defaults to 1.
         edge_dir: Edge direction ("in" or "out"). Defaults to "out".
@@ -107,9 +102,24 @@ def create_homogeneous_dataset(
     num_nodes = int(edge_index.max().item() + 1)
     num_edges = int(edge_index.shape[1])
 
-    # Create default features if not provided
-    if node_features is None:
-        node_features = torch.zeros(num_nodes, node_feature_dim)
+    # Build partitioned features only if provided
+    partitioned_node_features = None
+    if node_features is not None:
+        partitioned_node_features = FeaturePartitionData(
+            feats=node_features, ids=torch.arange(num_nodes)
+        )
+
+    partitioned_edge_features = None
+    if edge_features is not None:
+        partitioned_edge_features = FeaturePartitionData(
+            feats=edge_features, ids=torch.arange(num_edges)
+        )
+
+    partitioned_node_labels = None
+    if node_labels is not None:
+        partitioned_node_labels = FeaturePartitionData(
+            feats=node_labels, ids=torch.arange(num_nodes)
+        )
 
     partition_output = PartitionOutput(
         # Partition books filled with zeros assign all nodes/edges to partition 0
@@ -119,13 +129,11 @@ def create_homogeneous_dataset(
             edge_index=edge_index,
             edge_ids=None,
         ),
-        partitioned_node_features=FeaturePartitionData(
-            feats=node_features, ids=torch.arange(num_nodes)
-        ),
-        partitioned_edge_features=None,
+        partitioned_node_features=partitioned_node_features,
+        partitioned_edge_features=partitioned_edge_features,
         partitioned_positive_labels=None,
         partitioned_negative_labels=None,
-        partitioned_node_labels=None,
+        partitioned_node_labels=partitioned_node_labels,
     )
     dataset = DistDataset(rank=rank, world_size=world_size, edge_dir=edge_dir)
     dataset.build(partition_output=partition_output)
@@ -136,7 +144,6 @@ def create_heterogeneous_dataset(
     edge_indices: dict[EdgeType, torch.Tensor],
     node_features: Optional[dict[NodeType, torch.Tensor]] = None,
     node_labels: Optional[dict[NodeType, torch.Tensor]] = None,
-    node_feature_dim: int = DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM,
     rank: int = 0,
     world_size: int = 1,
     edge_dir: Literal["in", "out"] = "out",
@@ -147,11 +154,8 @@ def create_heterogeneous_dataset(
 
     Args:
         edge_indices: Mapping of EdgeType -> COO format edge index [2, num_edges].
-        node_features: Mapping of NodeType -> feature tensor [num_nodes, feature_dim].
-            If None, creates zero features with the specified dimension.
-        node_labels: Mapping of NodeType -> label tensor [num_nodes, 1].
-            If None, creates labels equal to node indices.
-        node_feature_dim: Dimension of node features if node_features is None.
+        node_features: Mapping of NodeType -> feature tensor [num_nodes, feature_dim], or None.
+        node_labels: Mapping of NodeType -> label tensor [num_nodes, label_dim], or None.
         rank: Rank of the current process. Defaults to 0.
         world_size: Total number of processes. Defaults to 1.
         edge_dir: Edge direction ("in" or "out"). Defaults to "out".
@@ -191,29 +195,24 @@ def create_heterogeneous_dataset(
         for edge_type, edge_index in edge_indices.items()
     }
 
-    # Create default features if not provided
-    if node_features is None:
-        node_features = {
-            node_type: torch.zeros(count, node_feature_dim)
-            for node_type, count in node_counts.items()
+    # Build partitioned features only if provided
+    partitioned_node_features = None
+    if node_features is not None:
+        partitioned_node_features = {
+            node_type: FeaturePartitionData(
+                feats=feats, ids=torch.arange(feats.shape[0])
+            )
+            for node_type, feats in node_features.items()
         }
 
-    partitioned_node_features = {
-        node_type: FeaturePartitionData(feats=feats, ids=torch.arange(feats.shape[0]))
-        for node_type, feats in node_features.items()
-    }
-
-    # Create default labels if not provided
-    if node_labels is None:
-        node_labels = {
-            node_type: torch.arange(count).unsqueeze(1)
-            for node_type, count in node_counts.items()
+    partitioned_node_labels = None
+    if node_labels is not None:
+        partitioned_node_labels = {
+            node_type: FeaturePartitionData(
+                feats=labels, ids=torch.arange(labels.shape[0])
+            )
+            for node_type, labels in node_labels.items()
         }
-
-    partitioned_node_labels = {
-        node_type: FeaturePartitionData(feats=labels, ids=torch.arange(labels.shape[0]))
-        for node_type, labels in node_labels.items()
-    }
 
     partition_output = PartitionOutput(
         node_partition_book=node_partition_book,
@@ -230,7 +229,7 @@ def create_heterogeneous_dataset(
     return dataset
 
 
-def create_heterogeneous_dataset_with_labels(
+def create_heterogeneous_dataset_for_ablp(
     positive_labels: dict[int, list[int]],
     train_node_ids: list[int],
     val_node_ids: list[int],
@@ -238,7 +237,6 @@ def create_heterogeneous_dataset_with_labels(
     edge_indices: dict[EdgeType, torch.Tensor],
     negative_labels: Optional[dict[int, list[int]]] = None,
     node_features: Optional[dict[NodeType, torch.Tensor]] = None,
-    node_feature_dim: int = DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM,
     src_node_type: NodeType = USER,
     dst_node_type: NodeType = STORY,
     supervision_edge_type: Optional[EdgeType] = None,
@@ -246,7 +244,7 @@ def create_heterogeneous_dataset_with_labels(
     world_size: int = 1,
     edge_dir: Literal["in", "out"] = "out",
 ) -> DistDataset:
-    """Create a heterogeneous test dataset with label edges and train/val/test splits.
+    """Create a heterogeneous test dataset for ABLP with label edges and train/val/test splits.
 
     Creates a dataset with:
     - Source and destination nodes (default: USER and STORY)
@@ -268,8 +266,7 @@ def create_heterogeneous_dataset_with_labels(
         test_node_ids: List of source node IDs in the test split (must be the highest IDs).
         edge_indices: Mapping of EdgeType -> COO format edge index [2, num_edges].
         negative_labels: Mapping of src_node_id -> list of negative dst_node_ids, or None.
-        node_features: Mapping of NodeType -> feature tensor [num_nodes, feature_dim].
-        node_feature_dim: Dimension of node features if node_features is None.
+        node_features: Mapping of NodeType -> feature tensor [num_nodes, feature_dim], or None.
         src_node_type: The source node type for labels. Defaults to USER.
         dst_node_type: The destination node type for labels. Defaults to STORY.
         supervision_edge_type: The edge type for supervision. If None, defaults to
@@ -286,7 +283,7 @@ def create_heterogeneous_dataset_with_labels(
 
     Example:
         >>> positive_labels = {0: [0, 1], 1: [1, 2], 2: [2, 3]}
-        >>> dataset = create_heterogeneous_dataset_with_labels(
+        >>> dataset = create_heterogeneous_dataset_for_ablp(
         ...     positive_labels=positive_labels,
         ...     train_node_ids=[0, 1],
         ...     val_node_ids=[2],
@@ -375,17 +372,15 @@ def create_heterogeneous_dataset_with_labels(
         for node_type, count in node_counts.items()
     }
 
-    # Create default features if not provided
-    if node_features is None:
-        node_features = {
-            node_type: torch.zeros(count, node_feature_dim)
-            for node_type, count in node_counts.items()
+    # Build partitioned features only if provided
+    partitioned_node_features = None
+    if node_features is not None:
+        partitioned_node_features = {
+            node_type: FeaturePartitionData(
+                feats=feats, ids=torch.arange(feats.shape[0])
+            )
+            for node_type, feats in node_features.items()
         }
-
-    partitioned_node_features = {
-        node_type: FeaturePartitionData(feats=feats, ids=torch.arange(feats.shape[0]))
-        for node_type, feats in node_features.items()
-    }
 
     partition_output = PartitionOutput(
         node_partition_book=node_partition_book,

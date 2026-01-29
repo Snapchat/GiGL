@@ -17,7 +17,7 @@ from tests.test_assets.distributed.test_dataset import (
     USER,
     USER_TO_STORY,
     create_heterogeneous_dataset,
-    create_heterogeneous_dataset_with_labels,
+    create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
 from tests.test_assets.distributed.utils import (
@@ -66,8 +66,13 @@ def _create_mock_graph_store_info(
 class TestRemoteDistDataset(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
+        # 10 nodes in DEFAULT_HOMOGENEOUS_EDGE_INDEX ring graph
+        node_features = torch.zeros(10, 3)
         storage_utils.register_dataset(
-            create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+            create_homogeneous_dataset(
+                edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+                node_features=node_features,
+            )
         )
 
     def tearDown(self) -> None:
@@ -137,9 +142,15 @@ class TestRemoteDistDataset(unittest.TestCase):
 class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
+        # 5 users, 5 stories in DEFAULT_HETEROGENEOUS_EDGE_INDICES
+        node_features = {
+            USER: torch.zeros(5, 2),
+            STORY: torch.zeros(5, 2),
+        }
         storage_utils.register_dataset(
             create_heterogeneous_dataset(
-                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
+                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+                node_features=node_features,
             )
         )
 
@@ -225,7 +236,7 @@ class TestRemoteDistDatasetWithSplits(unittest.TestCase):
             4: [1],
         }
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             train_node_ids=[0, 1, 2],

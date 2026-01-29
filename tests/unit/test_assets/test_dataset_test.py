@@ -8,15 +8,13 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import FeatureInfo
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
-    DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
-    DEFAULT_HOMOGENEOUS_NODE_FEATURE_DIM,
     STORY,
     STORY_TO_USER,
     USER,
     USER_TO_STORY,
     create_heterogeneous_dataset,
-    create_heterogeneous_dataset_with_labels,
+    create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
 from tests.test_assets.distributed.utils import (
@@ -37,11 +35,8 @@ class TestCreateHomogeneousDataset(unittest.TestCase):
         assert isinstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
 
-        # Verify feature info uses default dimension
-        expected_feature_info = FeatureInfo(
-            dim=DEFAULT_HOMOGENEOUS_NODE_FEATURE_DIM, dtype=torch.float32
-        )
-        self.assertEqual(dataset.node_feature_info, expected_feature_info)
+        # Verify feature info is None when no features provided
+        self.assertIsNone(dataset.node_feature_info)
 
         # Verify default edge direction
         self.assertEqual(dataset.edge_dir, "out")
@@ -95,16 +90,8 @@ class TestCreateHeterogeneousDataset(unittest.TestCase):
         self.assertEqual(node_ids[USER].shape[0], 5)
         self.assertEqual(node_ids[STORY].shape[0], 5)
 
-        # Verify feature info uses default dimension
-        expected_feature_info = {
-            USER: FeatureInfo(
-                dim=DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM, dtype=torch.float32
-            ),
-            STORY: FeatureInfo(
-                dim=DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM, dtype=torch.float32
-            ),
-        }
-        self.assertEqual(dataset.node_feature_info, expected_feature_info)
+        # Verify feature info is None when no features provided
+        self.assertIsNone(dataset.node_feature_info)
 
         # Verify default edge direction
         self.assertEqual(dataset.edge_dir, "out")
@@ -183,7 +170,7 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
         positive_labels = {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3, 4], 4: [4, 0]}
         negative_labels = {0: [2], 1: [3], 2: [4], 3: [0], 4: [1]}
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -210,7 +197,7 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
 
         with self.assertRaises(ValueError) as context:
-            create_heterogeneous_dataset_with_labels(
+            create_heterogeneous_dataset_for_ablp(
                 positive_labels=positive_labels,
                 train_node_ids=[0, 1, 2],
                 val_node_ids=[3],
@@ -221,8 +208,8 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
         self.assertIn("5", str(context.exception))
         self.assertIn("positive_labels", str(context.exception))
 
-    def test_with_custom_node_types_and_feature_dim(self) -> None:
-        """Test creating a dataset with custom node types and feature dimension."""
+    def test_with_custom_node_types_and_features(self) -> None:
+        """Test creating a dataset with custom node types and features."""
         create_test_process_group()
 
         positive_labels = {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3, 4], 4: [4, 0]}
@@ -239,7 +226,12 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
             reverse_edge_type: torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
         }
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        custom_features = {
+            custom_src_type: torch.zeros(5, 8),
+            custom_dst_type: torch.zeros(5, 8),
+        }
+
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -248,7 +240,7 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
             src_node_type=custom_src_type,
             dst_node_type=custom_dst_type,
             supervision_edge_type=custom_edge_type,
-            node_feature_dim=8,
+            node_features=custom_features,
         )
 
         # Verify custom node types
