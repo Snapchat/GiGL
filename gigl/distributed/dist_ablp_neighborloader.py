@@ -606,6 +606,58 @@ class DistABLPLoader(DistLoader):
             negative_labels_by_label_edge_type,
         )
 
+    def _compute_label_matches(
+        self,
+        local_to_global: torch.Tensor,
+        label_tensor: torch.Tensor,
+        num_anchors: int,
+    ) -> dict[int, torch.Tensor]:
+        """
+        Compute label matches using fully vectorized operations.
+
+        Args:
+            local_to_global: [N] tensor mapping local node idx to global node ID
+            label_tensor: [A, M] tensor of label global node IDs (padded with PADDING_NODE)
+            num_anchors: Number of anchor nodes (A)
+
+        Returns:
+            dict[int, torch.Tensor]: Mapping from anchor_idx to tensor of matching local node indices
+        """
+        # Vectorized broadcast comparison: [A, N, M]
+        # local_to_global: [N] -> [1, N, 1]
+        # label_tensor: [A, M] -> [A, 1, M]
+        matches = local_to_global.view(1, -1, 1) == label_tensor.unsqueeze(1)
+
+        # Mask out padding matches (PADDING_NODE should not match any real node)
+        padding_mask = (label_tensor == PADDING_NODE).unsqueeze(1)  # [A, 1, M]
+        matches = matches & ~padding_mask
+
+        # Reduce: any match across labels dimension -> [A, N]
+        any_match = matches.any(dim=2)
+
+        # Single nonzero call on full tensor to get all (anchor_idx, node_idx) pairs
+        # Returns tuple of (anchor_indices, node_indices) tensors
+        match_coords = torch.nonzero(any_match, as_tuple=True)
+        anchor_indices = match_coords[0]
+        node_indices = match_coords[1]
+
+        # Count matches per anchor using bincount for efficient splitting
+        if anchor_indices.numel() > 0:
+            counts = torch.bincount(anchor_indices, minlength=num_anchors)
+        else:
+            counts = torch.zeros(num_anchors, dtype=torch.long, device=any_match.device)
+
+        # Transfer node_indices to target device ONCE before splitting
+        # This avoids num_anchors small device transfers which have significant overhead
+        node_indices_on_device = node_indices.to(self.to_device)
+
+        # Split on device - torch.split returns a tuple of views (no copy)
+        split_sizes = counts.tolist()
+        split_indices = torch.split(node_indices_on_device, split_sizes)
+
+        # Build output dict using dict comprehension with enumerate (faster than loop)
+        return dict(enumerate(split_indices))
+
     def _set_labels(
         self,
         data: Union[Data, HeteroData],
@@ -617,8 +669,8 @@ class DistABLPLoader(DistLoader):
         local index. Removes inserted supervision edge type from the data variables, since this is an implementation detail and should not be
         exposed in the final HeteroData/Data object.
 
-        This method uses vectorized operations to efficiently process all anchor nodes in a batch simultaneously,
-        rather than iterating over each anchor node individually.
+        This method uses fully vectorized operations to efficiently process all anchor nodes in a batch simultaneously,
+        including a single nonzero call for all anchors followed by efficient splitting.
 
         Args:
             data (Union[Data, HeteroData]): Graph to provide labels for
@@ -651,60 +703,29 @@ class DistABLPLoader(DistLoader):
         # So we can index into the edge type accordingly.
         edge_index = 2
 
-        # Process positive labels with vectorized operations
+        # Process positive labels with fully vectorized operations
         for edge_type, label_tensor in positive_labels_by_label_edge_type.items():
             local_to_global = node_type_to_local_node_to_global_node[
                 edge_type[edge_index]
             ]
+            num_anchors = label_tensor.size(0)
 
-            # Vectorized broadcast comparison: [A, N, M]
-            # local_to_global: [N] -> [1, N, 1]
-            # label_tensor: [A, M] -> [A, 1, M]
-            # Result: [A, N, M] where A=num_anchors, N=num_nodes, M=max_labels_per_anchor
-            matches = local_to_global.view(1, -1, 1) == label_tensor.unsqueeze(1)
-
-            # Mask out padding matches (PADDING_NODE should not match any real node)
-            padding_mask = (label_tensor == PADDING_NODE).unsqueeze(1)  # [A, 1, M]
-            matches = matches & ~padding_mask
-
-            # Reduce: any match across labels dimension -> [A, N]
-            any_match = matches.any(dim=2)
-
-            # Build output dict
             mp_edge_type = label_edge_type_to_message_passing_edge_type(edge_type)
-            for anchor_idx in range(any_match.size(0)):
-                matching_indices = torch.nonzero(any_match[anchor_idx], as_tuple=True)[
-                    0
-                ]
-                output_positive_labels[mp_edge_type][anchor_idx] = matching_indices.to(
-                    self.to_device
-                )
+            output_positive_labels[mp_edge_type] = self._compute_label_matches(
+                local_to_global, label_tensor, num_anchors
+            )
 
-        # Process negative labels with vectorized operations
+        # Process negative labels with fully vectorized operations
         for edge_type, label_tensor in negative_labels_by_label_edge_type.items():
             local_to_global = node_type_to_local_node_to_global_node[
                 edge_type[edge_index]
             ]
+            num_anchors = label_tensor.size(0)
 
-            # Vectorized broadcast comparison: [A, N, M]
-            matches = local_to_global.view(1, -1, 1) == label_tensor.unsqueeze(1)
-
-            # Mask out padding matches
-            padding_mask = (label_tensor == PADDING_NODE).unsqueeze(1)
-            matches = matches & ~padding_mask
-
-            # Reduce: any match across labels dimension -> [A, N]
-            any_match = matches.any(dim=2)
-
-            # Build output dict
             mp_edge_type = label_edge_type_to_message_passing_edge_type(edge_type)
-            for anchor_idx in range(any_match.size(0)):
-                matching_indices = torch.nonzero(any_match[anchor_idx], as_tuple=True)[
-                    0
-                ]
-                output_negative_labels[mp_edge_type][anchor_idx] = matching_indices.to(
-                    self.to_device
-                )
+            output_negative_labels[mp_edge_type] = self._compute_label_matches(
+                local_to_global, label_tensor, num_anchors
+            )
 
         if not output_positive_labels:
             raise ValueError("No positive labels were found in the data!")
