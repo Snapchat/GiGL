@@ -29,7 +29,7 @@ done
 # Get the directory of the current script
 SCRIPT_DIR="$(dirname "$0")"
 # Source the dep_vars.env file to use its variables
-source "$SCRIPT_DIR/../dep_vars.env"
+source "$SCRIPT_DIR/../gigl/dep_vars.env"
 
 # Local path variables
 TOOLS_SCALA_DIR="tools/scala"

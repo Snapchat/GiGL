@@ -1,4 +1,4 @@
-include dep_vars.env
+include gigl/dep_vars.env
 
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")

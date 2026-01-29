@@ -55,7 +55,7 @@ WORKDIR /gigl_deps
 COPY tools tools
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
-COPY dep_vars.env dep_vars.env
+COPY gigl/dep_vars.env gigl/dep_vars.env
 COPY requirements requirements
 # Needed to install GLT
 COPY gigl/scripts gigl/scripts
