@@ -68,7 +68,7 @@ the compute processes signal shutdown via `gigl.distributed.graph_store.compute.
 import argparse
 import os
 from distutils.util import strtobool
-from typing import Optional
+from typing import Literal, Optional
 
 # TODO(kmonte): Remove GLT imports from this file.
 import graphlearn_torch as glt
@@ -76,12 +76,17 @@ import torch
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
-from gigl.distributed import build_dataset_from_task_config_uri
+from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.graph_store.storage_utils import register_dataset
-from gigl.distributed.utils import get_graph_store_info
+from gigl.distributed.utils import get_free_ports_from_master_node, get_graph_store_info
 from gigl.distributed.utils.networking import get_free_ports_from_master_node
+from gigl.distributed.utils.serialized_graph_metadata_translator import (
+    convert_pb_to_serialized_graph_metadata,
+)
 from gigl.env.distributed import GraphStoreInfo
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 
 logger = Logger()
 
@@ -159,7 +164,8 @@ def storage_node_process(
     storage_rank: int,
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
-    is_inference: bool = True,
+    sample_edge_direction: Literal["in", "out"],
+    should_load_tf_records_in_parallel: bool = True,
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
     storage_world_backend: Optional[str] = None,
 ) -> None:
@@ -189,10 +195,19 @@ def storage_node_process(
     logger.info(
         f"Storage node {storage_rank} / {cluster_info.num_storage_nodes} process group initialized"
     )
-    dataset = build_dataset_from_task_config_uri(
-        task_config_uri=task_config_uri,
-        is_inference=is_inference,
-        _tfrecord_uri_pattern=tf_record_uri_pattern,
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+        gbml_config_uri=task_config_uri
+    )
+    serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+        preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+        graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        tfrecord_uri_pattern=tf_record_uri_pattern,
+    )
+    dataset = build_dataset(
+        serialized_graph_metadata=serialized_graph_metadata,
+        sample_edge_direction=sample_edge_direction,
+        should_load_tf_records_in_parallel=should_load_tf_records_in_parallel,
+        partitioner_class=DistRangePartitioner,
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
@@ -222,10 +237,10 @@ if __name__ == "__main__":
     parser.add_argument("--task_config_uri", type=str, required=True)
     parser.add_argument("--resource_config_uri", type=str, required=True)
     parser.add_argument("--job_name", type=str, required=True)
-    parser.add_argument("--is_inference", type=str, required=True)
+    parser.add_argument("--sample_edge_direction", type=str, required=True)
+    parser.add_argument("--should_load_tf_records_in_parallel", type=str, required=True)
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
-    is_inference = bool(strtobool(args.is_inference))
 
     # Setup cluster-wide (e.g. storage and compute nodes) Torch Distributed process group.
     # This is needed so we can get the cluster information (e.g. number of storage and compute nodes) and rank/world_size.
@@ -242,5 +257,8 @@ if __name__ == "__main__":
         storage_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,
         task_config_uri=UriFactory.create_uri(args.task_config_uri),
-        is_inference=is_inference,
+        sample_edge_direction=args.sample_edge_direction,
+        should_load_tf_records_in_parallel=bool(
+            strtobool(args.should_load_tf_records_in_parallel)
+        ),
     )
