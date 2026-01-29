@@ -79,68 +79,18 @@ class TestRemoteDistDataset(unittest.TestCase):
         "gigl.distributed.graph_store.remote_dist_dataset.request_server",
         side_effect=_mock_request_server,
     )
-    def test_get_node_feature_info(self, mock_request):
+    def test_graph_metadata_getters_homogeneous(self, mock_request):
+        """Test get_node_feature_info, get_edge_feature_info, get_edge_dir, get_edge_types for homogeneous graphs."""
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
-        result = remote_dataset.get_node_feature_info()
-
-        self.assertEqual(result, FeatureInfo(dim=3, dtype=torch.float32))
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
-        side_effect=_mock_request_server,
-    )
-    def test_get_edge_feature_info(self, mock_request):
-        cluster_info = _create_mock_graph_store_info()
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_edge_feature_info()
-
-        self.assertIsNone(result)
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
-        side_effect=_mock_request_server,
-    )
-    def test_get_edge_dir(self, mock_request):
-        cluster_info = _create_mock_graph_store_info()
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_edge_dir()
-
-        self.assertEqual(result, "out")
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
-        side_effect=_mock_request_server,
-    )
-    def test_get_edge_types_homogeneous(self, mock_request):
-        cluster_info = _create_mock_graph_store_info()
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_edge_types()
-
-        self.assertIsNone(result)
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
-        side_effect=_mock_request_server,
-    )
-    def test_get_edge_types_heterogeneous(self, mock_request):
-        storage_utils._dataset = None
-        storage_utils.register_dataset(
-            create_heterogeneous_dataset(
-                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
-            )
+        self.assertEqual(
+            remote_dataset.get_node_feature_info(),
+            FeatureInfo(dim=3, dtype=torch.float32),
         )
-
-        cluster_info = _create_mock_graph_store_info()
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_edge_types()
-
-        self.assertEqual(result, [USER_TO_STORY, STORY_TO_USER])
+        self.assertIsNone(remote_dataset.get_edge_feature_info())
+        self.assertEqual(remote_dataset.get_edge_dir(), "out")
+        self.assertIsNone(remote_dataset.get_edge_types())
 
     def test_init_rejects_non_dict_proxy_for_mp_sharing_dict(self):
         cluster_info = _create_mock_graph_store_info()
@@ -165,30 +115,21 @@ class TestRemoteDistDataset(unittest.TestCase):
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_get_node_ids_basic(self, mock_async_request):
-        """Test get_node_ids returns node ids from all storage nodes."""
+    def test_get_node_ids(self, mock_async_request):
+        """Test get_node_ids returns node ids, with optional sharding via rank/world_size."""
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
+        # Basic: all nodes
         result = remote_dataset.get_node_ids()
-
         self.assertIn(0, result)
         assert_tensor_equality(result[0], torch.arange(10))
 
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_get_node_ids_with_rank_world_size(self, mock_async_request):
-        """Test get_node_ids with rank/world_size for sharding."""
-        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        # Request first half of nodes (rank 0 of 2)
+        # With sharding: first half (rank 0 of 2)
         result = remote_dataset.get_node_ids(rank=0, world_size=2)
         assert_tensor_equality(result[0], torch.arange(5))
 
-        # Request second half of nodes (rank 1 of 2)
+        # With sharding: second half (rank 1 of 2)
         result = remote_dataset.get_node_ids(rank=1, world_size=2)
         assert_tensor_equality(result[0], torch.arange(5, 10))
 
@@ -211,36 +152,27 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
         "gigl.distributed.graph_store.remote_dist_dataset.request_server",
         side_effect=_mock_request_server,
     )
-    def test_get_node_feature_info_heterogeneous(self, mock_request):
+    def test_graph_metadata_getters_heterogeneous(self, mock_request):
+        """Test get_node_feature_info, get_edge_dir, get_edge_types for heterogeneous graphs."""
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
-        result = remote_dataset.get_node_feature_info()
-
-        expected = {
-            USER: FeatureInfo(dim=2, dtype=torch.float32),
-            STORY: FeatureInfo(dim=2, dtype=torch.float32),
-        }
-        self.assertEqual(result, expected)
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
-        side_effect=_mock_request_server,
-    )
-    def test_get_edge_dir_heterogeneous(self, mock_request):
-        cluster_info = _create_mock_graph_store_info()
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_edge_dir()
-
-        self.assertEqual(result, "out")
+        self.assertEqual(
+            remote_dataset.get_node_feature_info(),
+            {
+                USER: FeatureInfo(dim=2, dtype=torch.float32),
+                STORY: FeatureInfo(dim=2, dtype=torch.float32),
+            },
+        )
+        self.assertEqual(remote_dataset.get_edge_dir(), "out")
+        self.assertEqual(remote_dataset.get_edge_types(), [USER_TO_STORY, STORY_TO_USER])
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
     def test_get_node_ids_with_node_type(self, mock_async_request):
-        """Test get_node_ids with node_type for heterogeneous graphs."""
+        """Test get_node_ids with node_type for heterogeneous graphs, with optional sharding."""
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
@@ -252,20 +184,11 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
         result = remote_dataset.get_node_ids(node_type=STORY)
         assert_tensor_equality(result[0], torch.arange(5))
 
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_get_node_ids_with_node_type_and_sharding(self, mock_async_request):
-        """Test get_node_ids with node_type and rank/world_size."""
-        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        # Get first half of user nodes
+        # With sharding: first half of user nodes (rank 0 of 2)
         result = remote_dataset.get_node_ids(rank=0, world_size=2, node_type=USER)
         assert_tensor_equality(result[0], torch.arange(2))
 
-        # Get second half of user nodes
+        # With sharding: second half of user nodes (rank 1 of 2)
         result = remote_dataset.get_node_ids(rank=1, world_size=2, node_type=USER)
         assert_tensor_equality(result[0], torch.arange(2, 5))
 
@@ -314,89 +237,46 @@ class TestRemoteDistDatasetWithSplits(unittest.TestCase):
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_get_node_ids_with_train_split(self, mock_async_request):
-        """Test get_node_ids returns only training nodes when split='train'."""
+    def test_get_node_ids_with_splits(self, mock_async_request):
+        """Test get_node_ids with train/val/test splits and optional sharding."""
         self._create_and_register_dataset_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
-        result = remote_dataset.get_node_ids(node_type=USER, split="train")
-
-        # Train split has nodes [0, 1, 2]
-        assert_tensor_equality(result[0], torch.tensor([0, 1, 2]))
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_get_node_ids_with_val_split(self, mock_async_request):
-        """Test get_node_ids returns only validation nodes when split='val'."""
-        self._create_and_register_dataset_with_splits()
-
-        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_node_ids(node_type=USER, split="val")
-
-        # Val split has node [3]
-        assert_tensor_equality(result[0], torch.tensor([3]))
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_get_node_ids_with_test_split(self, mock_async_request):
-        """Test get_node_ids returns only test nodes when split='test'."""
-        self._create_and_register_dataset_with_splits()
-
-        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_node_ids(node_type=USER, split="test")
-
-        # Test split has node [4]
-        assert_tensor_equality(result[0], torch.tensor([4]))
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_get_node_ids_with_split_and_sharding(self, mock_async_request):
-        """Test get_node_ids with split and rank/world_size for sharding."""
-        self._create_and_register_dataset_with_splits()
-
-        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        # Train split has [0, 1, 2], shard across 2 ranks
-        # Rank 0 gets first half: [0]
-        result_rank_0 = remote_dataset.get_node_ids(
-            rank=0, world_size=2, node_type=USER, split="train"
+        # Test each split returns correct nodes
+        assert_tensor_equality(
+            remote_dataset.get_node_ids(node_type=USER, split="train")[0],
+            torch.tensor([0, 1, 2]),
         )
-        assert_tensor_equality(result_rank_0[0], torch.tensor([0]))
-
-        # Rank 1 gets second half: [1, 2]
-        result_rank_1 = remote_dataset.get_node_ids(
-            rank=1, world_size=2, node_type=USER, split="train"
+        assert_tensor_equality(
+            remote_dataset.get_node_ids(node_type=USER, split="val")[0],
+            torch.tensor([3]),
         )
-        assert_tensor_equality(result_rank_1[0], torch.tensor([1, 2]))
+        assert_tensor_equality(
+            remote_dataset.get_node_ids(node_type=USER, split="test")[0],
+            torch.tensor([4]),
+        )
 
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_get_node_ids_without_split_returns_all_nodes(self, mock_async_request):
-        """Test get_node_ids without split returns all nodes."""
-        self._create_and_register_dataset_with_splits()
+        # No split returns all nodes
+        assert_tensor_equality(
+            remote_dataset.get_node_ids(node_type=USER, split=None)[0],
+            torch.arange(5),
+        )
 
-        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        result = remote_dataset.get_node_ids(node_type=USER, split=None)
-
-        # All 5 nodes should be returned
-        assert_tensor_equality(result[0], torch.arange(5))
+        # With sharding: train split [0, 1, 2] across 2 ranks
+        assert_tensor_equality(
+            remote_dataset.get_node_ids(
+                rank=0, world_size=2, node_type=USER, split="train"
+            )[0],
+            torch.tensor([0]),
+        )
+        assert_tensor_equality(
+            remote_dataset.get_node_ids(
+                rank=1, world_size=2, node_type=USER, split="train"
+            )[0],
+            torch.tensor([1, 2]),
+        )
 
 
 def _test_get_free_ports_on_storage_cluster(
