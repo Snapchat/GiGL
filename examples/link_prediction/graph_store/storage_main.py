@@ -206,7 +206,7 @@ def storage_node_process(
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
-        should_load_tf_records_in_parallel=should_load_tf_records_in_parallel,
+        should_load_tensors_in_parallel=should_load_tf_records_in_parallel,
         partitioner_class=DistRangePartitioner,
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
