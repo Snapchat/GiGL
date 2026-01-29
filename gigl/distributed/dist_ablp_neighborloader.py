@@ -45,7 +45,7 @@ from gigl.types.graph import (
     reverse_edge_type,
     select_label_edge_types,
 )
-from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 
 logger = Logger()
 
@@ -616,6 +616,10 @@ class DistABLPLoader(DistLoader):
         Sets the labels and relevant fields in the torch_geometric Data object, converting the global node ids for labels to their
         local index. Removes inserted supervision edge type from the data variables, since this is an implementation detail and should not be
         exposed in the final HeteroData/Data object.
+
+        This method uses vectorized operations to efficiently process all anchor nodes in a batch simultaneously,
+        rather than iterating over each anchor node individually.
+
         Args:
             data (Union[Data, HeteroData]): Graph to provide labels for
             positive_labels_by_label_edge_type (dict[EdgeType, torch.Tensor]): Dict[positive label edge type, label ID tensor],
@@ -635,48 +639,73 @@ class DistABLPLoader(DistLoader):
             node_type_to_local_node_to_global_node[
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
             ] = data.node
+
         output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
         output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )
+
         # We always have supervision edge types of the form (anchor_node_type, to, supervision_node_type)
         # So we can index into the edge type accordingly.
         edge_index = 2
+
+        # Process positive labels with vectorized operations
         for edge_type, label_tensor in positive_labels_by_label_edge_type.items():
-            for local_anchor_node_id in range(label_tensor.size(0)):
-                positive_mask = (
-                    node_type_to_local_node_to_global_node[
-                        edge_type[edge_index]
-                    ].unsqueeze(1)
-                    == label_tensor[local_anchor_node_id]
-                )  # shape [N, P], where N is the number of nodes and P is the number of positive labels for the current anchor node
+            local_to_global = node_type_to_local_node_to_global_node[
+                edge_type[edge_index]
+            ]
 
-                # Gets the indexes of the items in local_node_to_global_node which match any of the positive labels for the current anchor node
-                output_positive_labels[
-                    label_edge_type_to_message_passing_edge_type(edge_type)
-                ][local_anchor_node_id] = torch.nonzero(positive_mask)[:, 0].to(
+            # Vectorized broadcast comparison: [A, N, M]
+            # local_to_global: [N] -> [1, N, 1]
+            # label_tensor: [A, M] -> [A, 1, M]
+            # Result: [A, N, M] where A=num_anchors, N=num_nodes, M=max_labels_per_anchor
+            matches = local_to_global.view(1, -1, 1) == label_tensor.unsqueeze(1)
+
+            # Mask out padding matches (PADDING_NODE should not match any real node)
+            padding_mask = (label_tensor == PADDING_NODE).unsqueeze(1)  # [A, 1, M]
+            matches = matches & ~padding_mask
+
+            # Reduce: any match across labels dimension -> [A, N]
+            any_match = matches.any(dim=2)
+
+            # Build output dict
+            mp_edge_type = label_edge_type_to_message_passing_edge_type(edge_type)
+            for anchor_idx in range(any_match.size(0)):
+                matching_indices = torch.nonzero(any_match[anchor_idx], as_tuple=True)[
+                    0
+                ]
+                output_positive_labels[mp_edge_type][anchor_idx] = matching_indices.to(
                     self.to_device
                 )
-                # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the positive labels for the current anchor node
 
+        # Process negative labels with vectorized operations
         for edge_type, label_tensor in negative_labels_by_label_edge_type.items():
-            for local_anchor_node_id in range(label_tensor.size(0)):
-                negative_mask = (
-                    node_type_to_local_node_to_global_node[
-                        edge_type[edge_index]
-                    ].unsqueeze(1)
-                    == label_tensor[local_anchor_node_id]
-                )  # shape [N, M], where N is the number of nodes and M is the number of negative labels for the current anchor node
+            local_to_global = node_type_to_local_node_to_global_node[
+                edge_type[edge_index]
+            ]
 
-                # Gets the indexes of the items in local_node_to_global_node which match any of the negative labels for the current anchor node
-                output_negative_labels[
-                    label_edge_type_to_message_passing_edge_type(edge_type)
-                ][local_anchor_node_id] = torch.nonzero(negative_mask)[:, 0].to(
+            # Vectorized broadcast comparison: [A, N, M]
+            matches = local_to_global.view(1, -1, 1) == label_tensor.unsqueeze(1)
+
+            # Mask out padding matches
+            padding_mask = (label_tensor == PADDING_NODE).unsqueeze(1)
+            matches = matches & ~padding_mask
+
+            # Reduce: any match across labels dimension -> [A, N]
+            any_match = matches.any(dim=2)
+
+            # Build output dict
+            mp_edge_type = label_edge_type_to_message_passing_edge_type(edge_type)
+            for anchor_idx in range(any_match.size(0)):
+                matching_indices = torch.nonzero(any_match[anchor_idx], as_tuple=True)[
+                    0
+                ]
+                output_negative_labels[mp_edge_type][anchor_idx] = matching_indices.to(
                     self.to_device
                 )
-                # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
+
         if not output_positive_labels:
             raise ValueError("No positive labels were found in the data!")
         elif len(output_positive_labels) == 1:
@@ -688,6 +717,7 @@ class DistABLPLoader(DistLoader):
             data.y_negative = next(iter(output_negative_labels.values()))
         elif len(output_negative_labels) > 0:
             data.y_negative = output_negative_labels
+
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
