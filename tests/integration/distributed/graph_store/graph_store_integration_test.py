@@ -139,11 +139,7 @@ def _assert_ablp_input(
         local_positive.clone(),
         local_negative.clone() if local_negative is not None else None,
     )
-    gathered_data: list[
-        tuple[int, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-    ] = [
-        None
-    ] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
+    gathered_data: list[tuple[int, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
     torch.distributed.all_gather_object(gathered_data, local_data)
 
     # Group by compute_node_rank and verify all processes in same group have identical ABLP input
