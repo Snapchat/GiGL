@@ -1,4 +1,5 @@
 import time
+from collections.abc import MutableMapping
 from multiprocessing.managers import DictProxy
 from typing import Literal, Optional, Union
 
@@ -26,7 +27,7 @@ class RemoteDistDataset:
         self,
         cluster_info: GraphStoreInfo,
         local_rank: int,
-        mp_sharing_dict: Optional[dict[str, torch.Tensor]] = None,
+        mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]] = None,
     ):
         """
         Represents a dataset that is stored on a difference storage cluster.
@@ -37,7 +38,7 @@ class RemoteDistDataset:
         Args:
             cluster_info (GraphStoreInfo): The cluster information.
             local_rank (int): The local rank of the process on the compute node.
-            mp_sharing_dict (Optional[dict[str, torch.Tensor]]):
+            mp_sharing_dict (Optional[MutableMapping[str, torch.Tensor]]):
                 (Optional) If provided, will be used to share tensors across the local machine.
                 e.g. for `get_node_ids`.
                 If provided, *must* be a `DictProxy` e.g. the return value of a mp.Manager.
@@ -46,6 +47,13 @@ class RemoteDistDataset:
         self._cluster_info = cluster_info
         self._local_rank = local_rank
         self._mp_sharing_dict = mp_sharing_dict
+        # We accept mp_sharing_dict as a `MutableMapping` as if we directly annotate as `DictProxy` (which is what we want)
+        # Then we will have runtime failures e.g.:
+        #   File "/.../GiGL/python/gigl/distributed/graph_store/remote_dist_dataset.py", line 30, in RemoteDistDataset
+        #   mp_sharing_dict: Optional[DictProxy[str, torch.Tensor]] = None,
+        #                              ~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+        # TypeError: type 'DictProxy' is not subscriptable
+
         if self._mp_sharing_dict is not None and not isinstance(
             self._mp_sharing_dict, DictProxy
         ):
@@ -192,6 +200,9 @@ class RemoteDistDataset:
 
         Args:
             num_ports (int): Number of free ports to get.
+
+        Returns:
+            list[int]: A list of free port numbers on the storage master node.
         """
         if not torch.distributed.is_initialized():
             raise ValueError(
