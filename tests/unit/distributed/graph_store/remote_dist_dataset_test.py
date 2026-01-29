@@ -11,6 +11,7 @@ from gigl.env.distributed import GraphStoreInfo
 from gigl.types.graph import FeatureInfo
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+    DEFAULT_HOMOGENEOUS_EDGE_INDEX,
     STORY,
     STORY_TO_USER,
     USER,
@@ -65,7 +66,9 @@ def _create_mock_graph_store_info(
 class TestRemoteDistDataset(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
-        storage_utils.register_dataset(create_homogeneous_dataset())
+        storage_utils.register_dataset(
+            create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+        )
 
     def tearDown(self) -> None:
         storage_utils._dataset = None
@@ -126,7 +129,11 @@ class TestRemoteDistDataset(unittest.TestCase):
     )
     def test_get_edge_types_heterogeneous(self, mock_request):
         storage_utils._dataset = None
-        storage_utils.register_dataset(create_heterogeneous_dataset())
+        storage_utils.register_dataset(
+            create_heterogeneous_dataset(
+                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
+            )
+        )
 
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
@@ -189,7 +196,11 @@ class TestRemoteDistDataset(unittest.TestCase):
 class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
-        storage_utils.register_dataset(create_heterogeneous_dataset())
+        storage_utils.register_dataset(
+            create_heterogeneous_dataset(
+                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
+            )
+        )
 
     def tearDown(self) -> None:
         storage_utils._dataset = None
@@ -433,7 +444,9 @@ def _test_get_free_ports_on_storage_cluster(
 class TestGetFreePortsOnStorageCluster(unittest.TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
-        storage_utils.register_dataset(create_homogeneous_dataset())
+        storage_utils.register_dataset(
+            create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+        )
 
     def tearDown(self) -> None:
         storage_utils._dataset = None

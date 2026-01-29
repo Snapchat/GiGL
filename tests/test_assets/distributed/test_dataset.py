@@ -13,8 +13,8 @@ Example usage:
         DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     )
 
-    # Create a simple homogeneous dataset
-    dataset = create_homogeneous_dataset()
+    # Create a simple homogeneous dataset with default edge index
+    dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
 
     # Create with custom edge index
     custom_edge_index = torch.tensor([[0, 1, 2], [1, 2, 0]])
@@ -69,7 +69,7 @@ DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM: Final[int] = 2
 
 
 def create_homogeneous_dataset(
-    edge_index: Optional[torch.Tensor] = None,
+    edge_index: torch.Tensor,
     node_features: Optional[torch.Tensor] = None,
     node_feature_dim: int = DEFAULT_HOMOGENEOUS_NODE_FEATURE_DIM,
     rank: int = 0,
@@ -79,10 +79,9 @@ def create_homogeneous_dataset(
     """Create a homogeneous test dataset.
 
     Creates a single-partition DistDataset with the specified edge index and node features.
-    If not provided, uses defaults: a 10-node ring graph with 3-dimensional zero features.
 
     Args:
-        edge_index: COO format edge index [2, num_edges]. Defaults to a 10-node ring graph.
+        edge_index: COO format edge index [2, num_edges].
         node_features: Node feature tensor [num_nodes, feature_dim]. If None, creates zero
             features with the specified dimension.
         node_feature_dim: Dimension of node features if node_features is None.
@@ -94,7 +93,7 @@ def create_homogeneous_dataset(
         A DistDataset instance with the specified configuration.
 
     Example:
-        >>> dataset = create_homogeneous_dataset()
+        >>> dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
         >>> dataset.node_ids.shape
         torch.Size([10])
 
@@ -103,8 +102,6 @@ def create_homogeneous_dataset(
         >>> dataset.node_ids.shape
         torch.Size([2])
     """
-    if edge_index is None:
-        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX.clone()
 
     # Derive counts from edge index
     num_nodes = int(edge_index.max().item() + 1)
@@ -136,7 +133,7 @@ def create_homogeneous_dataset(
 
 
 def create_heterogeneous_dataset(
-    edge_indices: Optional[dict[EdgeType, torch.Tensor]] = None,
+    edge_indices: dict[EdgeType, torch.Tensor],
     node_features: Optional[dict[NodeType, torch.Tensor]] = None,
     node_labels: Optional[dict[NodeType, torch.Tensor]] = None,
     node_feature_dim: int = DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM,
@@ -147,12 +144,9 @@ def create_heterogeneous_dataset(
     """Create a heterogeneous test dataset.
 
     Creates a single-partition DistDataset with the specified edge indices and node features.
-    If not provided, uses defaults: USER and STORY node types with 5 nodes each, identity
-    mapping edges, and 2-dimensional zero features.
 
     Args:
         edge_indices: Mapping of EdgeType -> COO format edge index [2, num_edges].
-            Defaults to USER_TO_STORY and STORY_TO_USER with identity mapping.
         node_features: Mapping of NodeType -> feature tensor [num_nodes, feature_dim].
             If None, creates zero features with the specified dimension.
         node_labels: Mapping of NodeType -> label tensor [num_nodes, 1].
@@ -166,18 +160,13 @@ def create_heterogeneous_dataset(
         A DistDataset instance with the specified configuration.
 
     Example:
-        >>> dataset = create_heterogeneous_dataset()
+        >>> dataset = create_heterogeneous_dataset(edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES)
         >>> dataset.node_ids[USER].shape
         torch.Size([5])
 
         >>> custom_edges = {USER_TO_STORY: torch.tensor([[0, 1], [0, 1]])}
         >>> dataset = create_heterogeneous_dataset(edge_indices=custom_edges)
     """
-    if edge_indices is None:
-        edge_indices = {
-            edge_type: edge_index.clone()
-            for edge_type, edge_index in DEFAULT_HETEROGENEOUS_EDGE_INDICES.items()
-        }
 
     # Derive node counts from edge indices by collecting max node ID per node type
     node_counts: dict[NodeType, int] = {}
@@ -246,8 +235,8 @@ def create_heterogeneous_dataset_with_labels(
     train_node_ids: list[int],
     val_node_ids: list[int],
     test_node_ids: list[int],
+    edge_indices: dict[EdgeType, torch.Tensor],
     negative_labels: Optional[dict[int, list[int]]] = None,
-    edge_indices: Optional[dict[EdgeType, torch.Tensor]] = None,
     node_features: Optional[dict[NodeType, torch.Tensor]] = None,
     node_feature_dim: int = DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM,
     src_node_type: NodeType = USER,
@@ -277,8 +266,8 @@ def create_heterogeneous_dataset_with_labels(
         train_node_ids: List of source node IDs in the train split (must be the lowest IDs).
         val_node_ids: List of source node IDs in the val split (must be middle IDs).
         test_node_ids: List of source node IDs in the test split (must be the highest IDs).
-        negative_labels: Mapping of src_node_id -> list of negative dst_node_ids, or None.
         edge_indices: Mapping of EdgeType -> COO format edge index [2, num_edges].
+        negative_labels: Mapping of src_node_id -> list of negative dst_node_ids, or None.
         node_features: Mapping of NodeType -> feature tensor [num_nodes, feature_dim].
         node_feature_dim: Dimension of node features if node_features is None.
         src_node_type: The source node type for labels. Defaults to USER.
@@ -302,18 +291,12 @@ def create_heterogeneous_dataset_with_labels(
         ...     train_node_ids=[0, 1],
         ...     val_node_ids=[2],
         ...     test_node_ids=[],
+        ...     edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         ... )
     """
     # Set default supervision edge type
     if supervision_edge_type is None:
         supervision_edge_type = EdgeType(src_node_type, Relation("to"), dst_node_type)
-
-    # Set default edge indices
-    if edge_indices is None:
-        edge_indices = {
-            edge_type: edge_index.clone()
-            for edge_type, edge_index in DEFAULT_HETEROGENEOUS_EDGE_INDICES.items()
-        }
 
     # Validate that all split node IDs have positive labels
     all_split_node_ids = set(train_node_ids) | set(val_node_ids) | set(test_node_ids)

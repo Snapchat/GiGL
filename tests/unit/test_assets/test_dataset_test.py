@@ -28,62 +28,54 @@ from tests.test_assets.distributed.utils import (
 class TestCreateHomogeneousDataset(unittest.TestCase):
     """Tests for create_homogeneous_dataset function."""
 
-    def test_default_dataset(self) -> None:
-        """Test creating a dataset with default parameters."""
-        dataset = create_homogeneous_dataset()
+    def test_with_default_edge_index(self) -> None:
+        """Test creating a dataset with default edge index constant."""
+        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
 
         # Verify node count (10 nodes in default ring graph)
         node_ids = dataset.node_ids
         assert isinstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
 
-        # Verify feature info
+        # Verify feature info uses default dimension
         expected_feature_info = FeatureInfo(
             dim=DEFAULT_HOMOGENEOUS_NODE_FEATURE_DIM, dtype=torch.float32
         )
         self.assertEqual(dataset.node_feature_info, expected_feature_info)
 
-        # Verify edge direction
+        # Verify default edge direction
         self.assertEqual(dataset.edge_dir, "out")
 
-    def test_custom_edge_index(self) -> None:
-        """Test creating a dataset with a custom edge index."""
-        # Create a simple 3-node graph
+    def test_with_custom_parameters(self) -> None:
+        """Test creating a dataset with custom edge index, features, and edge direction."""
+        # Custom 3-node graph
         custom_edge_index = torch.tensor([[0, 1, 2], [1, 2, 0]])
-        dataset = create_homogeneous_dataset(edge_index=custom_edge_index)
+        custom_features = torch.ones(3, 5)
 
-        # Verify node count
+        dataset = create_homogeneous_dataset(
+            edge_index=custom_edge_index,
+            node_features=custom_features,
+            edge_dir="in",
+        )
+
+        # Verify node count from custom edge index
         node_ids = dataset.node_ids
         assert isinstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 3)
         assert_tensor_equality(node_ids, torch.arange(3))
 
-    def test_custom_node_features(self) -> None:
-        """Test creating a dataset with custom node features."""
-        custom_features = torch.ones(10, 5)
-        dataset = create_homogeneous_dataset(node_features=custom_features)
+        # Verify feature dimension from custom features
+        self.assertEqual(
+            dataset.node_feature_info, FeatureInfo(dim=5, dtype=torch.float32)
+        )
 
-        # Verify feature dimension
-        expected_feature_info = FeatureInfo(dim=5, dtype=torch.float32)
-        self.assertEqual(dataset.node_feature_info, expected_feature_info)
-
-    def test_custom_feature_dim(self) -> None:
-        """Test creating a dataset with custom feature dimension."""
-        dataset = create_homogeneous_dataset(node_feature_dim=7)
-
-        expected_feature_info = FeatureInfo(dim=7, dtype=torch.float32)
-        self.assertEqual(dataset.node_feature_info, expected_feature_info)
-
-    def test_edge_dir_in(self) -> None:
-        """Test creating a dataset with 'in' edge direction."""
-        dataset = create_homogeneous_dataset(edge_dir="in")
-
+        # Verify custom edge direction
         self.assertEqual(dataset.edge_dir, "in")
 
     def test_default_edge_index_not_modified(self) -> None:
         """Test that creating a dataset doesn't modify the default edge index."""
         original = DEFAULT_HOMOGENEOUS_EDGE_INDEX.clone()
-        _ = create_homogeneous_dataset()
+        _ = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
 
         assert_tensor_equality(DEFAULT_HOMOGENEOUS_EDGE_INDEX, original)
 
@@ -91,9 +83,11 @@ class TestCreateHomogeneousDataset(unittest.TestCase):
 class TestCreateHeterogeneousDataset(unittest.TestCase):
     """Tests for create_heterogeneous_dataset function."""
 
-    def test_default_dataset(self) -> None:
-        """Test creating a dataset with default parameters."""
-        dataset = create_heterogeneous_dataset()
+    def test_with_default_edge_indices(self) -> None:
+        """Test creating a dataset with default edge indices constant."""
+        dataset = create_heterogeneous_dataset(
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
+        )
 
         # Verify node counts (5 users, 5 stories in default graph)
         node_ids = dataset.node_ids
@@ -101,7 +95,7 @@ class TestCreateHeterogeneousDataset(unittest.TestCase):
         self.assertEqual(node_ids[USER].shape[0], 5)
         self.assertEqual(node_ids[STORY].shape[0], 5)
 
-        # Verify feature info
+        # Verify feature info uses default dimension
         expected_feature_info = {
             USER: FeatureInfo(
                 dim=DEFAULT_HETEROGENEOUS_NODE_FEATURE_DIM, dtype=torch.float32
@@ -112,56 +106,52 @@ class TestCreateHeterogeneousDataset(unittest.TestCase):
         }
         self.assertEqual(dataset.node_feature_info, expected_feature_info)
 
-        # Verify edge direction
+        # Verify default edge direction
         self.assertEqual(dataset.edge_dir, "out")
 
-    def test_custom_edge_indices(self) -> None:
-        """Test creating a dataset with custom edge indices."""
+    def test_with_custom_parameters(self) -> None:
+        """Test creating a dataset with custom edge indices, features, labels, and edge direction."""
+        # Custom 3-node graph per type
         custom_edges = {
             USER_TO_STORY: torch.tensor([[0, 1, 2], [0, 1, 2]]),
             STORY_TO_USER: torch.tensor([[0, 1, 2], [0, 1, 2]]),
         }
-        dataset = create_heterogeneous_dataset(edge_indices=custom_edges)
+        custom_features = {
+            USER: torch.ones(3, 4),
+            STORY: torch.ones(3, 4),
+        }
+        custom_labels = {
+            USER: torch.tensor([[10], [20], [30]]),
+            STORY: torch.tensor([[100], [200], [300]]),
+        }
 
-        # Verify node counts (3 users, 3 stories)
+        dataset = create_heterogeneous_dataset(
+            edge_indices=custom_edges,
+            node_features=custom_features,
+            node_labels=custom_labels,
+            edge_dir="in",
+        )
+
+        # Verify node counts from custom edge indices
         node_ids = dataset.node_ids
         assert isinstance(node_ids, dict)
         self.assertEqual(node_ids[USER].shape[0], 3)
         self.assertEqual(node_ids[STORY].shape[0], 3)
 
-    def test_custom_node_features(self) -> None:
-        """Test creating a dataset with custom node features."""
-        custom_features = {
-            USER: torch.ones(5, 4),
-            STORY: torch.ones(5, 4),
-        }
-        dataset = create_heterogeneous_dataset(node_features=custom_features)
-
+        # Verify feature dimension from custom features
         expected_feature_info = {
             USER: FeatureInfo(dim=4, dtype=torch.float32),
             STORY: FeatureInfo(dim=4, dtype=torch.float32),
         }
         self.assertEqual(dataset.node_feature_info, expected_feature_info)
 
-    def test_custom_node_labels(self) -> None:
-        """Test creating a dataset with custom node labels."""
-        custom_labels = {
-            USER: torch.tensor([[10], [20], [30], [40], [50]]),
-            STORY: torch.tensor([[100], [200], [300], [400], [500]]),
-        }
-        dataset = create_heterogeneous_dataset(node_labels=custom_labels)
-
-        # Verify node labels are set (node_labels returns Feature objects, not raw tensors)
+        # Verify node labels are set
         node_labels = dataset.node_labels
         assert isinstance(node_labels, dict)
-        # The node_labels property returns Feature objects which wrap the tensors
         self.assertIn(USER, node_labels)
         self.assertIn(STORY, node_labels)
 
-    def test_edge_dir_in(self) -> None:
-        """Test creating a dataset with 'in' edge direction."""
-        dataset = create_heterogeneous_dataset(edge_dir="in")
-
+        # Verify custom edge direction
         self.assertEqual(dataset.edge_dir, "in")
 
     def test_default_edge_indices_not_modified(self) -> None:
@@ -170,7 +160,9 @@ class TestCreateHeterogeneousDataset(unittest.TestCase):
             edge_type: edge_index.clone()
             for edge_type, edge_index in DEFAULT_HETEROGENEOUS_EDGE_INDICES.items()
         }
-        _ = create_heterogeneous_dataset()
+        _ = create_heterogeneous_dataset(
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
+        )
 
         for edge_type, edge_index in DEFAULT_HETEROGENEOUS_EDGE_INDICES.items():
             assert_tensor_equality(edge_index, original[edge_type])
@@ -179,37 +171,25 @@ class TestCreateHeterogeneousDataset(unittest.TestCase):
 class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
     """Tests for create_heterogeneous_dataset_with_labels function."""
 
-    def setUp(self) -> None:
-        """Set up test fixtures."""
-        self.positive_labels = {
-            0: [0, 1],
-            1: [1, 2],
-            2: [2, 3],
-            3: [3, 4],
-            4: [4, 0],
-        }
-        self.negative_labels = {
-            0: [2],
-            1: [3],
-            2: [4],
-            3: [0],
-            4: [1],
-        }
-
     def tearDown(self) -> None:
         """Clean up after each test."""
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
 
     def test_basic_dataset_with_splits(self) -> None:
-        """Test creating a dataset with train/val/test splits."""
+        """Test creating a dataset with train/val/test splits and labels."""
         create_test_process_group()
 
+        positive_labels = {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3, 4], 4: [4, 0]}
+        negative_labels = {0: [2], 1: [3], 2: [4], 3: [0], 4: [1]}
+
         dataset = create_heterogeneous_dataset_with_labels(
-            positive_labels=self.positive_labels,
+            positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
             test_node_ids=[4],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+            negative_labels=negative_labels,
         )
 
         # Verify train/val/test node IDs are set
@@ -225,53 +205,27 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
         self.assertEqual(val_node_ids[USER].shape[0], 1)
         self.assertEqual(test_node_ids[USER].shape[0], 1)
 
-    def test_dataset_with_negative_labels(self) -> None:
-        """Test creating a dataset with both positive and negative labels."""
-        create_test_process_group()
-
-        dataset = create_heterogeneous_dataset_with_labels(
-            positive_labels=self.positive_labels,
-            negative_labels=self.negative_labels,
-            train_node_ids=[0, 1, 2],
-            val_node_ids=[3],
-            test_node_ids=[4],
-        )
-
-        # Verify the dataset was created successfully
-        self.assertIsNotNone(dataset.train_node_ids)
-
-    def test_dataset_without_negative_labels(self) -> None:
-        """Test creating a dataset without negative labels."""
-        create_test_process_group()
-
-        dataset = create_heterogeneous_dataset_with_labels(
-            positive_labels=self.positive_labels,
-            negative_labels=None,
-            train_node_ids=[0, 1, 2],
-            val_node_ids=[3],
-            test_node_ids=[4],
-        )
-
-        # Verify the dataset was created successfully
-        self.assertIsNotNone(dataset.train_node_ids)
-
     def test_missing_positive_labels_raises_error(self) -> None:
         """Test that missing positive labels for split nodes raises an error."""
-        # Node 5 is in test split but not in positive_labels
+        positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
+
         with self.assertRaises(ValueError) as context:
             create_heterogeneous_dataset_with_labels(
-                positive_labels=self.positive_labels,
+                positive_labels=positive_labels,
                 train_node_ids=[0, 1, 2],
                 val_node_ids=[3],
                 test_node_ids=[5],  # Node 5 not in positive_labels
+                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
             )
 
         self.assertIn("5", str(context.exception))
         self.assertIn("positive_labels", str(context.exception))
 
-    def test_custom_node_types(self) -> None:
-        """Test creating a dataset with custom node types."""
+    def test_with_custom_node_types_and_feature_dim(self) -> None:
+        """Test creating a dataset with custom node types and feature dimension."""
         create_test_process_group()
+
+        positive_labels = {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3, 4], 4: [4, 0]}
 
         custom_src_type = NodeType("author")
         custom_dst_type = NodeType("article")
@@ -286,7 +240,7 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
         }
 
         dataset = create_heterogeneous_dataset_with_labels(
-            positive_labels=self.positive_labels,
+            positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
             test_node_ids=[4],
@@ -294,48 +248,21 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
             src_node_type=custom_src_type,
             dst_node_type=custom_dst_type,
             supervision_edge_type=custom_edge_type,
+            node_feature_dim=8,
         )
 
-        # Verify node types
+        # Verify custom node types
         node_ids = dataset.node_ids
         assert isinstance(node_ids, dict)
         self.assertIn(custom_src_type, node_ids)
         self.assertIn(custom_dst_type, node_ids)
 
-    def test_custom_feature_dim(self) -> None:
-        """Test creating a dataset with custom feature dimension."""
-        create_test_process_group()
-
-        dataset = create_heterogeneous_dataset_with_labels(
-            positive_labels=self.positive_labels,
-            train_node_ids=[0, 1, 2],
-            val_node_ids=[3],
-            test_node_ids=[4],
-            node_feature_dim=8,
-        )
-
+        # Verify custom feature dimension
         expected_feature_info = {
-            USER: FeatureInfo(dim=8, dtype=torch.float32),
-            STORY: FeatureInfo(dim=8, dtype=torch.float32),
+            custom_src_type: FeatureInfo(dim=8, dtype=torch.float32),
+            custom_dst_type: FeatureInfo(dim=8, dtype=torch.float32),
         }
         self.assertEqual(dataset.node_feature_info, expected_feature_info)
-
-    def test_all_train_split(self) -> None:
-        """Test creating a dataset with most nodes in train split."""
-        create_test_process_group()
-
-        # The splitter requires at least some val and test nodes, so we use minimal splits
-        dataset = create_heterogeneous_dataset_with_labels(
-            positive_labels=self.positive_labels,
-            train_node_ids=[0, 1, 2],
-            val_node_ids=[3],
-            test_node_ids=[4],
-        )
-
-        # Verify train has expected nodes
-        train_node_ids = dataset.train_node_ids
-        assert isinstance(train_node_ids, dict)
-        self.assertEqual(train_node_ids[USER].shape[0], 3)
 
 
 if __name__ == "__main__":
