@@ -165,7 +165,9 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
             },
         )
         self.assertEqual(remote_dataset.get_edge_dir(), "out")
-        self.assertEqual(remote_dataset.get_edge_types(), [USER_TO_STORY, STORY_TO_USER])
+        self.assertEqual(
+            remote_dataset.get_edge_types(), [USER_TO_STORY, STORY_TO_USER]
+        )
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
@@ -276,6 +278,136 @@ class TestRemoteDistDatasetWithSplits(unittest.TestCase):
                 rank=1, world_size=2, node_type=USER, split="train"
             )[0],
             torch.tensor([1, 2]),
+        )
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_ablp_input(self, mock_async_request):
+        """Test get_ablp_input with train/val/test splits."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # Train split: nodes [0, 1, 2]
+        result = remote_dataset.get_ablp_input(
+            split="train", node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        self.assertIn(0, result)
+        anchors, positive_labels, negative_labels = result[0]
+        assert_tensor_equality(anchors, torch.tensor([0, 1, 2]))
+        assert_tensor_equality(positive_labels, torch.tensor([[0, 1], [1, 2], [2, 3]]))
+        assert negative_labels is not None
+        assert_tensor_equality(negative_labels, torch.tensor([[2], [3], [4]]))
+
+        # Val split: node [3]
+        result = remote_dataset.get_ablp_input(
+            split="val", node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        anchors, positive_labels, negative_labels = result[0]
+        assert_tensor_equality(anchors, torch.tensor([3]))
+        assert_tensor_equality(positive_labels, torch.tensor([[3, 4]]))
+        assert negative_labels is not None
+        assert_tensor_equality(negative_labels, torch.tensor([[0]]))
+
+        # Test split: node [4]
+        # Note: Labels are stored in CSR format which sorts by destination indices,
+        # so [4, 0] from the input becomes [0, 4] in the stored format.
+        result = remote_dataset.get_ablp_input(
+            split="test", node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        anchors, positive_labels, negative_labels = result[0]
+        assert_tensor_equality(anchors, torch.tensor([4]))
+        assert_tensor_equality(positive_labels, torch.tensor([[0, 4]]))
+        assert negative_labels is not None
+        assert_tensor_equality(negative_labels, torch.tensor([[1]]))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_ablp_input_with_sharding(self, mock_async_request):
+        """Test get_ablp_input with sharding across compute nodes."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # With sharding: train split [0, 1, 2] across 2 ranks
+        result_rank0 = remote_dataset.get_ablp_input(
+            split="train",
+            rank=0,
+            world_size=2,
+            node_type=USER,
+            supervision_edge_type=USER_TO_STORY,
+        )
+        anchors_0, positive_labels_0, negative_labels_0 = result_rank0[0]
+
+        # Rank 0 should get node 0
+        assert_tensor_equality(anchors_0, torch.tensor([0]))
+        assert_tensor_equality(positive_labels_0, torch.tensor([[0, 1]]))
+        assert negative_labels_0 is not None
+        assert_tensor_equality(negative_labels_0, torch.tensor([[2]]))
+
+        result_rank1 = remote_dataset.get_ablp_input(
+            split="train",
+            rank=1,
+            world_size=2,
+            node_type=USER,
+            supervision_edge_type=USER_TO_STORY,
+        )
+        anchors_1, positive_labels_1, negative_labels_1 = result_rank1[0]
+
+        # Rank 1 should get nodes 1, 2
+        assert_tensor_equality(anchors_1, torch.tensor([1, 2]))
+        assert_tensor_equality(positive_labels_1, torch.tensor([[1, 2], [2, 3]]))
+        assert negative_labels_1 is not None
+        assert_tensor_equality(negative_labels_1, torch.tensor([[3], [4]]))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_ablp_input_with_mp_sharing_dict(self, mock_async_request):
+        """Test get_ablp_input with mp_sharing_dict for shared memory across processes."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        mp_sharing_dict = mp.Manager().dict()
+        remote_dataset = RemoteDistDataset(
+            cluster_info=cluster_info, local_rank=0, mp_sharing_dict=mp_sharing_dict
+        )
+
+        # First call - should fetch and store in shared dict
+        result = remote_dataset.get_ablp_input(
+            split="train", node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        anchors, positive_labels, negative_labels = result[0]
+
+        # Verify results are correct
+        assert_tensor_equality(anchors, torch.tensor([0, 1, 2]))
+        assert_tensor_equality(positive_labels, torch.tensor([[0, 1], [1, 2], [2, 3]]))
+        assert negative_labels is not None
+        assert_tensor_equality(negative_labels, torch.tensor([[2], [3], [4]]))
+
+        # Verify data was stored in shared dict
+        self.assertIn("ablp_server_0_anchors", mp_sharing_dict)
+        self.assertIn("ablp_server_0_positive_labels", mp_sharing_dict)
+        self.assertIn("ablp_server_0_negative_labels", mp_sharing_dict)
+
+        # Verify stored tensors match the returned tensors
+        assert_tensor_equality(
+            mp_sharing_dict["ablp_server_0_anchors"], torch.tensor([0, 1, 2])
+        )
+        assert_tensor_equality(
+            mp_sharing_dict["ablp_server_0_positive_labels"],
+            torch.tensor([[0, 1], [1, 2], [2, 3]]),
+        )
+        assert_tensor_equality(
+            mp_sharing_dict["ablp_server_0_negative_labels"],
+            torch.tensor([[2], [3], [4]]),
         )
 
 
