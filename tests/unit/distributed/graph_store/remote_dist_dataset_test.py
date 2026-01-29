@@ -165,7 +165,9 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
             },
         )
         self.assertEqual(remote_dataset.get_edge_dir(), "out")
-        self.assertEqual(remote_dataset.get_edge_types(), [USER_TO_STORY, STORY_TO_USER])
+        self.assertEqual(
+            remote_dataset.get_edge_types(), [USER_TO_STORY, STORY_TO_USER]
+        )
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
