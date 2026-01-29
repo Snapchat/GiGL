@@ -233,6 +233,7 @@ def storage_node_process(
 
 
 if __name__ == "__main__":
+    # TODO(kmonte): We want to expose splitter class here probably.
     parser = argparse.ArgumentParser()
     parser.add_argument("--task_config_uri", type=str, required=True)
     parser.add_argument("--resource_config_uri", type=str, required=True)
