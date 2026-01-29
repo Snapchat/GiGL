@@ -26,12 +26,18 @@ from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureInfo
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureInfo,
+    select_label_edge_types,
+)
+from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 logger = Logger()
 
 _NO_DATASET_ERROR = ValueError(
-    "Dataset not registered! Register the dataset first with `gigl.distributed.server_client.register_dataset`"
+    "Dataset not registered! Register the dataset first with `gigl.distributed.graph_store.storage_utils.register_dataset`"
 )
 _dataset: Optional[DistDataset] = None
 
@@ -99,6 +105,7 @@ def get_edge_dir() -> Literal["in", "out"]:
     return _dataset.edge_dir
 
 
+# TODO(kmonte): Migrate this to be `get_node_ids(split?, shard?)`
 def get_node_ids_for_rank(
     rank: int,
     world_size: int,
@@ -155,3 +162,64 @@ def get_edge_types() -> Optional[list[EdgeType]]:
         return list(_dataset.graph.keys())
     else:
         return None
+
+
+def get_ablp_input(
+    split: Union[Literal["train", "val", "test"], str],
+    rank: int,
+    world_size: int,
+    node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
+
+    Note: rank and world_size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
+    e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+
+    Args:
+        split: The split to get the training input for.
+        rank: The rank of the process requesting the training input.
+        world_size: The total number of processes in the distributed setup.
+        node_type: The type of nodes to retrieve. Defaults to the default homogeneous node type.
+        supervision_edge_type: The edge type to use for the supervision. Defaults to the default homogeneous edge type.
+    Returns:
+        A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
+        The positive labels are of shape [N, M], where N is the number of anchor nodes and M is the number of positive labels.
+        The negative labels are of shape [N, M], where N is the number of anchor nodes and M is the number of negative labels.
+        The negative labels may be None if no negative labels are available.
+    Raises:
+        ValueError: If no dataset has been registered or if the split is invalid.
+    """
+
+    # TODO(kmonte): Migrate this part to use some `get_node_ids` method on the dataset.
+    if _dataset is None:
+        raise _NO_DATASET_ERROR
+
+    if split == "train":
+        anchors = _dataset.train_node_ids
+    elif split == "val":
+        anchors = _dataset.val_node_ids
+    elif split == "test":
+        anchors = _dataset.test_node_ids
+    else:
+        raise ValueError(f"Invalid split: {split}")
+
+    if isinstance(anchors, torch.Tensor):
+        raise ValueError(
+            f"dataset.node_ids should be a dict[NodeType, torch.Tensor] for getting training input for datasets, got a torch.Tensor for split {split}"
+        )
+    elif isinstance(anchors, dict):
+        anchor_nodes = anchors[node_type]
+    else:
+        raise ValueError(
+            f"Anchor nodes must be a torch.Tensor or a dict[NodeType, torch.Tensor], got {type(anchors)}"
+        )
+
+    anchors_for_rank = shard_nodes_by_process(anchor_nodes, rank, world_size)
+    positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
+        supervision_edge_type, _dataset.get_edge_types()
+    )
+    positive_labels, negative_labels = get_labels_for_anchor_nodes(
+        _dataset, anchors_for_rank, positive_label_edge_type, negative_label_edge_type
+    )
+    return anchors_for_rank, positive_labels, negative_labels

@@ -31,7 +31,8 @@ import argparse
 import statistics
 import time
 from collections.abc import Iterator, Mapping
-from typing import Literal, Optional
+from dataclasses import dataclass
+from typing import Literal, Optional, Union
 
 import torch
 import torch.distributed
@@ -79,7 +80,7 @@ def _setup_dataloaders(
     dataset: DistDataset,
     split: Literal["train", "val", "test"],
     supervision_edge_type: EdgeType,
-    num_neighbors: list[int],
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -278,75 +279,105 @@ def _compute_loss(
     return loss
 
 
+@dataclass(frozen=True)
+class TrainingProcessArgs:
+    """
+    Arguments for the heterogeneous training process.
+
+    Contains all configuration needed to run distributed training for heterogeneous graph neural
+    networks, including distributed context, data configuration, model parameters, sampling
+    configuration, and training hyperparameters.
+
+    Attributes:
+        local_world_size (int): Number of training processes spawned by each machine.
+        machine_rank (int): Rank of the current machine in the cluster.
+        machine_world_size (int): Total number of machines in the cluster.
+        master_ip_address (str): IP address of the master node for process group initialization.
+        master_default_process_group_port (int): Port for the default process group.
+        dataset (DistDataset): Loaded Distributed Dataset for training and testing.
+        supervision_edge_type (EdgeType): The supervision edge type for training in format
+            query_node -> relation -> labeled_node.
+        model_uri (Uri): URI to save/load the trained model state dict.
+        hid_dim (int): Hidden dimension of the model.
+        out_dim (int): Output dimension of the model.
+        node_type_to_feature_dim (dict[NodeType, int]): Mapping of node types to their feature
+            dimensions.
+        edge_type_to_feature_dim (dict[EdgeType, int]): Mapping of edge types to their feature
+            dimensions.
+        num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling,
+            where the ith item corresponds to the number of items to sample for the ith hop.
+        sampling_workers_per_process (int): Number of sampling workers per training/testing process.
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for
+            the channel during sampling (e.g., "4GB").
+        process_start_gap_seconds (int): Time to sleep between dataloader initializations to reduce
+            peak memory usage during initialization.
+        main_batch_size (int): Batch size for main dataloader with query and labeled nodes.
+        random_batch_size (int): Batch size for random negative dataloader.
+        learning_rate (float): Learning rate for the optimizer.
+        weight_decay (float): Weight decay for the optimizer.
+        num_max_train_batches (int): Maximum number of training batches across all processes.
+        num_val_batches (int): Number of validation batches across all processes.
+        val_every_n_batch (int): Frequency to run validation during training.
+        log_every_n_batch (int): Frequency to log batch information during training.
+        should_skip_training (bool): If True, skip training and only run testing.
+    """
+
+    # Distributed context
+    local_world_size: int
+    machine_rank: int
+    machine_world_size: int
+    master_ip_address: str
+    master_default_process_group_port: int
+
+    # Data
+    dataset: DistDataset
+    supervision_edge_type: EdgeType
+
+    # Model
+    model_uri: Uri
+    hid_dim: int
+    out_dim: int
+    node_type_to_feature_dim: dict[NodeType, int]
+    edge_type_to_feature_dim: dict[EdgeType, int]
+
+    # Sampling config
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
+    sampling_workers_per_process: int
+    sampling_worker_shared_channel_size: str
+    process_start_gap_seconds: int
+
+    # Training hyperparameters
+    main_batch_size: int
+    random_batch_size: int
+    learning_rate: float
+    weight_decay: float
+    num_max_train_batches: int
+    num_val_batches: int
+    val_every_n_batch: int
+    log_every_n_batch: int
+    should_skip_training: bool
+
+
 def _training_process(
     local_rank: int,
-    local_world_size: int,
-    machine_rank: int,
-    machine_world_size: int,
-    dataset: DistDataset,
-    supervision_edge_type: EdgeType,
-    node_type_to_feature_dim: dict[NodeType, int],
-    edge_type_to_feature_dim: dict[EdgeType, int],
-    master_ip_address: str,
-    master_default_process_group_port: int,
-    model_uri: Uri,
-    num_neighbors: list[int],
-    sampling_workers_per_process: int,
-    main_batch_size: int,
-    random_batch_size: int,
-    hid_dim: int,
-    out_dim: int,
-    sampling_worker_shared_channel_size: str,
-    process_start_gap_seconds: int,
-    log_every_n_batch: int,
-    learning_rate: float,
-    weight_decay: float,
-    num_max_train_batches: int,
-    num_val_batches: int,
-    val_every_n_batch: int,
-    should_skip_training: bool,
+    args: TrainingProcessArgs,
 ) -> None:
     """
     This function is spawned by each machine for training a GNN model given some loaded distributed dataset.
     Args:
         local_rank (int): Process number on the current machine
-        local_world_size (int): Number of training processes spawned by each machine
-        machine_rank (int): Rank of the current machine
-        machine_world_size (int): Total number of machines
-        dataset (DistDataset): Loaded Distributed Dataset for training
-        supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
-        node_type_to_feature_dim (dict[NodeType, int]): Input node feature dimension for the model per node type
-        edge_type_to_feature_dim (dict[EdgeType, int]): Input edge feature dimension for the model per edge type
-        master_ip_address (str): IP Address of the master worker for distributed communication
-        master_default_process_group_port (int): Port on the master worker for setting up distributed process group communication
-        model_uri (Uri): URI Path to save the model to
-        num_neighbors: list[int]: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop
-        sampling_workers_per_process (int): Number of sampling workers per training process
-        main_batch_size (int): Batch size for main dataloader with query and labeled nodes
-        random_batch_size (int): Batch size for random negative dataloader
-        hid_dim (int): Hidden dimension of the model
-        out_dim (int): Output dimension of the model
-        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling
-        process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader. For large-scale settings, consider setting this
-            field to 30-60 seconds to ensure dataloaders don't compete for memory during initialization, causing OOM.
-        log_every_n_batch (int): The frequency we should log batch information when training
-        learning_rate (float): Learning rate for training
-        weight_decay (float): Weight decay for training
-        num_max_train_batches (int): The maximum number of batches to train for across all training processes
-        num_val_batches (int): The number of batches to do validation for across all training processes
-        val_every_n_batch: (int): The frequency we should log batch information when validating
-        should_skip_training (bool): Whether training should be skipped and we should only run testing. Assumes model has been uploaded to the model_uri.
+        args (TrainingProcessArgs): Dataclass containing all training process arguments
     """
 
-    world_size = machine_world_size * local_world_size
-    rank = machine_rank * local_world_size + local_rank
+    world_size = args.machine_world_size * args.local_world_size
+    rank = args.machine_rank * args.local_world_size + local_rank
     logger.info(
         f"---Current training process rank: {rank}, training process world size: {world_size}"
     )
 
     torch.distributed.init_process_group(
         backend="nccl" if torch.cuda.is_available() else "gloo",
-        init_method=f"tcp://{master_ip_address}:{master_default_process_group_port}",
+        init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
         rank=rank,
         world_size=world_size,
     )
@@ -364,18 +395,18 @@ def _training_process(
         remove_accidental_hits=True,
     )
 
-    if not should_skip_training:
+    if not args.should_skip_training:
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
-            dataset=dataset,
+            dataset=args.dataset,
             split="train",
-            supervision_edge_type=supervision_edge_type,
-            num_neighbors=num_neighbors,
-            sampling_workers_per_process=sampling_workers_per_process,
-            main_batch_size=main_batch_size,
-            random_batch_size=random_batch_size,
+            supervision_edge_type=args.supervision_edge_type,
+            num_neighbors=args.num_neighbors,
+            sampling_workers_per_process=args.sampling_workers_per_process,
+            main_batch_size=args.main_batch_size,
+            random_batch_size=args.random_batch_size,
             device=device,
-            sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-            process_start_gap_seconds=process_start_gap_seconds,
+            sampling_worker_shared_channel_size=args.sampling_worker_shared_channel_size,
+            process_start_gap_seconds=args.process_start_gap_seconds,
         )
 
         # We keep track of both the dataloader and the iterator for it
@@ -386,16 +417,16 @@ def _training_process(
         )
 
         val_main_loader, val_random_negative_loader = _setup_dataloaders(
-            dataset=dataset,
+            dataset=args.dataset,
             split="val",
-            supervision_edge_type=supervision_edge_type,
-            num_neighbors=num_neighbors,
-            sampling_workers_per_process=sampling_workers_per_process,
-            main_batch_size=main_batch_size,
-            random_batch_size=random_batch_size,
+            supervision_edge_type=args.supervision_edge_type,
+            num_neighbors=args.num_neighbors,
+            sampling_workers_per_process=args.sampling_workers_per_process,
+            main_batch_size=args.main_batch_size,
+            random_batch_size=args.random_batch_size,
             device=device,
-            sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-            process_start_gap_seconds=process_start_gap_seconds,
+            sampling_worker_shared_channel_size=args.sampling_worker_shared_channel_size,
+            process_start_gap_seconds=args.process_start_gap_seconds,
         )
 
         # We keep track of both the dataloader and the iterator for it
@@ -403,10 +434,10 @@ def _training_process(
         val_main_loader_iter = InfiniteIterator(val_main_loader)
         val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
         model = init_example_gigl_heterogeneous_model(
-            node_type_to_feature_dim=node_type_to_feature_dim,
-            edge_type_to_feature_dim=edge_type_to_feature_dim,
-            hid_dim=hid_dim,
-            out_dim=out_dim,
+            node_type_to_feature_dim=args.node_type_to_feature_dim,
+            edge_type_to_feature_dim=args.edge_type_to_feature_dim,
+            hid_dim=args.hid_dim,
+            out_dim=args.out_dim,
             device=device,
             wrap_with_ddp=True,
             # Find unused parameters in the encoder.
@@ -414,7 +445,9 @@ def _training_process(
             find_unused_encoder_parameters=True,
         )
         optimizer = torch.optim.AdamW(
-            params=model.parameters(), lr=learning_rate, weight_decay=weight_decay
+            params=model.parameters(),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
         )
         logger.info(
             f"Model initialized on rank {rank} training device {device}\n{model}"
@@ -429,8 +462,8 @@ def _training_process(
         avg_train_loss = 0.0
         last_n_batch_avg_loss: list[float] = []
         last_n_batch_time: list[float] = []
-        num_max_train_batches_per_process = num_max_train_batches // world_size
-        num_val_batches_per_process = num_val_batches // world_size
+        num_max_train_batches_per_process = args.num_max_train_batches // world_size
+        num_val_batches_per_process = args.num_val_batches // world_size
         logger.info(
             f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
         )
@@ -445,7 +478,7 @@ def _training_process(
             if batch_idx >= num_max_train_batches_per_process:
                 logger.info(
                     f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
-                    f"stopping training on machine {machine_rank} local rank {local_rank}"
+                    f"stopping training on machine {args.machine_rank} local rank {local_rank}"
                 )
                 break
             loss = _compute_loss(
@@ -453,7 +486,7 @@ def _training_process(
                 main_data=main_data,
                 random_negative_data=random_data,
                 loss_fn=loss_fn,
-                supervision_edge_type=supervision_edge_type,
+                supervision_edge_type=args.supervision_edge_type,
                 device=device,
             )
             optimizer.zero_grad()
@@ -464,7 +497,7 @@ def _training_process(
             last_n_batch_time.append(time.time() - batch_start)
             batch_start = time.time()
             batch_idx += 1
-            if batch_idx % log_every_n_batch == 0:
+            if batch_idx % args.log_every_n_batch == 0:
                 logger.info(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
@@ -477,11 +510,11 @@ def _training_process(
                 last_n_batch_time.clear()
                 # log the global average training loss
                 logger.info(
-                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
                 )
                 last_n_batch_avg_loss.clear()
 
-            if batch_idx % val_every_n_batch == 0:
+            if batch_idx % args.val_every_n_batch == 0:
                 logger.info(f"rank={rank}, batch={batch_idx}, validating...")
                 model.eval()
                 _run_validation_loops(
@@ -489,9 +522,9 @@ def _training_process(
                     main_loader=val_main_loader_iter,
                     random_negative_loader=val_random_negative_loader_iter,
                     loss_fn=loss_fn,
-                    supervision_edge_type=supervision_edge_type,
+                    supervision_edge_type=args.supervision_edge_type,
                     device=device,
-                    log_every_n_batch=log_every_n_batch,
+                    log_every_n_batch=args.log_every_n_batch,
                     num_batches=num_val_batches_per_process,
                 )
                 model.train()
@@ -512,21 +545,25 @@ def _training_process(
         val_random_negative_loader.shutdown()
 
         # We save the model on the process with the 0th node rank and 0th local rank.
-        if machine_rank == 0 and local_rank == 0:
+        if args.machine_rank == 0 and local_rank == 0:
             logger.info(
-                f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {model_uri}"
+                f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
             )
             # We unwrap the model from DDP to save it
             # We do this so we can use the model without DDP later, e.g. for inference.
-            save_state_dict(model=model.unwrap_from_ddp(), save_to_path_uri=model_uri)
+            save_state_dict(
+                model=model.unwrap_from_ddp(), save_to_path_uri=args.model_uri
+            )
 
     else:  # should_skip_training is True, meaning we should only run testing
-        state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
+        state_dict = load_state_dict_from_uri(
+            load_from_uri=args.model_uri, device=device
+        )
         model = init_example_gigl_heterogeneous_model(
-            node_type_to_feature_dim=node_type_to_feature_dim,
-            edge_type_to_feature_dim=edge_type_to_feature_dim,
-            hid_dim=hid_dim,
-            out_dim=out_dim,
+            node_type_to_feature_dim=args.node_type_to_feature_dim,
+            edge_type_to_feature_dim=args.edge_type_to_feature_dim,
+            hid_dim=args.hid_dim,
+            out_dim=args.out_dim,
             device=device,
             wrap_with_ddp=True,
             # Find unused parameters in the encoder.
@@ -544,16 +581,16 @@ def _training_process(
     model.eval()
 
     test_main_loader, test_random_negative_loader = _setup_dataloaders(
-        dataset=dataset,
+        dataset=args.dataset,
         split="test",
-        supervision_edge_type=supervision_edge_type,
-        num_neighbors=num_neighbors,
-        sampling_workers_per_process=sampling_workers_per_process,
-        main_batch_size=main_batch_size,
-        random_batch_size=random_batch_size,
+        supervision_edge_type=args.supervision_edge_type,
+        num_neighbors=args.num_neighbors,
+        sampling_workers_per_process=args.sampling_workers_per_process,
+        main_batch_size=args.main_batch_size,
+        random_batch_size=args.random_batch_size,
         device=device,
-        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
-        process_start_gap_seconds=process_start_gap_seconds,
+        sampling_worker_shared_channel_size=args.sampling_worker_shared_channel_size,
+        process_start_gap_seconds=args.process_start_gap_seconds,
     )
 
     # We keep track of both the dataloader and the iterator for it
@@ -567,9 +604,9 @@ def _training_process(
         main_loader=test_main_loader_iter,
         random_negative_loader=test_random_negative_loader_iter,
         loss_fn=loss_fn,
-        supervision_edge_type=supervision_edge_type,
+        supervision_edge_type=args.supervision_edge_type,
         device=device,
-        log_every_n_batch=log_every_n_batch,
+        log_every_n_batch=args.log_every_n_batch,
     )
 
     # Memory cleanup and waiting for all processes to finish
@@ -823,35 +860,38 @@ def _run_example_training(
 
     logger.info("--- Launching training processes ...\n")
     start_time = time.time()
+
+    training_args = TrainingProcessArgs(
+        local_world_size=local_world_size,
+        machine_rank=machine_rank,
+        machine_world_size=machine_world_size,
+        master_ip_address=master_ip_address,
+        master_default_process_group_port=master_default_process_group_port,
+        dataset=dataset,
+        supervision_edge_type=supervision_edge_type,
+        model_uri=model_uri,
+        hid_dim=hid_dim,
+        out_dim=out_dim,
+        node_type_to_feature_dim=node_type_to_feature_dim,
+        edge_type_to_feature_dim=edge_type_to_feature_dim,
+        num_neighbors=num_neighbors,
+        sampling_workers_per_process=sampling_workers_per_process,
+        sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
+        process_start_gap_seconds=process_start_gap_seconds,
+        main_batch_size=main_batch_size,
+        random_batch_size=random_batch_size,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        num_max_train_batches=num_max_train_batches,
+        num_val_batches=num_val_batches,
+        val_every_n_batch=val_every_n_batch,
+        log_every_n_batch=log_every_n_batch,
+        should_skip_training=should_skip_training,
+    )
+
     torch.multiprocessing.spawn(
         _training_process,
-        args=(  # Corresponding arguments in `_training_process` function
-            local_world_size,  # local_world_size
-            machine_rank,  # machine_rank
-            machine_world_size,  # machine_world_size
-            dataset,  # dataset
-            supervision_edge_type,  # supervision_edge_type
-            node_type_to_feature_dim,  # node_type_to_feature_dim
-            edge_type_to_feature_dim,  # edge_type_to_feature_dim
-            master_ip_address,  # master_ip_address
-            master_default_process_group_port,  # master_default_process_group_port
-            model_uri,  # model_uri
-            num_neighbors,  # num_neighbors
-            sampling_workers_per_process,  # sampling_workers_per_process
-            main_batch_size,  # main_batch_size
-            random_batch_size,  # random_batch_size
-            hid_dim,  # hid_dim
-            out_dim,  # out_dim
-            sampling_worker_shared_channel_size,  # sampling_worker_shared_channel_size
-            process_start_gap_seconds,  # process_start_gap_seconds
-            log_every_n_batch,  # log_every_n_batch
-            learning_rate,  # learning_rate
-            weight_decay,  # weight_decay
-            num_max_train_batches,  # num_max_train_batches
-            num_val_batches,  # num_val_batches
-            val_every_n_batch,  # val_every_n_batch
-            should_skip_training,  # should_skip_training
-        ),
+        args=(training_args,),
         nprocs=local_world_size,
         join=True,
     )
