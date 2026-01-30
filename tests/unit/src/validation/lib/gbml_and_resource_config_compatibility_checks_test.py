@@ -75,42 +75,10 @@ def _create_shared_resource_config(
 # Helper functions for creating GbmlConfig configurations
 
 
-def _create_gbml_config_with_trainer_graph_store(
-    storage_command: str = "python -m gigl.distributed.graph_store.storage_main",
-) -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig with graph_store_storage_config set for trainer."""
-    gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.trainer_config.graph_store_storage_config.command = storage_command
-    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
-
-
-def _create_gbml_config_without_trainer_graph_store() -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig without graph_store_storage_config for trainer."""
-    gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.trainer_config.trainer_args["some_arg"] = "some_value"
-    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
-
-
-def _create_gbml_config_with_inferencer_graph_store(
-    storage_command: str = "python -m gigl.distributed.graph_store.storage_main",
-) -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig with graph_store_storage_config set for inferencer."""
-    gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.inferencer_config.graph_store_storage_config.command = storage_command
-    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
-
-
-def _create_gbml_config_without_inferencer_graph_store() -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig without graph_store_storage_config for inferencer."""
-    gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.inferencer_config.inferencer_args["some_arg"] = "some_value"
-    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
-
-
 def _create_gbml_config_with_both_graph_stores(
     storage_command: str = "python -m gigl.distributed.graph_store.storage_main",
 ) -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig with graph_store_storage_config for both trainer and inferencer."""
+    """Create a GbmlConfig with graph_store_storage_config set for both trainer and inferencer."""
     gbml_config = gbml_config_pb2.GbmlConfig()
     gbml_config.trainer_config.graph_store_storage_config.command = storage_command
     gbml_config.inferencer_config.graph_store_storage_config.command = storage_command
@@ -118,69 +86,11 @@ def _create_gbml_config_with_both_graph_stores(
 
 
 def _create_gbml_config_without_graph_stores() -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig without graph_store_storage_config for both trainer and inferencer."""
+    """Create a GbmlConfig without graph_store_storage_config for trainer or inferencer."""
     gbml_config = gbml_config_pb2.GbmlConfig()
     gbml_config.trainer_config.trainer_args["some_arg"] = "some_value"
     gbml_config.inferencer_config.inferencer_args["some_arg"] = "some_value"
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
-
-
-# Helper functions for creating GiglResourceConfig configurations
-
-
-def _create_resource_config_with_trainer_graph_store() -> GiglResourceConfigWrapper:
-    """Create a GiglResourceConfig with VertexAiGraphStoreConfig for trainer."""
-    config = gigl_resource_config_pb2.GiglResourceConfig()
-    _create_shared_resource_config(config)
-
-    # Trainer with VertexAiGraphStoreConfig
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.CopyFrom(
-        _create_vertex_ai_graph_store_config()
-    )
-    # Inferencer with standard config
-    config.inferencer_resource_config.vertex_ai_inferencer_config.CopyFrom(
-        _create_vertex_ai_resource_config()
-    )
-    return GiglResourceConfigWrapper(resource_config=config)
-
-
-def _create_resource_config_without_trainer_graph_store() -> GiglResourceConfigWrapper:
-    """Create a GiglResourceConfig without VertexAiGraphStoreConfig for trainer."""
-    config = gigl_resource_config_pb2.GiglResourceConfig()
-    _create_shared_resource_config(config)
-
-    # Trainer with standard config
-    config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
-        _create_vertex_ai_resource_config()
-    )
-    # Inferencer with standard config
-    config.inferencer_resource_config.vertex_ai_inferencer_config.CopyFrom(
-        _create_vertex_ai_resource_config()
-    )
-    return GiglResourceConfigWrapper(resource_config=config)
-
-
-def _create_resource_config_with_inferencer_graph_store() -> GiglResourceConfigWrapper:
-    """Create a GiglResourceConfig with VertexAiGraphStoreConfig for inferencer."""
-    config = gigl_resource_config_pb2.GiglResourceConfig()
-    _create_shared_resource_config(config)
-
-    # Trainer with standard config
-    config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
-        _create_vertex_ai_resource_config()
-    )
-    # Inferencer with VertexAiGraphStoreConfig
-    config.inferencer_resource_config.vertex_ai_graph_store_inferencer_config.CopyFrom(
-        _create_vertex_ai_graph_store_config()
-    )
-    return GiglResourceConfigWrapper(resource_config=config)
-
-
-def _create_resource_config_without_inferencer_graph_store() -> (
-    GiglResourceConfigWrapper
-):
-    """Create a GiglResourceConfig without VertexAiGraphStoreConfig for inferencer."""
-    return _create_resource_config_without_trainer_graph_store()
 
 
 def _create_resource_config_with_both_graph_stores() -> GiglResourceConfigWrapper:
@@ -200,11 +110,19 @@ def _create_resource_config_with_both_graph_stores() -> GiglResourceConfigWrappe
 
 
 def _create_resource_config_without_graph_stores() -> GiglResourceConfigWrapper:
-    """Create a GiglResourceConfig without VertexAiGraphStoreConfig for both trainer and inferencer."""
-    return _create_resource_config_without_trainer_graph_store()
+    """Create a GiglResourceConfig without VertexAiGraphStoreConfig for trainer or inferencer."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    _create_shared_resource_config(config)
 
-
-# Test Classes
+    # Trainer with standard config
+    config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
+        _create_vertex_ai_resource_config()
+    )
+    # Inferencer with standard config
+    config.inferencer_resource_config.vertex_ai_inferencer_config.CopyFrom(
+        _create_vertex_ai_resource_config()
+    )
+    return GiglResourceConfigWrapper(resource_config=config)
 
 
 class TestTrainerGraphStoreCompatibility(unittest.TestCase):
@@ -212,8 +130,8 @@ class TestTrainerGraphStoreCompatibility(unittest.TestCase):
 
     def test_both_have_trainer_graph_store(self):
         """Test that both configs having trainer graph store passes validation."""
-        gbml_config = _create_gbml_config_with_trainer_graph_store()
-        resource_config = _create_resource_config_with_trainer_graph_store()
+        gbml_config = _create_gbml_config_with_both_graph_stores()
+        resource_config = _create_resource_config_with_both_graph_stores()
         # Should not raise any exception
         check_trainer_graph_store_compatibility(
             gbml_config_pb_wrapper=gbml_config,
@@ -222,8 +140,8 @@ class TestTrainerGraphStoreCompatibility(unittest.TestCase):
 
     def test_neither_has_trainer_graph_store(self):
         """Test that neither config having trainer graph store passes validation."""
-        gbml_config = _create_gbml_config_without_trainer_graph_store()
-        resource_config = _create_resource_config_without_trainer_graph_store()
+        gbml_config = _create_gbml_config_without_graph_stores()
+        resource_config = _create_resource_config_without_graph_stores()
         # Should not raise any exception
         check_trainer_graph_store_compatibility(
             gbml_config_pb_wrapper=gbml_config,
@@ -232,8 +150,8 @@ class TestTrainerGraphStoreCompatibility(unittest.TestCase):
 
     def test_template_has_trainer_graph_store_resource_does_not(self):
         """Test that template having graph store but resource not raises an assertion error."""
-        gbml_config = _create_gbml_config_with_trainer_graph_store()
-        resource_config = _create_resource_config_without_trainer_graph_store()
+        gbml_config = _create_gbml_config_with_both_graph_stores()
+        resource_config = _create_resource_config_without_graph_stores()
         with self.assertRaises(AssertionError):
             check_trainer_graph_store_compatibility(
                 gbml_config_pb_wrapper=gbml_config,
@@ -242,8 +160,8 @@ class TestTrainerGraphStoreCompatibility(unittest.TestCase):
 
     def test_resource_has_trainer_graph_store_template_does_not(self):
         """Test that resource having graph store but template not raises an assertion error."""
-        gbml_config = _create_gbml_config_without_trainer_graph_store()
-        resource_config = _create_resource_config_with_trainer_graph_store()
+        gbml_config = _create_gbml_config_without_graph_stores()
+        resource_config = _create_resource_config_with_both_graph_stores()
         with self.assertRaises(AssertionError):
             check_trainer_graph_store_compatibility(
                 gbml_config_pb_wrapper=gbml_config,
@@ -256,8 +174,8 @@ class TestInferencerGraphStoreCompatibility(unittest.TestCase):
 
     def test_both_have_inferencer_graph_store(self):
         """Test that both configs having inferencer graph store passes validation."""
-        gbml_config = _create_gbml_config_with_inferencer_graph_store()
-        resource_config = _create_resource_config_with_inferencer_graph_store()
+        gbml_config = _create_gbml_config_with_both_graph_stores()
+        resource_config = _create_resource_config_with_both_graph_stores()
         # Should not raise any exception
         check_inferencer_graph_store_compatibility(
             gbml_config_pb_wrapper=gbml_config,
@@ -266,8 +184,8 @@ class TestInferencerGraphStoreCompatibility(unittest.TestCase):
 
     def test_neither_has_inferencer_graph_store(self):
         """Test that neither config having inferencer graph store passes validation."""
-        gbml_config = _create_gbml_config_without_inferencer_graph_store()
-        resource_config = _create_resource_config_without_inferencer_graph_store()
+        gbml_config = _create_gbml_config_without_graph_stores()
+        resource_config = _create_resource_config_without_graph_stores()
         # Should not raise any exception
         check_inferencer_graph_store_compatibility(
             gbml_config_pb_wrapper=gbml_config,
@@ -276,8 +194,8 @@ class TestInferencerGraphStoreCompatibility(unittest.TestCase):
 
     def test_template_has_inferencer_graph_store_resource_does_not(self):
         """Test that template having graph store but resource not raises an assertion error."""
-        gbml_config = _create_gbml_config_with_inferencer_graph_store()
-        resource_config = _create_resource_config_without_inferencer_graph_store()
+        gbml_config = _create_gbml_config_with_both_graph_stores()
+        resource_config = _create_resource_config_without_graph_stores()
         with self.assertRaises(AssertionError):
             check_inferencer_graph_store_compatibility(
                 gbml_config_pb_wrapper=gbml_config,
@@ -286,109 +204,13 @@ class TestInferencerGraphStoreCompatibility(unittest.TestCase):
 
     def test_resource_has_inferencer_graph_store_template_does_not(self):
         """Test that resource having graph store but template not raises an assertion error."""
-        gbml_config = _create_gbml_config_without_inferencer_graph_store()
-        resource_config = _create_resource_config_with_inferencer_graph_store()
-        with self.assertRaises(AssertionError):
-            check_inferencer_graph_store_compatibility(
-                gbml_config_pb_wrapper=gbml_config,
-                resource_config_wrapper=resource_config,
-            )
-
-
-class TestMixedGraphStoreConfigurations(unittest.TestCase):
-    """Test suite for mixed graph store configuration scenarios."""
-
-    def test_both_have_all_graph_stores(self):
-        """Test that both configs having all graph stores passes validation."""
-        gbml_config = _create_gbml_config_with_both_graph_stores()
-        resource_config = _create_resource_config_with_both_graph_stores()
-        # Should not raise any exception for trainer
-        check_trainer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-        # Should not raise any exception for inferencer
-        check_inferencer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-
-    def test_neither_has_any_graph_stores(self):
-        """Test that neither config having any graph stores passes validation."""
         gbml_config = _create_gbml_config_without_graph_stores()
-        resource_config = _create_resource_config_without_graph_stores()
-        # Should not raise any exception for trainer
-        check_trainer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-        # Should not raise any exception for inferencer
-        check_inferencer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-
-    def test_trainer_graph_store_only_compatible(self):
-        """Test trainer graph store only configuration is compatible."""
-        gbml_config = _create_gbml_config_with_trainer_graph_store()
-        resource_config = _create_resource_config_with_trainer_graph_store()
-        # Should not raise any exception for trainer
-        check_trainer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-        # Should not raise any exception for inferencer (neither has it)
-        check_inferencer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-
-    def test_inferencer_graph_store_only_compatible(self):
-        """Test inferencer graph store only configuration is compatible."""
-        gbml_config = _create_gbml_config_with_inferencer_graph_store()
-        resource_config = _create_resource_config_with_inferencer_graph_store()
-        # Should not raise any exception for trainer (neither has it)
-        check_trainer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-        # Should not raise any exception for inferencer
-        check_inferencer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-
-    def test_template_has_both_resource_has_trainer_only(self):
-        """Test that template having both but resource having only trainer raises an error for inferencer."""
-        gbml_config = _create_gbml_config_with_both_graph_stores()
-        resource_config = _create_resource_config_with_trainer_graph_store()
-        # Should not raise any exception for trainer
-        check_trainer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
-        # Should raise an assertion error for inferencer
+        resource_config = _create_resource_config_with_both_graph_stores()
         with self.assertRaises(AssertionError):
             check_inferencer_graph_store_compatibility(
                 gbml_config_pb_wrapper=gbml_config,
                 resource_config_wrapper=resource_config,
             )
-
-    def test_template_has_both_resource_has_inferencer_only(self):
-        """Test that template having both but resource having only inferencer raises an error for trainer."""
-        gbml_config = _create_gbml_config_with_both_graph_stores()
-        resource_config = _create_resource_config_with_inferencer_graph_store()
-        # Should raise an assertion error for trainer
-        with self.assertRaises(AssertionError):
-            check_trainer_graph_store_compatibility(
-                gbml_config_pb_wrapper=gbml_config,
-                resource_config_wrapper=resource_config,
-            )
-        # Should not raise any exception for inferencer
-        check_inferencer_graph_store_compatibility(
-            gbml_config_pb_wrapper=gbml_config,
-            resource_config_wrapper=resource_config,
-        )
 
 
 if __name__ == "__main__":
