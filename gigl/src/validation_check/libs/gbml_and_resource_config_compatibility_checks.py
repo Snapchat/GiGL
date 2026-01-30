@@ -5,6 +5,10 @@ These checks ensure that graph store mode configurations are consistent across b
 If graph store mode is set up for trainer or inferencer in one config, it must be set up in the other.
 """
 
+from typing import Literal
+
+from google.protobuf.message import Message
+
 from gigl.common.logger import Logger
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -15,24 +19,9 @@ from snapchat.research.gbml import gigl_resource_config_pb2
 logger = Logger()
 
 
-def _gbml_config_has_trainer_graph_store(
+def _gbml_config_has_graph_store(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> bool:
-    """
-    Check if the GbmlConfig has graph_store_storage_config set for trainer.
-
-    Args:
-        gbml_config_pb_wrapper: The GbmlConfig wrapper to check.
-
-    Returns:
-        True if graph_store_storage_config is set for trainer, False otherwise.
-    """
-    trainer_config = gbml_config_pb_wrapper.gbml_config_pb.trainer_config
-    return trainer_config.HasField("graph_store_storage_config")
-
-
-def _gbml_config_has_inferencer_graph_store(
-    gbml_config_pb_wrapper: GbmlConfigPbWrapper,
+    component: Literal["trainer", "inferencer"],
 ) -> bool:
     """
     Check if the GbmlConfig has graph_store_storage_config set for inferencer.
@@ -43,15 +32,23 @@ def _gbml_config_has_inferencer_graph_store(
     Returns:
         True if graph_store_storage_config is set for inferencer, False otherwise.
     """
-    inferencer_config = gbml_config_pb_wrapper.gbml_config_pb.inferencer_config
-    return inferencer_config.HasField("graph_store_storage_config")
+    if component == "inferencer":
+        config: Message = gbml_config_pb_wrapper.gbml_config_pb.inferencer_config
+    elif component == "trainer":
+        config = gbml_config_pb_wrapper.gbml_config_pb.trainer_config
+    else:
+        raise ValueError(
+            f"Invalid component: {component}. Must be 'inferencer' or 'trainer'."
+        )
+    return config.HasField("graph_store_storage_config")
 
 
-def _resource_config_has_trainer_graph_store(
+def _resource_config_has_graph_store(
     resource_config_wrapper: GiglResourceConfigWrapper,
+    component: Literal["trainer", "inferencer"],
 ) -> bool:
     """
-    Check if the GiglResourceConfig has VertexAiGraphStoreConfig set for trainer.
+    Check if the GiglResourceConfig has VertexAiGraphStoreConfig set for the given component.
 
     Args:
         resource_config_wrapper: The resource config wrapper to check.
@@ -59,26 +56,15 @@ def _resource_config_has_trainer_graph_store(
     Returns:
         True if VertexAiGraphStoreConfig is set for trainer, False otherwise.
     """
-    trainer_config = resource_config_wrapper.trainer_config
-    return isinstance(trainer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig)
-
-
-def _resource_config_has_inferencer_graph_store(
-    resource_config_wrapper: GiglResourceConfigWrapper,
-) -> bool:
-    """
-    Check if the GiglResourceConfig has VertexAiGraphStoreConfig set for inferencer.
-
-    Args:
-        resource_config_wrapper: The resource config wrapper to check.
-
-    Returns:
-        True if VertexAiGraphStoreConfig is set for inferencer, False otherwise.
-    """
-    inferencer_config = resource_config_wrapper.inferencer_config
-    return isinstance(
-        inferencer_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
-    )
+    if component == "trainer":
+        config: Message = resource_config_wrapper.trainer_config
+    elif component == "inferencer":
+        config = resource_config_wrapper.inferencer_config
+    else:
+        raise ValueError(
+            f"Invalid component: {component}. Must be 'trainer' or 'inferencer'."
+        )
+    return isinstance(config, gigl_resource_config_pb2.VertexAiGraphStoreConfig)
 
 
 def check_trainer_graph_store_compatibility(
@@ -103,23 +89,16 @@ def check_trainer_graph_store_compatibility(
         "Config validation check: trainer graph store compatibility between template and resource configs."
     )
 
-    gbml_has_graph_store = _gbml_config_has_trainer_graph_store(gbml_config_pb_wrapper)
-    resource_has_graph_store = _resource_config_has_trainer_graph_store(
-        resource_config_wrapper
+    gbml_has_graph_store = _gbml_config_has_graph_store(
+        gbml_config_pb_wrapper, "trainer"
+    )
+    resource_has_graph_store = _resource_config_has_graph_store(
+        resource_config_wrapper, "trainer"
     )
 
-    if gbml_has_graph_store and not resource_has_graph_store:
+    if gbml_has_graph_store ^ resource_has_graph_store:
         raise AssertionError(
-            "GbmlConfig.trainer_config.graph_store_storage_config is set, but "
-            "GiglResourceConfig.trainer_resource_config does not use VertexAiGraphStoreConfig. "
-            "Both configs must use graph store mode for trainer, or neither should."
-        )
-
-    if resource_has_graph_store and not gbml_has_graph_store:
-        raise AssertionError(
-            "GiglResourceConfig.trainer_resource_config uses VertexAiGraphStoreConfig, but "
-            "GbmlConfig.trainer_config.graph_store_storage_config is not set. "
-            "Both configs must use graph store mode for trainer, or neither should."
+            f"If one of GbmlConfig.trainer_config.graph_store_storage_config or GiglResourceConfig.trainer_resource_config is set, the other must also be set. GbmlConfig.trainer_config.graph_store_storage_config is set: {gbml_has_graph_store}, GiglResourceConfig.trainer_resource_config is set: {resource_has_graph_store}."
         )
 
 
@@ -145,23 +124,14 @@ def check_inferencer_graph_store_compatibility(
         "Config validation check: inferencer graph store compatibility between template and resource configs."
     )
 
-    gbml_has_graph_store = _gbml_config_has_inferencer_graph_store(
-        gbml_config_pb_wrapper
+    gbml_has_graph_store = _gbml_config_has_graph_store(
+        gbml_config_pb_wrapper, "inferencer"
     )
-    resource_has_graph_store = _resource_config_has_inferencer_graph_store(
-        resource_config_wrapper
+    resource_has_graph_store = _resource_config_has_graph_store(
+        resource_config_wrapper, "inferencer"
     )
 
     if gbml_has_graph_store and not resource_has_graph_store:
         raise AssertionError(
-            "GbmlConfig.inferencer_config.graph_store_storage_config is set, but "
-            "GiglResourceConfig.inferencer_resource_config does not use VertexAiGraphStoreConfig. "
-            "Both configs must use graph store mode for inferencer, or neither should."
-        )
-
-    if resource_has_graph_store and not gbml_has_graph_store:
-        raise AssertionError(
-            "GiglResourceConfig.inferencer_resource_config uses VertexAiGraphStoreConfig, but "
-            "GbmlConfig.inferencer_config.graph_store_storage_config is not set. "
-            "Both configs must use graph store mode for inferencer, or neither should."
+            f"If one of GbmlConfig.inferencer_config.graph_store_storage_config or GiglResourceConfig.inferencer_resource_config is set, the other must also be set. GbmlConfig.inferencer_config.graph_store_storage_config is set: {gbml_has_graph_store}, GiglResourceConfig.inferencer_resource_config is set: {resource_has_graph_store}."
         )
