@@ -209,7 +209,7 @@ jobs:
         gh pr create --title "Release v${{ needs.bump_version.outputs.new_version }}" \
         --body "## Release v${{ needs.bump_version.outputs.new_version }}
 
-        This updates and releases GiG version from \`${{ needs.bump_version.outputs.current_version }}\` to \`${{ needs.bump_version.outputs.new_version }}\`.
+        This updates and releases GiGL version from \`${{ needs.bump_version.outputs.current_version }}\` to \`${{ needs.bump_version.outputs.new_version }}\`.
 
         ### Info:
         - **Bump Type:** ${{ needs.bump_version.outputs.bump_type }}
