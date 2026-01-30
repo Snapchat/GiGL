@@ -262,7 +262,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Use the underlying sampling infrastructure to get all neighbors
         # We request a large number to effectively get all neighbors
         output: NeighborOutput = await self._sample_one_hop(
-            nodes, req_num=-1, edge_type=edge_type  # -1 typically means all neighbors
+            srcs=nodes, num_nbr=10000, etype=edge_type
         )
         return output.nbr, output.nbr_num
 
