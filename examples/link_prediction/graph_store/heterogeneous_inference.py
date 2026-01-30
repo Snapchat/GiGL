@@ -64,7 +64,7 @@ from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed.graph_store.compute import init_compute_process
+from gigl.distributed.graph_store.compute import init_compute_process, shutdown_compute_proccess
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
@@ -80,6 +80,12 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
+
+def flush():
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    sys.stderr.write("\n")
+    sys.stderr.flush()
 
 @dataclass(frozen=True)
 class InferenceProcessArgs:
@@ -172,6 +178,8 @@ def _inference_process(
     world_size = args.machine_world_size * args.local_world_size
     # Note: This is a *critical* step in Graph Store mode. It initializes the connection to the storage cluster.
     # If this is not done, the dataloader will not be able to sample from the graph store and will crash.
+    logger.info(f"Initializing compute process for rank {local_rank} in machine {args.machine_rank} with cluster info {args.cluster_info} for inference node type {args.inference_node_type}")
+    flush()
     init_compute_process(local_rank, args.cluster_info)
     dataset = RemoteDistDataset(
         args.cluster_info, local_rank, mp_sharing_dict=args.mp_sharing_dict
@@ -185,7 +193,7 @@ def _inference_process(
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
     )
-    sys.stdout.flush()
+    flush()
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=args.num_neighbors,
@@ -200,7 +208,7 @@ def _inference_process(
         # don't compete for memory during initialization, causing OOM
         process_start_gap_seconds=0,
     )
-    sys.stdout.flush()
+    flush()
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
@@ -242,7 +250,7 @@ def _inference_process(
 
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
-    sys.stdout.flush()
+    flush()
     torch.distributed.barrier()
 
     t = time.time()
@@ -250,7 +258,7 @@ def _inference_process(
     inference_start_time = time.time()
     cumulative_data_loading_time = 0.0
     cumulative_inference_time = 0.0
-    sys.stdout.flush()
+    flush()
 
     # Begin inference loop
 
@@ -291,7 +299,7 @@ def _inference_process(
             t = time.time()
             cumulative_data_loading_time = 0
             cumulative_inference_time = 0
-            sys.stdout.flush()
+            flush()
 
         data_loading_start_time = time.time()
 
@@ -315,13 +323,14 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
+    shutdown_compute_proccess()
     gc.collect()
 
     logger.info(
-        f"--- All machines local rank {local_rank} finished inference for node type {args.inference_node_type}. Deleted data loader"
+        f"--- All machines local rank {local_rank} finished inference for node type {args.inference_node_type}. Deleted data loader and shutdown compute process"
     )
 
-    sys.stdout.flush()
+    flush()
 
 
 def _run_example_inference(
@@ -415,10 +424,10 @@ def _run_example_inference(
         raise ValueError(
             f"Number of inference processes per machine ({num_inference_processes_per_machine}) must not be more than the number of GPUs: ({torch.cuda.device_count()})"
         )
-    sys.stdout.flush()
+    flush()
 
     ## Inference Start
-    sys.stdout.flush()
+    flush()
     inference_start_time = time.time()
 
     for process_num, inference_node_type in enumerate(inference_node_types):
@@ -492,7 +501,7 @@ def _run_example_inference(
             log_every_n_batch=log_every_n_batch,
         )
         logger.info(f"Rank {cluster_info.compute_node_rank} started inference process for node type {inference_node_type} with {num_inference_processes_per_machine} processes\nargs: {inference_args}")
-        sys.stdout.flush()
+        flush()
 
         mp.spawn(
             fn=_inference_process,
@@ -504,7 +513,7 @@ def _run_example_inference(
         logger.info(
             f"--- Inference finished on rank {cluster_info.compute_node_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
         )
-        sys.stdout.flush()
+        flush()
 
         # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
         if cluster_info.compute_node_rank == 0:
@@ -525,7 +534,7 @@ def _run_example_inference(
                 table_id=bq_table_name,
                 should_run_async=should_run_async,
             )
-            sys.stdout.flush()
+            flush()
     logger.info(
         f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
     )
@@ -545,7 +554,8 @@ if __name__ == "__main__":
 
         # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for distributed inference
         args, unused_args = parser.parse_known_args()
-        logger.info(f"Unused arguments: {unused_args}")
+        logger.info(f"Args: {args}, Unused arguments: {unused_args}")
+        flush()
 
         # We only need `job_name` and `task_config_uri` for running inference
         _run_example_inference(

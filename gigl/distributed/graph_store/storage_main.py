@@ -110,11 +110,11 @@ def storage_node_process(
     logger.info(f"Inference node types: {inference_node_types}")
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
-    server_processes = []
     mp_context = torch.multiprocessing.get_context("spawn")
     # TODO(kmonte): Enable more than one server process per machine
     for i, inference_node_type in enumerate(inference_node_types):
         logger.info(f"Starting storage node for inference node type {inference_node_type} (storage process group {i} / {len(inference_node_types)})")
+        server_processes = []
         for i in range(1):
             server_process = mp_context.Process(
                 target=_run_storage_process,
@@ -127,10 +127,11 @@ def storage_node_process(
                 ),
             )
             server_processes.append(server_process)
-        for server_process in server_processes:
-            server_process.start()
-        for server_process in server_processes:
-            server_process.join()
+            for server_process in server_processes:
+                server_process.start()
+            for server_process in server_processes:
+                server_process.join()
+            logger.info(f"All server processes for inference node type {inference_node_type} joined")
 
 
 if __name__ == "__main__":

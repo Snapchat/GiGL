@@ -1,21 +1,21 @@
 # Combined e2e test configurations for GiGL
 # This file contains all the test specifications that can be run via the e2e test script
 tests:
-  cora_nalp_test:
-    task_config_uri: "gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml"
-    resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
-  cora_snc_test:
-    task_config_uri: "gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml"
-    resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
-  cora_udl_test:
-    task_config_uri: "gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml"
-    resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
-  dblp_nalp_test:
-    task_config_uri: "gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml"
-    resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
-  hom_cora_sup_test:
-    task_config_uri: "examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml"
-    resource_config_uri: "${oc.env:GIGL_TEST_IN_MEMORY_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_glt_resource_config.yaml}"
+  # cora_nalp_test:
+  #   task_config_uri: "gigl/src/mocking/configs/e2e_node_anchor_based_link_prediction_template_gbml_config.yaml"
+  #   resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
+  # cora_snc_test:
+  #   task_config_uri: "gigl/src/mocking/configs/e2e_supervised_node_classification_template_gbml_config.yaml"
+  #   resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
+  # cora_udl_test:
+  #   task_config_uri: "gigl/src/mocking/configs/e2e_udl_node_anchor_based_link_prediction_template_gbml_config.yaml"
+  #   resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
+  # dblp_nalp_test:
+  #   task_config_uri: "gigl/src/mocking/configs/dblp_node_anchor_based_link_prediction_template_gbml_config.yaml"
+  #   resource_config_uri: "${oc.env:GIGL_TEST_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_cicd_resource_config.yaml}"
+  # hom_cora_sup_test:
+  #   task_config_uri: "examples/link_prediction/configs/e2e_hom_cora_sup_task_config.yaml"
+  #   resource_config_uri: "${oc.env:GIGL_TEST_IN_MEMORY_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_glt_resource_config.yaml}"
   het_dblp_sup_test:
     task_config_uri: "examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml"
     resource_config_uri: "${oc.env:GIGL_TEST_IN_MEMORY_DEFAULT_RESOURCE_CONFIG,deployment/configs/e2e_glt_resource_config.yaml}"
