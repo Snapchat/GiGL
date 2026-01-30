@@ -31,7 +31,7 @@ inferencerConfig:
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.graph_store.homogeneous_inference
   graphStoreStorageConfig:
-    storageCommand: python -m examples.link_prediction.graph_store.storage_main
+    command: python -m examples.link_prediction.graph_store.storage_main
     storageArgs:
       sample_edge_direction: "in"
 sharedConfig:
