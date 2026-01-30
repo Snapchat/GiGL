@@ -232,8 +232,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     def __init__(
         self,
         *args,
-        alpha: float = 0.15,
-        eps: float = 1e-5,
+        alpha: float = 0.5,
+        eps: float = 1e-4,
         max_ppr_nodes: int = 50,
         default_node_id: int = -1,
         default_weight: float = 0.0,
@@ -262,7 +262,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Use the underlying sampling infrastructure to get all neighbors
         # We request a large number to effectively get all neighbors
         output: NeighborOutput = await self._sample_one_hop(
-            srcs=nodes, num_nbr=10000, etype=edge_type
+            srcs=nodes, num_nbr=10, etype=edge_type
         )
         return output.nbr, output.nbr_num
 
@@ -484,7 +484,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 node=node_dict,
                 row={},  # PPR doesn't necessarily maintain edge structure
                 col={},
-                edge=None,
+                edge={},  # Empty dict instead of None - GLT SampleQueue requires all values to be tensors
                 batch={input_type: input_seeds},
                 num_sampled_nodes={
                     ntype: [nodes.size(0)] for ntype, nodes in node_dict.items()
@@ -514,7 +514,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 node=all_nodes,
                 row=torch.tensor([], dtype=torch.long, device=self.device),
                 col=torch.tensor([], dtype=torch.long, device=self.device),
-                edge=None,
+                edge=torch.tensor(
+                    [], dtype=torch.long, device=self.device
+                ),  # Empty tensor instead of None - GLT SampleQueue requires all values to be tensors
                 batch=input_seeds,
                 num_sampled_nodes=[input_seeds.size(0), valid_neighbors.size(0)],
                 num_sampled_edges=[],
