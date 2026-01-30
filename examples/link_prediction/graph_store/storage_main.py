@@ -239,7 +239,7 @@ if __name__ == "__main__":
     parser.add_argument("--resource_config_uri", type=str, required=True)
     parser.add_argument("--job_name", type=str, required=True)
     parser.add_argument("--sample_edge_direction", type=str, required=True)
-    parser.add_argument("--should_load_tf_records_in_parallel", type=str, required=True)
+    parser.add_argument("--should_load_tf_records_in_parallel", type=str, default="True")
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
