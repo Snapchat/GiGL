@@ -206,7 +206,7 @@ def storage_node_process(
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
-        should_load_tf_records_in_parallel=should_load_tf_records_in_parallel,
+        should_load_tensors_in_parallel=should_load_tf_records_in_parallel,
         partitioner_class=DistRangePartitioner,
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
@@ -233,6 +233,7 @@ def storage_node_process(
 
 
 if __name__ == "__main__":
+    # TODO(kmonte): We want to expose splitter class here probably.
     parser = argparse.ArgumentParser()
     parser.add_argument("--task_config_uri", type=str, required=True)
     parser.add_argument("--resource_config_uri", type=str, required=True)

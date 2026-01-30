@@ -31,9 +31,7 @@ inferencerConfig:
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.graph_store.homogeneous_inference
   graphStoreStorageConfig:
-    storageCommand: python -m examples.link_prediction.graph_store.storage_main
-    # TODO(kmonte): Swap away from is_inference to unpack args, so we can directly use build_dataset.
-    # See https://github.com/Snapchat/GiGL/pull/462/changes#r2728929487 for context.
+    command: python -m examples.link_prediction.graph_store.storage_main
     storageArgs:
       sample_edge_direction: "in"
 sharedConfig:
