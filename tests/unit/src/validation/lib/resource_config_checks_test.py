@@ -756,34 +756,20 @@ class TestValidateMachineConfig(unittest.TestCase):
 # Helper functions for creating GbmlConfig configurations
 
 
-def _create_gbml_config_with_trainer_graph_store(
+def _create_gbml_config_with_both_graph_stores(
     storage_command: str = "python -m gigl.distributed.graph_store.storage_main",
 ) -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig with graph_store_storage_config set for trainer."""
+    """Create a GbmlConfig with graph_store_storage_config set for both trainer and inferencer."""
     gbml_config = gbml_config_pb2.GbmlConfig()
     gbml_config.trainer_config.graph_store_storage_config.command = storage_command
-    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
-
-
-def _create_gbml_config_without_trainer_graph_store() -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig without graph_store_storage_config for trainer."""
-    gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.trainer_config.trainer_args["some_arg"] = "some_value"
-    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
-
-
-def _create_gbml_config_with_inferencer_graph_store(
-    storage_command: str = "python -m gigl.distributed.graph_store.storage_main",
-) -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig with graph_store_storage_config set for inferencer."""
-    gbml_config = gbml_config_pb2.GbmlConfig()
     gbml_config.inferencer_config.graph_store_storage_config.command = storage_command
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
 
-def _create_gbml_config_without_inferencer_graph_store() -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig without graph_store_storage_config for inferencer."""
+def _create_gbml_config_without_graph_stores() -> GbmlConfigPbWrapper:
+    """Create a GbmlConfig without graph_store_storage_config for trainer or inferencer."""
     gbml_config = gbml_config_pb2.GbmlConfig()
+    gbml_config.trainer_config.trainer_args["some_arg"] = "some_value"
     gbml_config.inferencer_config.inferencer_args["some_arg"] = "some_value"
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
@@ -793,19 +779,19 @@ class TestTrainerGraphStoreStorageCommand(unittest.TestCase):
 
     def test_valid_storage_command(self):
         """Test that a valid storage_command passes validation."""
-        gbml_config = _create_gbml_config_with_trainer_graph_store()
+        gbml_config = _create_gbml_config_with_both_graph_stores()
         # Should not raise any exception
         check_if_trainer_graph_store_storage_command_valid(gbml_config)
 
     def test_missing_storage_command(self):
         """Test that missing storage_command raises an assertion error."""
-        gbml_config = _create_gbml_config_with_trainer_graph_store(storage_command="")
+        gbml_config = _create_gbml_config_with_both_graph_stores(storage_command="")
         with self.assertRaises(AssertionError):
             check_if_trainer_graph_store_storage_command_valid(gbml_config)
 
     def test_no_graph_store_config(self):
         """Test that no graph store config passes validation (nothing to check)."""
-        gbml_config = _create_gbml_config_without_trainer_graph_store()
+        gbml_config = _create_gbml_config_without_graph_stores()
         # Should not raise any exception - no graph store means nothing to validate
         check_if_trainer_graph_store_storage_command_valid(gbml_config)
 
@@ -815,21 +801,19 @@ class TestInferencerGraphStoreStorageCommand(unittest.TestCase):
 
     def test_valid_storage_command(self):
         """Test that a valid storage_command passes validation."""
-        gbml_config = _create_gbml_config_with_inferencer_graph_store()
+        gbml_config = _create_gbml_config_with_both_graph_stores()
         # Should not raise any exception
         check_if_inferencer_graph_store_storage_command_valid(gbml_config)
 
     def test_missing_storage_command(self):
         """Test that missing storage_command raises an assertion error."""
-        gbml_config = _create_gbml_config_with_inferencer_graph_store(
-            storage_command=""
-        )
+        gbml_config = _create_gbml_config_with_both_graph_stores(storage_command="")
         with self.assertRaises(AssertionError):
             check_if_inferencer_graph_store_storage_command_valid(gbml_config)
 
     def test_no_graph_store_config(self):
         """Test that no graph store config passes validation (nothing to check)."""
-        gbml_config = _create_gbml_config_without_inferencer_graph_store()
+        gbml_config = _create_gbml_config_without_graph_stores()
         # Should not raise any exception - no graph store means nothing to validate
         check_if_inferencer_graph_store_storage_command_valid(gbml_config)
 
