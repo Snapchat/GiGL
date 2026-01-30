@@ -144,8 +144,8 @@ class TestRemoteDataset(unittest.TestCase):
         self.assertEqual(node_ids.shape[0], 5)
         assert_tensor_equality(node_ids, torch.arange(5))
 
-    def test_get_node_ids_for_rank_with_homogeneous_dataset(self) -> None:
-        """Test get_node_ids_for_rank with a homogeneous dataset."""
+    def test_get_node_ids_with_homogeneous_dataset(self) -> None:
+        """Test get_node_ids with a homogeneous dataset."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
@@ -157,8 +157,8 @@ class TestRemoteDataset(unittest.TestCase):
         self.assertEqual(node_ids.shape[0], 10)
         assert_tensor_equality(node_ids, torch.arange(10))
 
-    def test_get_node_ids_for_rank_with_heterogeneous_dataset(self) -> None:
-        """Test get_node_ids_for_rank with a heterogeneous dataset."""
+    def test_get_node_ids_with_heterogeneous_dataset(self) -> None:
+        """Test get_node_ids with a heterogeneous dataset."""
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
@@ -178,8 +178,8 @@ class TestRemoteDataset(unittest.TestCase):
         self.assertEqual(story_node_ids.shape[0], 5)
         assert_tensor_equality(story_node_ids, torch.arange(5))
 
-    def test_get_node_ids_for_rank_with_multiple_ranks(self) -> None:
-        """Test get_node_ids_for_rank with multiple ranks to verify sharding."""
+    def test_get_node_ids_with_multiple_ranks(self) -> None:
+        """Test get_node_ids with multiple ranks to verify sharding."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
@@ -202,16 +202,16 @@ class TestRemoteDataset(unittest.TestCase):
         assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
         assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
 
-    def test_get_node_ids_for_rank_without_registered_dataset(self) -> None:
-        """Test get_node_ids_for_rank raises ValueError when no dataset is registered."""
+    def test_get_node_ids_without_registered_dataset(self) -> None:
+        """Test get_node_ids raises ValueError when no dataset is registered."""
         with self.assertRaises(ValueError) as context:
             storage_utils.get_node_ids(rank=0, world_size=1)
 
         self.assertIn("Dataset not registered", str(context.exception))
         self.assertIn("register_dataset", str(context.exception))
 
-    def test_get_node_ids_for_rank_with_homogeneous_dataset_and_node_type(self) -> None:
-        """Test get_node_ids_for_rank with a homogeneous dataset and a node type."""
+    def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
+        """Test get_node_ids with a homogeneous dataset and a node type."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
@@ -219,10 +219,10 @@ class TestRemoteDataset(unittest.TestCase):
         with self.assertRaises(ValueError):
             storage_utils.get_node_ids(rank=0, world_size=1, node_type=USER)
 
-    def test_get_node_ids_for_rank_with_heterogeneous_dataset_and_no_node_type(
+    def test_get_node_ids_with_heterogeneous_dataset_and_no_node_type(
         self,
     ) -> None:
-        """Test get_node_ids_for_rank with a heterogeneous dataset and no node type."""
+        """Test get_node_ids with a heterogeneous dataset and no node type."""
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
