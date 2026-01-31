@@ -2,7 +2,7 @@
 name            = "gigl"
 description     = "GIgantic Graph Learning Library"
 readme          = "README.md"
-version         = "0.2.0"
+version         = "0.2.0.dev20260131191230"
 classifiers     = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
