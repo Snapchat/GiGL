@@ -288,7 +288,7 @@ _skip_build_deps:
 # 	job_name=... \ , and other params
 # 	compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" \
 # 	run_dev_gnn_kubeflow_pipeline
-run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, compile_jars, push_new_docker_images)
+run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, compile_jars push_new_docker_images)
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		$(if $(compiled_pipeline_path),,--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}) \
 		$(if $(compiled_pipeline_path),,--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}) \
