@@ -106,15 +106,21 @@ def storage_node_process(
     task_config = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
     )
-    inference_node_types = sorted(task_config.task_metadata_pb_wrapper.get_task_root_node_types())
+    inference_node_types = sorted(
+        task_config.task_metadata_pb_wrapper.get_task_root_node_types()
+    )
     logger.info(f"Inference node types: {inference_node_types}")
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
     mp_context = torch.multiprocessing.get_context("spawn")
-    # TODO(kmonte): Enable more than one server process per machine
+    # Since we create a new inference process for each inference node type, we need to start a new server process for each inference node type.
+    # We do this as you cannot re-connect to the same server process after it has been joined.
     for i, inference_node_type in enumerate(inference_node_types):
-        logger.info(f"Starting storage node for inference node type {inference_node_type} (storage process group {i} / {len(inference_node_types)})")
+        logger.info(
+            f"Starting storage node for inference node type {inference_node_type} (storage process group {i} / {len(inference_node_types)})"
+        )
         server_processes = []
+        # TODO(kmonte): Enable more than one server process per machine
         for i in range(1):
             server_process = mp_context.Process(
                 target=_run_storage_process,
@@ -131,7 +137,9 @@ def storage_node_process(
                 server_process.start()
             for server_process in server_processes:
                 server_process.join()
-            logger.info(f"All server processes for inference node type {inference_node_type} joined")
+            logger.info(
+                f"All server processes for inference node type {inference_node_type} joined"
+            )
 
 
 if __name__ == "__main__":

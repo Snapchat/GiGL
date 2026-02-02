@@ -148,7 +148,9 @@ def get_node_ids_for_rank(
             f"Node ids must be a torch.Tensor or a dict[NodeType, torch.Tensor], got {type(_dataset.node_ids)}"
         )
     nodes = shard_nodes_by_process(nodes, rank, world_size)
-    logger.info(f"Got {nodes.shape[0]} nodes for rank {rank} / {world_size} with node type {node_type}")
+    logger.info(
+        f"Got {nodes.shape[0]} nodes for rank {rank} / {world_size} with node type {node_type}"
+    )
     return nodes
 
 

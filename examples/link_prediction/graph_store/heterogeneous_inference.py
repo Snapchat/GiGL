@@ -1,9 +1,64 @@
 """
-This file contains an example for how to run heterogeneous inference on pretrained torch.nn.Module in GiGL (or elsewhere) using new
-GLT (GraphLearn-for-PyTorch) bindings that GiGL has. Note that example should be applied to use cases which already have
-some pretrained `nn.Module` and are looking to utilize cost-savings with distributed inference. While `run_example_inference` is coupled with
-GiGL orchestration, the `_inference_process` function is generic and can be used as references
-for writing inference for pipelines not dependent on GiGL orchestration.
+This file contains an example for how to run heterogeneous inference in **graph store mode** using GiGL.
+
+Graph Store Mode vs Standard Mode:
+----------------------------------
+Graph store mode uses a heterogeneous cluster architecture with two distinct sub-clusters:
+  1. **Storage Cluster (graph_store_pool)**: Dedicated machines for storing and serving the graph
+     data. These are typically high-memory machines without GPUs (e.g., n2-highmem-32).
+  2. **Compute Cluster (compute_pool)**: Dedicated machines for running model inference/training.
+     These typically have GPUs attached (e.g., n1-standard-16 with NVIDIA_TESLA_T4).
+
+This separation allows for:
+  - Independent scaling of storage and compute resources
+  - Better memory utilization (graph data stays on storage nodes)
+  - Cost optimization by using appropriate hardware for each role
+
+In contrast, the standard inference mode (see `examples/link_prediction/heterogeneous_inference.py`)
+uses a homogeneous cluster where each machine handles both graph storage and computation.
+
+Key Implementation Differences:
+-------------------------------
+This file (graph store mode):
+  - Uses `RemoteDistDataset` to connect to a remote graph store cluster
+  - Uses `init_compute_process` to initialize the compute node connection to storage
+  - Obtains cluster topology via `get_graph_store_info()` which returns `GraphStoreInfo`
+  - Uses `mp_sharing_dict` for efficient tensor sharing between local processes
+
+Standard mode (`heterogeneous_inference.py`):
+  - Uses `DistDataset` with `build_dataset_from_task_config_uri` where each node loads its partition
+  - Manually manages distributed process groups with master IP and port
+  - Each machine stores its own partition of the graph data
+
+Resource Configuration:
+-----------------------
+Graph store mode requires a different resource config structure. Compare:
+
+**Graph Store Mode** (e2e_glt_gs_resource_config.yaml):
+```yaml
+inferencer_resource_config:
+  vertex_ai_graph_store_inferencer_config:
+    graph_store_pool:
+      machine_type: n2-highmem-32      # High memory for graph storage
+      gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+      gpu_limit: 0
+      num_replicas: 2
+    compute_pool:
+      machine_type: n1-standard-16     # Standard machines with GPUs
+      gpu_type: NVIDIA_TESLA_T4
+      gpu_limit: 2
+      num_replicas: 2
+```
+
+**Standard Mode** (e2e_glt_resource_config.yaml):
+```yaml
+inferencer_resource_config:
+  vertex_ai_inferencer_config:
+    machine_type: n1-highmem-32
+    gpu_type: NVIDIA_TESLA_T4
+    gpu_limit: 2
+    num_replicas: 2
+```
 
 To run this file with GiGL orchestration, set the fields similar to below:
 
@@ -12,18 +67,23 @@ inferencerConfig:
     # Example argument to inferencer
     log_every_n_batch: "50"
   inferenceBatchSize: 512
-  command: python -m examples.link_prediction.heterogeneous_inference
+  command: python -m examples.link_prediction.graph_store.heterogeneous_inference
 featureFlags:
   should_run_glt_backend: 'True'
 
-You can run this example in a full pipeline with `make run_het_dblp_sup_test` from GiGL root.
-"""
+Note: Ensure you use a resource config with `vertex_ai_graph_store_inferencer_config` when
+running in graph store mode.
+
+You can run this example in a full pipeline with `make run_het_dblp_sup_gs_e2e_test` from GiGL root."""
 
 import argparse
 import gc
+import os
+import sys
 import time
+from collections.abc import MutableMapping
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Union
 
 import torch
 import torch.distributed
@@ -36,35 +96,10 @@ from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
-from gigl.nn import LinkPredictionGNN
-from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.model import load_state_dict_from_uri
-from gigl.src.inference.lib.assets import InferenceAssets
-from gigl.utils.sampling import parse_fanout
-import argparse
-import gc
-import os
-import sys
-import time
-from collections.abc import MutableMapping
-from dataclasses import dataclass
-from typing import Union
-
-import torch
-import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
-
-import gigl.distributed
-import gigl.distributed.utils
-from gigl.common import GcsUri, Uri, UriFactory
-from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
-from gigl.common.logger import Logger
-from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed.graph_store.compute import init_compute_process, shutdown_compute_proccess
+from gigl.distributed.graph_store.compute import (
+    init_compute_process,
+    shutdown_compute_proccess,
+)
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
@@ -77,15 +112,17 @@ from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
 
-
 logger = Logger()
 
 
+# We don't see logs for graph store mode for whatever reason.
+# TOOD(#442): Revert this once the GCP issues are resolved.
 def flush():
     sys.stdout.write("\n")
     sys.stdout.flush()
     sys.stderr.write("\n")
     sys.stderr.flush()
+
 
 @dataclass(frozen=True)
 class InferenceProcessArgs:
@@ -100,10 +137,11 @@ class InferenceProcessArgs:
         local_world_size (int): Number of inference processes spawned by each machine.
         machine_rank (int): Rank of the current machine in the cluster.
         machine_world_size (int): Total number of machines in the cluster.
-        master_ip_address (str): IP address of the master node for process group initialization.
-        master_default_process_group_port (int): Port for the default process group.
-        dataset (DistDataset): Loaded Distributed Dataset for inference.
+        cluster_info (GraphStoreInfo): Cluster topology info for graph store mode, containing
+            information about storage and compute node ranks and addresses.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
+        mp_sharing_dict (MutableMapping[str, torch.Tensor]): Shared dictionary for efficient tensor
+            sharing between local processes.
         model_state_dict_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
@@ -178,7 +216,9 @@ def _inference_process(
     world_size = args.machine_world_size * args.local_world_size
     # Note: This is a *critical* step in Graph Store mode. It initializes the connection to the storage cluster.
     # If this is not done, the dataloader will not be able to sample from the graph store and will crash.
-    logger.info(f"Initializing compute process for rank {local_rank} in machine {args.machine_rank} with cluster info {args.cluster_info} for inference node type {args.inference_node_type}")
+    logger.info(
+        f"Initializing compute process for rank {local_rank} in machine {args.machine_rank} with cluster info {args.cluster_info} for inference node type {args.inference_node_type}"
+    )
     flush()
     init_compute_process(local_rank, args.cluster_info)
     dataset = RemoteDistDataset(
@@ -289,7 +329,9 @@ def _inference_process(
 
         cumulative_inference_time += time.time() - inference_start_time
 
-        if batch_idx == 0 or (batch_idx > 0 and batch_idx % args.log_every_n_batch == 0):
+        if batch_idx == 0 or (
+            batch_idx > 0 and batch_idx % args.log_every_n_batch == 0
+        ):
             logger.info(
                 f"Rank {rank} processed {batch_idx} batches for node type {args.inference_node_type}. "
                 f"{args.log_every_n_batch} batches took {time.time() - t:.2f} seconds for node type {args.inference_node_type}. "
@@ -369,6 +411,7 @@ def _run_example_inference(
     logger.info(
         f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
     )
+    flush()
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -500,7 +543,9 @@ def _run_example_inference(
             sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
             log_every_n_batch=log_every_n_batch,
         )
-        logger.info(f"Rank {cluster_info.compute_node_rank} started inference process for node type {inference_node_type} with {num_inference_processes_per_machine} processes\nargs: {inference_args}")
+        logger.info(
+            f"Rank {cluster_info.compute_node_rank} started inference process for node type {inference_node_type} with {num_inference_processes_per_machine} processes\nargs: {inference_args}"
+        )
         flush()
 
         mp.spawn(
@@ -541,6 +586,8 @@ def _run_example_inference(
 
 
 if __name__ == "__main__":
+    # TODO(#442): Revert this once the GCP issues are resolved.
+    # Per the GCP folks this try/except may help - though in practice it seems to not.
     try:
         parser = argparse.ArgumentParser(
             description="Arguments for distributed model inference on VertexAI"
