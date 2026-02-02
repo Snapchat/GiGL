@@ -385,7 +385,7 @@ class DistPPRNeighborLoader(DistLoader):
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
         ppr_alpha: float = 0.5,
-        ppr_eps: float = 1e-4,
+        ppr_eps: float = 1e-3,
         ppr_max_nodes: int = 50,
         num_workers: int = 1,
         batch_size: int = 1,

@@ -233,7 +233,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self,
         *args,
         alpha: float = 0.5,
-        eps: float = 1e-4,
+        eps: float = 1e-3,
         max_ppr_nodes: int = 50,
         default_node_id: int = -1,
         default_weight: float = 0.0,
@@ -270,7 +270,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self,
         seed_nodes: torch.Tensor,
         edge_type: Optional[EdgeType] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, int]]:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
 
@@ -283,7 +283,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             edge_type: Optional edge type for heterogeneous graphs
 
         Returns:
-            Tuple of (neighbor_ids, ppr_weights) both of shape [batch_size, max_ppr_nodes]
+            Tuple of (neighbor_ids, ppr_weights, stats) where:
+                - neighbor_ids: shape [batch_size, max_ppr_nodes]
+                - ppr_weights: shape [batch_size, max_ppr_nodes]
+                - stats: dict with iteration statistics for runtime tuning
         """
         device = seed_nodes.device
         batch_size = seed_nodes.size(0)
@@ -314,7 +317,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Count total nodes in queues
         num_nodes_in_queue = batch_size
 
+        # PPR iteration statistics for runtime tuning
+        ppr_num_iterations = 0
+        ppr_total_nodes_processed = 0
+        ppr_num_neighbor_lookups = 0
+
         while num_nodes_in_queue > 0:
+            ppr_num_iterations += 1
             # Collect all unique nodes that need neighbor lookups
             nodes_to_lookup: List[int] = []
             nodes_to_lookup_set: Set[int] = set()
@@ -329,6 +338,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             # Batch fetch neighbors for all nodes not in cache
             if nodes_to_lookup:
+                ppr_num_neighbor_lookups += 1
                 lookup_tensor = torch.tensor(
                     nodes_to_lookup, dtype=torch.long, device=device
                 )
@@ -354,6 +364,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 u_node = q[i].pop()
                 q_set[i].discard(u_node)
                 num_nodes_in_queue -= 1
+                ppr_total_nodes_processed += 1
 
                 # Get residual for this node
                 res_u = r[i].get(u_node, 0.0)
@@ -414,7 +425,15 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 out_neighbor_ids[i, j] = node_id
                 out_weights[i, j] = weight
 
-        return out_neighbor_ids, out_weights
+        # Collect PPR iteration statistics for runtime tuning
+        ppr_stats: Dict[str, int] = {
+            "ppr_num_iterations": ppr_num_iterations,
+            "ppr_total_nodes_processed": ppr_total_nodes_processed,
+            "ppr_num_neighbor_lookups": ppr_num_neighbor_lookups,
+            "ppr_neighbor_cache_size": len(neighbor_cache),
+        }
+
+        return out_neighbor_ids, out_weights, ppr_stats
 
     async def _sample_from_nodes(
         self,
@@ -429,6 +448,14 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         is_hetero = self.dist_graph.data_cls == "hetero"
         metadata: Dict[str, torch.Tensor] = {}
 
+        # Aggregate PPR stats across edge types
+        total_ppr_stats: Dict[str, int] = {
+            "ppr_num_iterations": 0,
+            "ppr_total_nodes_processed": 0,
+            "ppr_num_neighbor_lookups": 0,
+            "ppr_neighbor_cache_size": 0,
+        }
+
         if is_hetero:
             assert input_type is not None
 
@@ -439,15 +466,23 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 if self.edge_dir == "in":
                     # For incoming edges, we sample from destination node type
                     if input_type == etype[-1]:
-                        ppr_neighbors[etype] = await self._compute_ppr_scores(
+                        neighbor_ids, weights, ppr_stats = await self._compute_ppr_scores(
                             input_seeds, etype
                         )
+                        ppr_neighbors[etype] = (neighbor_ids, weights)
+                        # Aggregate stats
+                        for key in total_ppr_stats:
+                            total_ppr_stats[key] += ppr_stats[key]
                 elif self.edge_dir == "out":
                     # For outgoing edges, we sample from source node type
                     if input_type == etype[0]:
-                        ppr_neighbors[etype] = await self._compute_ppr_scores(
+                        neighbor_ids, weights, ppr_stats = await self._compute_ppr_scores(
                             input_seeds, etype
                         )
+                        ppr_neighbors[etype] = (neighbor_ids, weights)
+                        # Aggregate stats
+                        for key in total_ppr_stats:
+                            total_ppr_stats[key] += ppr_stats[key]
 
             # Build the sampler output from PPR results
             out_nodes_hetero: Dict[NodeType, List[torch.Tensor]] = defaultdict(list)
@@ -472,6 +507,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                     # Store PPR weights in metadata for later use
                     metadata[f"ppr_weights_{etype}"] = weights
+
+            # Add PPR stats to metadata as tensors (required by GLT SampleQueue)
+            metadata["ppr_num_iterations"] = torch.tensor([total_ppr_stats["ppr_num_iterations"]], dtype=torch.long, device=self.device)
+            metadata["ppr_total_nodes_processed"] = torch.tensor([total_ppr_stats["ppr_total_nodes_processed"]], dtype=torch.long, device=self.device)
+            metadata["ppr_num_neighbor_lookups"] = torch.tensor([total_ppr_stats["ppr_num_neighbor_lookups"]], dtype=torch.long, device=self.device)
+            metadata["ppr_neighbor_cache_size"] = torch.tensor([total_ppr_stats["ppr_neighbor_cache_size"]], dtype=torch.long, device=self.device)
 
             # Concatenate nodes per type
             node_dict = {
@@ -498,7 +539,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         else:
             # Homogeneous graph case
-            neighbor_ids, weights = await self._compute_ppr_scores(input_seeds, None)
+            neighbor_ids, weights, ppr_stats = await self._compute_ppr_scores(input_seeds, None)
+            total_ppr_stats = ppr_stats
 
             # Flatten and get unique neighbors
             flat_neighbors = neighbor_ids.flatten()
@@ -509,6 +551,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             metadata["ppr_weights"] = weights
             metadata["ppr_neighbor_ids"] = neighbor_ids
+
+            # Add PPR stats to metadata as tensors (required by GLT SampleQueue)
+            metadata["ppr_num_iterations"] = torch.tensor([total_ppr_stats["ppr_num_iterations"]], dtype=torch.long, device=self.device)
+            metadata["ppr_total_nodes_processed"] = torch.tensor([total_ppr_stats["ppr_total_nodes_processed"]], dtype=torch.long, device=self.device)
+            metadata["ppr_num_neighbor_lookups"] = torch.tensor([total_ppr_stats["ppr_num_neighbor_lookups"]], dtype=torch.long, device=self.device)
+            metadata["ppr_neighbor_cache_size"] = torch.tensor([total_ppr_stats["ppr_neighbor_cache_size"]], dtype=torch.long, device=self.device)
 
             sample_output = SamplerOutput(
                 node=all_nodes,
