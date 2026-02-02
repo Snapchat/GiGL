@@ -14,6 +14,7 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
+from gigl.env.pipelines_config import get_resource_config
 from gigl.orchestration.kubeflow.utils.glt_backend import (
     check_glt_backend_eligibility_component,
 )
@@ -247,7 +248,8 @@ def generate_pipeline(
         resource_config_uri: str,
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
-        notification_emails: Optional[List[str]] = None,
+        # We need to provide *some* notification emails, other wise the cleanup component will fail.
+        notification_emails: List[str] = ["kmonte@snap.com"],
     ):
         with kfp.dsl.ExitHandler(
             VertexNotificationEmailOp(recipients=notification_emails),
