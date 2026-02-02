@@ -566,3 +566,9 @@ if __name__ == "__main__":
         sys.stderr.write(f"Error: {e}\n")
         sys.stderr.flush()
         raise e
+    finally:
+        print("Finally block")
+        print("flush stdout")
+        sys.stdout.flush()
+        print("flush stderr")
+        sys.stderr.flush()
