@@ -2,7 +2,7 @@
 name            = "gigl"
 description     = "GIgantic Graph Learning Library"
 readme          = "README.md"
-version         = "0.1.0"
+version         = "0.2.0"
 classifiers     = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -231,6 +231,7 @@ torch_spline_conv = [
 requires      = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages
 include = ["gigl*", "snapchat*"]  # Include only packages that match the specified patterns
@@ -242,6 +243,8 @@ Homepage = "https://github.com/snapchat/gigl"
 gigl-post-install = "gigl.scripts.post_install:main"
 
 [tool.setuptools.package-data]
+# Include dep_vars.env from the root directory
+"gigl" = ["dep_vars.env", "**/*.yaml"]
 "gigl.scripts" = ["*.sh"]
 
 
