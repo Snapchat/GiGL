@@ -1,4 +1,4 @@
-include ../dep_vars.env
+include ../gigl/dep_vars.env
 
 # Ensure that path can be resolved globally to the jar
 # In this case, MAKEFILE_DIRS_PARENT_PATH resolves to the root of the repo

@@ -4,7 +4,6 @@ import torch
 
 from gigl.distributed.graph_store import storage_utils
 from gigl.src.common.types.graph_data import Relation
-from gigl.types.graph import FeatureInfo
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -12,7 +11,7 @@ from tests.test_assets.distributed.test_dataset import (
     USER,
     USER_TO_STORY,
     create_heterogeneous_dataset,
-    create_heterogeneous_dataset_with_labels,
+    create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
 from tests.test_assets.distributed.utils import (
@@ -63,11 +62,7 @@ class TestRemoteDataset(unittest.TestCase):
         node_feature_info = storage_utils.get_node_feature_info()
 
         # Verify it returns the correct feature info
-        expected = {
-            USER: FeatureInfo(dim=2, dtype=torch.float32),
-            STORY: FeatureInfo(dim=2, dtype=torch.float32),
-        }
-        self.assertEqual(node_feature_info, expected)
+        self.assertIsNone(node_feature_info)
 
     def test_get_node_feature_info_with_homogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a registered homogeneous dataset."""
@@ -79,8 +74,7 @@ class TestRemoteDataset(unittest.TestCase):
         node_feature_info = storage_utils.get_node_feature_info()
 
         # Verify it returns the correct feature info
-        expected = FeatureInfo(dim=3, dtype=torch.float32)
-        self.assertEqual(node_feature_info, expected)
+        self.assertIsNone(node_feature_info)
 
     def test_get_node_feature_info_without_registered_dataset(self) -> None:
         """Test get_node_feature_info raises ValueError when no dataset is registered."""
@@ -144,8 +138,8 @@ class TestRemoteDataset(unittest.TestCase):
         self.assertEqual(node_ids.shape[0], 5)
         assert_tensor_equality(node_ids, torch.arange(5))
 
-    def test_get_node_ids_for_rank_with_homogeneous_dataset(self) -> None:
-        """Test get_node_ids_for_rank with a homogeneous dataset."""
+    def test_get_node_ids_with_homogeneous_dataset(self) -> None:
+        """Test get_node_ids with a homogeneous dataset."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
@@ -157,8 +151,8 @@ class TestRemoteDataset(unittest.TestCase):
         self.assertEqual(node_ids.shape[0], 10)
         assert_tensor_equality(node_ids, torch.arange(10))
 
-    def test_get_node_ids_for_rank_with_heterogeneous_dataset(self) -> None:
-        """Test get_node_ids_for_rank with a heterogeneous dataset."""
+    def test_get_node_ids_with_heterogeneous_dataset(self) -> None:
+        """Test get_node_ids with a heterogeneous dataset."""
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
@@ -178,8 +172,8 @@ class TestRemoteDataset(unittest.TestCase):
         self.assertEqual(story_node_ids.shape[0], 5)
         assert_tensor_equality(story_node_ids, torch.arange(5))
 
-    def test_get_node_ids_for_rank_with_multiple_ranks(self) -> None:
-        """Test get_node_ids_for_rank with multiple ranks to verify sharding."""
+    def test_get_node_ids_with_multiple_ranks(self) -> None:
+        """Test get_node_ids with multiple ranks to verify sharding."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
@@ -202,16 +196,16 @@ class TestRemoteDataset(unittest.TestCase):
         assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
         assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
 
-    def test_get_node_ids_for_rank_without_registered_dataset(self) -> None:
-        """Test get_node_ids_for_rank raises ValueError when no dataset is registered."""
+    def test_get_node_ids_without_registered_dataset(self) -> None:
+        """Test get_node_ids raises ValueError when no dataset is registered."""
         with self.assertRaises(ValueError) as context:
             storage_utils.get_node_ids(rank=0, world_size=1)
 
         self.assertIn("Dataset not registered", str(context.exception))
         self.assertIn("register_dataset", str(context.exception))
 
-    def test_get_node_ids_for_rank_with_homogeneous_dataset_and_node_type(self) -> None:
-        """Test get_node_ids_for_rank with a homogeneous dataset and a node type."""
+    def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
+        """Test get_node_ids with a homogeneous dataset and a node type."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
@@ -219,10 +213,10 @@ class TestRemoteDataset(unittest.TestCase):
         with self.assertRaises(ValueError):
             storage_utils.get_node_ids(rank=0, world_size=1, node_type=USER)
 
-    def test_get_node_ids_for_rank_with_heterogeneous_dataset_and_no_node_type(
+    def test_get_node_ids_with_heterogeneous_dataset_and_no_node_type(
         self,
     ) -> None:
-        """Test get_node_ids_for_rank with a heterogeneous dataset and no node type."""
+        """Test get_node_ids with a heterogeneous dataset and no node type."""
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
@@ -235,7 +229,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -252,7 +246,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -269,7 +263,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -286,7 +280,7 @@ class TestRemoteDataset(unittest.TestCase):
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             train_node_ids=[0, 1, 2],
             val_node_ids=[3],
@@ -380,7 +374,7 @@ class TestRemoteDataset(unittest.TestCase):
             "test": [4],
         }
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             train_node_ids=split_to_user_ids["train"],
@@ -433,7 +427,7 @@ class TestRemoteDataset(unittest.TestCase):
         }
         train_user_ids = [0, 1, 2, 3]
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             train_node_ids=train_user_ids,
@@ -501,7 +495,7 @@ class TestRemoteDataset(unittest.TestCase):
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
         negative_labels = {0: [1], 1: [2], 2: [3], 3: [4], 4: [0]}
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             train_node_ids=[0, 1, 2],
@@ -533,7 +527,7 @@ class TestRemoteDataset(unittest.TestCase):
         }
         train_user_ids = [0, 1, 2]
 
-        dataset = create_heterogeneous_dataset_with_labels(
+        dataset = create_heterogeneous_dataset_for_ablp(
             positive_labels=positive_labels,
             negative_labels=None,  # No negative labels
             train_node_ids=train_user_ids,
