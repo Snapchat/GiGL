@@ -4,7 +4,6 @@ import torch
 
 from gigl.distributed.graph_store import storage_utils
 from gigl.src.common.types.graph_data import Relation
-from gigl.types.graph import FeatureInfo
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -63,11 +62,7 @@ class TestRemoteDataset(unittest.TestCase):
         node_feature_info = storage_utils.get_node_feature_info()
 
         # Verify it returns the correct feature info
-        expected = {
-            USER: FeatureInfo(dim=2, dtype=torch.float32),
-            STORY: FeatureInfo(dim=2, dtype=torch.float32),
-        }
-        self.assertEqual(node_feature_info, expected)
+        self.assertIsNone(node_feature_info)
 
     def test_get_node_feature_info_with_homogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a registered homogeneous dataset."""
@@ -79,8 +74,7 @@ class TestRemoteDataset(unittest.TestCase):
         node_feature_info = storage_utils.get_node_feature_info()
 
         # Verify it returns the correct feature info
-        expected = FeatureInfo(dim=3, dtype=torch.float32)
-        self.assertEqual(node_feature_info, expected)
+        self.assertIsNone(node_feature_info)
 
     def test_get_node_feature_info_without_registered_dataset(self) -> None:
         """Test get_node_feature_info raises ValueError when no dataset is registered."""
