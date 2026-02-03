@@ -415,7 +415,7 @@ def _run_example_inference(
         # should be specified with format (SRC_NODE_TYPE, RELATION, DST_NODE_TYPE). For the default
         # example, we make a decision to keep the fanouts for all edge types the same, specifying
         # the `fanout` with a `list[int]`. To see an example of a 'fanout' with different behaviors
-        # per edge type, refer to `examples/link_prediction.configs/e2e_het_dblp_sup_task_config.yaml`.
+        # per edge type, refer to `examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml`.
         num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
 
         # While the ideal value for `sampling_workers_per_inference_process` has been identified to

@@ -68,6 +68,10 @@ inferencerConfig:
     log_every_n_batch: "50"
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.graph_store.homogeneous_inference
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
 featureFlags:
   should_run_glt_backend: 'True'
 
