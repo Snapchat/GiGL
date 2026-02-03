@@ -96,7 +96,7 @@ def check_trainer_graph_store_compatibility(
         resource_config_wrapper, "trainer"
     )
 
-    if gbml_has_graph_store ^ resource_has_graph_store:
+    if gbml_has_graph_store != resource_has_graph_store:
         raise AssertionError(
             f"If one of GbmlConfig.trainer_config.graph_store_storage_config or GiglResourceConfig.trainer_resource_config is set, the other must also be set. GbmlConfig.trainer_config.graph_store_storage_config is set: {gbml_has_graph_store}, GiglResourceConfig.trainer_resource_config is set: {resource_has_graph_store}."
         )
@@ -131,7 +131,7 @@ def check_inferencer_graph_store_compatibility(
         resource_config_wrapper, "inferencer"
     )
 
-    if gbml_has_graph_store ^ resource_has_graph_store:
+    if gbml_has_graph_store != resource_has_graph_store:
         raise AssertionError(
             f"If one of GbmlConfig.inferencer_config.graph_store_storage_config or GiglResourceConfig.inferencer_resource_config is set, the other must also be set. GbmlConfig.inferencer_config.graph_store_storage_config is set: {gbml_has_graph_store}, GiglResourceConfig.inferencer_resource_config is set: {resource_has_graph_store}."
         )
