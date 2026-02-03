@@ -3,6 +3,7 @@ from typing import Union
 from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
 
 from gigl.common.logger import Logger
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
@@ -254,3 +255,53 @@ def _validate_machine_config(
             or {gigl_resource_config_pb2.VertexAiGraphStoreConfig.__name__}.
             Got {type(config)}"""
         )
+
+
+def check_if_trainer_graph_store_storage_command_valid(
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper,
+) -> None:
+    """
+    Validates that storage_command is set when graph store mode is enabled for trainer.
+
+    Args:
+        gbml_config_pb_wrapper: The GbmlConfig wrapper to check.
+
+    Raises:
+        AssertionError: If graph store mode is enabled but storage_command is missing.
+    """
+    logger.info(
+        "Config validation check: if trainer graph store storage_command is valid."
+    )
+    trainer_config = gbml_config_pb_wrapper.gbml_config_pb.trainer_config
+    if trainer_config.HasField("graph_store_storage_config"):
+        storage_command = trainer_config.graph_store_storage_config.command
+        if not storage_command:
+            raise AssertionError(
+                "GbmlConfig.trainer_config.graph_store_storage_config.storage_command must be set "
+                "when using graph store mode for trainer."
+            )
+
+
+def check_if_inferencer_graph_store_storage_command_valid(
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper,
+) -> None:
+    """
+    Validates that storage_command is set when graph store mode is enabled for inferencer.
+
+    Args:
+        gbml_config_pb_wrapper: The GbmlConfig wrapper to check.
+
+    Raises:
+        AssertionError: If graph store mode is enabled but storage_command is missing.
+    """
+    logger.info(
+        "Config validation check: if inferencer graph store storage_command is valid."
+    )
+    inferencer_config = gbml_config_pb_wrapper.gbml_config_pb.inferencer_config
+    if inferencer_config.HasField("graph_store_storage_config"):
+        storage_command = inferencer_config.graph_store_storage_config.command
+        if not storage_command:
+            raise AssertionError(
+                "GbmlConfig.inferencer_config.graph_store_storage_config.storage_command must be set "
+                "when using graph store mode for inferencer."
+            )
