@@ -2,7 +2,7 @@ import collections
 import os
 import socket
 import unittest
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 from unittest import mock
 
 import torch
@@ -206,7 +206,7 @@ def _client_process(
 def _run_server_processes(
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
-    is_inference: bool,
+    sample_edge_direction: Literal["in", "out"],
 ) -> None:
     logger.info(
         f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
@@ -215,7 +215,7 @@ def _run_server_processes(
         storage_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,
         task_config_uri=task_config_uri,
-        is_inference=is_inference,
+        sample_edge_direction=sample_edge_direction,
         tf_record_uri_pattern=".*tfrecord",
         storage_world_backend="gloo",
     )
@@ -349,7 +349,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                     args=[
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
-                        True,  # is_inference
+                        "in",  # sample_edge_direction
                     ],
                 )
                 server_process.start()
@@ -450,7 +450,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                     args=[
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
-                        True,  # is_inference
+                        "in",  # sample_edge_direction
                     ],
                 )
                 server_process.start()
