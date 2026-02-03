@@ -124,7 +124,7 @@ def storage_node_process(
         task_config.task_metadata_pb_wrapper.get_task_root_node_types()
     )
     logger.info(f"Inference node types: {inference_node_types}")
-    torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
+    torch_process_ports = get_free_ports_from_master_node(num_ports=len(inference_node_types))
     torch.distributed.destroy_process_group()
     mp_context = torch.multiprocessing.get_context("spawn")
     # Since we create a new inference process for each inference node type, we need to start a new server process for each inference node type.
@@ -143,7 +143,7 @@ def storage_node_process(
                     storage_rank + i,  # storage_rank
                     cluster_info,  # cluster_info
                     dataset,  # dataset
-                    torch_process_port,  # torch_process_port
+                    torch_process_ports[i],  # torch_process_port
                     storage_world_backend,  # storage_world_backend
                 ),
             )
