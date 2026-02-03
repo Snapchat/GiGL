@@ -135,7 +135,8 @@ def storage_node_process(
         )
         server_processes = []
         # TODO(kmonte): Enable more than one server process per machine
-        for i in range(1):
+        num_server_processes = 1
+        for i in range(num_server_processes):
             server_process = mp_context.Process(
                 target=_run_storage_process,
                 args=(

@@ -220,9 +220,10 @@ def storage_node_process(
         torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
         torch.distributed.destroy_process_group()
         mp_context = torch.multiprocessing.get_context("spawn")
-        # TODO(kmonte): Enable more than one server process per machine
         server_processes = []
-        for i in range(1):
+        # TODO(kmonte): Enable more than one server process per machine
+        num_server_processes = 1
+        for i in range(num_server_processes):
             server_process = mp_context.Process(
                 target=_run_storage_process,
                 args=(
