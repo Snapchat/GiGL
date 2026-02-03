@@ -1,18 +1,21 @@
 import unittest
 
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.validation_check.libs.resource_config_checks import (
     _check_if_dataflow_resource_config_valid,
     _check_if_spark_resource_config_valid,
     _validate_accelerator_type,
     _validate_machine_config,
+    check_if_inferencer_graph_store_storage_command_valid,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
     check_if_shared_resource_config_valid,
     check_if_split_generator_resource_config_valid,
     check_if_subgraph_sampler_resource_config_valid,
+    check_if_trainer_graph_store_storage_command_valid,
     check_if_trainer_resource_config_valid,
 )
-from snapchat.research.gbml import gigl_resource_config_pb2
+from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 
 # Helper functions for creating valid configurations
 
@@ -748,6 +751,71 @@ class TestValidateMachineConfig(unittest.TestCase):
         )
         # Should not raise any exception
         _validate_machine_config(config)
+
+
+# Helper functions for creating GbmlConfig configurations
+
+
+def _create_gbml_config_with_both_graph_stores(
+    storage_command: str = "python -m gigl.distributed.graph_store.storage_main",
+) -> GbmlConfigPbWrapper:
+    """Create a GbmlConfig with graph_store_storage_config set for both trainer and inferencer."""
+    gbml_config = gbml_config_pb2.GbmlConfig()
+    gbml_config.trainer_config.graph_store_storage_config.command = storage_command
+    gbml_config.inferencer_config.graph_store_storage_config.command = storage_command
+    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
+
+
+def _create_gbml_config_without_graph_stores() -> GbmlConfigPbWrapper:
+    """Create a GbmlConfig without graph_store_storage_config for trainer or inferencer."""
+    gbml_config = gbml_config_pb2.GbmlConfig()
+    gbml_config.trainer_config.trainer_args["some_arg"] = "some_value"
+    gbml_config.inferencer_config.inferencer_args["some_arg"] = "some_value"
+    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
+
+
+class TestTrainerGraphStoreStorageCommand(unittest.TestCase):
+    """Test suite for trainer graph store storage_command validation."""
+
+    def test_valid_storage_command(self):
+        """Test that a valid storage_command passes validation."""
+        gbml_config = _create_gbml_config_with_both_graph_stores()
+        # Should not raise any exception
+        check_if_trainer_graph_store_storage_command_valid(gbml_config)
+
+    def test_missing_storage_command(self):
+        """Test that missing storage_command raises an assertion error."""
+        gbml_config = _create_gbml_config_with_both_graph_stores(storage_command="")
+        with self.assertRaises(AssertionError):
+            check_if_trainer_graph_store_storage_command_valid(gbml_config)
+
+    def test_no_graph_store_config(self):
+        """Test that no graph store config passes validation (nothing to check)."""
+        gbml_config = _create_gbml_config_without_graph_stores()
+        # Should not raise any exception - no graph store means nothing to validate
+        check_if_trainer_graph_store_storage_command_valid(gbml_config)
+
+
+class TestInferencerGraphStoreStorageCommand(unittest.TestCase):
+    """Test suite for inferencer graph store storage_command validation."""
+
+    def test_valid_storage_command(self):
+        """Test that a valid storage_command passes validation."""
+        gbml_config = _create_gbml_config_with_both_graph_stores()
+        # Should not raise any exception
+        check_if_inferencer_graph_store_storage_command_valid(gbml_config)
+
+    def test_missing_storage_command(self):
+        """Test that missing storage_command raises an assertion error."""
+        gbml_config = _create_gbml_config_with_both_graph_stores(storage_command="")
+        with self.assertRaises(AssertionError):
+            check_if_inferencer_graph_store_storage_command_valid(gbml_config)
+
+    def test_no_graph_store_config(self):
+        """Test that no graph store config passes validation (nothing to check)."""
+        gbml_config = _create_gbml_config_without_graph_stores()
+        # Should not raise any exception - no graph store means nothing to validate
+        check_if_inferencer_graph_store_storage_command_valid(gbml_config)
 
 
 if __name__ == "__main__":
