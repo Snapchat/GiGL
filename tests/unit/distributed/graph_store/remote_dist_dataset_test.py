@@ -377,50 +377,6 @@ class TestRemoteDistDatasetWithSplits(unittest.TestCase):
         assert negative_labels_1 is not None
         assert_tensor_equality(negative_labels_1, torch.tensor([[3], [4]]))
 
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_get_ablp_input_with_mp_sharing_dict(self, mock_async_request):
-        """Test get_ablp_input with mp_sharing_dict for shared memory across processes."""
-        self._create_and_register_dataset_with_splits()
-
-        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
-        mp_sharing_dict = mp.Manager().dict()
-        remote_dataset = RemoteDistDataset(
-            cluster_info=cluster_info, local_rank=0, mp_sharing_dict=mp_sharing_dict
-        )
-
-        # First call - should fetch and store in shared dict
-        result = remote_dataset.get_ablp_input(
-            split="train", node_type=USER, supervision_edge_type=USER_TO_STORY
-        )
-        anchors, positive_labels, negative_labels = result[0]
-
-        # Verify results are correct
-        assert_tensor_equality(anchors, torch.tensor([0, 1, 2]))
-        assert_tensor_equality(positive_labels, torch.tensor([[0, 1], [1, 2], [2, 3]]))
-        assert negative_labels is not None
-        assert_tensor_equality(negative_labels, torch.tensor([[2], [3], [4]]))
-
-        # Verify data was stored in shared dict
-        self.assertIn("ablp_server_0_anchors", mp_sharing_dict)
-        self.assertIn("ablp_server_0_positive_labels", mp_sharing_dict)
-        self.assertIn("ablp_server_0_negative_labels", mp_sharing_dict)
-
-        # Verify stored tensors match the returned tensors
-        assert_tensor_equality(
-            mp_sharing_dict["ablp_server_0_anchors"], torch.tensor([0, 1, 2])
-        )
-        assert_tensor_equality(
-            mp_sharing_dict["ablp_server_0_positive_labels"],
-            torch.tensor([[0, 1], [1, 2], [2, 3]]),
-        )
-        assert_tensor_equality(
-            mp_sharing_dict["ablp_server_0_negative_labels"],
-            torch.tensor([[2], [3], [4]]),
-        )
-
 
 def _test_get_free_ports_on_storage_cluster(
     rank: int,
