@@ -393,7 +393,6 @@ def _run_server_processes(
     logger.info(
         f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
     )
-    print(f"{cluster_info=}, {task_config_uri=}, {sample_edge_direction=}, {splitter=}")
     storage_node_process(
         storage_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,

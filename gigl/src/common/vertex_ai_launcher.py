@@ -127,6 +127,8 @@ def launch_graph_store_enabled_job(
         )
     storage_pool_config = vertex_ai_graph_store_config.graph_store_pool
     compute_pool_config = vertex_ai_graph_store_config.compute_pool
+    logger.info(f"Storage pool config: {storage_pool_config}")
+    logger.info(f"Compute pool config: {compute_pool_config}")
 
     # Determine if CPU or GPU based on compute pool
     is_cpu_execution = _determine_if_cpu_execution(

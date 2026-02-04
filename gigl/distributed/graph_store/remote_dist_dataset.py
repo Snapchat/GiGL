@@ -329,7 +329,8 @@ class RemoteDistDataset:
         Fetches ABLP (Anchor Based Link Prediction) input from the storage nodes.
 
         The returned dict maps storage rank to a tuple of (anchor_nodes, positive_labels, negative_labels)
-        for that storage node, filtered and sharded according to the provided arguments.
+        for that storage node. If (rank, world_size) is provided, the input will be sharded across the compute nodes.
+        If no (rank, world_size) is provided, the input will be returned for all storage nodes.
 
         Args:
             split (Literal["train", "val", "test"]): The split to get the input for.
