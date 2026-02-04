@@ -17,6 +17,10 @@ DEFAULT_POLL_INTERVAL_SECONDS: Final[float] = 0.1
 
 
 class TestCase(absltest.TestCase):
+    """
+    Base class for all tests.
+    """
+
     def kill_all_children_processes(self, pid: Optional[int] = None) -> None:
         """Kill all children processes.
 
