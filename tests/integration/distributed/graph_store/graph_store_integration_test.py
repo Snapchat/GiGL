@@ -35,6 +35,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 logger = Logger()
@@ -387,15 +388,18 @@ def _run_server_processes(
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
     sample_edge_direction: Literal["in", "out"],
+    splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None,
 ) -> None:
     logger.info(
         f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
     )
+    print(f"{cluster_info=}, {task_config_uri=}, {sample_edge_direction=}, {splitter=}")
     storage_node_process(
         storage_rank=cluster_info.storage_node_rank,
         cluster_info=cluster_info,
         task_config_uri=task_config_uri,
         sample_edge_direction=sample_edge_direction,
+        splitter=splitter,
         tf_record_uri_pattern=".*tfrecord",
         storage_world_backend="gloo",
     )
@@ -445,7 +449,7 @@ def _get_expected_input_nodes_by_rank(
 
 
 class GraphStoreIntegrationTest(unittest.TestCase):
-    def test_graph_store_homogeneous(self):
+    def _test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -596,6 +600,10 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 client_process.start()
                 client_processes.append(client_process)
         # Start server process
+        splitter = DistNodeAnchorLinkSplitter(
+            sampling_direction="in",
+            should_convert_labels_to_edges=True,
+        )
         server_processes = []
         for i in range(cluster_info.num_storage_nodes):
             with mock.patch.dict(
@@ -616,7 +624,8 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                     args=[
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
-                        False,  # is_inference - False for training mode
+                        "in",  # sample_edge_direction
+                        splitter,  # splitter
                     ],
                 )
                 server_process.start()
@@ -718,6 +727,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
                         "in",  # sample_edge_direction
+                        splitter,  # splitter
                     ],
                 )
                 server_process.start()

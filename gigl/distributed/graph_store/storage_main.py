@@ -7,7 +7,7 @@ We keep this around so we can use the utils in tests/integration/distributed/gra
 """
 import argparse
 import os
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import graphlearn_torch as glt
 import torch
@@ -25,6 +25,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
 logger = Logger()
 
@@ -75,6 +76,7 @@ def storage_node_process(
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
     sample_edge_direction: Literal["in", "out"],
+    splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None,
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
     storage_world_backend: Optional[str] = None,
 ) -> None:
@@ -86,7 +88,8 @@ def storage_node_process(
         storage_rank (int): The rank of the storage node.
         cluster_info (GraphStoreInfo): The cluster information.
         task_config_uri (Uri): The task config URI.
-        is_inference (bool): Whether the process is an inference process. Defaults to True.
+        sample_edge_direction (Literal["in", "out"]): The sample edge direction.
+        splitter (Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]]): The splitter to use. If None, will not split the dataset.
         tf_record_uri_pattern (str): The TF Record URI pattern.
         storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
     """
@@ -116,6 +119,7 @@ def storage_node_process(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         partitioner_class=DistRangePartitioner,
+        splitter=splitter,
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
