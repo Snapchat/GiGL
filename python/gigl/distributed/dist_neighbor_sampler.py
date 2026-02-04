@@ -262,7 +262,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Use the underlying sampling infrastructure to get all neighbors
         # We request a large number to effectively get all neighbors
         output: NeighborOutput = await self._sample_one_hop(
-            srcs=nodes, num_nbr=10, etype=edge_type
+            srcs=nodes, num_nbr=10000, etype=edge_type
         )
         return output.nbr, output.nbr_num
 
@@ -300,7 +300,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Use both a list (for ordering) and a set (for O(1) membership check)
         q: List[List[int]] = [[] for _ in range(batch_size)]
         q_set: List[Set[int]] = [set() for _ in range(batch_size)]
-
         # Batch convert seeds to Python ints (single boundary crossing)
         seed_list = seed_nodes.tolist()
 
@@ -313,6 +312,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Cache for neighbor lookups to avoid redundant fetches
         # Store as Python lists to avoid repeated .item() calls
         neighbor_cache: Dict[int, List[int]] = {}
+        # Separate cache for degrees - allows us to discard neighbor IDs when only degree is needed
+        degree_cache: Dict[int, int] = {}
 
         # Count total nodes in queues
         num_nodes_in_queue = batch_size
@@ -324,11 +325,22 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         while num_nodes_in_queue > 0:
             ppr_num_iterations += 1
-            # Collect all unique nodes that need neighbor lookups
+
+            # Drain ALL nodes from ALL queues for processing in this iteration
+            # This minimizes network calls by batching all neighbor lookups together
+            nodes_to_process: List[List[int]] = [[] for _ in range(batch_size)]
+            for i in range(batch_size):
+                if q[i]:
+                    nodes_to_process[i] = list(q[i])  # Copy all nodes
+                    q[i].clear()
+                    q_set[i].clear()
+                    num_nodes_in_queue -= len(nodes_to_process[i])
+
+            # Collect all unique nodes that need neighbor lookups across all batches
             nodes_to_lookup: List[int] = []
             nodes_to_lookup_set: Set[int] = set()
             for i in range(batch_size):
-                for node_id in q[i]:
+                for node_id in nodes_to_process[i]:
                     if (
                         node_id not in neighbor_cache
                         and node_id not in nodes_to_lookup_set
@@ -336,7 +348,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         nodes_to_lookup.append(node_id)
                         nodes_to_lookup_set.add(node_id)
 
-            # Batch fetch neighbors for all nodes not in cache
+            # Batch fetch neighbors for all nodes not in cache (single network call per iteration)
+            # This populates both neighbor_cache (for residual pushing) and degree_cache
             if nodes_to_lookup:
                 ppr_num_neighbor_lookups += 1
                 lookup_tensor = torch.tensor(
@@ -349,59 +362,113 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 # Batch convert to Python lists (single boundary crossing)
                 neighbors_list = neighbors.tolist()
                 counts_list = neighbor_counts.tolist()
+                del neighbors, neighbor_counts
 
-                # Populate cache with Python lists
+                # Populate both caches with Python lists
                 offset = 0
                 for node_id, count in zip(nodes_to_lookup, counts_list):
                     neighbor_cache[node_id] = neighbors_list[offset : offset + count]
+                    degree_cache[node_id] = count
                     offset += count
 
-            # Process one node from each non-empty queue
+            # Process ALL nodes from ALL queues
             for i in range(batch_size):
-                if not q[i]:
-                    continue
+                for u_node in nodes_to_process[i]:
+                    ppr_total_nodes_processed += 1
 
-                u_node = q[i].pop()
-                q_set[i].discard(u_node)
-                num_nodes_in_queue -= 1
-                ppr_total_nodes_processed += 1
+                    # Get residual for this node
+                    res_u = r[i].get(u_node, 0.0)
 
-                # Get residual for this node
-                res_u = r[i].get(u_node, 0.0)
+                    # Push to PPR score and reset residual
+                    p[i][u_node] += res_u
+                    r[i][u_node] = 0.0
 
-                # Push to PPR score and reset residual
-                p[i][u_node] += res_u
-                r[i][u_node] = 0.0
+                    # Get neighbors from cache (already Python list)
+                    neighbor_list = neighbor_cache[u_node]
+                    neighbor_count = degree_cache[u_node]
 
-                # Get neighbors from cache (already Python list)
-                neighbor_list = neighbor_cache.get(u_node, [])
-                neighbor_count = len(neighbor_list)
+                    if neighbor_count == 0:
+                        continue
 
-                if neighbor_count == 0:
-                    continue
+                    # Distribute residual to neighbors
+                    push_value = (1 - self.alpha) * res_u / neighbor_count
 
-                # Distribute residual to neighbors
-                push_value = (1 - self.alpha) * res_u / neighbor_count
+                    for v_node in neighbor_list:
+                        r[i][v_node] += push_value
 
-                for v_node in neighbor_list:
-                    r[i][v_node] += push_value
+            # Collect all neighbor nodes that need degree lookups (not already in degree_cache)
+            # This follows the C++ implementation which pre-fetches neighbor counts
+            neighbors_needing_degree: List[int] = []
+            neighbors_needing_degree_set: Set[int] = set()
+            for i in range(batch_size):
+                for u_node in nodes_to_process[i]:
+                    neighbor_list = neighbor_cache[u_node]
+                    for v_node in neighbor_list:
+                        if (
+                            v_node not in degree_cache
+                            and v_node not in neighbors_needing_degree_set
+                        ):
+                            neighbors_needing_degree.append(v_node)
+                            neighbors_needing_degree_set.add(v_node)
 
-                    # Check if v_node should be added to queue
-                    res_v = r[i].get(v_node, 0.0)
+            # Batch fetch neighbors for all v_nodes not in cache to get their degrees
+            # We keep neighbors temporarily and only promote to neighbor_cache if they pass threshold
+            # Note that it may be more performant to only fetch neighbor counts instead of both neighbors
+            # and neighbot counts. However, GLT doesn't expose a lever for only getting neighbor counts, so we
+            # fetch all neighbors and neighbor counts initially.
+            # TODO (mkolodner-sc): Upstream an item to GLT to expose lever for only getting neighbor counts.
+            temp_neighbors: Dict[int, List[int]] = {}
+            if neighbors_needing_degree:
+                ppr_num_neighbor_lookups += 1
+                lookup_tensor = torch.tensor(
+                    neighbors_needing_degree, dtype=torch.long, device=device
+                )
+                neighbors, neighbor_counts = await self._get_neighbors_for_nodes(
+                    lookup_tensor, edge_type
+                )
 
-                    # Get degree of v_node for threshold check
-                    if v_node in neighbor_cache:
-                        v_degree = len(neighbor_cache[v_node])
-                    else:
-                        # If not in cache, we'll fetch it next iteration
-                        v_degree = 1  # Conservative estimate
+                # Convert to Python lists (single boundary crossing)
+                neighbors_list = neighbors.tolist()
+                counts_list = neighbor_counts.tolist()
+                del neighbors, neighbor_counts
 
-                    # Add to queue if residual exceeds threshold (O(1) set lookup)
-                    if res_v >= self._alpha_eps * v_degree:
-                        if v_node not in q_set[i]:
+                # Populate degree_cache and temp_neighbors
+                offset = 0
+                for node_id, count in zip(neighbors_needing_degree, counts_list):
+                    degree_cache[node_id] = count
+                    temp_neighbors[node_id] = neighbors_list[offset : offset + count]
+                    offset += count
+
+            # After processing all nodes, check which neighbors should be added to queues
+            # We do this in a separate pass to ensure all residuals are updated first
+            # Now all v_nodes have their degrees in the degree_cache
+            for i in range(batch_size):
+                for u_node in nodes_to_process[i]:
+                    neighbor_list = neighbor_cache[u_node]
+                    for v_node in neighbor_list:
+                        # Check if v_node should be added to queue
+                        res_v = r[i].get(v_node, 0.0)
+
+                        # Skip if already in queue or residual is zero
+                        if v_node in q_set[i] or res_v == 0.0:
+                            continue
+
+                        # Get degree of v_node for threshold check (guaranteed to be in degree_cache now)
+                        v_degree = degree_cache[v_node]
+
+                        # Add to queue if residual exceeds threshold (O(1) set lookup)
+                        if res_v >= self._alpha_eps * v_degree:
                             q[i].append(v_node)
                             q_set[i].add(v_node)
                             num_nodes_in_queue += 1
+
+                            # Promote temp_neighbors to neighbor_cache if available
+                            # This avoids re-fetching in the next iteration
+                            if v_node in temp_neighbors:
+                                neighbor_cache[v_node] = temp_neighbors[v_node]
+
+            # Discard temporary neighbors that didn't pass threshold (save memory)
+            del temp_neighbors
 
         # Extract top-k nodes by PPR score for each seed using heapq (O(n log k))
         out_neighbor_ids = torch.full(
@@ -431,6 +498,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             "ppr_total_nodes_processed": ppr_total_nodes_processed,
             "ppr_num_neighbor_lookups": ppr_num_neighbor_lookups,
             "ppr_neighbor_cache_size": len(neighbor_cache),
+            "ppr_degree_cache_size": len(degree_cache),
         }
 
         return out_neighbor_ids, out_weights, ppr_stats
@@ -454,6 +522,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             "ppr_total_nodes_processed": 0,
             "ppr_num_neighbor_lookups": 0,
             "ppr_neighbor_cache_size": 0,
+            "ppr_degree_cache_size": 0,
         }
 
         if is_hetero:
@@ -466,9 +535,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 if self.edge_dir == "in":
                     # For incoming edges, we sample from destination node type
                     if input_type == etype[-1]:
-                        neighbor_ids, weights, ppr_stats = await self._compute_ppr_scores(
-                            input_seeds, etype
-                        )
+                        (
+                            neighbor_ids,
+                            weights,
+                            ppr_stats,
+                        ) = await self._compute_ppr_scores(input_seeds, etype)
                         ppr_neighbors[etype] = (neighbor_ids, weights)
                         # Aggregate stats
                         for key in total_ppr_stats:
@@ -476,9 +547,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 elif self.edge_dir == "out":
                     # For outgoing edges, we sample from source node type
                     if input_type == etype[0]:
-                        neighbor_ids, weights, ppr_stats = await self._compute_ppr_scores(
-                            input_seeds, etype
-                        )
+                        (
+                            neighbor_ids,
+                            weights,
+                            ppr_stats,
+                        ) = await self._compute_ppr_scores(input_seeds, etype)
                         ppr_neighbors[etype] = (neighbor_ids, weights)
                         # Aggregate stats
                         for key in total_ppr_stats:
@@ -509,10 +582,31 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     metadata[f"ppr_weights_{etype}"] = weights
 
             # Add PPR stats to metadata as tensors (required by GLT SampleQueue)
-            metadata["ppr_num_iterations"] = torch.tensor([total_ppr_stats["ppr_num_iterations"]], dtype=torch.long, device=self.device)
-            metadata["ppr_total_nodes_processed"] = torch.tensor([total_ppr_stats["ppr_total_nodes_processed"]], dtype=torch.long, device=self.device)
-            metadata["ppr_num_neighbor_lookups"] = torch.tensor([total_ppr_stats["ppr_num_neighbor_lookups"]], dtype=torch.long, device=self.device)
-            metadata["ppr_neighbor_cache_size"] = torch.tensor([total_ppr_stats["ppr_neighbor_cache_size"]], dtype=torch.long, device=self.device)
+            metadata["ppr_num_iterations"] = torch.tensor(
+                [total_ppr_stats["ppr_num_iterations"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_total_nodes_processed"] = torch.tensor(
+                [total_ppr_stats["ppr_total_nodes_processed"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_num_neighbor_lookups"] = torch.tensor(
+                [total_ppr_stats["ppr_num_neighbor_lookups"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_neighbor_cache_size"] = torch.tensor(
+                [total_ppr_stats["ppr_neighbor_cache_size"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_degree_cache_size"] = torch.tensor(
+                [total_ppr_stats["ppr_degree_cache_size"]],
+                dtype=torch.long,
+                device=self.device,
+            )
 
             # Concatenate nodes per type
             node_dict = {
@@ -539,7 +633,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         else:
             # Homogeneous graph case
-            neighbor_ids, weights, ppr_stats = await self._compute_ppr_scores(input_seeds, None)
+            neighbor_ids, weights, ppr_stats = await self._compute_ppr_scores(
+                input_seeds, None
+            )
             total_ppr_stats = ppr_stats
 
             # Flatten and get unique neighbors
@@ -553,10 +649,31 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             metadata["ppr_neighbor_ids"] = neighbor_ids
 
             # Add PPR stats to metadata as tensors (required by GLT SampleQueue)
-            metadata["ppr_num_iterations"] = torch.tensor([total_ppr_stats["ppr_num_iterations"]], dtype=torch.long, device=self.device)
-            metadata["ppr_total_nodes_processed"] = torch.tensor([total_ppr_stats["ppr_total_nodes_processed"]], dtype=torch.long, device=self.device)
-            metadata["ppr_num_neighbor_lookups"] = torch.tensor([total_ppr_stats["ppr_num_neighbor_lookups"]], dtype=torch.long, device=self.device)
-            metadata["ppr_neighbor_cache_size"] = torch.tensor([total_ppr_stats["ppr_neighbor_cache_size"]], dtype=torch.long, device=self.device)
+            metadata["ppr_num_iterations"] = torch.tensor(
+                [total_ppr_stats["ppr_num_iterations"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_total_nodes_processed"] = torch.tensor(
+                [total_ppr_stats["ppr_total_nodes_processed"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_num_neighbor_lookups"] = torch.tensor(
+                [total_ppr_stats["ppr_num_neighbor_lookups"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_neighbor_cache_size"] = torch.tensor(
+                [total_ppr_stats["ppr_neighbor_cache_size"]],
+                dtype=torch.long,
+                device=self.device,
+            )
+            metadata["ppr_degree_cache_size"] = torch.tensor(
+                [total_ppr_stats["ppr_degree_cache_size"]],
+                dtype=torch.long,
+                device=self.device,
+            )
 
             sample_output = SamplerOutput(
                 node=all_nodes,
