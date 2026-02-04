@@ -165,7 +165,7 @@ def _sampling_worker_loop(
     shutdown_rpc(graceful=False)
 
 
-class DistSamplingProducer(DistMpSamplingProducer):
+class DistAblpSamplingProducer(DistMpSamplingProducer):
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
         if self.sampling_config.seed is not None:
