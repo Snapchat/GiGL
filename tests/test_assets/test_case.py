@@ -16,6 +16,7 @@ DEFAULT_TIMEOUT_SECONDS: Final[float] = 300.0
 DEFAULT_POLL_INTERVAL_SECONDS: Final[float] = 0.1
 
 
+# TODO(kmonte): Migrate us to use this class.
 class TestCase(absltest.TestCase):
     """
     Base class for all tests.
