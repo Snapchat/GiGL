@@ -1,10 +1,14 @@
 import collections
+import multiprocessing.context as py_mp_context
 import os
 import socket
+import time
+import traceback
 import unittest
 from typing import Literal, Optional, Union
 from unittest import mock
 
+import psutil
 import torch
 import torch.multiprocessing as mp
 from torch_geometric.data import Data, HeteroData
@@ -34,6 +38,9 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 logger = Logger()
+
+_PROCESS_TIMEOUT_SECONDS = 300  # 5 minutes
+_POLL_INTERVAL_SECONDS = 1.0
 
 
 def _assert_sampler_input(
@@ -167,50 +174,63 @@ def _client_process(
     node_type: Optional[NodeType],
     expected_sampler_input: dict[int, list[torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
+    exception_dict: dict[str, str],
 ) -> None:
-    logger.info(
-        f"Initializing client node {client_rank} / {cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {client_rank}"
-    )
-
-    mp_context = torch.multiprocessing.get_context("spawn")
-    mp_sharing_dict = torch.multiprocessing.Manager().dict()
-    client_processes = []
-    logger.info("Starting client processes")
-    for i in range(cluster_info.num_processes_per_compute):
-        client_process = mp_context.Process(
-            target=_run_compute_tests,
-            args=[
-                i,  # client_rank
-                cluster_info,  # cluster_info
-                mp_sharing_dict,  # mp_sharing_dict
-                node_type,  # node_type
-                expected_sampler_input,  # expected_sampler_input
-                expected_edge_types,  # expected_edge_types
-            ],
+    process_name = f"client_{client_rank}"
+    try:
+        logger.info(
+            f"Initializing client node {client_rank} / {cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {client_rank}"
         )
-        client_processes.append(client_process)
-    for client_process in client_processes:
-        client_process.start()
-    for client_process in client_processes:
-        client_process.join()
+        raise ValueError("_client_process not implemented")
+        mp_context = torch.multiprocessing.get_context("spawn")
+        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        client_processes: list[py_mp_context.SpawnProcess] = []
+        logger.info("Starting client processes")
+        for i in range(cluster_info.num_processes_per_compute):
+            client_process = mp_context.Process(
+                target=_run_compute_tests,
+                args=[
+                    i,  # client_rank
+                    cluster_info,  # cluster_info
+                    mp_sharing_dict,  # mp_sharing_dict
+                    node_type,  # node_type
+                    expected_sampler_input,  # expected_sampler_input
+                    expected_edge_types,  # expected_edge_types
+                ],
+            )
+            client_processes.append(client_process)
+        for client_process in client_processes:
+            client_process.start()
+        for client_process in client_processes:
+            client_process.join(_PROCESS_TIMEOUT_SECONDS)
+    except Exception:
+        exception_dict[process_name] = traceback.format_exc()
+        raise
 
 
 def _run_server_processes(
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
     sample_edge_direction: Literal["in", "out"],
+    exception_dict: dict[str, str],
 ) -> None:
-    logger.info(
-        f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
-    )
-    storage_node_process(
-        storage_rank=cluster_info.storage_node_rank,
-        cluster_info=cluster_info,
-        task_config_uri=task_config_uri,
-        sample_edge_direction=sample_edge_direction,
-        tf_record_uri_pattern=".*tfrecord",
-        storage_world_backend="gloo",
-    )
+    process_name = f"server_{cluster_info.storage_node_rank}"
+    try:
+        logger.info(
+            f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
+        )
+        storage_node_process(
+            storage_rank=cluster_info.storage_node_rank,
+            cluster_info=cluster_info,
+            task_config_uri=task_config_uri,
+            sample_edge_direction=sample_edge_direction,
+            tf_record_uri_pattern=".*tfrecord",
+            storage_world_backend="gloo",
+            timeout_seconds=_PROCESS_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        exception_dict[process_name] = traceback.format_exc()
+        raise
 
 
 def _get_expected_input_nodes_by_rank(
@@ -257,6 +277,91 @@ def _get_expected_input_nodes_by_rank(
 
 
 class GraphStoreIntegrationTest(unittest.TestCase):
+    def _kill_process_tree(self, proc: py_mp_context.SpawnProcess) -> None:
+        """Force kill a process and all its children using psutil.
+
+        We do this as we have complicated process trees with multiple levels of nested processes.
+        And we want to clean all of them up.
+        Args:
+            proc: The process to kill along with its children.
+        """
+        if proc.exitcode is not None:
+            return
+
+        pid = proc.pid
+        if pid is None:
+            return
+
+        try:
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            proc.kill()
+            proc.join(timeout=5)
+        except psutil.NoSuchProcess:
+            pass
+
+    def _assert_all_processes_succeed(
+        self,
+        processes: list[py_mp_context.SpawnProcess],
+        exception_dict: dict[str, str],
+        timeout_seconds: int = _PROCESS_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = _POLL_INTERVAL_SECONDS,
+    ) -> None:
+        """Wait for processes to complete and assert all succeeded.
+
+        Monitors all processes and terminates remaining ones if any process fails.
+        After all processes complete (or are terminated), asserts that all had
+        exit code 0, including stack traces from exception_dict if available.
+
+        Args:
+            processes: List of processes to monitor.
+            exception_dict: Shared dict mapping process names to stack traces.
+            timeout_seconds: Maximum time to wait for all processes.
+            poll_interval_seconds: How often to check process status.
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout_seconds:
+            # Check if any process has failed
+            for proc in processes:
+                if proc.exitcode is not None and proc.exitcode != 0:
+                    # A process has failed, terminate all others
+                    logger.warning(
+                        f"Process {proc.name} failed with exit code {proc.exitcode}. "
+                        "Terminating remaining processes."
+                    )
+                    for other_proc in processes:
+                        self._kill_process_tree(other_proc)
+                    break
+
+            # Check if all processes have completed
+            if all(proc.exitcode is not None for proc in processes):
+                break
+
+            time.sleep(poll_interval_seconds)
+        else:
+            # Timeout reached, terminate any remaining processes
+            logger.warning(
+                f"Timeout of {timeout_seconds}s reached. Terminating remaining processes."
+            )
+            for proc in processes:
+                self._kill_process_tree(proc)
+
+        # Collect failures and their stack traces
+        failures: list[str] = []
+        for proc in processes:
+            if proc.exitcode != 0:
+                error_msg = f"Process {proc.name} failed with exit code {proc.exitcode}"
+                if proc.name in exception_dict:
+                    error_msg += f"\nStack trace:\n{exception_dict[proc.name]}"
+                failures.append(error_msg)
+
+        if failures:
+            self.fail("\n\n".join(failures))
+
     def test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
@@ -293,7 +398,9 @@ class GraphStoreIntegrationTest(unittest.TestCase):
         )
 
         ctx = mp.get_context("spawn")
-        client_processes: list = []
+        manager = mp.Manager()
+        exception_dict = manager.dict()
+        launched_processes: list[py_mp_context.SpawnProcess] = []
         for i in range(cluster_info.num_compute_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -316,12 +423,13 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                         None,  # node_type - None for homogeneous dataset
                         expected_sampler_input,  # expected_sampler_input
                         None,  # expected_edge_types - None for homogeneous dataset
+                        exception_dict,  # exception_dict
                     ],
+                    name=f"client_{i}",
                 )
                 client_process.start()
-                client_processes.append(client_process)
+                launched_processes.append(client_process)
         # Start server process
-        server_processes = []
         for i in range(cluster_info.num_storage_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -342,15 +450,14 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
                         "in",  # sample_edge_direction
+                        exception_dict,  # exception_dict
                     ],
+                    name=f"server_{i}",
                 )
                 server_process.start()
-                server_processes.append(server_process)
+                launched_processes.append(server_process)
 
-        for client_process in client_processes:
-            client_process.join()
-        for server_process in server_processes:
-            server_process.join()
+        self._assert_all_processes_succeed(launched_processes, exception_dict)
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
@@ -394,7 +501,9 @@ class GraphStoreIntegrationTest(unittest.TestCase):
             EdgeType(NodeType("term"), Relation("to"), NodeType("paper")),
         ]
         ctx = mp.get_context("spawn")
-        client_processes: list = []
+        manager = mp.Manager()
+        exception_dict = manager.dict()
+        launched_processes: list[py_mp_context.SpawnProcess] = []
         for i in range(cluster_info.num_compute_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -417,12 +526,13 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                         NodeType("author"),  # node_type
                         expected_sampler_input,  # expected_sampler_input
                         expected_edge_types,  # expected_edge_types
+                        exception_dict,  # exception_dict
                     ],
+                    name=f"client_{i}",
                 )
                 client_process.start()
-                client_processes.append(client_process)
+                launched_processes.append(client_process)
         # Start server process
-        server_processes = []
         for i in range(cluster_info.num_storage_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -443,12 +553,11 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
                         "in",  # sample_edge_direction
+                        exception_dict,  # exception_dict
                     ],
+                    name=f"server_{i}",
                 )
                 server_process.start()
-                server_processes.append(server_process)
+                launched_processes.append(server_process)
 
-        for client_process in client_processes:
-            client_process.join()
-        for server_process in server_processes:
-            server_process.join()
+        self._assert_all_processes_succeed(launched_processes, exception_dict)
