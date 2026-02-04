@@ -727,7 +727,6 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                         cluster_info,  # cluster_info
                         task_config_uri,  # task_config_uri
                         "in",  # sample_edge_direction
-                        splitter,  # splitter
                     ],
                 )
                 server_process.start()
