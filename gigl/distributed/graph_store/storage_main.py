@@ -78,6 +78,7 @@ def storage_node_process(
     sample_edge_direction: Literal["in", "out"],
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None,
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
+    ssl_positive_label_percentage: Optional[float] = None,
     storage_world_backend: Optional[str] = None,
 ) -> None:
     """Run a storage node process
@@ -92,6 +93,9 @@ def storage_node_process(
         splitter (Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]]): The splitter to use. If None, will not split the dataset.
         tf_record_uri_pattern (str): The TF Record URI pattern.
         storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
+        ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
+            Must be None if supervised edge labels are provided in advance.
+            If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
@@ -120,6 +124,7 @@ def storage_node_process(
         sample_edge_direction=sample_edge_direction,
         partitioner_class=DistRangePartitioner,
         splitter=splitter,
+        _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
