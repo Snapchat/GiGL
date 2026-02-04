@@ -119,6 +119,7 @@ def storage_node_process(
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
+    # TODO(kmonte): Add support for TFDatasetOptions.
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,

@@ -210,13 +210,14 @@ def storage_node_process(
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
+    # TODO(kmonte): Add support for TFDatasetOptions.
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         should_load_tensors_in_parallel=should_load_tf_records_in_parallel,
         partitioner_class=DistRangePartitioner,
         splitter=splitter,
-       _ssl_positive_label_percentage=ssl_positive_label_percentage,
+        _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
