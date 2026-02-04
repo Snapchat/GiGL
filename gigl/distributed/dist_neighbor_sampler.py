@@ -15,12 +15,15 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
+from gigl.common.logger import Logger
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
 from gigl.utils.data_splitters import PADDING_NODE
+
+logger = Logger()
 
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
 

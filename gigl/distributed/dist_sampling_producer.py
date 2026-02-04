@@ -32,7 +32,10 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
+from gigl.common.logger import Logger
 from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
+
+logger = Logger()
 
 
 def _sampling_worker_loop(
@@ -84,6 +87,7 @@ def _sampling_worker_loop(
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
+        logger.info(f"Sampling config: {sampling_config}")
         dist_sampler = DistABLPNeighborSampler(
             data,
             sampling_config.num_neighbors,
@@ -167,6 +171,7 @@ def _sampling_worker_loop(
 
 class DistSamplingProducer(DistMpSamplingProducer):
     def init(self):
+        logger.info("Initializing GiGL DistSamplingProducer")
         r"""Create the subprocess pool. Init samplers and rpc server."""
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)

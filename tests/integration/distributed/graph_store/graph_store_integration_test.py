@@ -11,6 +11,7 @@ from torch_geometric.data import Data, HeteroData
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
@@ -176,7 +177,7 @@ def _run_compute_train_tests(
     node_type: Optional[NodeType],
 ) -> None:
     """
-    Simplified compute test for training mode that only verifies ABLP input.
+    Compute test for training mode that verifies ABLP input and DistABLPLoader.
     """
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
@@ -186,13 +187,13 @@ def _run_compute_train_tests(
         mp_sharing_dict=mp_sharing_dict,
     )
 
-    # Use default types for homogeneous graph
+    # Use default types for labeled homogeneous graph
     test_node_type = (
         node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
     )
     supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
-    # Test get_ablp_input for train split
+    # Test 1: Verify get_ablp_input for train split
     ablp_result = remote_dist_dataset.get_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
@@ -202,6 +203,66 @@ def _run_compute_train_tests(
     )
 
     _assert_ablp_input(cluster_info, ablp_result)
+
+    # Test 2: Test DistABLPLoader with Graph Store mode
+    print(f"ablp_result: {ablp_result}")
+    for rank, (anchors, positive_labels, negative_labels) in ablp_result.items():
+        if negative_labels is not None:
+            print(
+                f"rank: {rank}, anchors: {anchors.shape}, positive_labels: {positive_labels.shape}, negative_labels: {negative_labels.shape}"
+            )
+        else:
+            print(
+                f"rank: {rank}, anchors: {anchors.shape}, positive_labels: {positive_labels.shape}"
+            )
+    torch.distributed.barrier()
+
+    # For labeled homogeneous, pass the dict directly (not as tuple)
+    input_nodes = ablp_result
+
+    loader = DistABLPLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        supervision_edge_type=supervision_edge_type,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+    )
+
+    count = 0
+    for batch in loader:
+        # Verify batch structure
+        assert hasattr(batch, "y_positive"), "Batch should have y_positive labels"
+        # y_positive should be dict mapping local anchor idx -> local label indices
+        assert isinstance(
+            batch.y_positive, dict
+        ), f"y_positive should be dict, got {type(batch.y_positive)}"
+        count += 1
+
+    torch.distributed.barrier()
+    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} ABLP batches")
+
+    # Verify total count across all ranks
+    count_tensor = torch.tensor(count, dtype=torch.int64)
+    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
+
+    # Calculate expected total anchors by summing across all compute nodes
+    # Each process on the same compute node has the same anchor count, so we sum
+    # across all processes and divide by num_processes_per_compute to get the true total
+    local_total_anchors = sum(
+        ablp_result[server_rank][0].shape[0] for server_rank in ablp_result
+    )
+    expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
+    torch.distributed.all_reduce(
+        expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
+    )
+    expected_batches = (
+        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
+    )
+    assert (
+        count_tensor.item() == expected_batches
+    ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
 
     shutdown_compute_proccess()
 
