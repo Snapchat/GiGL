@@ -113,7 +113,11 @@ def _run_compute_tests(
     torch.distributed.barrier()
     logger.info("Verified that all ranks received the same free ports")
 
-    sampler_input = remote_dist_dataset.get_node_ids(node_type=node_type)
+    sampler_input = remote_dist_dataset.get_node_ids(
+        node_type=node_type,
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+    )
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
 
     # test "simple" case where we don't have mp sharing dict too
@@ -121,7 +125,11 @@ def _run_compute_tests(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=None,
-    ).get_node_ids(node_type=node_type)
+    ).get_node_ids(
+        node_type=node_type,
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+    )
     _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
     assert (
