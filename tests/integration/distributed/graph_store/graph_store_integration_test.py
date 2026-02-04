@@ -181,7 +181,6 @@ def _client_process(
         logger.info(
             f"Initializing client node {client_rank} / {cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {client_rank}"
         )
-        raise ValueError("_client_process not implemented")
         mp_context = torch.multiprocessing.get_context("spawn")
         mp_sharing_dict = torch.multiprocessing.Manager().dict()
         client_processes: list[py_mp_context.SpawnProcess] = []
