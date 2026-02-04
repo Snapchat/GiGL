@@ -2,13 +2,11 @@ import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
-import time
 import traceback
 import unittest
 from typing import Literal, Optional, Union
 from unittest import mock
 
-import psutil
 import torch
 import torch.multiprocessing as mp
 from torch_geometric.data import Data, HeteroData
@@ -36,11 +34,9 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import DEFAULT_TIMEOUT_SECONDS, TestCase
 
 logger = Logger()
-
-_PROCESS_TIMEOUT_SECONDS = 300  # 5 minutes
-_POLL_INTERVAL_SECONDS = 1.0
 
 
 def _assert_sampler_input(
@@ -209,7 +205,7 @@ def _client_process(
         for client_process in client_processes:
             client_process.start()
         for client_process in client_processes:
-            client_process.join(_PROCESS_TIMEOUT_SECONDS)
+            client_process.join(DEFAULT_TIMEOUT_SECONDS)
     except Exception:
         exception_dict[process_name] = traceback.format_exc()
         raise
@@ -233,7 +229,7 @@ def _run_server_processes(
             sample_edge_direction=sample_edge_direction,
             tf_record_uri_pattern=".*tfrecord",
             storage_world_backend="gloo",
-            timeout_seconds=_PROCESS_TIMEOUT_SECONDS,
+            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
         )
     except Exception:
         exception_dict[process_name] = traceback.format_exc()
@@ -283,92 +279,7 @@ def _get_expected_input_nodes_by_rank(
     return dict(expected_sampler_input)
 
 
-class GraphStoreIntegrationTest(unittest.TestCase):
-    def _kill_process_tree(self, proc: py_mp_context.SpawnProcess) -> None:
-        """Force kill a process and all its children using psutil.
-
-        We do this as we have complicated process trees with multiple levels of nested processes.
-        And we want to clean all of them up.
-        Args:
-            proc: The process to kill along with its children.
-        """
-        if proc.exitcode is not None:
-            return
-
-        pid = proc.pid
-        if pid is None:
-            return
-
-        try:
-            parent = psutil.Process(pid)
-            for child in parent.children(recursive=True):
-                try:
-                    child.kill()
-                except psutil.NoSuchProcess:
-                    pass
-            proc.kill()
-            proc.join(timeout=5)
-        except psutil.NoSuchProcess:
-            pass
-
-    def _assert_all_processes_succeed(
-        self,
-        processes: list[py_mp_context.SpawnProcess],
-        exception_dict: dict[str, str],
-        timeout_seconds: int = _PROCESS_TIMEOUT_SECONDS,
-        poll_interval_seconds: float = _POLL_INTERVAL_SECONDS,
-    ) -> None:
-        """Wait for processes to complete and assert all succeeded.
-
-        Monitors all processes and terminates remaining ones if any process fails.
-        After all processes complete (or are terminated), asserts that all had
-        exit code 0, including stack traces from exception_dict if available.
-
-        Args:
-            processes: List of processes to monitor.
-            exception_dict: Shared dict mapping process names to stack traces.
-            timeout_seconds: Maximum time to wait for all processes.
-            poll_interval_seconds: How often to check process status.
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout_seconds:
-            # Check if any process has failed
-            for proc in processes:
-                if proc.exitcode is not None and proc.exitcode != 0:
-                    # A process has failed, terminate all others
-                    logger.warning(
-                        f"Process {proc.name} failed with exit code {proc.exitcode}. "
-                        "Terminating remaining processes."
-                    )
-                    for other_proc in processes:
-                        self._kill_process_tree(other_proc)
-                    break
-
-            # Check if all processes have completed
-            if all(proc.exitcode is not None for proc in processes):
-                break
-
-            time.sleep(poll_interval_seconds)
-        else:
-            # Timeout reached, terminate any remaining processes
-            logger.warning(
-                f"Timeout of {timeout_seconds}s reached. Terminating remaining processes."
-            )
-            for proc in processes:
-                self._kill_process_tree(proc)
-
-        # Collect failures and their stack traces
-        failures: list[str] = []
-        for proc in processes:
-            if proc.exitcode != 0:
-                error_msg = f"Process {proc.name} failed with exit code {proc.exitcode}"
-                if proc.name in exception_dict:
-                    error_msg += f"\nStack trace:\n{exception_dict[proc.name]}"
-                failures.append(error_msg)
-
-        if failures:
-            self.fail("\n\n".join(failures))
-
+class GraphStoreIntegrationTest(TestCase):
     def test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
@@ -464,7 +375,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 server_process.start()
                 launched_processes.append(server_process)
 
-        self._assert_all_processes_succeed(launched_processes, exception_dict)
+        self.assert_all_processes_succeed(launched_processes, exception_dict)
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
@@ -567,4 +478,4 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 server_process.start()
                 launched_processes.append(server_process)
 
-        self._assert_all_processes_succeed(launched_processes, exception_dict)
+        self.assert_all_processes_succeed(launched_processes, exception_dict)
