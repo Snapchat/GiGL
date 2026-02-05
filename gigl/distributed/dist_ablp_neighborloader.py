@@ -403,8 +403,8 @@ class DistABLPLoader(DistLoader):
                     got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
             if dataset.edge_dir == "in":
                 self._supervision_edge_types = [
-                    reverse_edge_type(sup_edge_type)
-                    for sup_edge_type in self._supervision_edge_types
+                    reverse_edge_type(supervision_edge_type)
+                    for supervision_edge_type in self._supervision_edge_types
                 ]
         elif isinstance(input_nodes, torch.Tensor):
             if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
@@ -514,6 +514,7 @@ class DistABLPLoader(DistLoader):
             master_worker_port=neighbor_loader_port_for_current_rank,
             device=device,
             should_use_cpu_workers=should_use_cpu_workers,
+            # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
         )
         logger.info(
@@ -529,8 +530,16 @@ class DistABLPLoader(DistLoader):
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
+            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
+            # need to be connected. Thus, we need master ip address and master port to
+            # initate the connection.
+            # Note that different groups of workers are independent, and thus
+            # the sampling processes in different groups should be independent, and should
+            # use different master ports.
             master_addr=master_ip_address,
             master_port=dist_sampling_port_for_current_rank,
+            # Load testing shows that when num_rpc_threads exceed 16, the performance
+            # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
             rpc_timeout=600,
             channel_size=channel_size,
