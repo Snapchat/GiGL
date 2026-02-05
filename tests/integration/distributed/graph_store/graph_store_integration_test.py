@@ -1,7 +1,11 @@
 import collections
+import multiprocessing.context as py_mp_context
 import os
 import socket
+import traceback
 import unittest
+from collections.abc import MutableMapping
+from dataclasses import dataclass
 from typing import Literal, Optional, Union
 from unittest import mock
 
@@ -37,6 +41,7 @@ from gigl.types.graph import (
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import DEFAULT_TIMEOUT_SECONDS, TestCase
 
 logger = Logger()
 
@@ -172,7 +177,7 @@ def _assert_ablp_input(
 def _run_compute_train_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: dict[str, torch.Tensor],
+    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
     node_type: Optional[NodeType],
 ) -> None:
     """
@@ -206,42 +211,59 @@ def _run_compute_train_tests(
     shutdown_compute_proccess()
 
 
-def _client_train_process(
-    client_rank: int,
-    cluster_info: GraphStoreInfo,
-    node_type: Optional[NodeType],
-) -> None:
+@dataclass(frozen=True)
+class ClientTrainProcessArgs:
+    """Arguments for the client training process.
+
+    Attributes:
+        client_rank: Rank of this client in the compute cluster.
+        cluster_info: Information about the distributed cluster.
+        node_type: Type of nodes to process, None for homogeneous graphs.
+        exception_dict: Shared dictionary for storing exceptions from processes.
+    """
+
+    client_rank: int
+    cluster_info: GraphStoreInfo
+    node_type: Optional[NodeType]
+    exception_dict: MutableMapping[str, str]
+
+
+def _client_train_process(args: ClientTrainProcessArgs) -> None:
     """Client process for training mode that spawns compute train tests."""
     logger.info(
-        f"Initializing train client node {client_rank} / {cluster_info.num_compute_nodes}. "
+        f"Initializing train client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. "
         f"OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
     )
-
-    mp_context = torch.multiprocessing.get_context("spawn")
-    mp_sharing_dict = torch.multiprocessing.Manager().dict()
-    client_processes = []
-    logger.info("Starting train client processes")
-    for i in range(cluster_info.num_processes_per_compute):
-        client_process = mp_context.Process(
-            target=_run_compute_train_tests,
-            args=[
-                i,  # client_rank
-                cluster_info,  # cluster_info
-                mp_sharing_dict,  # mp_sharing_dict
-                node_type,  # node_type
-            ],
-        )
-        client_processes.append(client_process)
-    for client_process in client_processes:
-        client_process.start()
-    for client_process in client_processes:
-        client_process.join()
+    process_name = f"client_train_{args.client_rank}"
+    try:
+        mp_context = torch.multiprocessing.get_context("spawn")
+        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        client_processes: list[py_mp_context.SpawnProcess] = []
+        logger.info("Starting train client processes")
+        for i in range(args.cluster_info.num_processes_per_compute):
+            client_process = mp_context.Process(
+                target=_run_compute_train_tests,
+                args=[
+                    i,  # client_rank
+                    args.cluster_info,  # cluster_info
+                    mp_sharing_dict,  # mp_sharing_dict
+                    args.node_type,  # node_type
+                ],
+            )
+            client_processes.append(client_process)
+        for client_process in client_processes:
+            client_process.start()
+        for client_process in client_processes:
+            client_process.join(DEFAULT_TIMEOUT_SECONDS)
+    except Exception:
+        args.exception_dict[process_name] = traceback.format_exc()
+        raise
 
 
 def _run_compute_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: dict[str, torch.Tensor],
+    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
     node_type: Optional[NodeType],
     expected_sampler_input: dict[int, list[torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
@@ -350,58 +372,97 @@ def _run_compute_tests(
     shutdown_compute_proccess()
 
 
-def _client_process(
-    client_rank: int,
-    cluster_info: GraphStoreInfo,
-    node_type: Optional[NodeType],
-    expected_sampler_input: dict[int, list[torch.Tensor]],
-    expected_edge_types: Optional[list[EdgeType]],
-) -> None:
-    logger.info(
-        f"Initializing client node {client_rank} / {cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {client_rank}"
-    )
+@dataclass(frozen=True)
+class ClientProcessArgs:
+    """Arguments for the client process.
 
-    mp_context = torch.multiprocessing.get_context("spawn")
-    mp_sharing_dict = torch.multiprocessing.Manager().dict()
-    client_processes = []
-    logger.info("Starting client processes")
-    for i in range(cluster_info.num_processes_per_compute):
-        client_process = mp_context.Process(
-            target=_run_compute_tests,
-            args=[
-                i,  # client_rank
-                cluster_info,  # cluster_info
-                mp_sharing_dict,  # mp_sharing_dict
-                node_type,  # node_type
-                expected_sampler_input,  # expected_sampler_input
-                expected_edge_types,  # expected_edge_types
-            ],
+    Attributes:
+        client_rank: Rank of this client in the compute cluster.
+        cluster_info: Information about the distributed cluster.
+        node_type: Type of nodes to process, None for homogeneous graphs.
+        expected_sampler_input: Expected sampler input for each compute rank.
+        expected_edge_types: Expected edge types for heterogeneous graphs.
+        exception_dict: Shared dictionary for storing exceptions from processes.
+    """
+
+    client_rank: int
+    cluster_info: GraphStoreInfo
+    node_type: Optional[NodeType]
+    expected_sampler_input: dict[int, list[torch.Tensor]]
+    expected_edge_types: Optional[list[EdgeType]]
+    exception_dict: MutableMapping[str, str]
+
+
+def _client_process(args: ClientProcessArgs) -> None:
+    process_name = f"client_{args.client_rank}"
+    try:
+        logger.info(
+            f"Initializing client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {args.client_rank}"
         )
-        client_processes.append(client_process)
-    for client_process in client_processes:
-        client_process.start()
-    for client_process in client_processes:
-        client_process.join()
+        mp_context = torch.multiprocessing.get_context("spawn")
+        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        client_processes: list[py_mp_context.SpawnProcess] = []
+        logger.info("Starting client processes")
+        for i in range(args.cluster_info.num_processes_per_compute):
+            client_process = mp_context.Process(
+                target=_run_compute_tests,
+                args=[
+                    i,  # client_rank
+                    args.cluster_info,  # cluster_info
+                    mp_sharing_dict,  # mp_sharing_dict
+                    args.node_type,  # node_type
+                    args.expected_sampler_input,  # expected_sampler_input
+                    args.expected_edge_types,  # expected_edge_types
+                ],
+            )
+            client_processes.append(client_process)
+        for client_process in client_processes:
+            client_process.start()
+        for client_process in client_processes:
+            client_process.join(DEFAULT_TIMEOUT_SECONDS)
+    except Exception:
+        args.exception_dict[process_name] = traceback.format_exc()
+        raise
 
 
-def _run_server_processes(
-    cluster_info: GraphStoreInfo,
-    task_config_uri: Uri,
-    sample_edge_direction: Literal["in", "out"],
-    splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None,
-) -> None:
-    logger.info(
-        f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
-    )
-    storage_node_process(
-        storage_rank=cluster_info.storage_node_rank,
-        cluster_info=cluster_info,
-        task_config_uri=task_config_uri,
-        sample_edge_direction=sample_edge_direction,
-        splitter=splitter,
-        tf_record_uri_pattern=".*tfrecord",
-        storage_world_backend="gloo",
-    )
+@dataclass(frozen=True)
+class ServerProcessArgs:
+    """Arguments for the server process.
+
+    Attributes:
+        cluster_info: Information about the distributed cluster.
+        task_config_uri: URI to the task configuration.
+        sample_edge_direction: Direction for edge sampling ("in" or "out").
+        exception_dict: Shared dictionary for storing exceptions from processes.
+        splitter: Optional splitter for node anchor link or node splitting.
+    """
+
+    cluster_info: GraphStoreInfo
+    task_config_uri: Uri
+    sample_edge_direction: Literal["in", "out"]
+    exception_dict: MutableMapping[str, str]
+    splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
+
+
+def _run_server_processes(args: ServerProcessArgs) -> None:
+    process_name = f"server_{args.cluster_info.storage_node_rank}"
+    try:
+        logger.info(
+            f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
+        )
+        storage_node_process(
+            storage_rank=args.cluster_info.storage_node_rank,
+            cluster_info=args.cluster_info,
+            task_config_uri=args.task_config_uri,
+            sample_edge_direction=args.sample_edge_direction,
+            splitter=args.splitter,
+            tf_record_uri_pattern=".*tfrecord",
+            storage_world_backend="gloo",
+            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        args.exception_dict[process_name] = traceback.format_exc()
+        raise
 
 
 def _get_expected_input_nodes_by_rank(
@@ -447,7 +508,7 @@ def _get_expected_input_nodes_by_rank(
     return dict(expected_sampler_input)
 
 
-class GraphStoreIntegrationTest(unittest.TestCase):
+class GraphStoreIntegrationTest(TestCase):
     def test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
@@ -484,7 +545,9 @@ class GraphStoreIntegrationTest(unittest.TestCase):
         )
 
         ctx = mp.get_context("spawn")
-        client_processes: list = []
+        manager = mp.Manager()
+        exception_dict = manager.dict()
+        launched_processes: list[py_mp_context.SpawnProcess] = []
         for i in range(cluster_info.num_compute_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -499,20 +562,22 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 },
                 clear=False,
             ):
+                client_args = ClientProcessArgs(
+                    client_rank=i,
+                    cluster_info=cluster_info,
+                    node_type=None,  # None for homogeneous dataset
+                    expected_sampler_input=expected_sampler_input,
+                    expected_edge_types=None,  # None for homogeneous dataset
+                    exception_dict=exception_dict,
+                )
                 client_process = ctx.Process(
                     target=_client_process,
-                    args=[
-                        i,  # client_rank
-                        cluster_info,  # cluster_info
-                        None,  # node_type - None for homogeneous dataset
-                        expected_sampler_input,  # expected_sampler_input
-                        None,  # expected_edge_types - None for homogeneous dataset
-                    ],
+                    args=[client_args],
+                    name=f"client_{i}",
                 )
                 client_process.start()
-                client_processes.append(client_process)
+                launched_processes.append(client_process)
         # Start server process
-        server_processes = []
         for i in range(cluster_info.num_storage_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -527,24 +592,23 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 },
                 clear=False,
             ):
+                server_args = ServerProcessArgs(
+                    cluster_info=cluster_info,
+                    task_config_uri=task_config_uri,
+                    sample_edge_direction="in",
+                    exception_dict=exception_dict,
+                )
                 server_process = ctx.Process(
                     target=_run_server_processes,
-                    args=[
-                        cluster_info,  # cluster_info
-                        task_config_uri,  # task_config_uri
-                        "in",  # sample_edge_direction
-                    ],
+                    args=[server_args],
+                    name=f"server_{i}",
                 )
                 server_process.start()
-                server_processes.append(server_process)
+                launched_processes.append(server_process)
 
-        for client_process in client_processes:
-            client_process.join()
-        for server_process in server_processes:
-            server_process.join()
+        self.assert_all_processes_succeed(launched_processes, exception_dict)
 
     def test_homogeneous_training(self):
-        """Test graph store with training mode (is_inference=False) to verify ABLP input."""
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -573,7 +637,8 @@ class GraphStoreIntegrationTest(unittest.TestCase):
         )
 
         ctx = mp.get_context("spawn")
-        client_processes: list = []
+        launched_processes: list[py_mp_context.SpawnProcess] = []
+        exception_dict = mp.Manager().dict()
         for i in range(cluster_info.num_compute_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -588,22 +653,24 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 },
                 clear=False,
             ):
+                client_train_args = ClientTrainProcessArgs(
+                    client_rank=i,
+                    cluster_info=cluster_info,
+                    node_type=None,  # None for homogeneous dataset
+                    exception_dict=exception_dict,
+                )
                 client_process = ctx.Process(
                     target=_client_train_process,
-                    args=[
-                        i,  # client_rank
-                        cluster_info,  # cluster_info
-                        None,  # node_type - None for homogeneous dataset
-                    ],
+                    args=[client_train_args],
+                    name=f"client_train_{i}",
                 )
                 client_process.start()
-                client_processes.append(client_process)
+                launched_processes.append(client_process)
         # Start server process
         splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in",
             should_convert_labels_to_edges=True,
         )
-        server_processes = []
         for i in range(cluster_info.num_storage_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -618,22 +685,21 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 },
                 clear=False,
             ):
+                server_args = ServerProcessArgs(
+                    cluster_info=cluster_info,
+                    task_config_uri=task_config_uri,
+                    sample_edge_direction="in",
+                    exception_dict=exception_dict,
+                    splitter=splitter,
+                )
                 server_process = ctx.Process(
                     target=_run_server_processes,
-                    args=[
-                        cluster_info,  # cluster_info
-                        task_config_uri,  # task_config_uri
-                        "in",  # sample_edge_direction
-                        splitter,  # splitter
-                    ],
+                    args=[server_args],
                 )
                 server_process.start()
-                server_processes.append(server_process)
+                launched_processes.append(server_process)
 
-        for client_process in client_processes:
-            client_process.join()
-        for server_process in server_processes:
-            server_process.join()
+        self.assert_all_processes_succeed(launched_processes, exception_dict)
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
@@ -677,7 +743,9 @@ class GraphStoreIntegrationTest(unittest.TestCase):
             EdgeType(NodeType("term"), Relation("to"), NodeType("paper")),
         ]
         ctx = mp.get_context("spawn")
-        client_processes: list = []
+        manager = mp.Manager()
+        exception_dict = manager.dict()
+        launched_processes: list[py_mp_context.SpawnProcess] = []
         for i in range(cluster_info.num_compute_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -692,20 +760,22 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 },
                 clear=False,
             ):
+                client_args = ClientProcessArgs(
+                    client_rank=i,
+                    cluster_info=cluster_info,
+                    node_type=NodeType("author"),
+                    expected_sampler_input=expected_sampler_input,
+                    expected_edge_types=expected_edge_types,
+                    exception_dict=exception_dict,
+                )
                 client_process = ctx.Process(
                     target=_client_process,
-                    args=[
-                        i,  # client_rank
-                        cluster_info,  # cluster_info
-                        NodeType("author"),  # node_type
-                        expected_sampler_input,  # expected_sampler_input
-                        expected_edge_types,  # expected_edge_types
-                    ],
+                    args=[client_args],
+                    name=f"client_{i}",
                 )
                 client_process.start()
-                client_processes.append(client_process)
+                launched_processes.append(client_process)
         # Start server process
-        server_processes = []
         for i in range(cluster_info.num_storage_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -720,18 +790,18 @@ class GraphStoreIntegrationTest(unittest.TestCase):
                 },
                 clear=False,
             ):
+                server_args = ServerProcessArgs(
+                    cluster_info=cluster_info,
+                    task_config_uri=task_config_uri,
+                    sample_edge_direction="in",
+                    exception_dict=exception_dict,
+                )
                 server_process = ctx.Process(
                     target=_run_server_processes,
-                    args=[
-                        cluster_info,  # cluster_info
-                        task_config_uri,  # task_config_uri
-                        "in",  # sample_edge_direction
-                    ],
+                    args=[server_args],
+                    name=f"server_{i}",
                 )
                 server_process.start()
-                server_processes.append(server_process)
+                launched_processes.append(server_process)
 
-        for client_process in client_processes:
-            client_process.join()
-        for server_process in server_processes:
-            server_process.join()
+        self.assert_all_processes_succeed(launched_processes, exception_dict)
