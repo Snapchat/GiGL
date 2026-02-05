@@ -29,6 +29,8 @@ from gigl.distributed.sampler import (
     metadata_key_with_prefix,
 )
 from gigl.distributed.utils.neighborloader import (
+    DatasetSchema,
+    SamplingClusterSetup,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     set_missing_features,
@@ -201,6 +203,8 @@ class DistABLPLoader(DistLoader):
             self._supervision_edge_types = [supervision_edge_type]
         del supervision_edge_type
 
+        self._sampling_cluster_setup = SamplingClusterSetup.COLOCATED
+
         if context:
             assert (
                 local_process_world_size is not None
@@ -262,107 +266,6 @@ class DistABLPLoader(DistLoader):
             local_process_world_size,
         )  # delete deprecated vars so we don't accidentally use them.
 
-        if not isinstance(dataset.graph, abc.Mapping):
-            raise ValueError(
-                f"The dataset must be heterogeneous for ABLP. Recieved dataset with graph of type: {type(dataset.graph)}"
-            )
-        self._is_input_heterogeneous: bool = False
-        if isinstance(input_nodes, tuple):
-            if self._supervision_edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
-                raise ValueError(
-                    "When using heterogeneous ABLP, you must provide supervision_edge_types."
-                )
-            self._is_input_heterogeneous = True
-            anchor_node_type, anchor_node_ids = input_nodes
-            # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
-            # this assumption is no longer valid and/or is too opinionated
-            for supervision_edge_type in self._supervision_edge_types:
-                assert (
-                    supervision_edge_type[0] == anchor_node_type
-                ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
-                    got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
-            if dataset.edge_dir == "in":
-                self._supervision_edge_types = [
-                    reverse_edge_type(supervision_edge_type)
-                    for supervision_edge_type in self._supervision_edge_types
-                ]
-        elif isinstance(input_nodes, torch.Tensor):
-            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
-                raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
-                )
-            anchor_node_ids = input_nodes
-            anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        elif input_nodes is None:
-            if dataset.node_ids is None:
-                raise ValueError(
-                    "Dataset must have node ids if input_nodes are not provided."
-                )
-            if isinstance(dataset.node_ids, abc.Mapping):
-                raise ValueError(
-                    f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
-                )
-            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
-                raise ValueError(
-                    f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
-                )
-
-            anchor_node_ids = dataset.node_ids
-            anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-
-        missing_edge_types = set(self._supervision_edge_types) - set(
-            dataset.graph.keys()
-        )
-        if missing_edge_types:
-            raise ValueError(
-                f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
-            )
-
-        if len(anchor_node_ids.shape) != 1:
-            raise ValueError(
-                f"input_nodes must be a 1D tensor, got {anchor_node_ids.shape}."
-            )
-
-        curr_process_nodes = shard_nodes_by_process(
-            input_nodes=anchor_node_ids,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-        )
-
-        self._positive_label_edge_types: list[EdgeType] = []
-        self._negative_label_edge_types: list[EdgeType] = []
-        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        for supervision_edge_type in self._supervision_edge_types:
-            (
-                positive_label_edge_type,
-                negative_label_edge_type,
-            ) = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
-            self._positive_label_edge_types.append(positive_label_edge_type)
-            if negative_label_edge_type is not None:
-                self._negative_label_edge_types.append(negative_label_edge_type)
-
-            positive_labels, negative_labels = get_labels_for_anchor_nodes(
-                dataset=dataset,
-                node_ids=curr_process_nodes,
-                positive_label_edge_type=positive_label_edge_type,
-                negative_label_edge_type=negative_label_edge_type,
-            )
-            positive_labels_by_label_edge_type[
-                positive_label_edge_type
-            ] = positive_labels
-            if negative_label_edge_type is not None and negative_labels is not None:
-                negative_labels_by_label_edge_type[
-                    negative_label_edge_type
-                ] = negative_labels
-
-        sampler_input = ABLPNodeSamplerInput(
-            node=curr_process_nodes,
-            input_type=anchor_node_type,
-            positive_label_by_edge_types=positive_labels_by_label_edge_type,
-            negative_label_by_edge_types=negative_labels_by_label_edge_type,
-        )
-
         self.to_device = (
             pin_memory_device
             if pin_memory_device
@@ -371,69 +274,31 @@ class DistABLPLoader(DistLoader):
             )
         )
 
-        num_neighbors = patch_fanout_for_sampling(
-            dataset.get_edge_types(), num_neighbors
-        )
-
-        self._node_feature_info = dataset.node_feature_info
-        self._edge_feature_info = dataset.edge_feature_info
-
-        # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
-        # the memory overhead and CPU contention.
-        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
-        logger.info(
-            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {self.to_device} on port {neighbor_loader_port_for_current_rank}."
-        )
-        should_use_cpu_workers = self.to_device.type == "cpu"
-        if should_use_cpu_workers and num_cpu_threads is None:
-            logger.info(
-                "Using CPU workers, but found num_cpu_threads to be None. "
-                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
-            )
-            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
-
-        gigl.distributed.utils.init_neighbor_loader_worker(
-            master_ip_address=master_ip_address,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-            rank=node_rank,
-            world_size=node_world_size,
-            master_worker_port=neighbor_loader_port_for_current_rank,
+        (
+            sampler_input,
+            worker_options,
+            dataset_metadata,
+        ) = self._setup_for_colocated(
+            input_nodes=input_nodes,
+            dataset=dataset,
+            local_rank=local_rank,
+            local_world_size=local_world_size,
             device=self.to_device,
-            should_use_cpu_workers=should_use_cpu_workers,
-            # Lever to explore tuning for CPU based inference
+            master_ip_address=master_ip_address,
+            node_rank=node_rank,
+            node_world_size=node_world_size,
+            num_workers=num_workers,
+            worker_concurrency=worker_concurrency,
+            channel_size=channel_size,
             num_cpu_threads=num_cpu_threads,
         )
-        logger.info(
-            f"Finished initializing neighbor loader worker: {local_rank}/{local_world_size}"
-        )
 
-        # Sets up worker options for the dataloader
-        dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
-        worker_options = MpDistSamplingWorkerOptions(
-            num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
-            worker_concurrency=worker_concurrency,
-            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
-            # need to be connected. Thus, we need master ip address and master port to
-            # initate the connection.
-            # Note that different groups of workers are independent, and thus
-            # the sampling processes in different groups should be independent, and should
-            # use different master ports.
-            master_addr=master_ip_address,
-            master_port=dist_sampling_port_for_current_rank,
-            # Load testing show that when num_rpc_threads exceed 16, the performance
-            # will degrade.
-            num_rpc_threads=min(dataset.num_partitions, 16),
-            rpc_timeout=600,
-            channel_size=channel_size,
-            pin_memory=self.to_device.type == "cuda",
+        self._is_input_heterogeneous = dataset_metadata.is_labeled_heterogeneous
+        self._node_feature_info = dataset_metadata.node_feature_info
+        self._edge_feature_info = dataset_metadata.edge_feature_info
+
+        num_neighbors = patch_fanout_for_sampling(
+            dataset_metadata.edge_types, num_neighbors
         )
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
@@ -452,7 +317,7 @@ class DistABLPLoader(DistLoader):
             collect_features=True,
             with_neg=False,
             with_weight=False,
-            edge_dir=dataset.edge_dir,
+            edge_dir=dataset_metadata.edge_dir,
             seed=None,  # it's actually optional - None means random.
         )
 
@@ -460,7 +325,7 @@ class DistABLPLoader(DistLoader):
         # We do this so that we may override the DistSamplingProducer that is used with the GiGL implementation.
 
         self.data = dataset
-        self.input_data = sampler_input
+        self.input_data = sampler_input[0]
         self.sampling_type = sampling_config.sampling_type
         self.num_neighbors = sampling_config.num_neighbors
         self.batch_size = sampling_config.batch_size
@@ -537,6 +402,225 @@ class DistABLPLoader(DistLoader):
         )
         time.sleep(process_start_gap_seconds * local_rank)
         self._mp_producer.init()
+
+    def _setup_for_colocated(
+        self,
+        input_nodes: Optional[Union[torch.Tensor, tuple[NodeType, torch.Tensor]]],
+        dataset: DistDataset,
+        local_rank: int,
+        local_world_size: int,
+        device: torch.device,
+        master_ip_address: str,
+        node_rank: int,
+        node_world_size: int,
+        num_workers: int,
+        worker_concurrency: int,
+        channel_size: str,
+        num_cpu_threads: Optional[int],
+    ) -> tuple[list[ABLPNodeSamplerInput], MpDistSamplingWorkerOptions, DatasetSchema]:
+        """
+        Setup method for colocated (non-Graph Store) mode.
+
+        Args:
+            input_nodes: Input nodes for sampling (tensor or tuple of node type and tensor).
+            dataset: The DistDataset to sample from.
+            local_rank: Local rank of the current process.
+            local_world_size: Total number of processes on this machine.
+            device: Target device for sampled data.
+            master_ip_address: IP address of the master node.
+            node_rank: Rank of the current machine.
+            node_world_size: Total number of machines.
+            num_workers: Number of sampling workers.
+            worker_concurrency: Max sampling concurrency per worker.
+            channel_size: Size of shared memory channel.
+            num_cpu_threads: Number of CPU threads for PyTorch.
+
+        Returns:
+            Tuple of (list[ABLPNodeSamplerInput], MpDistSamplingWorkerOptions, DatasetSchema).
+        """
+        # Validate input format - should not be Graph Store format
+        if isinstance(input_nodes, abc.Mapping):
+            raise ValueError(
+                f"When using Colocated mode, input_nodes must be of type "
+                f"(torch.Tensor | tuple[NodeType, torch.Tensor] | None), "
+                f"received {type(input_nodes)}"
+            )
+        elif isinstance(input_nodes, tuple) and isinstance(input_nodes[1], abc.Mapping):
+            raise ValueError(
+                f"When using Colocated mode, input_nodes must be of type "
+                f"(torch.Tensor | tuple[NodeType, torch.Tensor] | None), "
+                f"received tuple with second element of type {type(input_nodes[1])}"
+            )
+
+        if not isinstance(dataset.graph, abc.Mapping):
+            raise ValueError(
+                f"The dataset must be heterogeneous for ABLP. Received dataset with graph of type: {type(dataset.graph)}"
+            )
+
+        is_labeled_heterogeneous: bool = False
+        if isinstance(input_nodes, tuple):
+            if self._supervision_edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+                raise ValueError(
+                    "When using heterogeneous ABLP, you must provide supervision_edge_types."
+                )
+            is_labeled_heterogeneous = True
+            anchor_node_type, anchor_node_ids = input_nodes
+            # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
+            # this assumption is no longer valid and/or is too opinionated
+            for sup_edge_type in self._supervision_edge_types:
+                assert (
+                    sup_edge_type[0] == anchor_node_type
+                ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
+                    got supervision edge type {sup_edge_type} with anchor node type {anchor_node_type}"
+            if dataset.edge_dir == "in":
+                self._supervision_edge_types = [
+                    reverse_edge_type(sup_edge_type)
+                    for sup_edge_type in self._supervision_edge_types
+                ]
+        elif isinstance(input_nodes, torch.Tensor):
+            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+                raise ValueError(
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
+                )
+            anchor_node_ids = input_nodes
+            anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        elif input_nodes is None:
+            if dataset.node_ids is None:
+                raise ValueError(
+                    "Dataset must have node ids if input_nodes are not provided."
+                )
+            if isinstance(dataset.node_ids, abc.Mapping):
+                raise ValueError(
+                    f"input_nodes must be provided for heterogeneous datasets, received node_ids of type: {dataset.node_ids.keys()}"
+                )
+            if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+                raise ValueError(
+                    f"Expected supervision edge type to be None for homogeneous input nodes, got {self._supervision_edge_types}"
+                )
+            anchor_node_ids = dataset.node_ids
+            anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        else:
+            raise ValueError(f"Unexpected input_nodes type: {type(input_nodes)}")
+
+        missing_edge_types = set(self._supervision_edge_types) - set(
+            dataset.graph.keys()
+        )
+        if missing_edge_types:
+            raise ValueError(
+                f"Missing edge types in dataset: {missing_edge_types}. Edge types in dataset: {dataset.graph.keys()}"
+            )
+
+        # Type narrowing - anchor_node_ids is always a Tensor in colocated mode
+        assert isinstance(anchor_node_ids, torch.Tensor)
+
+        if len(anchor_node_ids.shape) != 1:
+            raise ValueError(
+                f"input_nodes must be a 1D tensor, got {anchor_node_ids.shape}."
+            )
+
+        curr_process_nodes = shard_nodes_by_process(
+            input_nodes=anchor_node_ids,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
+        )
+
+        self._positive_label_edge_types: list[EdgeType] = []
+        self._negative_label_edge_types: list[EdgeType] = []
+        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
+        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
+        for sup_edge_type in self._supervision_edge_types:
+            (
+                positive_label_edge_type,
+                negative_label_edge_type,
+            ) = select_label_edge_types(sup_edge_type, dataset.graph.keys())
+            self._positive_label_edge_types.append(positive_label_edge_type)
+            if negative_label_edge_type is not None:
+                self._negative_label_edge_types.append(negative_label_edge_type)
+
+            positive_labels, negative_labels = get_labels_for_anchor_nodes(
+                dataset=dataset,
+                node_ids=curr_process_nodes,
+                positive_label_edge_type=positive_label_edge_type,
+                negative_label_edge_type=negative_label_edge_type,
+            )
+            positive_labels_by_label_edge_type[
+                positive_label_edge_type
+            ] = positive_labels
+            if negative_label_edge_type is not None and negative_labels is not None:
+                negative_labels_by_label_edge_type[
+                    negative_label_edge_type
+                ] = negative_labels
+
+        sampler_input = ABLPNodeSamplerInput(
+            node=curr_process_nodes,
+            input_type=anchor_node_type,
+            positive_label_by_edge_types=positive_labels_by_label_edge_type,
+            negative_label_by_edge_types=negative_labels_by_label_edge_type,
+        )
+
+        # Sets up processes and torch device for initializing the GLT DistNeighborLoader,
+        # setting up RPC and worker groups to minimize the memory overhead and CPU contention.
+        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
+            num_ports=local_world_size
+        )
+        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
+        logger.info(
+            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} "
+            f"using device: {device} on port {neighbor_loader_port_for_current_rank}."
+        )
+        should_use_cpu_workers = device.type == "cpu"
+        if should_use_cpu_workers and num_cpu_threads is None:
+            logger.info(
+                "Using CPU workers, but found num_cpu_threads to be None. "
+                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
+            )
+            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
+
+        gigl.distributed.utils.init_neighbor_loader_worker(
+            master_ip_address=master_ip_address,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
+            rank=node_rank,
+            world_size=node_world_size,
+            master_worker_port=neighbor_loader_port_for_current_rank,
+            device=device,
+            should_use_cpu_workers=should_use_cpu_workers,
+            num_cpu_threads=num_cpu_threads,
+        )
+        logger.info(
+            f"Finished initializing neighbor loader worker: {local_rank}/{local_world_size}"
+        )
+
+        # Sets up worker options for the dataloader
+        dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(
+            num_ports=local_world_size
+        )
+        dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
+        worker_options = MpDistSamplingWorkerOptions(
+            num_workers=num_workers,
+            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
+            worker_concurrency=worker_concurrency,
+            master_addr=master_ip_address,
+            master_port=dist_sampling_port_for_current_rank,
+            num_rpc_threads=min(dataset.num_partitions, 16),
+            rpc_timeout=600,
+            channel_size=channel_size,
+            pin_memory=device.type == "cuda",
+        )
+
+        edge_types = list(dataset.graph.keys())
+
+        return (
+            [sampler_input],
+            worker_options,
+            DatasetSchema(
+                is_labeled_heterogeneous=is_labeled_heterogeneous,
+                edge_types=edge_types,
+                node_feature_info=dataset.node_feature_info,
+                edge_feature_info=dataset.edge_feature_info,
+                edge_dir=dataset.edge_dir,
+            ),
+        )
 
     def _get_labels(
         self, msg: SampleMessage
