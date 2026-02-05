@@ -13,10 +13,7 @@ from tests.test_assets.distributed.test_dataset import (
     create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
-from tests.test_assets.distributed.utils import (
-    assert_tensor_equality,
-    create_test_process_group,
-)
+from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
 
 
@@ -125,7 +122,7 @@ class TestRemoteDataset(TestCase):
         node_ids = storage_utils.get_node_ids()
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
-        assert_tensor_equality(node_ids, torch.arange(10))
+        self.assert_tensor_equality(node_ids, torch.arange(10))
 
     def get_node_ids_heterogeneous(self) -> None:
         """Test get_node_ids with a registered heterogeneous dataset."""
@@ -136,7 +133,7 @@ class TestRemoteDataset(TestCase):
         node_ids = storage_utils.get_node_ids(node_type=USER)
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 5)
-        assert_tensor_equality(node_ids, torch.arange(5))
+        self.assert_tensor_equality(node_ids, torch.arange(5))
 
     def test_get_node_ids_with_homogeneous_dataset(self) -> None:
         """Test get_node_ids with a homogeneous dataset."""
@@ -149,7 +146,7 @@ class TestRemoteDataset(TestCase):
         node_ids = storage_utils.get_node_ids(rank=0, world_size=1, node_type=None)
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
-        assert_tensor_equality(node_ids, torch.arange(10))
+        self.assert_tensor_equality(node_ids, torch.arange(10))
 
     def test_get_node_ids_with_heterogeneous_dataset(self) -> None:
         """Test get_node_ids with a heterogeneous dataset."""
@@ -162,7 +159,7 @@ class TestRemoteDataset(TestCase):
         user_node_ids = storage_utils.get_node_ids(rank=0, world_size=1, node_type=USER)
         self.assertIsInstance(user_node_ids, torch.Tensor)
         self.assertEqual(user_node_ids.shape[0], 5)
-        assert_tensor_equality(user_node_ids, torch.arange(5))
+        self.assert_tensor_equality(user_node_ids, torch.arange(5))
 
         # Test with STORY node type
         story_node_ids = storage_utils.get_node_ids(
@@ -170,7 +167,7 @@ class TestRemoteDataset(TestCase):
         )
         self.assertIsInstance(story_node_ids, torch.Tensor)
         self.assertEqual(story_node_ids.shape[0], 5)
-        assert_tensor_equality(story_node_ids, torch.arange(5))
+        self.assert_tensor_equality(story_node_ids, torch.arange(5))
 
     def test_get_node_ids_with_multiple_ranks(self) -> None:
         """Test get_node_ids with multiple ranks to verify sharding."""
@@ -184,17 +181,17 @@ class TestRemoteDataset(TestCase):
         rank_1_nodes = storage_utils.get_node_ids(rank=1, world_size=2, node_type=None)
 
         # Verify each rank gets different nodes
-        assert_tensor_equality(rank_0_nodes, torch.arange(5))
-        assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
+        self.assert_tensor_equality(rank_0_nodes, torch.arange(5))
+        self.assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
         # Test with world_size=3 (uneven split)
         rank_0_nodes = storage_utils.get_node_ids(rank=0, world_size=3, node_type=None)
         rank_1_nodes = storage_utils.get_node_ids(rank=1, world_size=3, node_type=None)
         rank_2_nodes = storage_utils.get_node_ids(rank=2, world_size=3, node_type=None)
 
-        assert_tensor_equality(rank_0_nodes, torch.arange(3))
-        assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
-        assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
+        self.assert_tensor_equality(rank_0_nodes, torch.arange(3))
+        self.assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
+        self.assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
 
     def test_get_node_ids_without_registered_dataset(self) -> None:
         """Test get_node_ids raises ValueError when no dataset is registered."""
@@ -239,7 +236,7 @@ class TestRemoteDataset(TestCase):
         storage_utils.register_dataset(dataset)
 
         train_nodes = storage_utils.get_node_ids(node_type=USER, split="train")
-        assert_tensor_equality(train_nodes, torch.tensor([0, 1, 2]))
+        self.assert_tensor_equality(train_nodes, torch.tensor([0, 1, 2]))
 
     def test_get_node_ids_with_val_split(self) -> None:
         """Test get_node_ids returns only validation nodes when split='val'."""
@@ -256,7 +253,7 @@ class TestRemoteDataset(TestCase):
         storage_utils.register_dataset(dataset)
 
         val_nodes = storage_utils.get_node_ids(node_type=USER, split="val")
-        assert_tensor_equality(val_nodes, torch.tensor([3]))
+        self.assert_tensor_equality(val_nodes, torch.tensor([3]))
 
     def test_get_node_ids_with_test_split(self) -> None:
         """Test get_node_ids returns only test nodes when split='test'."""
@@ -273,7 +270,7 @@ class TestRemoteDataset(TestCase):
         storage_utils.register_dataset(dataset)
 
         test_nodes = storage_utils.get_node_ids(node_type=USER, split="test")
-        assert_tensor_equality(test_nodes, torch.tensor([4]))
+        self.assert_tensor_equality(test_nodes, torch.tensor([4]))
 
     def test_get_node_ids_with_split_and_sharding(self) -> None:
         """Test get_node_ids with split and rank/world_size for sharding."""
@@ -297,8 +294,8 @@ class TestRemoteDataset(TestCase):
             rank=1, world_size=2, node_type=USER, split="train"
         )
 
-        assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
-        assert_tensor_equality(rank_1_nodes, torch.tensor([1, 2]))
+        self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
+        self.assert_tensor_equality(rank_1_nodes, torch.tensor([1, 2]))
 
     def test_get_edge_dir(self) -> None:
         """Test get_edge_dir with a registered dataset."""
@@ -395,18 +392,20 @@ class TestRemoteDataset(TestCase):
                 )
 
                 # Verify anchor nodes match expected users
-                assert_tensor_equality(anchor_nodes, torch.tensor(expected_user_ids))
+                self.assert_tensor_equality(
+                    anchor_nodes, torch.tensor(expected_user_ids)
+                )
 
                 # Verify positive labels (order may vary due to CSR representation)
                 expected_positive = [positive_labels[uid] for uid in expected_user_ids]
-                assert_tensor_equality(
+                self.assert_tensor_equality(
                     pos_labels, torch.tensor(expected_positive), dim=1
                 )
 
                 # Verify negative labels
                 expected_negative = [negative_labels[uid] for uid in expected_user_ids]
                 assert neg_labels is not None
-                assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
+                self.assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
 
     def test_get_ablp_input_multiple_ranks(self) -> None:
         """Test get_ablp_input with multiple ranks to verify sharding."""
@@ -461,22 +460,26 @@ class TestRemoteDataset(TestCase):
         # Train nodes [0, 1, 2, 3] should be split across ranks
         rank_0_user_ids = [0, 1]
         rank_1_user_ids = [2, 3]
-        assert_tensor_equality(anchor_nodes_0, torch.tensor(rank_0_user_ids))
-        assert_tensor_equality(anchor_nodes_1, torch.tensor(rank_1_user_ids))
+        self.assert_tensor_equality(anchor_nodes_0, torch.tensor(rank_0_user_ids))
+        self.assert_tensor_equality(anchor_nodes_1, torch.tensor(rank_1_user_ids))
 
         # Verify positive labels for each rank (order may vary due to CSR representation)
         expected_positive_0 = [positive_labels[uid] for uid in rank_0_user_ids]
         expected_positive_1 = [positive_labels[uid] for uid in rank_1_user_ids]
-        assert_tensor_equality(pos_labels_0, torch.tensor(expected_positive_0), dim=1)
-        assert_tensor_equality(pos_labels_1, torch.tensor(expected_positive_1), dim=1)
+        self.assert_tensor_equality(
+            pos_labels_0, torch.tensor(expected_positive_0), dim=1
+        )
+        self.assert_tensor_equality(
+            pos_labels_1, torch.tensor(expected_positive_1), dim=1
+        )
 
         # Verify negative labels for each rank
         expected_negative_0 = [negative_labels[uid] for uid in rank_0_user_ids]
         expected_negative_1 = [negative_labels[uid] for uid in rank_1_user_ids]
         assert neg_labels_0 is not None
         assert neg_labels_1 is not None
-        assert_tensor_equality(neg_labels_0, torch.tensor(expected_negative_0))
-        assert_tensor_equality(neg_labels_1, torch.tensor(expected_negative_1))
+        self.assert_tensor_equality(neg_labels_0, torch.tensor(expected_negative_0))
+        self.assert_tensor_equality(neg_labels_1, torch.tensor(expected_negative_1))
 
     def test_get_training_input_without_registered_dataset(self) -> None:
         """Test get_training_input raises ValueError when no dataset is registered."""
@@ -546,11 +549,11 @@ class TestRemoteDataset(TestCase):
         )
 
         # Verify train split returns the expected users
-        assert_tensor_equality(anchor_nodes, torch.tensor(train_user_ids))
+        self.assert_tensor_equality(anchor_nodes, torch.tensor(train_user_ids))
 
         # Positive labels should still work
         expected_positive = [positive_labels[uid] for uid in train_user_ids]
-        assert_tensor_equality(pos_labels, torch.tensor(expected_positive), dim=1)
+        self.assert_tensor_equality(pos_labels, torch.tensor(expected_positive), dim=1)
 
         # Negative labels should be None
         self.assertIsNone(neg_labels)
