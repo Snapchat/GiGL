@@ -6,6 +6,7 @@ TODO(kmonte): Remove this, and only expose utils.
 We keep this around so we can use the utils in tests/integration/distributed/graph_store/graph_store_integration_test.py.
 """
 import argparse
+import multiprocessing.context as py_mp_context
 import os
 from typing import Literal, Optional, Union
 
@@ -80,6 +81,7 @@ def storage_node_process(
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
     ssl_positive_label_percentage: Optional[float] = None,
     storage_world_backend: Optional[str] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> None:
     """Run a storage node process
 
@@ -96,6 +98,7 @@ def storage_node_process(
         ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
             Must be None if supervised edge labels are provided in advance.
             If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
+        timeout_seconds (Optional[float]): The timeout seconds for the storage node process.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
@@ -129,7 +132,7 @@ def storage_node_process(
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
-    server_processes = []
+    server_processes: list[py_mp_context.SpawnProcess] = []
     mp_context = torch.multiprocessing.get_context("spawn")
     # TODO(kmonte): Enable more than one server process per machine
     for i in range(1):
@@ -147,7 +150,7 @@ def storage_node_process(
     for server_process in server_processes:
         server_process.start()
     for server_process in server_processes:
-        server_process.join()
+        server_process.join(timeout_seconds)
 
 
 if __name__ == "__main__":
