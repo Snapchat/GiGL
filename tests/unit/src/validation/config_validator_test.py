@@ -1,9 +1,9 @@
 import os
 import shutil
 import tempfile
-import unittest
 
 import google.protobuf.message
+from absl.testing import absltest
 from parameterized import param, parameterized
 
 import gigl.env.pipelines_config
@@ -15,6 +15,7 @@ from snapchat.research.gbml import (
     gigl_resource_config_pb2,
     graph_schema_pb2,
 )
+from tests.test_assets.test_case import TestCase
 
 # Shared helper functions for creating proto components
 
@@ -247,7 +248,7 @@ def _create_valid_offline_subgraph_sampling_resource_config() -> (
     )
 
 
-class TestConfigValidationPerSGSBackends(unittest.TestCase):
+class TestConfigValidationPerSGSBackends(TestCase):
     """Test suite for config validation with different SGS backends (live subgraph sampling, offline subgraph sampling)."""
 
     def setUp(self):
@@ -352,4 +353,4 @@ class TestConfigValidationPerSGSBackends(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

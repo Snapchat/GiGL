@@ -1,11 +1,10 @@
-import unittest
-
 import numpy as np
 
 from gigl.common.utils.compute.serialization.serialize_np import NumpyCoder
+from tests.test_assets.test_case import TestCase
 
 
-class FastSerializeNpTest(unittest.TestCase):
+class FastSerializeNpTest(TestCase):
     def setUp(self) -> None:
         self.numpy_coder = NumpyCoder()
 

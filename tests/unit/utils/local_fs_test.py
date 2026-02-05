@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from pathlib import Path
 from typing import Optional
 
@@ -7,9 +6,10 @@ from parameterized import param, parameterized
 
 import gigl.common.utils.local_fs as local_fs_utils
 from gigl.common import LocalUri
+from tests.test_assets.test_case import TestCase
 
 
-class LocalFsUtilsTest(unittest.TestCase):
+class LocalFsUtilsTest(TestCase):
     def setUp(self):
         super().setUp()
         # Sets up the below file structure

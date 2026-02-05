@@ -1,4 +1,3 @@
-import unittest
 from typing import Optional
 
 from gigl.common.logger import Logger
@@ -17,11 +16,12 @@ from tests.test_assets.graph_metadata_constants import (
     EXAMPLE_HETEROGENEOUS_EDGE_TYPES,
     EXAMPLE_HETEROGENEOUS_NODE_TYPES_STR,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class SamplingOpValidationUnitTest(unittest.TestCase):
+class SamplingOpValidationUnitTest(TestCase):
     """
     These tests check the Sampling Op Pb Wrapper validation check for logic specific to a Sampling Op and its immediate Parent/Children Sampling Ops.
 

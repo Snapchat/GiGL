@@ -1,9 +1,9 @@
-import unittest
 from unittest.mock import patch
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from absl.testing import absltest
 
 from gigl.distributed.graph_store import storage_utils
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -26,6 +26,7 @@ from tests.test_assets.distributed.utils import (
     create_test_process_group,
     get_process_group_init_method,
 )
+from tests.test_assets.test_case import TestCase
 
 
 def _mock_request_server(server_rank, func, *args, **kwargs):
@@ -63,7 +64,7 @@ def _create_mock_graph_store_info(
     return MockGraphStoreInfo(real_info, compute_node_rank)
 
 
-class TestRemoteDistDataset(unittest.TestCase):
+class TestRemoteDistDataset(TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
         # 10 nodes in DEFAULT_HOMOGENEOUS_EDGE_INDEX ring graph
@@ -139,7 +140,7 @@ class TestRemoteDistDataset(unittest.TestCase):
         assert_tensor_equality(result[0], torch.arange(5, 10))
 
 
-class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
+class TestRemoteDistDatasetHeterogeneous(TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
         # 5 users, 5 stories in DEFAULT_HETEROGENEOUS_EDGE_INDICES
@@ -206,7 +207,7 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
         assert_tensor_equality(result[0], torch.arange(2, 5))
 
 
-class TestRemoteDistDatasetWithSplits(unittest.TestCase):
+class TestRemoteDistDatasetWithSplits(TestCase):
     """Tests for get_node_ids with train/val/test splits."""
 
     def setUp(self) -> None:
@@ -334,7 +335,7 @@ def _test_get_free_ports_on_storage_cluster(
         dist.destroy_process_group()
 
 
-class TestGetFreePortsOnStorageCluster(unittest.TestCase):
+class TestGetFreePortsOnStorageCluster(TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
         storage_utils.register_dataset(
@@ -369,4 +370,4 @@ class TestGetFreePortsOnStorageCluster(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

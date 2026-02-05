@@ -1,4 +1,4 @@
-import unittest
+from absl.testing import absltest
 
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -9,6 +9,7 @@ from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_check
     check_trainer_graph_store_compatibility,
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
+from tests.test_assets.test_case import TestCase
 
 # Helper functions for creating VertexAiGraphStoreConfig
 
@@ -125,7 +126,7 @@ def _create_resource_config_without_graph_stores() -> GiglResourceConfigWrapper:
     return GiglResourceConfigWrapper(resource_config=config)
 
 
-class TestTrainerGraphStoreCompatibility(unittest.TestCase):
+class TestTrainerGraphStoreCompatibility(TestCase):
     """Test suite for trainer graph store compatibility checks."""
 
     def test_both_have_trainer_graph_store(self):
@@ -169,7 +170,7 @@ class TestTrainerGraphStoreCompatibility(unittest.TestCase):
             )
 
 
-class TestInferencerGraphStoreCompatibility(unittest.TestCase):
+class TestInferencerGraphStoreCompatibility(TestCase):
     """Test suite for inferencer graph store compatibility checks."""
 
     def test_both_have_inferencer_graph_store(self):
@@ -214,4 +215,4 @@ class TestInferencerGraphStoreCompatibility(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()
