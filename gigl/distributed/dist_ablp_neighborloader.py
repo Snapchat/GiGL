@@ -321,87 +321,16 @@ class DistABLPLoader(DistLoader):
             seed=None,  # it's actually optional - None means random.
         )
 
-        # Code below this point is taken from the GLT DistNeighborLoader.__init__() function (graphlearn_torch/python/distributed/dist_neighbor_loader.py).
-        # We do this so that we may override the DistSamplingProducer that is used with the GiGL implementation.
-
-        self.data = dataset
-        self.input_data = sampler_input[0]
-        self.sampling_type = sampling_config.sampling_type
-        self.num_neighbors = sampling_config.num_neighbors
-        self.batch_size = sampling_config.batch_size
-        self.shuffle = sampling_config.shuffle
-        self.drop_last = sampling_config.drop_last
-        self.with_edge = sampling_config.with_edge
-        self.with_weight = sampling_config.with_weight
-        self.collect_features = sampling_config.collect_features
-        self.edge_dir = sampling_config.edge_dir
-        self.sampling_config = sampling_config
-        self.worker_options = worker_options
-
-        # We can set shutdowned to false now
-        self._shutdowned = False
-
-        self._is_mp_worker = True
-        self._is_collocated_worker = False
-        self._is_remote_worker = False
-
-        self.num_data_partitions = self.data.num_partitions
-        self.data_partition_idx = self.data.partition_idx
-        self._set_ntypes_and_etypes(
-            self.data.get_node_types(), self.data.get_edge_types()
-        )
-
-        self._num_recv = 0
-        self._epoch = 0
-
-        current_ctx = get_context()
-
-        self._input_len = len(self.input_data)
-        self._input_type = self.input_data.input_type
-        self._num_expected = self._input_len // self.batch_size
-        if not self.drop_last and self._input_len % self.batch_size != 0:
-            self._num_expected += 1
-
-        if not current_ctx.is_worker():
-            raise RuntimeError(
-                f"'{self.__class__.__name__}': only supports "
-                f"launching multiprocessing sampling workers with "
-                f"a non-server distribution mode, current role of "
-                f"distributed context is {current_ctx.role}."
+        if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
+            self._start_colocated_producers(
+                dataset=dataset,
+                rank=rank,
+                local_rank=local_rank,
+                process_start_gap_seconds=process_start_gap_seconds,
+                sampler_input=sampler_input,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
             )
-        if self.data is None:
-            raise ValueError(
-                f"'{self.__class__.__name__}': missing input dataset "
-                f"when launching multiprocessing sampling workers."
-            )
-
-        # Launch multiprocessing sampling workers
-        self._with_channel = True
-        self.worker_options._set_worker_ranks(current_ctx)
-
-        self._channel = ShmChannel(
-            self.worker_options.channel_capacity, self.worker_options.channel_size
-        )
-        if self.worker_options.pin_memory:
-            self._channel.pin_memory()
-
-        self._mp_producer = DistSamplingProducer(
-            self.data,
-            self.input_data,
-            self.sampling_config,
-            self.worker_options,
-            self._channel,
-        )
-        # When initiating data loader(s), there will be a spike of memory usage lasting for ~30s.
-        # The current hypothesis is making connections across machines require a lot of memory.
-        # If we start all data loaders in all processes simultaneously, the spike of memory
-        # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
-        # to smooth the memory usage. The definition of group is discussed in init_neighbor_loader_worker.
-        logger.info(
-            f"---Machine {rank} local process number {local_rank} preparing to sleep for {process_start_gap_seconds * local_rank} seconds"
-        )
-        time.sleep(process_start_gap_seconds * local_rank)
-        self._mp_producer.init()
 
     def _setup_for_colocated(
         self,
@@ -467,11 +396,11 @@ class DistABLPLoader(DistLoader):
             anchor_node_type, anchor_node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
-            for sup_edge_type in self._supervision_edge_types:
+            for supervision_edge_type in self._supervision_edge_types:
                 assert (
-                    sup_edge_type[0] == anchor_node_type
+                    supervision_edge_type[0] == anchor_node_type
                 ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
-                    got supervision edge type {sup_edge_type} with anchor node type {anchor_node_type}"
+                    got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
             if dataset.edge_dir == "in":
                 self._supervision_edge_types = [
                     reverse_edge_type(sup_edge_type)
@@ -528,11 +457,11 @@ class DistABLPLoader(DistLoader):
         self._negative_label_edge_types: list[EdgeType] = []
         positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        for sup_edge_type in self._supervision_edge_types:
+        for supervision_edge_type in self._supervision_edge_types:
             (
                 positive_label_edge_type,
                 negative_label_edge_type,
-            ) = select_label_edge_types(sup_edge_type, dataset.graph.keys())
+            ) = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
             self._positive_label_edge_types.append(positive_label_edge_type)
             if negative_label_edge_type is not None:
                 self._negative_label_edge_types.append(negative_label_edge_type)
@@ -621,6 +550,98 @@ class DistABLPLoader(DistLoader):
                 edge_dir=dataset.edge_dir,
             ),
         )
+
+    def _start_colocated_producers(
+        self,
+        dataset: DistDataset,
+        rank: int,
+        local_rank: int,
+        process_start_gap_seconds: float,
+        sampler_input: list[ABLPNodeSamplerInput],
+        sampling_config: SamplingConfig,
+        worker_options: MpDistSamplingWorkerOptions,
+    ) -> None:
+        # Code below this point is taken from the GLT DistNeighborLoader.__init__() function (graphlearn_torch/python/distributed/dist_neighbor_loader.py).
+        # We do this so that we may override the DistSamplingProducer that is used with the GiGL implementation.
+
+        self.data = dataset
+        self.input_data = sampler_input[0]
+        self.sampling_type = sampling_config.sampling_type
+        self.num_neighbors = sampling_config.num_neighbors
+        self.batch_size = sampling_config.batch_size
+        self.shuffle = sampling_config.shuffle
+        self.drop_last = sampling_config.drop_last
+        self.with_edge = sampling_config.with_edge
+        self.with_weight = sampling_config.with_weight
+        self.collect_features = sampling_config.collect_features
+        self.edge_dir = sampling_config.edge_dir
+        self.sampling_config = sampling_config
+        self.worker_options = worker_options
+
+        # We can set shutdowned to false now
+        self._shutdowned = False
+
+        self._is_mp_worker = True
+        self._is_collocated_worker = False
+        self._is_remote_worker = False
+
+        self.num_data_partitions = self.data.num_partitions
+        self.data_partition_idx = self.data.partition_idx
+        self._set_ntypes_and_etypes(
+            self.data.get_node_types(), self.data.get_edge_types()
+        )
+
+        self._num_recv = 0
+        self._epoch = 0
+
+        current_ctx = get_context()
+
+        self._input_len = len(self.input_data)
+        self._input_type = self.input_data.input_type
+        self._num_expected = self._input_len // self.batch_size
+        if not self.drop_last and self._input_len % self.batch_size != 0:
+            self._num_expected += 1
+
+        if not current_ctx.is_worker():
+            raise RuntimeError(
+                f"'{self.__class__.__name__}': only supports "
+                f"launching multiprocessing sampling workers with "
+                f"a non-server distribution mode, current role of "
+                f"distributed context is {current_ctx.role}."
+            )
+        if self.data is None:
+            raise ValueError(
+                f"'{self.__class__.__name__}': missing input dataset "
+                f"when launching multiprocessing sampling workers."
+            )
+
+        # Launch multiprocessing sampling workers
+        self._with_channel = True
+        self.worker_options._set_worker_ranks(current_ctx)
+
+        self._channel = ShmChannel(
+            self.worker_options.channel_capacity, self.worker_options.channel_size
+        )
+        if self.worker_options.pin_memory:
+            self._channel.pin_memory()
+
+        self._mp_producer = DistSamplingProducer(
+            self.data,
+            self.input_data,
+            self.sampling_config,
+            self.worker_options,
+            self._channel,
+        )
+        # When initiating data loader(s), there will be a spike of memory usage lasting for ~30s.
+        # The current hypothesis is making connections across machines require a lot of memory.
+        # If we start all data loaders in all processes simultaneously, the spike of memory
+        # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
+        # to smooth the memory usage. The definition of group is discussed in init_neighbor_loader_worker.
+        logger.info(
+            f"---Machine {rank} local process number {local_rank} preparing to sleep for {process_start_gap_seconds * local_rank} seconds"
+        )
+        time.sleep(process_start_gap_seconds * local_rank)
+        self._mp_producer.init()
 
     def _get_labels(
         self, msg: SampleMessage
