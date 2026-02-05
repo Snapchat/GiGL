@@ -2,7 +2,7 @@ import asyncio
 import gc
 import heapq
 from collections import defaultdict
-from typing import Any, dict, list, Optional, Set, Tuple, Union
+from typing import Optional, Set, Tuple, Union, dict, list
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -26,7 +26,12 @@ from gigl.utils.data_splitters import PADDING_NODE
 # TODO (mkolodner-sc): Investigate upstreaming this change back to GLT
 
 _PPR_HOMOGENEOUS_NODE_TYPE = "ppr_homogeneous_node_type"
-_PPR_HOMOGENEOUS_EDGE_TYPE = (_PPR_HOMOGENEOUS_NODE_TYPE, "to", _PPR_HOMOGENEOUS_NODE_TYPE)
+_PPR_HOMOGENEOUS_EDGE_TYPE = (
+    _PPR_HOMOGENEOUS_NODE_TYPE,
+    "to",
+    _PPR_HOMOGENEOUS_NODE_TYPE,
+)
+
 
 class DistABLPNeighborSampler(DistNeighborSampler):
     """
@@ -258,7 +263,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = {}
-        
+
         if self.edge_types is not None:
             self._is_homogeneous = False
             # Heterogeneous case: map each node type to its outgoing/incoming edge types
@@ -269,12 +274,14 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 else:  # "out"
                     # For outgoing edges, we traverse FROM the source node type
                     anchor_type = etype[0]
-                
+
                 if anchor_type not in self._node_type_to_edge_types:
                     self._node_type_to_edge_types[anchor_type] = []
                 self._node_type_to_edge_types[anchor_type].append(etype)
         else:
-            self._node_type_to_edge_types[_PPR_HOMOGENEOUS_NODE_TYPE] = [_PPR_HOMOGENEOUS_EDGE_TYPE]
+            self._node_type_to_edge_types[_PPR_HOMOGENEOUS_NODE_TYPE] = [
+                _PPR_HOMOGENEOUS_EDGE_TYPE
+            ]
             self._is_homogeneous = True
 
     def _get_neighbor_type(self, edge_type: EdgeType) -> NodeType:
@@ -327,7 +334,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 - ppr_weights_by_type: Union[torch.Tensor, dict mapping node type -> [batch_size, max_ppr_nodes]]
                 - stats: dict with iteration statistics for runtime tuning
         """
-        if seed_node_type is None: 
+        if seed_node_type is None:
             seed_node_type = _PPR_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
         batch_size = seed_nodes.size(0)
@@ -343,7 +350,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         ]
 
         # Queue stores (node_id, node_type) tuples
-        q: list[Set[Tuple[int, Optional[NodeType]]]] = [set() for _ in range(batch_size)]
+        q: list[Set[Tuple[int, Optional[NodeType]]]] = [
+            set() for _ in range(batch_size)
+        ]
 
         seed_list = seed_nodes.tolist()
 
@@ -381,9 +390,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             nodes_by_edge_type: dict[Optional[EdgeType], Set[int]] = defaultdict(set)
 
             for i in range(batch_size):
-                for (node_id, node_type) in nodes_to_process[i]:
+                for node_id, node_type in nodes_to_process[i]:
                     # Get all edge types we can traverse from this node type
-                    edge_types_for_node = self._node_type_to_edge_types.get(node_type, [])
+                    edge_types_for_node = self._node_type_to_edge_types.get(
+                        node_type, []
+                    )
                     for etype in edge_types_for_node:
                         cache_key = (node_id, etype)
                         if cache_key not in neighbor_cache:
@@ -394,10 +405,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 if not node_ids:
                     continue
                 nodes_list = list(node_ids)
-                lookup_tensor = torch.tensor(nodes_list, dtype=torch.long, device=device)
+                lookup_tensor = torch.tensor(
+                    nodes_list, dtype=torch.long, device=device
+                )
 
                 neighbors, neighbor_counts = await self._get_neighbors_for_nodes(
-                    lookup_tensor, etype if etype is not _PPR_HOMOGENEOUS_EDGE_TYPE else None
+                    lookup_tensor,
+                    etype if etype is not _PPR_HOMOGENEOUS_EDGE_TYPE else None,
                 )
                 ppr_num_neighbor_lookups += 1
 
@@ -418,7 +432,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             # Process nodes and push residual
             for i in range(batch_size):
-                for (u_node, u_type) in nodes_to_process[i]:
+                for u_node, u_type in nodes_to_process[i]:
                     ppr_total_nodes_processed += 1
 
                     key_u = (u_node, u_type)
@@ -430,11 +444,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                     # For each edge type from this node type, push residual to neighbors
                     edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
-                    
+
                     # Calculate total degree across all edge types for proper probability distribution
                     total_degree = sum(
-                        degree_cache[(u_node, etype)]
-                        for etype in edge_types_for_node
+                        degree_cache[(u_node, etype)] for etype in edge_types_for_node
                     )
 
                     if total_degree == 0:
@@ -460,10 +473,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             r[i][key_v] += push_value
 
             # Collect all neighbor nodes that need degree lookups
-            neighbors_needing_degree: dict[Optional[EdgeType], Set[int]] = defaultdict(set)
+            neighbors_needing_degree: dict[Optional[EdgeType], Set[int]] = defaultdict(
+                set
+            )
 
             for i in range(batch_size):
-                for (u_node, u_type) in nodes_to_process[i]:
+                for u_node, u_type in nodes_to_process[i]:
                     edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
                     for etype in edge_types_for_node:
                         cache_key = (u_node, etype)
@@ -472,7 +487,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                         for v_node in neighbor_list:
                             # Check each edge type the neighbor can traverse
-                            edge_types_for_v = self._node_type_to_edge_types.get(v_type, [])
+                            edge_types_for_v = self._node_type_to_edge_types.get(
+                                v_type, []
+                            )
                             for v_etype in edge_types_for_v:
                                 v_cache_key = (v_node, v_etype)
                                 if v_cache_key not in degree_cache:
@@ -491,10 +508,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 if not node_ids:
                     continue
                 nodes_list = list(node_ids)
-                lookup_tensor = torch.tensor(nodes_list, dtype=torch.long, device=device)
+                lookup_tensor = torch.tensor(
+                    nodes_list, dtype=torch.long, device=device
+                )
 
                 neighbors, neighbor_counts = await self._get_neighbors_for_nodes(
-                    lookup_tensor, etype if etype is not _PPR_HOMOGENEOUS_EDGE_TYPE else None
+                    lookup_tensor,
+                    etype if etype is not _PPR_HOMOGENEOUS_EDGE_TYPE else None,
                 )
                 ppr_num_neighbor_lookups += 1
 
@@ -515,7 +535,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             # Add high-residual neighbors to queue
             for i in range(batch_size):
-                for (u_node, u_type) in nodes_to_process[i]:
+                for u_node, u_type in nodes_to_process[i]:
                     edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
                     for etype in edge_types_for_node:
                         cache_key = (u_node, etype)
@@ -533,7 +553,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                                 continue
 
                             # Sum degrees across all edge types from v_type for threshold check
-                            edge_types_for_v = self._node_type_to_edge_types.get(v_type, [])
+                            edge_types_for_v = self._node_type_to_edge_types.get(
+                                v_type, []
+                            )
                             total_v_degree = sum(
                                 degree_cache[(v_node, v_etype)]
                                 for v_etype in edge_types_for_v
@@ -547,7 +569,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                                 for v_etype in edge_types_for_v:
                                     temp_key = (v_node, v_etype)
                                     if temp_key in temp_neighbors:
-                                        neighbor_cache[temp_key] = temp_neighbors[temp_key]
+                                        neighbor_cache[temp_key] = temp_neighbors[
+                                            temp_key
+                                        ]
 
             del temp_neighbors
 
@@ -555,7 +579,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Collect all node types that appear in results
         all_node_types: Set[NodeType] = set()
         for i in range(batch_size):
-            for (node_id, node_type) in p[i].keys():
+            for node_id, node_type in p[i].keys():
                 all_node_types.add(node_type)
 
         out_neighbor_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = {}
@@ -594,7 +618,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             out_weights[ntype] = ntype_weights
 
         if self._is_homogeneous:
-            assert len(all_node_types) == 1 and _PPR_HOMOGENEOUS_NODE_TYPE in all_node_types
+            assert (
+                len(all_node_types) == 1
+                and _PPR_HOMOGENEOUS_NODE_TYPE in all_node_types
+            )
             out_neighbor_ids = out_neighbor_ids[_PPR_HOMOGENEOUS_NODE_TYPE]
             out_weights = out_weights[_PPR_HOMOGENEOUS_NODE_TYPE]
 
@@ -630,9 +657,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # For hetero: pass input_type as seed_node_type
         # For homo: pass None as seed_node_type
         seed_node_type = input_type if is_hetero else None
-        neighbor_ids_by_type, weights_by_type, ppr_stats = await self._compute_ppr_scores(
-            input_seeds, seed_node_type
-        )
+        (
+            neighbor_ids_by_type,
+            weights_by_type,
+            ppr_stats,
+        ) = await self._compute_ppr_scores(input_seeds, seed_node_type)
 
         # Add PPR stats to metadata as tensors (required by GLT SampleQueue)
         metadata["ppr_num_iterations"] = torch.tensor(
