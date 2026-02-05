@@ -6,6 +6,7 @@ TODO(kmonte): Remove this, and only expose utils.
 We keep this around so we can use the utils in tests/integration/distributed/graph_store/graph_store_integration_test.py.
 """
 import argparse
+import multiprocessing.context as py_mp_context
 import os
 from typing import Literal, Optional, Union
 
@@ -80,6 +81,7 @@ def storage_node_process(
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
     ssl_positive_label_percentage: Optional[float] = None,
     storage_world_backend: Optional[str] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> None:
     """Run a storage node process
 
@@ -96,6 +98,7 @@ def storage_node_process(
         ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
             Must be None if supervised edge labels are provided in advance.
             If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
+        timeout_seconds (Optional[float]): The timeout seconds for the storage node process.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
@@ -134,7 +137,9 @@ def storage_node_process(
         task_config.task_metadata_pb_wrapper.get_task_root_node_types()
     )
     logger.info(f"Inference node types: {inference_node_types}")
-    torch_process_ports = get_free_ports_from_master_node(num_ports=len(inference_node_types))
+    torch_process_ports = get_free_ports_from_master_node(
+        num_ports=len(inference_node_types)
+    )
     torch.distributed.destroy_process_group()
     mp_context = torch.multiprocessing.get_context("spawn")
     # Since we create a new inference process for each inference node type, we need to start a new server process for each inference node type.
@@ -143,7 +148,7 @@ def storage_node_process(
         logger.info(
             f"Starting storage node for inference node type {inference_node_type} (storage process group {i} / {len(inference_node_types)})"
         )
-        server_processes = []
+        server_processes: list[py_mp_context.SpawnProcess] = []
         # TODO(kmonte): Enable more than one server process per machine
         num_server_processes = 1
         for i in range(num_server_processes):
