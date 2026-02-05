@@ -223,23 +223,24 @@ def storage_node_process(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
     )
     logger.info(f"Inference node types: {inference_node_types}")
+    torch_process_ports = get_free_ports_from_master_node(num_ports=len(inference_node_types))
+    torch.distributed.destroy_process_group()
     for i, inference_node_type in enumerate(inference_node_types):
         logger.info(
             f"Starting storage node rank {storage_rank} / {cluster_info.num_storage_nodes} for inference node type {inference_node_type} (storage process group {i} / {len(inference_node_types)})"
         )
-        torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
-        torch.distributed.destroy_process_group()
         mp_context = torch.multiprocessing.get_context("spawn")
-        # TODO(kmonte): Enable more than one server process per machine
         server_processes = []
-        for i in range(1):
+        # TODO(kmonte): Enable more than one server process per machine
+        num_server_processes = 1
+        for i in range(num_server_processes):
             server_process = mp_context.Process(
                 target=_run_storage_process,
                 args=(
                     storage_rank + i,  # storage_rank
                     cluster_info,  # cluster_info
                     dataset,  # dataset
-                    torch_process_port,  # torch_process_port
+                    torch_process_ports[i],  # torch_process_port
                     storage_world_backend,  # storage_world_backend
                 ),
             )
