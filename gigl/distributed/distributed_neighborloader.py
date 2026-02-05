@@ -347,9 +347,10 @@ class DistNeighborLoader(DistLoader):
                         device,
                         worker_options,
                     )
-                    print(f"node_rank {node_rank} initialized the dist loader")
+                    logger.info(f"node_rank {node_rank} initialized the dist loader")
                 torch.distributed.barrier()
             torch.distributed.barrier()
+            logger.info("All node ranks initialized the dist loader")
 
     def _setup_for_graph_store(
         self,
