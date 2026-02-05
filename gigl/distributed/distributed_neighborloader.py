@@ -387,7 +387,7 @@ class DistNeighborLoader(DistLoader):
 
         # Get sampling ports for compute-storage connections.
         sampling_ports = dataset.get_free_ports_on_storage_cluster(
-            num_ports=dataset.cluster_info.num_processes_per_compute
+            num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
 

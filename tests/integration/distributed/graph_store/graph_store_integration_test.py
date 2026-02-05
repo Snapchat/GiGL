@@ -441,7 +441,7 @@ def _get_expected_input_nodes_by_rank(
         server_nodes = get_ids_on_rank(partition_book, server_rank)
         for compute_rank in range(cluster_info.num_compute_nodes):
             generated_nodes = shard_nodes_by_process(
-                server_nodes, compute_rank, cluster_info.num_processes_per_compute
+                server_nodes, compute_rank, cluster_info.num_compute_nodes
             )
             expected_sampler_input[compute_rank].append(generated_nodes)
     return dict(expected_sampler_input)
@@ -466,7 +466,7 @@ class GraphStoreIntegrationTest(unittest.TestCase):
         host_ip = socket.gethostbyname(socket.gethostname())
         cluster_info = GraphStoreInfo(
             num_storage_nodes=2,
-            num_compute_nodes=2,
+            num_compute_nodes=4,
             num_processes_per_compute=2,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
