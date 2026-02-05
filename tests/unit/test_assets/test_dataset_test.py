@@ -1,8 +1,7 @@
 """Unit tests for test_dataset factory functions."""
 
-import unittest
-
 import torch
+from absl.testing import absltest
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import FeatureInfo
@@ -17,13 +16,11 @@ from tests.test_assets.distributed.test_dataset import (
     create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
-from tests.test_assets.distributed.utils import (
-    assert_tensor_equality,
-    create_test_process_group,
-)
+from tests.test_assets.distributed.utils import create_test_process_group
+from tests.test_assets.test_case import TestCase
 
 
-class TestCreateHomogeneousDataset(unittest.TestCase):
+class TestCreateHomogeneousDataset(TestCase):
     """Tests for create_homogeneous_dataset function."""
 
     def test_with_default_edge_index(self) -> None:
@@ -57,7 +54,7 @@ class TestCreateHomogeneousDataset(unittest.TestCase):
         node_ids = dataset.node_ids
         assert isinstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 3)
-        assert_tensor_equality(node_ids, torch.arange(3))
+        self.assert_tensor_equality(node_ids, torch.arange(3))
 
         # Verify feature dimension from custom features
         self.assertEqual(
@@ -72,10 +69,10 @@ class TestCreateHomogeneousDataset(unittest.TestCase):
         original = DEFAULT_HOMOGENEOUS_EDGE_INDEX.clone()
         _ = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
 
-        assert_tensor_equality(DEFAULT_HOMOGENEOUS_EDGE_INDEX, original)
+        self.assert_tensor_equality(DEFAULT_HOMOGENEOUS_EDGE_INDEX, original)
 
 
-class TestCreateHeterogeneousDataset(unittest.TestCase):
+class TestCreateHeterogeneousDataset(TestCase):
     """Tests for create_heterogeneous_dataset function."""
 
     def test_with_default_edge_indices(self) -> None:
@@ -152,10 +149,10 @@ class TestCreateHeterogeneousDataset(unittest.TestCase):
         )
 
         for edge_type, edge_index in DEFAULT_HETEROGENEOUS_EDGE_INDICES.items():
-            assert_tensor_equality(edge_index, original[edge_type])
+            self.assert_tensor_equality(edge_index, original[edge_type])
 
 
-class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
+class TestCreateHeterogeneousDatasetWithLabels(TestCase):
     """Tests for create_heterogeneous_dataset_with_labels function."""
 
     def tearDown(self) -> None:
@@ -258,4 +255,4 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

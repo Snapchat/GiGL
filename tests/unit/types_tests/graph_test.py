@@ -1,7 +1,7 @@
-import unittest
 from typing import Literal, Union
 
 import torch
+from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -18,9 +18,10 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class GraphTypesTyest(unittest.TestCase):
+class GraphTypesTyest(TestCase):
     @parameterized.expand(
         [
             param("none_input", None, None),
@@ -443,4 +444,4 @@ class GraphTypesTyest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

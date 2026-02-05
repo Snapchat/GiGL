@@ -1,14 +1,15 @@
 import time
-import unittest
 import uuid
 
+from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.bq import BqUtils
+from tests.test_assets.test_case import TestCase
 
 
-class BqUtilsIntegrationTest(unittest.TestCase):
+class BqUtilsIntegrationTest(TestCase):
     """Integration tests for BqUtils that use real BigQuery resources."""
 
     def setUp(self):
@@ -318,4 +319,4 @@ class BqUtilsIntegrationTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

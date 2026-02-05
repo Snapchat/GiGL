@@ -1,7 +1,6 @@
 import datetime
 import json
 import tempfile
-import unittest
 from typing import Tuple
 
 import torch
@@ -20,11 +19,12 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.src.training.v1.lib.training_process import GnnTrainingProcess
 from snapchat.research.gbml import gbml_config_pb2
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class TrainerTest(unittest.TestCase):
+class TrainerTest(TestCase):
     def setUp(self) -> None:
         self.__gcs_utils = GcsUtils()
         self.__proto_utils = ProtoUtils()

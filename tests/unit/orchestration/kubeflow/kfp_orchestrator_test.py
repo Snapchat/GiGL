@@ -1,14 +1,16 @@
-import unittest
 from unittest.mock import ANY, patch
+
+from absl.testing import absltest
 
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
 from gigl.orchestration.kubeflow.kfp_orchestrator import KfpOrchestrator
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class KfpOrchestratorTest(unittest.TestCase):
+class KfpOrchestratorTest(TestCase):
     @patch("gigl.orchestration.kubeflow.kfp_orchestrator.FileLoader")
     def test_compile_uploads_compiled_yaml(self, MockFileLoader):
         mock_file_loader = MockFileLoader.return_value
@@ -29,4 +31,4 @@ class KfpOrchestratorTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

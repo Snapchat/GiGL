@@ -1,11 +1,10 @@
-import unittest
-
 from parameterized import param, parameterized
 
 from gigl.src.common.utils.bq import BqUtils
+from tests.test_assets.test_case import TestCase
 
 
-class BqUtilsTest(unittest.TestCase):
+class BqUtilsTest(TestCase):
     @parameterized.expand(
         [
             param(

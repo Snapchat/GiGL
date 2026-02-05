@@ -1,6 +1,5 @@
-import unittest
-
 import torch
+from absl.testing import absltest
 from graphlearn_torch.partition import RangePartitionBook
 from parameterized import param, parameterized
 
@@ -9,10 +8,10 @@ from gigl.distributed.utils.partition_book import (
     get_ids_on_rank,
     get_total_ids,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 
-class PartitionBookTest(unittest.TestCase):
+class PartitionBookTest(TestCase):
     @parameterized.expand(
         [
             param(
@@ -49,7 +48,7 @@ class PartitionBookTest(unittest.TestCase):
         for rank, expected_ids in rank_to_expected_ids.items():
             with self.subTest(rank=rank):
                 output_ids = get_ids_on_rank(partition_book=partition_book, rank=rank)
-                assert_tensor_equality(output_ids, expected_ids)
+                self.assert_tensor_equality(output_ids, expected_ids)
 
     @parameterized.expand(
         [
@@ -98,4 +97,4 @@ class PartitionBookTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

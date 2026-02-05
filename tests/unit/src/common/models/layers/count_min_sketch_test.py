@@ -1,14 +1,14 @@
-import unittest
-
 import torch
+from absl.testing import absltest
 
 from gigl.common.logger import Logger
 from gigl.src.common.models.layers.count_min_sketch import CountMinSketch
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class CountMinSketchTest(unittest.TestCase):
+class CountMinSketchTest(TestCase):
     def test_count(self):
         # Initialize the CountMinSketch object
         cms = CountMinSketch(width=20, depth=5)
@@ -24,4 +24,4 @@ class CountMinSketchTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

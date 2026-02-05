@@ -1,9 +1,8 @@
-import unittest
-
 from gigl.common.collections.frozen_dict import FrozenDict
+from tests.test_assets.test_case import TestCase
 
 
-class FrozenDictTest(unittest.TestCase):
+class FrozenDictTest(TestCase):
     def test_frozen_dict_is_frozen(self):
         frozen_dict: FrozenDict[int, int] = FrozenDict()
 

@@ -1,14 +1,13 @@
-import unittest
-
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.gbml_graph_protocol import GbmlGraphDataProtocol
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.types.graph_data import Edge, Node, NodeId, NodeType, Relation
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class GbmlGraphProtocolTest(unittest.TestCase):
+class GbmlGraphProtocolTest(TestCase):
     def setUp(self):
         # graph -> used for `are_same_graph`:
         # Node (id: 1, type: 1) --Relation (type: 1)--> Node (id: 2, type: 1)

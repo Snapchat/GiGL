@@ -1,9 +1,9 @@
-import unittest
 from unittest.mock import patch
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from absl.testing import absltest
 
 from gigl.distributed.graph_store import storage_utils
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -22,10 +22,10 @@ from tests.test_assets.distributed.test_dataset import (
 )
 from tests.test_assets.distributed.utils import (
     MockGraphStoreInfo,
-    assert_tensor_equality,
     create_test_process_group,
     get_process_group_init_method,
 )
+from tests.test_assets.test_case import TestCase
 
 
 def _mock_request_server(server_rank, func, *args, **kwargs):
@@ -63,7 +63,7 @@ def _create_mock_graph_store_info(
     return MockGraphStoreInfo(real_info, compute_node_rank)
 
 
-class TestRemoteDistDataset(unittest.TestCase):
+class TestRemoteDistDataset(TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
         # 10 nodes in DEFAULT_HOMOGENEOUS_EDGE_INDEX ring graph
@@ -128,18 +128,18 @@ class TestRemoteDistDataset(unittest.TestCase):
         # Basic: all nodes
         result = remote_dataset.get_node_ids()
         self.assertIn(0, result)
-        assert_tensor_equality(result[0], torch.arange(10))
+        self.assert_tensor_equality(result[0], torch.arange(10))
 
         # With sharding: first half (rank 0 of 2)
         result = remote_dataset.get_node_ids(rank=0, world_size=2)
-        assert_tensor_equality(result[0], torch.arange(5))
+        self.assert_tensor_equality(result[0], torch.arange(5))
 
         # With sharding: second half (rank 1 of 2)
         result = remote_dataset.get_node_ids(rank=1, world_size=2)
-        assert_tensor_equality(result[0], torch.arange(5, 10))
+        self.assert_tensor_equality(result[0], torch.arange(5, 10))
 
 
-class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
+class TestRemoteDistDatasetHeterogeneous(TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
         # 5 users, 5 stories in DEFAULT_HETEROGENEOUS_EDGE_INDICES
@@ -191,22 +191,22 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
 
         # Get user nodes
         result = remote_dataset.get_node_ids(node_type=USER)
-        assert_tensor_equality(result[0], torch.arange(5))
+        self.assert_tensor_equality(result[0], torch.arange(5))
 
         # Get story nodes
         result = remote_dataset.get_node_ids(node_type=STORY)
-        assert_tensor_equality(result[0], torch.arange(5))
+        self.assert_tensor_equality(result[0], torch.arange(5))
 
         # With sharding: first half of user nodes (rank 0 of 2)
         result = remote_dataset.get_node_ids(rank=0, world_size=2, node_type=USER)
-        assert_tensor_equality(result[0], torch.arange(2))
+        self.assert_tensor_equality(result[0], torch.arange(2))
 
         # With sharding: second half of user nodes (rank 1 of 2)
         result = remote_dataset.get_node_ids(rank=1, world_size=2, node_type=USER)
-        assert_tensor_equality(result[0], torch.arange(2, 5))
+        self.assert_tensor_equality(result[0], torch.arange(2, 5))
 
 
-class TestRemoteDistDatasetWithSplits(unittest.TestCase):
+class TestRemoteDistDatasetWithSplits(TestCase):
     """Tests for get_node_ids with train/val/test splits."""
 
     def setUp(self) -> None:
@@ -258,33 +258,33 @@ class TestRemoteDistDatasetWithSplits(unittest.TestCase):
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
         # Test each split returns correct nodes
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split="train")[0],
             torch.tensor([0, 1, 2]),
         )
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split="val")[0],
             torch.tensor([3]),
         )
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split="test")[0],
             torch.tensor([4]),
         )
 
         # No split returns all nodes
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split=None)[0],
             torch.arange(5),
         )
 
         # With sharding: train split [0, 1, 2] across 2 ranks
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(
                 rank=0, world_size=2, node_type=USER, split="train"
             )[0],
             torch.tensor([0]),
         )
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(
                 rank=1, world_size=2, node_type=USER, split="train"
             )[0],
@@ -334,7 +334,7 @@ def _test_get_free_ports_on_storage_cluster(
         dist.destroy_process_group()
 
 
-class TestGetFreePortsOnStorageCluster(unittest.TestCase):
+class TestGetFreePortsOnStorageCluster(TestCase):
     def setUp(self) -> None:
         storage_utils._dataset = None
         storage_utils.register_dataset(
@@ -369,4 +369,4 @@ class TestGetFreePortsOnStorageCluster(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

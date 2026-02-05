@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from collections import OrderedDict
 from typing import Optional
 
@@ -33,11 +32,12 @@ from tests.test_assets.celeb_test_graph.assets import (
     get_celeb_supervised_sample,
 )
 from tests.test_assets.models.pass_through import PassThroughNet
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class NodeClassificationInferencerTest(unittest.TestCase):
+class NodeClassificationInferencerTest(TestCase):
     class _SimpleInferer(SupervisedNodeClassificationBaseInferencer):
         @property
         def model(self) -> torch.nn.Module:

@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from collections import defaultdict
 
 import tensorflow as tf
@@ -16,9 +15,10 @@ from snapchat.research.gbml import graph_schema_pb2, training_samples_schema_pb2
 from tests.test_assets.graph_metadata_constants import (
     EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class CombinedIterableDatasetTest(unittest.TestCase):
+class CombinedIterableDatasetTest(TestCase):
     def setUp(self) -> None:
         self._condensed_node_types = list(
             EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER.condensed_node_types

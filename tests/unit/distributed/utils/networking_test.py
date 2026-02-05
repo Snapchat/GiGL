@@ -1,7 +1,6 @@
 import json
 import os
 import subprocess
-import unittest
 from typing import Optional
 from unittest.mock import patch
 
@@ -23,6 +22,7 @@ from gigl.env.distributed import (
     GraphStoreInfo,
 )
 from tests.test_assets.distributed.utils import get_process_group_init_method
+from tests.test_assets.test_case import TestCase
 
 
 def _test_fetching_free_ports_in_dist_context(
@@ -172,7 +172,7 @@ def _test_get_internal_ip_from_node(
         dist.destroy_process_group()
 
 
-class TestDistributedNetworkingUtils(unittest.TestCase):
+class TestDistributedNetworkingUtils(TestCase):
     def tearDown(self):
         if dist.is_initialized():
             print("Destroying process group")
@@ -446,7 +446,7 @@ def _get_cluster_spec_for_test(
     return cluster_spec
 
 
-class TestGetGraphStoreInfo(unittest.TestCase):
+class TestGetGraphStoreInfo(TestCase):
     """Test suite for get_graph_store_info function."""
 
     def tearDown(self):

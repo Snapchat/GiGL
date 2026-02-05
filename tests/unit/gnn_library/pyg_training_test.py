@@ -4,11 +4,11 @@ from gigl.src.applied_tasks.test_tasks.academic import (
     log_stats_for_pyg_planetoid_dataset,
 )
 from gigl.src.common.types.graph_data import NodeType
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 import tempfile
-import unittest
 
 import torch
 import torch.nn.functional as F
@@ -32,7 +32,7 @@ class GCN(torch.nn.Module):
         return x
 
 
-class PygTrainingTest(unittest.TestCase):
+class PygTrainingTest(TestCase):
     def setUp(self) -> None:
         torch.manual_seed(0)
         self.__tmp_dir = tempfile.TemporaryDirectory()

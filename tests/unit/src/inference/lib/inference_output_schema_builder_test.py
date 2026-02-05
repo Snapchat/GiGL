@@ -1,12 +1,11 @@
-import unittest
-
 from gigl.src.inference.v1.lib.inference_output_schema import (
     InferenceOutputBigqueryTableSchema,
     InferenceOutputBigqueryTableSchemaBuilder,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class InferenceOutputSchemaBuilderTest(unittest.TestCase):
+class InferenceOutputSchemaBuilderTest(TestCase):
     def setUp(self) -> None:
         self.field_one = "one"
         self.field_two = "two"

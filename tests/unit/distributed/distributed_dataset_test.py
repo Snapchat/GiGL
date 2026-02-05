@@ -1,8 +1,8 @@
-import unittest
 from collections.abc import Mapping
 from typing import Any, Optional, Type, Union
 
 import torch
+from absl.testing import absltest
 from graphlearn_torch.data import Feature
 from parameterized import param, parameterized
 from torch.testing import assert_close
@@ -46,7 +46,7 @@ from gigl.utils.data_splitters import DistNodeSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 
 class _PassthroughSplitter:
@@ -74,7 +74,7 @@ _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 
 
-class DistributedDatasetTestCase(unittest.TestCase):
+class DistributedDatasetTestCase(TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
         self._world_size = 1
@@ -561,11 +561,13 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
         # We expect the dataset's node labels to be equal to the node labels we passed in
 
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             dataset.node_labels.feature_tensor, torch.arange(10).unsqueeze(1)
         )
 
-        assert_tensor_equality(dataset.node_features.feature_tensor, torch.zeros(10, 2))
+        self.assert_tensor_equality(
+            dataset.node_features.feature_tensor, torch.zeros(10, 2)
+        )
 
     def test_building_heterogeneous_dataset_preserves_node_features_and_labels(self):
         partition_output = PartitionOutput(
@@ -614,16 +616,16 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
         # We expect the dataset's node labels to be equal to the node labels we passed in
 
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             dataset.node_labels[_USER].feature_tensor,
             torch.arange(10).unsqueeze(1),
         )
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             dataset.node_labels[_STORY].feature_tensor,
             torch.arange(5).unsqueeze(1),
         )
 
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             dataset.node_features[_USER].feature_tensor,
             torch.zeros(10, 2),
         )
@@ -713,4 +715,4 @@ class DistributedDatasetTestCase(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

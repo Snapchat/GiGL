@@ -1,18 +1,19 @@
 """Tests for distributed environment utilities."""
 
-import unittest
 from unittest import mock
 
+from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.env.distributed import GraphStoreInfo
+from tests.test_assets.test_case import TestCase
 
 _NUM_STORAGE_NODES = 4
 _NUM_COMPUTE_NODES = 8
 _NUM_PROCESSES_PER_COMPUTE = 2
 
 
-class TestGraphStoreInfo(unittest.TestCase):
+class TestGraphStoreInfo(TestCase):
     """Test suite for GraphStoreInfo properties."""
 
     def setUp(self) -> None:
@@ -99,4 +100,4 @@ class TestGraphStoreInfo(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

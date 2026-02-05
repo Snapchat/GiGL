@@ -1,4 +1,4 @@
-import unittest
+from absl.testing import absltest
 
 from gigl.common.logger import Logger
 from gigl.orchestration.kubeflow.runner import (
@@ -8,11 +8,12 @@ from gigl.orchestration.kubeflow.runner import (
     _parse_labels,
 )
 from gigl.src.common.constants.components import GiGLComponents
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class KFPRunnerTest(unittest.TestCase):
+class KFPRunnerTest(TestCase):
     def test_parse_additional_job_args(
         self,
     ):
@@ -111,4 +112,4 @@ class KFPRunnerTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

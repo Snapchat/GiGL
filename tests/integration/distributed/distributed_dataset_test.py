@@ -1,10 +1,10 @@
-import unittest
 from collections import abc, defaultdict
 from typing import MutableMapping, Optional
 
 import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
+from absl.testing import absltest
 from graphlearn_torch.data import Feature, Graph
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
@@ -26,9 +26,10 @@ from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, NodeAnchorLink
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class DistDatasetTestCase(unittest.TestCase):
+class DistDatasetTestCase(TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
         self._world_size = 2
@@ -241,4 +242,4 @@ class DistDatasetTestCase(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

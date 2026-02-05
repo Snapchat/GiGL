@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from collections import defaultdict
 from itertools import chain
 from typing import Iterable, Set, Tuple
@@ -55,6 +54,7 @@ from tests.integration.pipeline.subgraph_sampler.utils import (
 from tests.integration.pipeline.utils import (
     get_gcs_assets_dir_from_frozen_gbml_config_uri,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
@@ -65,7 +65,7 @@ TEST_NUM_USER_DEFINED_POSITIVE_SAMPLES = 2
 TEST_NUM_USER_DEFINED_NEGATIVE_SAMPLES = 2
 
 
-class SubgraphSamplerTest(unittest.TestCase):
+class SubgraphSamplerTest(TestCase):
     def setUp(self) -> None:
         pass
 

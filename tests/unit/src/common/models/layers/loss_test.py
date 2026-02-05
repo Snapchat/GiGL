@@ -1,13 +1,11 @@
-import unittest
-
 import torch
 import torch.nn.functional as F
 
 from gigl.nn.loss import RetrievalLoss
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 
-class RetrievalLossTest(unittest.TestCase):
+class RetrievalLossTest(TestCase):
     query_embeddings = torch.tensor([])
     positive_embeddings = torch.tensor([])
     random_neg_embeddings = torch.tensor([])
@@ -177,4 +175,4 @@ class RetrievalLossTest(unittest.TestCase):
         loss = loss_fn._calculate_batch_retrieval_loss(
             scores=empty_scores, query_ids=query_ids, candidate_ids=candidate_ids
         )
-        assert_tensor_equality(loss, expected_loss)
+        self.assert_tensor_equality(loss, expected_loss)

@@ -6,6 +6,7 @@ TODO(kmonte): Remove this, and only expose utils.
 We keep this around so we can use the utils in tests/integration/distributed/graph_store/graph_store_integration_test.py.
 """
 import argparse
+import multiprocessing.context as py_mp_context
 import os
 from typing import Literal, Optional
 
@@ -77,6 +78,7 @@ def storage_node_process(
     sample_edge_direction: Literal["in", "out"],
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
     storage_world_backend: Optional[str] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> None:
     """Run a storage node process
 
@@ -89,6 +91,7 @@ def storage_node_process(
         is_inference (bool): Whether the process is an inference process. Defaults to True.
         tf_record_uri_pattern (str): The TF Record URI pattern.
         storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
+        timeout_seconds (Optional[float]): The timeout seconds for the storage node process.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
@@ -119,7 +122,7 @@ def storage_node_process(
     )
     torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
     torch.distributed.destroy_process_group()
-    server_processes = []
+    server_processes: list[py_mp_context.SpawnProcess] = []
     mp_context = torch.multiprocessing.get_context("spawn")
     # TODO(kmonte): Enable more than one server process per machine
     for i in range(1):
@@ -137,7 +140,7 @@ def storage_node_process(
     for server_process in server_processes:
         server_process.start()
     for server_process in server_processes:
-        server_process.join()
+        server_process.join(timeout_seconds)
 
 
 if __name__ == "__main__":

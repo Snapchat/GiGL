@@ -1,4 +1,3 @@
-import unittest
 from typing import cast
 
 import numpy as np
@@ -23,9 +22,10 @@ from tests.test_assets.graph_metadata_constants import (
     DEFAULT_HOMOGENEOUS_GRAPH_METADATA_PB_WRAPPER,
     DEFAULT_HOMOGENEOUS_PREPROCESSED_METADATA_PB_WRAPPER,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class RootedNodeNeighborhoodBatchingTest(unittest.TestCase):
+class RootedNodeNeighborhoodBatchingTest(TestCase):
     # TODO: Extend this test to heterogeneous graph data.
     def setUp(self) -> None:
         dummy_node_feature_bytes = FeatureSerializationUtils.serialize_node_features(

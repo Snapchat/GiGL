@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-import unittest
 from typing import Set, Tuple, Type, TypeVar, cast
 
 import numpy as np
@@ -46,6 +45,7 @@ from tests.integration.pipeline.split_generator.lib import (
 from tests.integration.pipeline.utils import (
     get_gcs_assets_dir_from_frozen_gbml_config_uri,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
@@ -65,7 +65,7 @@ def are_dataset_split_sets_disjoint(train: Set, val: Set, test: Set) -> bool:
     return are_sets_disjoint
 
 
-class SplitGeneratorPipelineTest(unittest.TestCase):
+class SplitGeneratorPipelineTest(TestCase):
     """
     This test checks the completion of split generator pipeline with the Cora dataset.
     Test will error out if it takes too long, or output files missing.

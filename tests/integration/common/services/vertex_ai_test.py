@@ -1,9 +1,9 @@
 import os
 import tempfile
-import unittest
 import uuid
 
 import kfp
+from absl.testing import absltest
 from google.cloud.aiplatform_v1.types import env_var
 from parameterized import param, parameterized
 
@@ -11,6 +11,7 @@ from gigl.common import UriFactory
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
+from tests.test_assets.test_case import TestCase
 
 
 @kfp.dsl.component
@@ -48,7 +49,7 @@ def get_pipeline_that_fails() -> float:
     return fails_task.output
 
 
-class VertexAIPipelineIntegrationTest(unittest.TestCase):
+class VertexAIPipelineIntegrationTest(TestCase):
     def setUp(self):
         self._resource_config = get_resource_config()
         self._project = self._resource_config.project
@@ -223,4 +224,4 @@ class VertexAIPipelineIntegrationTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -1,5 +1,3 @@
-import unittest
-
 from parameterized import param, parameterized
 
 from gigl.common.logger import Logger
@@ -16,6 +14,7 @@ from snapchat.research.gbml import (
     inference_metadata_pb2,
     trained_model_metadata_pb2,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
@@ -33,7 +32,7 @@ _TEMPLATE_CONFIG_FOR_GLT = gbml_config_pb2.GbmlConfig(
 )
 
 
-class ConfigPopulatorUnitTest(unittest.TestCase):
+class ConfigPopulatorUnitTest(TestCase):
     """
     This test checks the completion of the ConfigPopulator step.
     """
