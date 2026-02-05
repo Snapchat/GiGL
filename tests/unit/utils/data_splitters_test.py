@@ -833,9 +833,9 @@ class TestDataSplitters(TestCase):
 
         train, val, test = splitter(node_ids)
 
-        self.assert_tensor_equality(train, expected_train, dim=0)
-        self.assert_tensor_equality(val, expected_val, dim=0)
-        self.assert_tensor_equality(test, expected_test, dim=0)
+        assert_tensor_equality(train, expected_train, dim=0)
+        assert_tensor_equality(val, expected_val, dim=0)
+        assert_tensor_equality(test, expected_test, dim=0)
 
     @parameterized.expand(
         [
@@ -941,9 +941,9 @@ class TestDataSplitters(TestCase):
             expected_test,
         ) in expected.items():
             train, val, test = split[node_type]
-            self.assert_tensor_equality(train, expected_train, dim=0)
-            self.assert_tensor_equality(val, expected_val, dim=0)
-            self.assert_tensor_equality(test, expected_test, dim=0)
+            assert_tensor_equality(train, expected_train, dim=0)
+            assert_tensor_equality(val, expected_val, dim=0)
+            assert_tensor_equality(test, expected_test, dim=0)
 
     def test_hashed_node_splitter_requires_process_group(self):
         node_ids = torch.arange(10, dtype=torch.int64)

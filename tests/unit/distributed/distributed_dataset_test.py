@@ -46,6 +46,7 @@ from gigl.utils.data_splitters import DistNodeSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
+from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import TestCase
 
 
@@ -561,13 +562,11 @@ class DistributedDatasetTestCase(TestCase):
 
         # We expect the dataset's node labels to be equal to the node labels we passed in
 
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             dataset.node_labels.feature_tensor, torch.arange(10).unsqueeze(1)
         )
 
-        self.assert_tensor_equality(
-            dataset.node_features.feature_tensor, torch.zeros(10, 2)
-        )
+        assert_tensor_equality(dataset.node_features.feature_tensor, torch.zeros(10, 2))
 
     def test_building_heterogeneous_dataset_preserves_node_features_and_labels(self):
         partition_output = PartitionOutput(
@@ -616,16 +615,16 @@ class DistributedDatasetTestCase(TestCase):
 
         # We expect the dataset's node labels to be equal to the node labels we passed in
 
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             dataset.node_labels[_USER].feature_tensor,
             torch.arange(10).unsqueeze(1),
         )
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             dataset.node_labels[_STORY].feature_tensor,
             torch.arange(5).unsqueeze(1),
         )
 
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             dataset.node_features[_USER].feature_tensor,
             torch.zeros(10, 2),
         )

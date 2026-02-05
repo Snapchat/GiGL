@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from gigl.nn.loss import RetrievalLoss
+from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import TestCase
 
 
@@ -175,4 +176,4 @@ class RetrievalLossTest(TestCase):
         loss = loss_fn._calculate_batch_retrieval_loss(
             scores=empty_scores, query_ids=query_ids, candidate_ids=candidate_ids
         )
-        self.assert_tensor_equality(loss, expected_loss)
+        assert_tensor_equality(loss, expected_loss)

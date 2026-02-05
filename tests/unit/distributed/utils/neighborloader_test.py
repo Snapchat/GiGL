@@ -14,6 +14,7 @@ from gigl.distributed.utils.neighborloader import (
     strip_label_edges,
 )
 from gigl.types.graph import FeatureInfo, message_passing_to_positive_label
+from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import TestCase
 
 _U2U_EDGE_TYPE = ("user", "to", "user")
@@ -55,7 +56,7 @@ class LoaderUtilsTest(TestCase):
             local_process_rank=local_process_rank,
             local_process_world_size=local_process_world_size,
         )
-        self.assert_tensor_equality(sharded_tensor, expected_sharded_tensor)
+        assert_tensor_equality(sharded_tensor, expected_sharded_tensor)
 
     @parameterized.expand(
         [
@@ -190,13 +191,9 @@ class LoaderUtilsTest(TestCase):
         self.assertTrue(hasattr(homogeneous_data, "edge_index"))
         self.assertTrue(hasattr(homogeneous_data, "batch"))
         self.assertTrue(hasattr(homogeneous_data, "batch_size"))
-        self.assert_tensor_equality(
-            homogeneous_data.num_sampled_nodes, torch.tensor([1, 1])
-        )
-        self.assert_tensor_equality(
-            homogeneous_data.num_sampled_edges, torch.tensor([1, 1])
-        )
-        self.assert_tensor_equality(homogeneous_data.batch, torch.tensor([0, 1]))
+        assert_tensor_equality(homogeneous_data.num_sampled_nodes, torch.tensor([1, 1]))
+        assert_tensor_equality(homogeneous_data.num_sampled_edges, torch.tensor([1, 1]))
+        assert_tensor_equality(homogeneous_data.batch, torch.tensor([0, 1]))
         self.assertEqual(homogeneous_data.batch_size, 2)
 
     def test_strip_label_edges(self):
@@ -276,11 +273,11 @@ class LoaderUtilsTest(TestCase):
             edge_feature_info=FeatureInfo(dim=4, dtype=dtype),
             device=self._device,
         )
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data.x,
             torch.zeros((num_node_features, 2), device=self._device, dtype=dtype),
         )
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data.edge_attr,
             torch.zeros((num_edge_features, 4), device=self._device, dtype=dtype),
         )
@@ -354,7 +351,7 @@ class LoaderUtilsTest(TestCase):
             device=self._device,
         )
 
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             hetero_data["user"].x,
             torch.zeros(
                 (user_num_node_features, 3),
@@ -362,12 +359,12 @@ class LoaderUtilsTest(TestCase):
                 dtype=dtype,
             ),
         )
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             hetero_data["item"].x,
             torch.zeros((0, 4), device=self._device, dtype=dtype),
         )
 
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             hetero_data[_U2U_EDGE_TYPE].edge_attr,
             torch.zeros(
                 (u2u_num_edge_features, 6),
@@ -375,7 +372,7 @@ class LoaderUtilsTest(TestCase):
                 dtype=dtype,
             ),
         )
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             hetero_data[_I2U_EDGE_TYPE].edge_attr,
             torch.zeros((0, 7), device=self._device, dtype=dtype),
         )
@@ -439,12 +436,12 @@ class LoaderUtilsTest(TestCase):
             device=self._device,
         )
         # Assert we did not override the value or data type of the node features
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data.x,
             input_node_feats,
         )
         # Assert we set the edge type features and the appropriate data type
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data.edge_attr,
             torch.zeros((0, 4), device=self._device, dtype=torch.int32),
         )
@@ -471,20 +468,20 @@ class LoaderUtilsTest(TestCase):
             device=self._device,
         )
         # Assert we did not override the value or data type of the node features
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data["user"].x,
             input_user_node_feats,
         )
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data["item"].x,
             input_item_node_feats,
         )
         # Assert we set the edge type features and the appropriate data type
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data[_U2I_EDGE_TYPE].edge_attr,
             torch.zeros((0, 4), device=self._device, dtype=torch.int32),
         )
-        self.assert_tensor_equality(
+        assert_tensor_equality(
             data[_I2U_EDGE_TYPE].edge_attr,
             torch.zeros((0, 8), device=self._device, dtype=torch.uint8),
         )
