@@ -1,15 +1,14 @@
-import unittest
-
 from gigl.common.logger import Logger
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.training.v1.lib.training_process import generate_trainer_instance
 from snapchat.research.gbml import gbml_config_pb2
+from tests.test_assets.test_case import TestCase
 from tests.test_assets.test_modeling_spec import TestModelingTaskSpec
 
 logger = Logger()
 
 
-class GnnTrainerTest(unittest.TestCase):
+class GnnTrainerTest(TestCase):
     def test_can_generate_instance(self):
         optim_lr = 10
         optim_weight_decay = 20

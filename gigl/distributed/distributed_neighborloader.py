@@ -347,9 +347,10 @@ class DistNeighborLoader(DistLoader):
                         device,
                         worker_options,
                     )
-                    print(f"node_rank {node_rank} initialized the dist loader")
+                    logger.info(f"node_rank {node_rank} initialized the dist loader")
                 torch.distributed.barrier()
             torch.distributed.barrier()
+            logger.info("All node ranks initialized the dist loader")
 
     def _setup_for_graph_store(
         self,
@@ -387,7 +388,7 @@ class DistNeighborLoader(DistLoader):
 
         # Get sampling ports for compute-storage connections.
         sampling_ports = dataset.get_free_ports_on_storage_cluster(
-            num_ports=dataset.cluster_info.num_processes_per_compute
+            num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
 

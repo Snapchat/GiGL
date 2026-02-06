@@ -1,8 +1,9 @@
 import copy
 import tempfile
-import unittest
 from pathlib import Path
 from typing import Final
+
+from absl.testing import absltest
 
 from gigl.common import UriFactory
 from gigl.common.utils.proto_utils import ProtoUtils
@@ -11,6 +12,7 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
 from snapchat.research.gbml import gigl_resource_config_pb2
+from tests.test_assets.test_case import TestCase
 
 _ENV: Final[str] = "test"
 _COST_RESOURCE_GROUP_TAG: Final[str] = "unittest_COMPONENT"
@@ -44,7 +46,7 @@ def _create_shared_resource_config() -> gigl_resource_config_pb2.SharedResourceC
     return config
 
 
-class TestGiglResourceConfigWrapper(unittest.TestCase):
+class TestGiglResourceConfigWrapper(TestCase):
     """Test suite for GiglResourceConfigWrapper."""
 
     def setUp(self) -> None:
@@ -454,4 +456,4 @@ class TestGiglResourceConfigWrapper(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

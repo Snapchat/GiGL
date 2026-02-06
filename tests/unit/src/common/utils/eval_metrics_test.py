@@ -1,11 +1,10 @@
-import unittest
-
 import torch
 
 from gigl.src.common.utils.eval_metrics import hit_rate_at_k, mean_reciprocal_rank
+from tests.test_assets.test_case import TestCase
 
 
-class EvalMetricsTest(unittest.TestCase):
+class EvalMetricsTest(TestCase):
     def setUp(self) -> None:
         self.neg_scores = torch.FloatTensor([3, 5, 7])
 

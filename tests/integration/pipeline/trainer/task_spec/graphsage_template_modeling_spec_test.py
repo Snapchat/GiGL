@@ -1,5 +1,3 @@
-import unittest
-
 import torch
 
 from gigl.common.logger import Logger
@@ -14,6 +12,7 @@ from gigl.src.mocking.lib.versioning import (
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from tests.test_assets.test_case import TestCase
 
 metadata: MockedDatasetArtifactMetadata = get_mocked_dataset_artifact_metadata()[
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.name
@@ -25,7 +24,7 @@ gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri
 logger = Logger()
 
 
-class GraphSageTemplateTrainerSpecTrainingTest(unittest.TestCase):
+class GraphSageTemplateTrainerSpecTrainingTest(TestCase):
     """
     Tests training functionality for GraphSageTemplateTrainerSpec.
     """

@@ -1,16 +1,17 @@
-import unittest
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
+from absl.testing import absltest
 from google.cloud.storage.blob import Blob
 from google.cloud.storage.bucket import Bucket
 from google.cloud.storage.client import Client
 
 from gigl.common import GcsUri
 from gigl.common.utils.gcs import GcsUtils
+from tests.test_assets.test_case import TestCase
 
 
-class TestGcsUtils(unittest.TestCase):
+class TestGcsUtils(TestCase):
     @patch("gigl.common.utils.gcs.storage")
     def test_upload_from_filelike(self, mock_storage_client):
         # Mock the GCS client, bucket, and blob
@@ -94,4 +95,4 @@ class TestGcsUtils(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

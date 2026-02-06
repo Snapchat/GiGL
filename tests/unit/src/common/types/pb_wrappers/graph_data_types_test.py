@@ -1,5 +1,4 @@
 import pickle
-import unittest
 from typing import Union
 
 from gigl.src.common.types.pb_wrappers.graph_data_types import (
@@ -9,9 +8,10 @@ from gigl.src.common.types.pb_wrappers.graph_data_types import (
     NodePbWrapper,
 )
 from snapchat.research.gbml import graph_schema_pb2
+from tests.test_assets.test_case import TestCase
 
 
-class GraphDataTypesTest(unittest.TestCase):
+class GraphDataTypesTest(TestCase):
     def test_node_pb_wrapper_equality(self):
         """
         Node pbs can be equal field-wise, but native pb __eq__ does not reflect their equality.

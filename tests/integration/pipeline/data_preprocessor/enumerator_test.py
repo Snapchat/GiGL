@@ -1,4 +1,3 @@
-import unittest
 from typing import Any, Tuple, Union
 
 import google.cloud.bigquery as bigquery
@@ -22,6 +21,7 @@ from gigl.src.data_preprocessor.lib.ingest.bigquery import (
     BigqueryEdgeDataReference,
     BigqueryNodeDataReference,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
@@ -94,7 +94,7 @@ _EDGE_NUM_SHARDS = 3
 
 
 # TODO: (svij-sc) Cleanup this test
-class EnumeratorTest(unittest.TestCase):
+class EnumeratorTest(TestCase):
     def __upload_records_to_bq(
         self,
         data_reference: Union[BigqueryEdgeDataReference, BigqueryNodeDataReference],
