@@ -183,26 +183,12 @@ class DistServer(GltDistServer):
                 f"Sampler input must be an instance of ABLPNodeSamplerInput. Received: {type(sampler_input)}"
             )
 
-        if isinstance(sampler_input, RemoteSamplerInput):
-            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
-
-        with self._lock:
-            producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
-            if producer_id is None:
-                producer_id = self._cur_producer_idx
-                self._worker_key2producer_id[worker_options.worker_key] = producer_id
-                self._cur_producer_idx += 1
-                buffer = ShmChannel(
-                    worker_options.buffer_capacity, worker_options.buffer_size
-                )
-                producer = DistABLPSamplingProducer(
-                    self.dataset, sampler_input, sampling_config, worker_options, buffer
-                )
-                producer.init()
-                self._producer_pool[producer_id] = producer
-                self._msg_buffer_pool[producer_id] = buffer
-                self._epoch[producer_id] = -1
-        return producer_id
+        return self._create_producer(
+            sampler_input=sampler_input,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            producer_cls=DistABLPSamplingProducer,
+        )
 
     def create_sampling_producer(
         self,
@@ -225,6 +211,39 @@ class DistServer(GltDistServer):
         Returns:
           A unique id of created sampling producer on this server.
         """
+        return self._create_producer(
+            sampler_input=sampler_input,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            producer_cls=DistMpSamplingProducer,
+        )
+
+    def _create_producer(
+        self,
+        sampler_input: Union[
+            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
+        ],
+        sampling_config: SamplingConfig,
+        worker_options: RemoteDistSamplingWorkerOptions,
+        producer_cls: type[Union[DistABLPSamplingProducer, DistMpSamplingProducer]],
+    ) -> int:
+        r"""Shared logic to create and initialize a sampling producer.
+
+        Converts remote sampler inputs to local, creates a ``ShmChannel`` buffer,
+        instantiates the given ``producer_cls``, and registers it in the internal pools.
+
+        Args:
+          sampler_input (NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput,
+            or ABLPNodeSamplerInput): The input data for sampling.
+          sampling_config (SamplingConfig): Configuration of sampling meta info.
+          worker_options (RemoteDistSamplingWorkerOptions): Options for launching
+            remote sampling workers by this server.
+          producer_cls: The producer class to instantiate
+            (``DistABLPSamplingProducer`` or ``DistMpSamplingProducer``).
+
+        Returns:
+          int: A unique id of created sampling producer on this server.
+        """
         if isinstance(sampler_input, RemoteSamplerInput):
             sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
@@ -237,7 +256,7 @@ class DistServer(GltDistServer):
                 buffer = ShmChannel(
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
-                producer = DistMpSamplingProducer(
+                producer = producer_cls(
                     self.dataset, sampler_input, sampling_config, worker_options, buffer
                 )
                 producer.init()
