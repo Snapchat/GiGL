@@ -8,6 +8,11 @@ These are the current environments supported by GiGL
 | ------ | --------------- | --------- | ---------- | ------- | --- |
 | 3.9    | Partial Support | Supported | 12.1       | 2.5     | 2.5 |
 
+## Available Versions
+
+You can see the available wheels for GiGL
+[here](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)
+
 ## Install Prerequisites - setting up your dev machine
 
 Below we provide two ways to bootstrap an environment for using and/or developing GiGL
@@ -41,9 +46,7 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
   1. If on MAC, Install [Homebrew](https://brew.sh/).
 
-  2. Install [Conda](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install):
-
-  3. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
+  2. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
 
       Once installed, ensure you can run multiarch docker builds by running following command:
 
@@ -96,21 +99,17 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 ### Install Wheel
 
-1. Create a python environment
-
-```bash
-conda create -y --override-channels --channel conda-forge --name gigl python=3.9
-conda activate gigl
-```
+1. Create a python virtual environment w/ `python==3.11.*`
 
 2. Install GiGL
 
-#### Install GiGL + necessary tooling for Torch 2.5 + Cuda12.1
+#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on Cuda12.8
 
 ```bash
-pip install "gigl[torch25-cuda-121,transform]==0.0.9" \
-  --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
-  --extra-index-url=https://pypi.org/simple
+pip install "gigl[pyg27-torch28-cu128, transform]==0.1.0" \
+--extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
+--extra-index-url=https://download.pytorch.org/whl/cu128 \
+--extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
 ```
 
 Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
@@ -120,12 +119,13 @@ script to setup GLT dependency:
 gigl-post-install
 ```
 
-#### Install GiGL + necessary tooling for Torch 2.5 + CPU
+#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CPU
 
 ```bash
-pip install "gigl[torch25-cpu,transform]==0.0.9" \
-  --index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
-  --extra-index-url=https://pypi.org/simple
+pip install "gigl[pyg27-torch28-cpu, transform]==0.1.0" \
+--extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
+--extra-index-url=https://download.pytorch.org/whl/cpu \
+--extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
 ```
 
 Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
@@ -137,29 +137,18 @@ gigl-post-install
 
 ### Install from source
 
-There are various ways to use GiGL. Firstly, clone the repo locally.
-
 ```bash
 git clone https://github.com/Snapchat/GiGL.git
 ```
 
-From the root directory:
-
-```bash
-make initialize_environment
-conda activate gnn
-```
-
-This creates a Python 3.9 environment with some basic utilities. Next, to install all user dependencies. Note: The
-command below will try its best ot infer your environment and install necessary reqs i.e. if CUDA is available it will
-try to install the necessary gpu deps, otherwise it will install cpu deps.
+If you are just using (not developing) GiGL, from the root directory:
 
 ```bash
 make install_deps
 ```
 
 If you *instead* want to contribute and/or extend GiGL. You can install the developer deps which includes some extra
-tooling useful for contributions:
+tooling:
 
 ```bash
 make install_dev_deps

@@ -8,7 +8,7 @@ ThisBuild / semanticdbEnabled := true
 ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 
 lazy val SPARK_35_TFRECORD_JAR_GCS_PATH: String = {
-  val filePath = "../dep_vars.env"
+  val filePath = "../gigl/dep_vars.env"
   val source = Source.fromFile(filePath)
   try {
     source.getLines().find(_.startsWith("SPARK_35_TFRECORD_JAR_GCS_PATH=")) match {

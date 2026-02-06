@@ -53,7 +53,7 @@ def update_dep_vars_env(
     kfp_pipeline_path: str,
 ) -> None:
     print(
-        f"Updating dep_vars.env with: "
+        f"Updating gigl/dep_vars.env with: "
         + f"cuda_image: {cuda_image_name}, "
         + f"cpu_image: {cpu_image_name}, "
         + f"dataflow_image: {dataflow_image_name}, "
@@ -61,7 +61,7 @@ def update_dep_vars_env(
         + f"kfp_pipeline: {kfp_pipeline_path}"
     )
 
-    dep_vars_env_path = f"{GIGL_ROOT_DIR}/dep_vars.env"
+    dep_vars_env_path = f"{GIGL_ROOT_DIR}/gigl/dep_vars.env"
     with open(dep_vars_env_path, "r") as f:
         content = f.read()
 
@@ -96,7 +96,7 @@ def update_dep_vars_env(
 
 
 def update_pyproject(version: str) -> None:
-    path = f"{GIGL_ROOT_DIR}/python/pyproject.toml"
+    path = f"{GIGL_ROOT_DIR}/pyproject.toml"
     with open(path, "r") as f:
         content = f.read()
     content = re.sub(r'(version\s*)=\s*"[\d\.]+"', f'\\1= "{version}"', content)

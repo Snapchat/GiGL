@@ -3,8 +3,12 @@ set -e
 set -x
 
 DEV=0  # Flag to install dev dependencies.
-PIP_ARGS="--no-deps"  # We don't want to install dependencies when installing packages from hashed requirements files.
-PIP_CREDENTIALS_MOUNTED=0  # When running this script in Docker environments, we may wish to mount pip credentials to install packages from a private repository.
+# Flag to skip installing GiGL lib dependencies, i.e. only dev tools will be installed if DEV=1.
+SKIP_GIGL_LIB_DEPS_INSTALL=0
+# Flag to skip GLT post install. Note: if SKIP_GIGL_LIB_DEPS_INSTALL=1,
+# GLT will never be installed (i.e. SKIP_GLT_POST_INSTALL flag will be treated as set to 1)
+SKIP_GLT_POST_INSTALL=0
+
 
 for arg in "$@"
 do
@@ -13,32 +17,18 @@ do
         DEV=1
         shift
         ;;
-    --no-pip-cache)
-        PIP_ARGS+=" --no-cache-dir"
+    --skip-gigl-lib-deps-install)
+        SKIP_GIGL_LIB_DEPS_INSTALL=1
         shift
         ;;
-    --mount-pip-credentials)
-        PIP_CREDENTIALS_MOUNTED=1
+    --skip-glt-post-install)
+        SKIP_GLT_POST_INSTALL=1
         shift
         ;;
     esac
 done
 
-REQ_FILE_PREFIX=""
-if [[ $DEV -eq 1 ]]
-then
-  echo "Recognized '--dev' flag is set. Will also install dev dependencies."
-  REQ_FILE_PREFIX="dev_"
-fi
-
-if [[ $PIP_CREDENTIALS_MOUNTED -eq 1 ]]
-then
-    echo "Recognized '--mount-pip-credentials' flag is set. Will use the mounted pip credentials (expected at /root/.pip/pip.conf)."
-    cp /root/.pip/pip.conf /etc/pip.conf
-    echo "Contents of /etc/pip.conf:"
-    cat /etc/pip.conf
-fi
-
+### Helper functions ###
 has_cuda_driver() {
     # Use the whereis command to locate the CUDA driver
     cuda_location=$(whereis cuda)
@@ -63,38 +53,30 @@ is_running_on_m1_mac() {
     return $?
 }
 
-pip install --upgrade pip
-
-if is_running_on_mac;
-then
-    echo "Setting up Mac CPU environment"
-    req_file="requirements/${REQ_FILE_PREFIX}darwin_arm64_requirements_unified.txt"
-else
-    if has_cuda_driver;
+### Installation Functions ###
+install_uv_if_needed() {
+    # We use the uv package manager
+    # Check if uv is already installed
+    if ! command -v uv &> /dev/null
     then
-        echo "Setting up Linux CUDA environment"
-        req_file="requirements/${REQ_FILE_PREFIX}linux_cuda_requirements_unified.txt"
-    else
-        echo "Setting up Linux CPU environment"
-        req_file="requirements/${REQ_FILE_PREFIX}linux_cpu_requirements_unified.txt"
+        echo "uv could not be found. Installing uv..."
+        EXPECTED_SHA256="8402ab80d2ef54d7044a71ea4e4e1e8db3b20c87c7bffbc30bff59f1e80ebbd5"
+        curl -LsSf -o uv_installer.sh https://astral.sh/uv/0.9.5/install.sh # Matches the version in .github/actions/setup-python-tools/action.yml
+
+        # Verify SHA256 checksum - script will exit if this fails due to set -e
+        if ! echo "$EXPECTED_SHA256  uv_installer.sh" | sha256sum -c -; then
+            echo "ERROR: SHA256 checksum verification failed for uv installer!" >&2
+            rm -f uv_installer.sh
+            exit 1
+        fi
+
+        sh uv_installer.sh
+        rm -f uv_installer.sh
+        source $HOME/.local/bin/env
     fi
-fi
+}
 
-echo "Installing from ${req_file}"
-pip install -r $req_file $PIP_ARGS
-
-
-# Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
-# We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-python $SCRIPT_DIR/../python/gigl/scripts/post_install.py
-
-# TODO: (svij) Check if gperftools is still needed
-# https://github.com/Snapchat/GiGL/issues/296
-conda install --override-channels --channel conda-forge gperftools # tcmalloc, ref: https://google.github.io/tcmalloc/overview.html
-
-if [[ $DEV -eq 1 ]]
-then
+install_dev_tools() {
     echo "Setting up required dev tooling"
     # Install tools needed to run spark/scala code
     mkdir -p tools/python_protoc
@@ -102,7 +84,7 @@ then
     echo "Installing tooling for python protobuf"
     # https://github.com/protocolbuffers/protobuf/releases/tag/v3.19.6
     # This version should be smaller than the one used by client i.e. the protobuf client version specified in
-    # common-requirements.txt file should be >= v3.19.6
+    # pyproject.toml file should be >= v3.19.6
     # TODO (svij-sc): update protoc + protobuff
     if is_running_on_mac;
     then
@@ -113,13 +95,80 @@ then
     unzip -o tools/python_protoc/python_protoc_3_19_6.zip -d tools/python_protoc
     rm tools/python_protoc/python_protoc_3_19_6.zip
 
-fi
+    echo "Finished setting up required dev tooling"
+}
 
-if [[ $PIP_CREDENTIALS_MOUNTED -eq 1 ]]
-then
-    echo "Removing mounted pip credentials."
-    rm /etc/pip.conf
-fi
+install_gigl_lib_deps() {
+    echo "Installing GiGL lib"
+    extra_deps=("experimental" "transform")
+    if is_running_on_mac;
+    then
+        echo "Setting up Mac CPU environment"
+        extra_deps+=("pyg27-torch28-cpu")
+    else
+        if has_cuda_driver;
+        then
+            echo "Setting up Linux CUDA environment"
+            extra_deps+=("pyg27-torch28-cu128")
+        else
+            echo "Setting up Linux CPU environment"
+            extra_deps+=("pyg27-torch28-cpu")
+        fi
+    fi
 
-conda clean -afy
+    extra_deps_clause=()
+    for dep in "${extra_deps[@]}"; do
+        extra_deps_clause+=(--extra "$dep")
+    done
+
+    flag_use_inexact_match=""
+    # If we are using system python, we want to use inexact match for dependencies so we don't override system packages.
+    # We currently, only do this in our Dockerfile.cuda.base, and Dockerfile.dataflow.base images, as they have python
+    # pre-installed with relevant packages - and currently reinstalling these in the trivial manner in a new virtual
+    # environment is not able to correctly symlink existing optimizations / bootstrap scripts available in the parent
+    # docker images of our base images.
+    if [[ "${UV_SYSTEM_PYTHON}" == "true" ]]
+    then
+        echo "Recognized using system python due to UV_SYSTEM_PYTHON = true."
+        echo "Will use inexact match for dependencies so we don't override system packages."
+        # Syncing is "exact" by default, which means it will remove any packages that are not present in the lockfile.
+        # To retain extraneous packages, use the --inexact option:
+        # https://docs.astral.sh/uv/concepts/projects/sync/#retaining-extraneous-packages
+        # This is useful for example when we might have packages pre-installed i.e. torch, pyg, etc.
+        flag_use_inexact_match="--inexact"
+    fi
+
+    if [[ $DEV -eq 1 ]]
+    then
+        # https://docs.astral.sh/uv/reference/cli/#uv-sync
+        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
+    else
+        uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match}
+    fi
+
+    # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
+    # We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
+    if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
+    then
+        SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+        uv run python $SCRIPT_DIR/../gigl/scripts/post_install.py
+    fi
+}
+
+### Main Script ###
+main() {
+    install_uv_if_needed
+
+    if [[ $DEV -eq 1 ]]
+    then
+        install_dev_tools
+    fi
+
+    if [[ $SKIP_GIGL_LIB_DEPS_INSTALL -eq 0 ]]
+    then
+        install_gigl_lib_deps
+    fi
+}
+
+main
 echo "Finished installation"

@@ -6,6 +6,7 @@ on:
       pr_number:
         description: 'PR to run the workflow on'
         required: true
+
 env:
   DOCKER_BUILDKIT: 1
   GIGL_BASE_CUDA_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cuda-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
@@ -16,6 +17,7 @@ env:
 
 jobs:
   comment-workflow-started:
+
     runs-on: ubuntu-latest
     steps:
     - name: Comment on PR
@@ -26,10 +28,10 @@ jobs:
           Starting to [build](${{env.WORKFLOW_URL}}) base images for CUDA and CPU.
           This may take a while, please be patient.
           The images will be pushed to the GCP Artifact Registry.
-          Once done, the workflow will update the `dep_vars.env` file with the new image names.
+          Once done, the workflow will update the `gigl/dep_vars.env` file with the new image names.
 
   build-cuda-base-image:
-    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -41,7 +43,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
     - name: Setup Machine for building Docker images
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -56,8 +58,8 @@ jobs:
         docker push ${GIGL_BASE_CUDA_IMAGE}
         echo "Pushed CUDA base image to ${GIGL_BASE_CUDA_IMAGE}"
 
-  build-cpu-base-images:
-    runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 4 cores, 16GB RAM, 150 GB SSD
+  build-cpu-base-image:
+    runs-on: ubuntu-latest
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -69,14 +71,13 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
     - name: Setup Machine for building Docker images
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
     - name: Build and Push CPU Base Image and Docker CPU Image
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -85,8 +86,30 @@ jobs:
         docker push ${GIGL_BASE_CPU_IMAGE}
         echo "Pushed CPU base image to ${GIGL_BASE_CPU_IMAGE}"
 
-        echo "Will use CPU image ${GIGL_BASE_CPU_IMAGE} as base image for Dataflow image."
-        docker build -f ./containers/Dockerfile.dataflow.base --build-arg BASE_IMAGE=${GIGL_BASE_CPU_IMAGE} -t ${GIGL_BASE_DATAFLOW_IMAGE} .
+  build-dataflow-base-image:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed for gcloud auth: https://github.com/google-github-actions/auth
+      contents: 'read'
+      id-token: 'write'
+    steps:
+    - name: Checkout PR Branch
+      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ inputs.pr_number }}
+    - name: Setup Machine for building Docker images
+      uses: ./.github/actions/setup-python-tools
+      with:
+        setup_gcloud: "true"
+        try_cleaning_disk_space: "true"
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+    - name: Build and Push Dataflow Base Image
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev
+        docker build -f ./containers/Dockerfile.dataflow.base -t ${GIGL_BASE_DATAFLOW_IMAGE} .
         docker push ${GIGL_BASE_DATAFLOW_IMAGE}
         echo "Pushed Dataflow base image to ${GIGL_BASE_DATAFLOW_IMAGE}"
 
@@ -103,7 +126,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
     - name: Setup Machine for building Docker images
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: ./.github/actions/setup-python-tools
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -124,7 +147,8 @@ jobs:
   build-and-commit-base-images:
     needs:
       - build-cuda-base-image
-      - build-cpu-base-images
+      - build-cpu-base-image
+      - build-dataflow-base-image
       - build-builder-image
     runs-on: ubuntu-latest
     steps:
@@ -134,23 +158,12 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
         should_leave_progress_comments: "false"
-        command: |
-          echo "Writing new image names to dep_vars.env:"
-          echo "  DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CUDA_IMAGE}"
-          echo "  DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CPU_IMAGE}"
-          echo "  DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=${GIGL_BASE_DATAFLOW_IMAGE}"
-          echo "  DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG=${GIGL_BUILDER_IMAGE}"
-          sed -i "s|^DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CUDA_IMAGE}|" dep_vars.env
-          sed -i "s|^DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG=${GIGL_BASE_CPU_IMAGE}|" dep_vars.env
-          sed -i "s|^DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=.*|DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG=${GIGL_BASE_DATAFLOW_IMAGE}|" dep_vars.env
-          sed -i "s|name: us-central1-docker\.pkg\.dev.*|name: ${GIGL_BUILDER_IMAGE}|" .github/cloud_builder/run_command_on_active_checkout.yaml
-
+        command: bash .github/scripts/update_docker_image_refs.sh
     - name: Commit and Push Dep Vars
       uses: snapchat/gigl/.github/actions/commit-and-push@main
       with:
         commit_message: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
         github_token: ${{ secrets.GITHUB_TOKEN }}
-
     - uses: snapchat/gigl/.github/actions/comment-on-pr@main
       with:
         pr_number: ${{ inputs.pr_number }}
@@ -161,5 +174,5 @@ jobs:
           * Dataflow base image: `${{ env.GIGL_BASE_DATAFLOW_IMAGE }}`
           * Builder image: `${{ env.GIGL_BUILDER_IMAGE }}`
 
-          Updated `dep_vars.env` with new image names.
+          Updated `gigl/dep_vars.env` with new image names.
           Updated `.github/cloud_builder/run_command_on_pr_cloud_build.yaml` with new builder image.

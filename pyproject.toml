@@ -1,0 +1,285 @@
+[project]
+name            = "gigl"
+description     = "GIgantic Graph Learning Library"
+readme          = "README.md"
+version         = "0.2.0"
+classifiers     = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available for newer python versions.
+
+dependencies = [
+  "argo-workflows",
+  "chardet",
+  "google-cloud-aiplatform",
+  "google-cloud-dataproc",
+  "google-cloud-logging",
+  "google-cloud-pipeline-components",
+  "google-cloud-storage",
+  # ipython and ipykernel are required for us to run jupyter notebooks as a part of our test suite.
+  # See https://stackoverflow.com/questions/69759351/error-jupyter-client-kernelspec-nosuchkernel-no-such-kernel-named-python3-occu
+  "ipykernel",
+  "ipython",
+  "kfp>=2.0.0",
+  "matplotlib",
+  "mmh3",
+  "msgpack",
+  "nbconvert",
+  "nbformat",
+  "numpy",
+  "omegaconf>=2.3.0,<3.0.0",
+  "pandas",
+  "pip~=25.3", # Used by KFP Python components - need to install pip as a package
+  "protobuf",
+  "python-dotenv",
+  "pyyaml",
+  "scikit-learn",
+  # When updating to a new tensorflow version, please ensure that the version changes align with
+  # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
+  "tensorflow~=2.16",
+]
+
+
+[project.optional-dependencies]
+transform = [
+  # Apache Beam version has to match with what is specified in `containers/Dockerfile.dataflow.base`
+  "apache-beam[gcp]==2.56.0",
+  "pyarrow==10.0.1",
+  # Tensorflow transform packages.
+  # There is no official MAC support for these packages - thus we ignore them on darwin machines.
+  # These packages are also required to be in sync.
+  # See the following for the compatibility matrix: https://pypi.org/project/tensorflow-transform/
+  "tensorflow-data-validation==1.16.1 ; sys_platform != 'darwin'",
+  "tensorflow-metadata==1.16.1 ; sys_platform != 'darwin'",
+  "tensorflow-transform==1.16.0 ; sys_platform != 'darwin'",
+  # Oct 28, 2025 - Latest ver tfx-bsl==1.17.1 requires latest version of Linux distros using glibc 2.39+
+  # i.e. Ubuntu 24.04. Currently, not compatible with our docker images.
+  "tfx-bsl==1.16.1 ; sys_platform != 'darwin'",
+]
+pyg27-torch28-cpu = [
+  "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'", # Compatiblity table: https://docs.pytorch.org/FBGEMM/general/Releases.html#fbgemm-releases-compatibility
+  "pyg_lib; sys_platform != 'darwin'",
+  "torch==2.8",
+  # Oct 24, 25 - 2.7 is latest version and torch ver support is inconsistant accross minor version changes
+  "torch_cluster; sys_platform != 'darwin'",
+  "torch_geometric==2.7",
+  "torch_scatter; sys_platform != 'darwin'",
+  "torch_sparse; sys_platform != 'darwin'",
+  "torch_spline_conv; sys_platform != 'darwin'",
+  "torchrec ; sys_platform != 'darwin'",
+]
+pyg27-torch28-cu128 = [
+  "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'",
+  "pyg_lib; sys_platform != 'darwin'",
+  "torch==2.8 ; sys_platform != 'darwin'",
+  "torch_cluster; sys_platform != 'darwin'",
+  "torch_geometric==2.7 ; sys_platform != 'darwin'",
+  "torch_scatter; sys_platform != 'darwin'",
+  "torch_sparse; sys_platform != 'darwin'",
+  "torch_spline_conv; sys_platform != 'darwin'",
+  "torchrec ; sys_platform != 'darwin'",
+
+]
+experimental = [
+  "hydra-core==1.3.2",
+]
+
+# Declares what deps are conflicting so they are not resolved together.
+# In the case below, we cannot have both pyg27-torch28-cpu and pyg27-torch28-cu128
+# installed at the same time (one is cuda and one is cpu and pull from seperate indexes).
+# Thus, they are treated as conflicting and `uv.lock` will be generated in a way that
+# transitive dependencies between them are resolved separately.
+[tool.uv]
+conflicts = [
+  [{ extra = "pyg27-torch28-cpu" },{ extra = "pyg27-torch28-cu128" }],
+]
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+
+[dependency-groups]
+dev = [
+  {include-group = "docs"},
+  {include-group = "lint"},
+  {include-group = "test"},
+  {include-group = "typing-stubs"},
+  "pre-commit==3.3.2",
+]
+docs = [
+  "astroid==3.3.11", # Newer versions of astroid are not compatible with sphinx==7.4.7
+  "mistune>=2.0.3",
+  "myst-parser==2.0.0",
+  "myst_nb==1.2.0",
+  "nbconvert>=7.16.2",
+  "nbsphinx==0.9.3",
+  "sphinx==7.4.7",
+  "sphinx-autoapi==3.6.0",
+  "sphinx-autodoc-typehints==2.3.0",
+  "sphinx-copybutton==0.5.2",
+  "sphinx-design==0.6.0",
+  "sphinx-hoverxref==1.3.0",
+  "sphinx-rtd-theme==2.0.0",
+  "pydata-sphinx-theme==0.16.1",
+  "sphinx-tabs==3.4.5",
+
+]
+typing-stubs = [
+  "pandas-stubs==2.2.2.240807",
+  "types-psutil==7.0.0.20250401",
+  "types-PyYAML~=6.0.12",
+  "types-requests==2.31.0.6",
+  "types-tqdm==4.67.0.20250513",
+]
+test = [
+  "parameterized==0.9.0",
+]
+lint = [
+  "autoflake==2.3.1",
+  "black~=23.1.0",
+  "isort~=5.12.0",
+  "mdformat==0.7.22",
+  "mdformat_tables==1.0.0",
+  "mypy==1.8.0",
+  "mypy-extensions",
+  "mypy-protobuf==3.3.0",
+]
+
+
+
+# =============================== PyTorch Indexes =============================
+[[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+# Setting this to true prevents packages from being installed from this index
+# unless explicitly pinned to it in [tool.uv.sources]
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# =============================== PyG Indexes ==================================
+[[tool.uv.index]]
+name = "pyg-torch28-cpu"
+url = "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
+explicit = true
+# By default, [[tool.uv.index]] entries are assumed to be PyPI-style registries
+# that implement the PEP 503. However, pyg is hosted in a "flat" index, which is
+# just an HTML page that contain flat lists of wheels and source distributions.
+format = "flat"
+
+[[tool.uv.index]]
+name = "pyg-torch28-cu128"
+url = "https://data.pyg.org/whl/torch-2.8.0+cu128.html"
+explicit = true
+format = "flat"
+
+# =============================== Google Artifact Registry Index ========================
+[[tool.uv.index]]
+name = "gcp-release-registry"
+url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/"
+publish-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl"
+explicit = true
+
+# ========== Mapping individual packages to their appropriate index =============
+[tool.uv.sources]
+# ============= PyTorch hosted Package Index Mappings
+torch = [
+  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+]
+torchrec = [
+  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+]
+fbgemm-gpu = [
+  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+]
+# ============= PyG hosted Package Index Mappings
+# PyG wheels are built for specific versions of torch @ a time. Thus the packages
+# are mapped to the appropriate PyG index based on the torch version.
+pyg_lib = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_scatter = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_sparse = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_cluster = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+torch_spline_conv = [
+  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+]
+
+
+
+# ===================== Build/Project Configurations ===========================
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools.packages.find]
+where = ["."]  # list of folders that contain the packages
+include = ["gigl*", "snapchat*"]  # Include only packages that match the specified patterns
+
+[project.urls]
+Homepage = "https://github.com/snapchat/gigl"
+
+[project.scripts]
+gigl-post-install = "gigl.scripts.post_install:main"
+
+[tool.setuptools.package-data]
+# Include dep_vars.env from the root directory
+"gigl" = ["dep_vars.env", "**/*.yaml"]
+"gigl.scripts" = ["*.sh"]
+
+
+[tool.black]
+# Skip generated proto files.
+# Note black uses regex instead of the glob isort/autoflake use.
+exclude = ".*_pb2.pyi?"
+
+[tool.isort]
+profile = "black"
+src_paths = [
+    "gigl",
+    "tests",
+    "snapchat",
+    "scripts",
+]
+# Skip generated proto files.
+skip_glob = [
+    "**_pb2.py*",
+]
+skip_gitignore = true
+
+[tool.autoflake]
+exclude =  [
+    # Skip generated proto files. If we run autoflake on generated protos
+    # their descriptor gets removed and they break, see below.
+    #   File "snapchat/research/gbml/gbml_config_pb2.py", line 17, in <module>
+    #   DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(...)
+    #   TypeError: Couldn't build proto file into descriptor pool!
+    #   Invalid proto descriptor for file "snapchat/research/gbml/gbml_config.proto":
+    #   snapchat/research/gbml/trained_model_metadata.proto: Import "snapchat/research/gbml/trained_model_metadata.proto" has not been loaded.
+    "**_pb2.py*",
+    # __init__.py are used to "export" modules, and their input are often not directly used.
+    "__init__.py",
+]
+remove-all-unused-imports = true
+in-place = true
+recursive = true

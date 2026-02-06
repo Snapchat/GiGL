@@ -61,9 +61,41 @@ class TestWithAssets(unittest.TestCase):
         self.assertIn("edges", config)
 ```
 
+### Testing Errors
+
+Error cases *should* be tested, with `self.assertRaises`.
+Be careful when checking for error messages in the test case, as it makes it hard to update logs in the future.
+Some examples where we *should* check for error messages:
+
+```py
+# Example 1: Multiple errors - we should make sure we are raising when expected
+def foo():
+    # Check when bar fails
+    if not bar():
+        raise ValueError("bar() failed!")
+
+    # Check when baz fails
+    if not baz():
+        raise ValueError("baz() failed!")
+
+# Example 2: When the error message has load bearing use downstream - e.g. error reporting
+def qux():
+    if not some_check():
+        raise ValueError(f"Structured error: my/namespace/tries/10")
+```
+
+In all other cases, we should not be checking the exact error message.
+E.g. if the error message is formatted with the input:
+
+```py
+def assert_even(x: int):
+    if not x % 2:
+        raise ValueError(f"{x} is not even")
+```
+
 ### Integration Testing
 
-For integration tests that require cloud resources, add them to the `python/tests/integration` directory
+For integration tests that require cloud resources, add them to the `tests/integration` directory
 
 ### Mocking External Dependencies
 
@@ -148,7 +180,7 @@ Use the following commands to evaluate a test:
 - unit test: `make unit_test_py`
   - Set PY_TEST_FILES=\<TEST_FILE_NAME_GLOB> to test a specifc file.
   - Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
-  - By default, runs all tests under python/tests/unit.
+  - By default, runs all tests under tests/unit.
 - integration test: `make integration_test PY_TEST_FILES="some_test.py"`
   - ensure to use `PY_TEST_FILES` and run integration tests one at a time as they take a long time to run
 

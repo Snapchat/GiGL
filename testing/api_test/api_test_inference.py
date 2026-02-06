@@ -190,7 +190,7 @@ def _inference_process(
 
     # GiGL class for exporting embeddings to GCS. This is achieved by writing ids and embeddings to an in-memory buffer which gets
     # flushed to GCS. Setting the min_shard_size_threshold_bytes field of this class sets the frequency of flushing to GCS, and defaults
-    # to only flushing when flush_embeddings() is called explicitly or after exiting via a context manager.
+    # to only flushing when flush_records() is called explicitly or after exiting via a context manager.
     exporter = EmbeddingExporter(export_dir=gcs_base_uri)
 
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
@@ -248,7 +248,7 @@ def _inference_process(
 
     write_embedding_start_time = time.time()
     # Flushes all remaining embeddings to GCS
-    exporter.flush_embeddings()
+    exporter.flush_records()
 
     logger.info(
         f"--- Rank {rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"

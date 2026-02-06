@@ -173,6 +173,18 @@ message GbmlConfig {
     }
   }
 
+  // Configuration for GraphStore storage.
+  message GraphStoreStorageConfig {
+    // Command to use for launching storage job.
+    // e.g. "python -m gigl.distributed.graph_store.storage_main".
+    // Required.
+    string command = 1;
+    // Arguments to instantiate concrete BaseStorage instance with.
+    // Will be appended to the storage_command.
+    // e.g. {"my_dataset_uri": "gs://my_dataset"} -> "python -m gigl.distributed.graph_store.storage_main --my_dataset_uri=gs://my_dataset"
+    map<string, string> storage_args = 2;
+  }
+
   message TrainerConfig {
     // (deprecated)
     // Uri pointing to user-written BaseTrainer class definition. Used for the subgraph-sampling-based training process.
@@ -188,6 +200,14 @@ message GbmlConfig {
     }
     // Weather to log to tensorboard or not (defaults to false)
     bool should_log_to_tensorboard = 12;
+
+    // Configuration for GraphStore storage.
+    // If setup, then GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config must be set.
+    // e.g. With separte job configs for storage and compute jobs.
+    // See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
+    oneof storage_config {
+      GraphStoreStorageConfig graph_store_storage_config = 13;
+    }
   }
 
   message InferencerConfig {
@@ -203,8 +223,16 @@ message GbmlConfig {
       string command = 101;
     }
     // Optional. If set, will be used to batch inference samples to a specific size before call for inference is made
-    // Defaults to setting in python/gigl/src/inference/gnn_inferencer.py
+    // Defaults to setting in gigl/src/inference/gnn_inferencer.py
     uint32 inference_batch_size = 5;
+
+    // Configuration for GraphStore storage.
+    // If setup, then GiGLResourceConfig.inferencer_resource_config.vertex_ai_graph_store_inferencer_config must be set.
+    // e.g. With separte job configs for storage and compute jobs.
+    // See GiGL/examples/link_prediction/graph_store/configs/example_resource_config.yaml for an example.
+    oneof storage_config {
+      GraphStoreStorageConfig graph_store_storage_config = 6;
+    }
   }
 
   message PostProcessorConfig {

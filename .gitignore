@@ -13,7 +13,6 @@ logs/
 .devcontainer/
 gigl.egg-info/
 gigl_dataflow_setup.egg-info/
-.python-version
 dist/
 *.egg-info/
 miniconda/
@@ -31,8 +30,8 @@ project/plugins/project/
 .history
 .cache
 .lib/
-python/gigl/env/customer.yaml
-python/gigl/deps/
+gigl/env/customer.yaml
+gigl/deps/
 _autosummary/
 graphlearn_torch/
 graphlearn_torch.egg-info/
