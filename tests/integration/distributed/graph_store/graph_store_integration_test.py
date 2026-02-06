@@ -529,7 +529,7 @@ class GraphStoreIntegrationTest(TestCase):
         host_ip = socket.gethostbyname(socket.gethostname())
         cluster_info = GraphStoreInfo(
             num_storage_nodes=2,
-            num_compute_nodes=4,
+            num_compute_nodes=2,
             num_processes_per_compute=2,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
@@ -626,8 +626,8 @@ class GraphStoreIntegrationTest(TestCase):
         host_ip = socket.gethostbyname(socket.gethostname())
         cluster_info = GraphStoreInfo(
             num_storage_nodes=2,
-            num_compute_nodes=4,
-            num_processes_per_compute=2,
+            num_compute_nodes=2,
+            num_processes_per_compute=1,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
             compute_cluster_master_ip=host_ip,
