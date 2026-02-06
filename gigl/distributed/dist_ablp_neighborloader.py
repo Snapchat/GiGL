@@ -20,7 +20,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistAblpSamplingProducer
+from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
@@ -520,7 +520,7 @@ class DistABLPLoader(DistLoader):
         if self.worker_options.pin_memory:
             self._channel.pin_memory()
 
-        self._mp_producer = DistAblpSamplingProducer(
+        self._mp_producer = DistABLPSamplingProducer(
             self.data,
             self.input_data,
             self.sampling_config,

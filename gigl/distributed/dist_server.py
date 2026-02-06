@@ -14,13 +14,15 @@ from typing import Optional, Union
 
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
-from graphlearn_torch.channel import QueueTimeoutError, ShmChannel
+from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     RemoteDistSamplingWorkerOptions,
     barrier,
     init_rpc,
     shutdown_rpc,
 )
+from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
+from graphlearn_torch.distributed.dist_server import DistServer as GltDistServer
 from graphlearn_torch.partition import PartitionBook
 from graphlearn_torch.sampler import (
     EdgeSamplerInput,
@@ -30,7 +32,8 @@ from graphlearn_torch.sampler import (
 )
 
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistAblpSamplingProducer
+from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
+from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
@@ -39,7 +42,7 @@ r""" Interval (in seconds) to check exit status of server.
 
 
 # TODO(kmonte): Migrate graph_store/storage_utils to this class.
-class DistServer(object):
+class DistServer(GltDistServer):
     r"""A server that supports launching remote sampling workers for
     training clients.
 
@@ -60,7 +63,7 @@ class DistServer(object):
         # The mapping from the key in worker options (such as 'train', 'test')
         # to producer id
         self._worker_key2producer_id: dict[str, int] = {}
-        self._producer_pool: dict[int, DistAblpSamplingProducer] = {}
+        self._producer_pool: dict[int, DistABLPSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
 
@@ -153,9 +156,59 @@ class DistServer(object):
             raise ValueError(f"Invalid layout {layout}")
         return (row_count, col_count)
 
+    def create_sampling_ablp_producer(
+        self,
+        sampler_input: Union[
+            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
+        ],
+        sampling_config: SamplingConfig,
+        worker_options: RemoteDistSamplingWorkerOptions,
+    ) -> int:
+        r"""Create and initialize an instance of ``DistABLPSamplingProducer`` with
+        a group of subprocesses for distributed sampling.
+
+        Args:
+          sampler_input (NodeSamplerInput or EdgeSamplerInput): The input data
+            for sampling.
+          sampling_config (SamplingConfig): Configuration of sampling meta info.
+          worker_options (RemoteDistSamplingWorkerOptions): Options for launching
+            remote sampling workers by this server.
+
+        Returns:
+          A unique id of created sampling producer on this server.
+        """
+
+        if not isinstance(sampler_input, ABLPNodeSamplerInput):
+            raise ValueError(
+                f"Sampler input must be an instance of ABLPNodeSamplerInput. Received: {type(sampler_input)}"
+            )
+
+        if isinstance(sampler_input, RemoteSamplerInput):
+            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
+
+        with self._lock:
+            producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
+            if producer_id is None:
+                producer_id = self._cur_producer_idx
+                self._worker_key2producer_id[worker_options.worker_key] = producer_id
+                self._cur_producer_idx += 1
+                buffer = ShmChannel(
+                    worker_options.buffer_capacity, worker_options.buffer_size
+                )
+                producer = DistABLPSamplingProducer(
+                    self.dataset, sampler_input, sampling_config, worker_options, buffer
+                )
+                producer.init()
+                self._producer_pool[producer_id] = producer
+                self._msg_buffer_pool[producer_id] = buffer
+                self._epoch[producer_id] = -1
+        return producer_id
+
     def create_sampling_producer(
         self,
-        sampler_input: Union[NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput],
+        sampler_input: Union[
+            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
+        ],
         sampling_config: SamplingConfig,
         worker_options: RemoteDistSamplingWorkerOptions,
     ) -> int:
@@ -184,10 +237,7 @@ class DistServer(object):
                 buffer = ShmChannel(
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
-                print(
-                    f"Creating DistMpSamplingProducer ({DistAblpSamplingProducer}) for worker key: {worker_options.worker_key} with producer id: {producer_id}"
-                )
-                producer = DistAblpSamplingProducer(
+                producer = DistMpSamplingProducer(
                     self.dataset, sampler_input, sampling_config, worker_options, buffer
                 )
                 producer.init()
@@ -222,7 +272,7 @@ class DistServer(object):
 
     def fetch_one_sampled_message(
         self, producer_id: int
-    ) -> tuple[Optional[bytes], bool]:
+    ) -> tuple[Optional[SampleMessage], bool]:
         r"""Fetch a sampled message from the buffer of a specific sampling
         producer with its producer id.
         """
