@@ -71,8 +71,6 @@ import os
 from distutils.util import strtobool
 from typing import Literal, Optional, Union
 
-# TODO(kmonte): Remove GLT imports from this file.
-import graphlearn_torch as glt
 import torch
 
 from gigl.common import Uri, UriFactory
@@ -80,6 +78,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
+from gigl.distributed.dist_server import init_server, wait_and_shutdown_server
 from gigl.distributed.graph_store.storage_utils import register_dataset
 from gigl.distributed.utils import get_free_ports_from_master_node, get_graph_store_info
 from gigl.distributed.utils.networking import get_free_ports_from_master_node
@@ -129,7 +128,7 @@ def _run_storage_process(
     )
     # Initialize the GLT server before starting the Torch Distributed process group.
     # Otherwise, we saw intermittent hangs when initializing the server.
-    glt.distributed.init_server(
+    init_server(
         num_servers=cluster_info.num_storage_nodes,
         server_rank=storage_rank,
         dataset=dataset,
@@ -158,7 +157,7 @@ def _run_storage_process(
     )
     # Wait for the server to exit.
     # Will wait until clients are also shutdown (with `gigl.distributed.graph_store.compute.shutdown_compute_proccess`)
-    glt.distributed.wait_and_shutdown_server()
+    wait_and_shutdown_server()
     logger.info(f"Storage node {storage_rank} exited")
 
 
