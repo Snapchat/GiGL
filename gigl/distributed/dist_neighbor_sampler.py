@@ -377,6 +377,18 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         neighbors. For heterogeneous graphs, the algorithm traverses across all
         edge types, switching based on the current node type.
 
+        Algorithm Overview (each iteration of the main loop):
+            1. Fetch neighbors: Drain all nodes from the queue, group by edge type,
+               and perform a batched neighbor lookup to populate neighbor/degree caches.
+            2. Push residual: For each queued node, add its residual to its PPR score,
+               reset its residual to zero, then distribute (1-alpha) * residual to
+               all neighbors proportionally by degree.
+            3. Batch fetch degrees: Group all neighbors that received residual and
+               perform a batched lookup to get their degrees (needed for threshold check).
+            4. Re-queue high-residual nodes: For each neighbor that received residual,
+               check if residual >= alpha * eps * total_degree. If so, add to queue
+               for processing in the next iteration.
+
         Args:
             seed_nodes: Tensor of seed node IDs [batch_size]
             seed_node_type: Node type of seed nodes. Should be None for homogeneous graphs.
@@ -393,7 +405,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         batch_size = seed_nodes.size(0)
 
         # PPR scores: p[i][(node_id, node_type)] = score
-        # For homogeneous graphs, node_type is always None
         p: list[dict[Tuple[int, NodeType], float]] = [
             defaultdict(float) for _ in range(batch_size)
         ]
