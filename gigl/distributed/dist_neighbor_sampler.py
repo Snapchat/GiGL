@@ -430,6 +430,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     degree_cache[cache_key] = count
                     offset += count
 
+            # Collect neighbors needing degree lookups while processing
+            neighbors_needing_degree: dict[Optional[EdgeType], Set[int]] = defaultdict(
+                set
+            )
+
             # Process nodes and push residual
             for i in range(batch_size):
                 for u_node, u_type in nodes_to_process[i]:
@@ -472,21 +477,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             key_v = (v_node, v_type)
                             r[i][key_v] += push_value
 
-            # Collect all neighbor nodes that need degree lookups
-            neighbors_needing_degree: dict[Optional[EdgeType], Set[int]] = defaultdict(
-                set
-            )
-
-            for i in range(batch_size):
-                for u_node, u_type in nodes_to_process[i]:
-                    edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
-                    for etype in edge_types_for_node:
-                        cache_key = (u_node, etype)
-                        neighbor_list = neighbor_cache[cache_key]
-                        v_type = self._get_neighbor_type(etype)
-
-                        for v_node in neighbor_list:
-                            # Check each edge type the neighbor can traverse
+                            # Collect neighbors needing degree lookups
                             edge_types_for_v = self._node_type_to_edge_types.get(
                                 v_type, []
                             )
