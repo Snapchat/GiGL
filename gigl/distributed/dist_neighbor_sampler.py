@@ -443,28 +443,26 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         while num_nodes_in_queue > 0:
             ppr_num_iterations += 1
 
-            # Drain all nodes from all queues for processing in this iteration
+            # Drain all nodes from all queues and group by edge type for batched lookups
             loop_start = time.perf_counter()
             nodes_to_process: list[Set[Tuple[int, NodeType]]] = [
                 set() for _ in range(batch_size)
             ]
+            nodes_by_edge_type: dict[EdgeType, Set[int]] = defaultdict(set)
+
             for i in range(batch_size):
                 if q[i]:
                     nodes_to_process[i] = q[i]
                     q[i] = set()
                     num_nodes_in_queue -= len(nodes_to_process[i])
 
-            # Group nodes by (node_type, edge_type) for batched lookups
-            nodes_by_edge_type: dict[EdgeType, Set[int]] = defaultdict(set)
-
-            for i in range(batch_size):
-                for node_id, node_type in nodes_to_process[i]:
-                    # Get all edge types we can traverse from this node type
-                    edge_types_for_node = self._node_type_to_edge_types[node_type]
-                    for etype in edge_types_for_node:
-                        cache_key = (node_id, etype)
-                        if cache_key not in neighbor_cache:
-                            nodes_by_edge_type[etype].add(node_id)
+                    # Group nodes by edge type for batched lookups
+                    for node_id, node_type in nodes_to_process[i]:
+                        edge_types_for_node = self._node_type_to_edge_types[node_type]
+                        for etype in edge_types_for_node:
+                            cache_key = (node_id, etype)
+                            if cache_key not in neighbor_cache:
+                                nodes_by_edge_type[etype].add(node_id)
             total_for_loop_time += time.perf_counter() - loop_start
 
             # Batch fetch neighbors per edge type
