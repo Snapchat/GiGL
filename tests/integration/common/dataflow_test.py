@@ -1,11 +1,10 @@
-import unittest
-
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.testing.util import assert_that, equal_to
 
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.dataflow import init_beam_pipeline_options
+from tests.test_assets.test_case import TestCase
 
 
 class _ComputeLengthDoFn(beam.DoFn):
@@ -19,7 +18,7 @@ class _PrintDoFn(beam.DoFn):
         return [element]
 
 
-class DataflowUtilsTest(unittest.TestCase):
+class DataflowUtilsTest(TestCase):
     def test_can_create_pipeline_config(self):
         NUM_WORKERS = 1
         MAX_NUM_WORKERS = 32

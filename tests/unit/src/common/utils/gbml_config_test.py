@@ -1,14 +1,14 @@
 import tempfile
-import unittest
 from uuid import uuid4
 
 from gigl.common import LocalUri
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import gbml_config_pb2
+from tests.test_assets.test_case import TestCase
 
 
-class GbmlConfigTest(unittest.TestCase):
+class GbmlConfigTest(TestCase):
     def setUp(self) -> None:
         self.file_loader = FileLoader()
         self.proto_utils = ProtoUtils()

@@ -1,7 +1,7 @@
-import unittest
 from typing import Optional, Union
 
 import torch
+from absl.testing import absltest
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -15,6 +15,7 @@ from gigl.distributed.utils.neighborloader import (
 )
 from gigl.types.graph import FeatureInfo, message_passing_to_positive_label
 from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 _U2U_EDGE_TYPE = ("user", "to", "user")
 _U2I_EDGE_TYPE = ("user", "to", "item")
@@ -22,7 +23,7 @@ _I2U_EDGE_TYPE = ("item", "to", "user")
 _LABELED_EDGE_TYPE = message_passing_to_positive_label(_U2I_EDGE_TYPE)
 
 
-class LoaderUtilsTest(unittest.TestCase):
+class LoaderUtilsTest(TestCase):
     def setUp(self):
         self._device = torch.device("cpu")
         super().setUp()
@@ -487,4 +488,4 @@ class LoaderUtilsTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

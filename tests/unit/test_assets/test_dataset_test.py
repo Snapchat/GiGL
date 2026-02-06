@@ -1,8 +1,7 @@
 """Unit tests for test_dataset factory functions."""
 
-import unittest
-
 import torch
+from absl.testing import absltest
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import FeatureInfo
@@ -21,9 +20,10 @@ from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestCreateHomogeneousDataset(unittest.TestCase):
+class TestCreateHomogeneousDataset(TestCase):
     """Tests for create_homogeneous_dataset function."""
 
     def test_with_default_edge_index(self) -> None:
@@ -75,7 +75,7 @@ class TestCreateHomogeneousDataset(unittest.TestCase):
         assert_tensor_equality(DEFAULT_HOMOGENEOUS_EDGE_INDEX, original)
 
 
-class TestCreateHeterogeneousDataset(unittest.TestCase):
+class TestCreateHeterogeneousDataset(TestCase):
     """Tests for create_heterogeneous_dataset function."""
 
     def test_with_default_edge_indices(self) -> None:
@@ -155,7 +155,7 @@ class TestCreateHeterogeneousDataset(unittest.TestCase):
             assert_tensor_equality(edge_index, original[edge_type])
 
 
-class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
+class TestCreateHeterogeneousDatasetWithLabels(TestCase):
     """Tests for create_heterogeneous_dataset_with_labels function."""
 
     def tearDown(self) -> None:
@@ -258,4 +258,4 @@ class TestCreateHeterogeneousDatasetWithLabels(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

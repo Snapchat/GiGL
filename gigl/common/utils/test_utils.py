@@ -7,6 +7,7 @@ from typing import Iterator, Tuple
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
@@ -48,7 +49,7 @@ def parse_args() -> TestArgs:
     return test_args
 
 
-def _run_individual_test(test: unittest.TestCase) -> Tuple[bool, int]:
+def _run_individual_test(test: TestCase) -> Tuple[bool, int]:
     # If we don't have any test cases, we skip running the test.
     # This reduces some noise in the logs.
     if test.countTestCases() == 0:

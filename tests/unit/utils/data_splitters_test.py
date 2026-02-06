@@ -1,9 +1,9 @@
-import unittest
 from collections.abc import Mapping
 from typing import Union
 
 import torch
 import torch.multiprocessing as mp
+from absl.testing import absltest
 from graphlearn_torch.data import Dataset, Topology
 from parameterized import param, parameterized
 from torch.testing import assert_close
@@ -24,6 +24,7 @@ from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
 )
+from tests.test_assets.test_case import TestCase
 
 # For TestDataSplitters
 _NODE_A = NodeType("A")
@@ -69,7 +70,7 @@ def _run_splitter_distributed(
     assert_tensor_equality(test, expected_test)
 
 
-class TestDataSplitters(unittest.TestCase):
+class TestDataSplitters(TestCase):
     def tearDown(self):
         if torch.distributed.is_initialized():
             print("Destroying process group")
@@ -975,7 +976,7 @@ class TestDataSplitters(unittest.TestCase):
             splitter(node_ids)
 
 
-class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
+class SelectSSLPositiveLabelEdgesTest(TestCase):
     @parameterized.expand(
         [
             param(
@@ -1034,4 +1035,4 @@ class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

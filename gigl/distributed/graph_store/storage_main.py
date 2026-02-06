@@ -94,10 +94,10 @@ def storage_node_process(
         sample_edge_direction (Literal["in", "out"]): The sample edge direction.
         splitter (Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]]): The splitter to use. If None, will not split the dataset.
         tf_record_uri_pattern (str): The TF Record URI pattern.
-        storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
         ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
             Must be None if supervised edge labels are provided in advance.
             If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
+        storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
         timeout_seconds (Optional[float]): The timeout seconds for the storage node process.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"

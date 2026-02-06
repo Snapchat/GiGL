@@ -1,4 +1,3 @@
-import unittest
 from typing import cast
 
 import numpy as np
@@ -35,9 +34,10 @@ from tests.test_assets.graph_metadata_constants import (
     EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER,
     EXAMPLE_HETEROGENEOUS_PREPROCESSED_METADATA_PB_WRAPPER,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class NodeAnchorBasedLinkPredictionBatchingTest(unittest.TestCase):
+class NodeAnchorBasedLinkPredictionBatchingTest(TestCase):
     def setUp(self) -> None:
         self.heterogeneous_condensed_node_type_zero = (
             EXAMPLE_HETEROGENEOUS_CONDENSED_NODE_TYPES[0]

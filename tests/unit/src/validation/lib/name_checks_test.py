@@ -1,13 +1,13 @@
-import unittest
-
+from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestStringChecks(unittest.TestCase):
+class TestStringChecks(TestCase):
     @parameterized.expand(
         [
             param("valid_job_name", "valid_job_name"),
@@ -39,4 +39,4 @@ class TestStringChecks(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

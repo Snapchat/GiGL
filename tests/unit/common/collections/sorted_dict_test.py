@@ -1,10 +1,12 @@
-import unittest
 from typing import Any
 
+from absl.testing import absltest
+
 from gigl.common.collections.sorted_dict import SortedDict
+from tests.test_assets.test_case import TestCase
 
 
-class TestSortedDict(unittest.TestCase):
+class TestSortedDict(TestCase):
     """Test suite for SortedDict collection class."""
 
     def setUp(self) -> None:
@@ -204,4 +206,4 @@ class TestSortedDict(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()
