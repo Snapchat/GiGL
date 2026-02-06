@@ -2,7 +2,7 @@ import asyncio
 import gc
 import heapq
 from collections import defaultdict
-from typing import Optional, Set, Tuple, Union, dict, list
+from typing import Optional, Set, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
