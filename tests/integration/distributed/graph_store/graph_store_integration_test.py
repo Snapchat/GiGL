@@ -511,6 +511,15 @@ def _get_expected_input_nodes_by_rank(
 
 
 class GraphStoreIntegrationTest(TestCase):
+    """
+    NOTE: Since these tests run on cloud build,
+    and our python process memory footprint is quite large due to tf, torch, etc,
+    We need to be careful to not spawn too many processes.
+    Otherwise we will OOM and see "myterious" failures like the below:
+    make: *** [Makefile:119: integration_test] Error 137
+    ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
+    ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
+    """
     def test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
