@@ -291,7 +291,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     async def _get_neighbors_for_nodes(
         self,
         nodes: torch.Tensor,
-        edge_type: Optional[EdgeType] = None,
+        edge_type: EdgeType,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Fetch neighbors for a batch of nodes.
@@ -303,9 +303,62 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Use the underlying sampling infrastructure to get all neighbors
         # We request a large number to effectively get all neighbors
         output: NeighborOutput = await self._sample_one_hop(
-            srcs=nodes, num_nbr=self._num_nbrs_per_hop, etype=edge_type
+            srcs=nodes,
+            num_nbr=self._num_nbrs_per_hop,
+            etype=edge_type if edge_type is not _PPR_HOMOGENEOUS_EDGE_TYPE else None,
         )
         return output.nbr, output.nbr_num
+
+    async def _batch_fetch_neighbors(
+        self,
+        nodes_by_edge_type: dict[EdgeType, Set[int]],
+        neighbor_target: dict[Tuple[int, EdgeType], list[int]],
+        degree_target: dict[Tuple[int, EdgeType], int],
+        device: torch.device,
+    ) -> int:
+        """
+        Batch fetch neighbors for nodes grouped by edge type.
+
+        Fetches neighbors for all nodes in nodes_by_edge_type, populating
+        neighbor_target with neighbor lists and degree_target with counts.
+
+        Args:
+            nodes_by_edge_type: Dict mapping edge type to set of node IDs to fetch
+            neighbor_target: Dict to populate with (node_id, edge_type) -> neighbor list
+            degree_target: Dict to populate with (node_id, edge_type) -> degree count
+            device: Torch device for tensor creation
+
+        Returns:
+            Number of neighbor lookup calls made
+        """
+        num_lookups = 0
+        for etype, node_ids in nodes_by_edge_type.items():
+            if not node_ids:
+                continue
+            nodes_list = list(node_ids)
+            lookup_tensor = torch.tensor(nodes_list, dtype=torch.long, device=device)
+
+            neighbors, neighbor_counts = await self._get_neighbors_for_nodes(
+                lookup_tensor,
+                etype,
+            )
+            num_lookups += 1
+
+            neighbors_list = neighbors.tolist()
+            counts_list = neighbor_counts.tolist()
+            del neighbors, neighbor_counts
+
+            # neighbors_list is a flat concatenation of all neighbors for all looked-up nodes.
+            # We use offset to slice out each node's neighbors: node i's neighbors are at
+            # neighbors_list[offset : offset + count], then we advance offset by count.
+            offset = 0
+            for node_id, count in zip(nodes_list, counts_list):
+                cache_key = (node_id, etype)
+                neighbor_target[cache_key] = neighbors_list[offset : offset + count]
+                degree_target[cache_key] = count
+                offset += count
+
+        return num_lookups
 
     async def _compute_ppr_scores(
         self,
@@ -341,18 +394,16 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         # PPR scores: p[i][(node_id, node_type)] = score
         # For homogeneous graphs, node_type is always None
-        p: list[dict[Tuple[int, Optional[NodeType]], float]] = [
+        p: list[dict[Tuple[int, NodeType], float]] = [
             defaultdict(float) for _ in range(batch_size)
         ]
         # Residuals: r[i][(node_id, node_type)] = residual
-        r: list[dict[Tuple[int, Optional[NodeType]], float]] = [
+        r: list[dict[Tuple[int, NodeType], float]] = [
             defaultdict(float) for _ in range(batch_size)
         ]
 
         # Queue stores (node_id, node_type) tuples
-        q: list[Set[Tuple[int, Optional[NodeType]]]] = [
-            set() for _ in range(batch_size)
-        ]
+        q: list[Set[Tuple[int, NodeType]]] = [set() for _ in range(batch_size)]
 
         seed_list = seed_nodes.tolist()
 
@@ -362,9 +413,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             q[i].add((seed, seed_node_type))
 
         # Cache keyed by (node_id, edge_type) since same node can have different neighbors per edge type
-        # For homogeneous graphs, edge_type is always None
-        neighbor_cache: dict[Tuple[int, Optional[EdgeType]], list[int]] = {}
-        degree_cache: dict[Tuple[int, Optional[EdgeType]], int] = {}
+        neighbor_cache: dict[Tuple[int, EdgeType], list[int]] = {}
+        degree_cache: dict[Tuple[int, EdgeType], int] = {}
 
         num_nodes_in_queue = batch_size
 
@@ -377,7 +427,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             ppr_num_iterations += 1
 
             # Drain all nodes from all queues for processing in this iteration
-            nodes_to_process: list[Set[Tuple[int, Optional[NodeType]]]] = [
+            nodes_to_process: list[Set[Tuple[int, NodeType]]] = [
                 set() for _ in range(batch_size)
             ]
             for i in range(batch_size):
@@ -387,7 +437,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     num_nodes_in_queue -= len(nodes_to_process[i])
 
             # Group nodes by (node_type, edge_type) for batched lookups
-            nodes_by_edge_type: dict[Optional[EdgeType], Set[int]] = defaultdict(set)
+            nodes_by_edge_type: dict[EdgeType, Set[int]] = defaultdict(set)
 
             for i in range(batch_size):
                 for node_id, node_type in nodes_to_process[i]:
@@ -401,39 +451,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             nodes_by_edge_type[etype].add(node_id)
 
             # Batch fetch neighbors per edge type
-            for etype, node_ids in nodes_by_edge_type.items():
-                if not node_ids:
-                    continue
-                nodes_list = list(node_ids)
-                lookup_tensor = torch.tensor(
-                    nodes_list, dtype=torch.long, device=device
-                )
-
-                neighbors, neighbor_counts = await self._get_neighbors_for_nodes(
-                    lookup_tensor,
-                    etype if etype is not _PPR_HOMOGENEOUS_EDGE_TYPE else None,
-                )
-                ppr_num_neighbor_lookups += 1
-
-                neighbors_list = neighbors.tolist()
-                counts_list = neighbor_counts.tolist()
-                del neighbors, neighbor_counts
-
-                # Populate both caches with Python lists.
-                # neighbors_list is a flat concatenation of all neighbors for all looked-up nodes.
-                # We use offset to slice out each node's neighbors: node i's neighbors are at
-                # neighbors_list[offset : offset + count], then we advance offset by count.
-                offset = 0
-                for node_id, count in zip(nodes_list, counts_list):
-                    cache_key = (node_id, etype)
-                    neighbor_cache[cache_key] = neighbors_list[offset : offset + count]
-                    degree_cache[cache_key] = count
-                    offset += count
-
-            # Collect neighbors needing degree lookups while processing
-            neighbors_needing_degree: dict[Optional[EdgeType], Set[int]] = defaultdict(
-                set
+            ppr_num_neighbor_lookups += await self._batch_fetch_neighbors(
+                nodes_by_edge_type, neighbor_cache, degree_cache, device
             )
+
+            # Track unique (batch_idx, v_node, v_type) that received residual updates
+            nodes_with_residual: Set[Tuple[int, int, NodeType]] = set()
 
             # Process nodes and push residual
             for i in range(batch_size):
@@ -476,15 +499,17 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         for v_node in neighbor_list:
                             key_v = (v_node, v_type)
                             r[i][key_v] += push_value
+                            nodes_with_residual.add((i, v_node, v_type))
 
-                            # Collect neighbors needing degree lookups
-                            edge_types_for_v = self._node_type_to_edge_types.get(
-                                v_type, []
-                            )
-                            for v_etype in edge_types_for_v:
-                                v_cache_key = (v_node, v_etype)
-                                if v_cache_key not in degree_cache:
-                                    neighbors_needing_degree[v_etype].add(v_node)
+            # Derive neighbors needing degree lookups from nodes_with_residual
+            # degree_cache check determines if fetch is needed, set handles deduplication
+            neighbors_needing_degree: dict[EdgeType, Set[int]] = defaultdict(set)
+            for _, v_node, v_type in nodes_with_residual:
+                edge_types_for_v = self._node_type_to_edge_types.get(v_type, [])
+                for v_etype in edge_types_for_v:
+                    v_cache_key = (v_node, v_etype)
+                    if v_cache_key not in degree_cache:
+                        neighbors_needing_degree[v_etype].add(v_node)
 
             # Batch fetch neighbors for all v_nodes not in cache to get their degrees.
             # We keep neighbors temporarily and only promote to neighbor_cache if they pass the residual threshold.
@@ -494,77 +519,40 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # and neighbor counts. However, GLT doesn't expose a lever for only getting neighbor counts, so we
             # fetch all neighbors and neighbor counts initially.
             # TODO (mkolodner-sc): Investigate and potentially upstream an item to GLT to expose lever for only getting neighbor counts.
-            temp_neighbors: dict[Tuple[int, Optional[EdgeType]], list[int]] = {}
-            for etype, node_ids in neighbors_needing_degree.items():
-                if not node_ids:
-                    continue
-                nodes_list = list(node_ids)
-                lookup_tensor = torch.tensor(
-                    nodes_list, dtype=torch.long, device=device
-                )
-
-                neighbors, neighbor_counts = await self._get_neighbors_for_nodes(
-                    lookup_tensor,
-                    etype if etype is not _PPR_HOMOGENEOUS_EDGE_TYPE else None,
-                )
-                ppr_num_neighbor_lookups += 1
-
-                neighbors_list = neighbors.tolist()
-                counts_list = neighbor_counts.tolist()
-                del neighbors, neighbor_counts
-
-                # Populate degree_cache and temp_neighbors
-                # neighbors_list is a flat concatenation of all neighbors for all looked-up nodes.
-                # We use offset to slice out each node's neighbors: node i's neighbors are at
-                # neighbors_list[offset : offset + count], then we advance offset by count.
-                offset = 0
-                for node_id, count in zip(nodes_list, counts_list):
-                    cache_key = (node_id, etype)
-                    degree_cache[cache_key] = count
-                    temp_neighbors[cache_key] = neighbors_list[offset : offset + count]
-                    offset += count
+            temp_neighbors: dict[Tuple[int, EdgeType], list[int]] = {}
+            ppr_num_neighbor_lookups += await self._batch_fetch_neighbors(
+                neighbors_needing_degree, temp_neighbors, degree_cache, device
+            )
 
             # Add high-residual neighbors to queue
-            for i in range(batch_size):
-                for u_node, u_type in nodes_to_process[i]:
-                    edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
-                    for etype in edge_types_for_node:
-                        cache_key = (u_node, etype)
-                        neighbor_list = neighbor_cache[cache_key]
-                        v_type = self._get_neighbor_type(etype)
+            # Iterate only over nodes that received residual updates, avoiding redundant nested loops
+            for i, v_node, v_type in nodes_with_residual:
+                key_v = (v_node, v_type)
 
-                        for v_node in neighbor_list:
-                            key_v = (v_node, v_type)
+                if key_v in q[i]:
+                    continue
 
-                            if key_v in q[i]:
-                                continue
+                res_v = r[i].get(key_v, 0.0)
+                if res_v == 0.0:
+                    continue
 
-                            res_v = r[i].get(key_v, 0.0)
-                            if res_v == 0.0:
-                                continue
+                # Sum degrees across all edge types from v_type for threshold check
+                edge_types_for_v = self._node_type_to_edge_types.get(v_type, [])
+                total_v_degree = sum(
+                    degree_cache[(v_node, v_etype)] for v_etype in edge_types_for_v
+                )
 
-                            # Sum degrees across all edge types from v_type for threshold check
-                            edge_types_for_v = self._node_type_to_edge_types.get(
-                                v_type, []
-                            )
-                            total_v_degree = sum(
-                                degree_cache[(v_node, v_etype)]
-                                for v_etype in edge_types_for_v
-                            )
+                if res_v >= self._alpha_eps * total_v_degree:
+                    q[i].add(key_v)
+                    num_nodes_in_queue += 1
 
-                            if res_v >= self._alpha_eps * total_v_degree:
-                                q[i].add(key_v)
-                                num_nodes_in_queue += 1
+                    # Promote temp_neighbors to neighbor_cache
+                    for v_etype in edge_types_for_v:
+                        neighbor_key = (v_node, v_etype)
+                        if neighbor_key in temp_neighbors:
+                            neighbor_cache[neighbor_key] = temp_neighbors[neighbor_key]
 
-                                # Promote temp_neighbors to neighbor_cache if available
-                                for v_etype in edge_types_for_v:
-                                    temp_key = (v_node, v_etype)
-                                    if temp_key in temp_neighbors:
-                                        neighbor_cache[temp_key] = temp_neighbors[
-                                            temp_key
-                                        ]
-
-            del temp_neighbors
+            del temp_neighbors, nodes_with_residual
 
         # Extract top-k nodes by PPR score, grouped by node type
         # Collect all node types that appear in results
