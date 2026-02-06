@@ -262,7 +262,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self._num_nbrs_per_hop = num_nbrs_per_hop
 
         # Build mapping from node type to edge types that can be traversed from that node type.
-        self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = {}
+        self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
+            list
+        )
 
         if self.edge_types is not None:
             self._is_homogeneous = False
@@ -275,8 +277,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     # For outgoing edges, we traverse FROM the source node type
                     anchor_type = etype[0]
 
-                if anchor_type not in self._node_type_to_edge_types:
-                    self._node_type_to_edge_types[anchor_type] = []
                 self._node_type_to_edge_types[anchor_type].append(etype)
         else:
             self._node_type_to_edge_types[_PPR_HOMOGENEOUS_NODE_TYPE] = [
@@ -442,9 +442,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             for i in range(batch_size):
                 for node_id, node_type in nodes_to_process[i]:
                     # Get all edge types we can traverse from this node type
-                    edge_types_for_node = self._node_type_to_edge_types.get(
-                        node_type, []
-                    )
+                    edge_types_for_node = self._node_type_to_edge_types[node_type]
                     for etype in edge_types_for_node:
                         cache_key = (node_id, etype)
                         if cache_key not in neighbor_cache:
@@ -471,7 +469,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     r[i][key_u] = 0.0
 
                     # For each edge type from this node type, push residual to neighbors
-                    edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
+                    edge_types_for_node = self._node_type_to_edge_types[u_type]
 
                     # Calculate total degree across all edge types for proper probability distribution
                     total_degree = sum(
@@ -505,7 +503,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # degree_cache check determines if fetch is needed, set handles deduplication
             neighbors_needing_degree: dict[EdgeType, Set[int]] = defaultdict(set)
             for _, v_node, v_type in nodes_with_residual:
-                edge_types_for_v = self._node_type_to_edge_types.get(v_type, [])
+                edge_types_for_v = self._node_type_to_edge_types[v_type]
                 for v_etype in edge_types_for_v:
                     v_cache_key = (v_node, v_etype)
                     if v_cache_key not in degree_cache:
@@ -537,7 +535,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     continue
 
                 # Sum degrees across all edge types from v_type for threshold check
-                edge_types_for_v = self._node_type_to_edge_types.get(v_type, [])
+                edge_types_for_v = self._node_type_to_edge_types[v_type]
                 total_v_degree = sum(
                     degree_cache[(v_node, v_etype)] for v_etype in edge_types_for_v
                 )
