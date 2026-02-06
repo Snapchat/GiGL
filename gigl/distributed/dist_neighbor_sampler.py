@@ -1,6 +1,7 @@
 import asyncio
 import gc
 import heapq
+import time
 from collections import defaultdict
 from typing import Optional, Set, Tuple, Union
 
@@ -434,10 +435,16 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         ppr_total_nodes_processed = 0
         ppr_num_neighbor_lookups = 0
 
+        # Timing statistics (in seconds)
+        total_network_time = 0.0
+        total_for_loop_time = 0.0
+        batch_start_time = time.perf_counter()
+
         while num_nodes_in_queue > 0:
             ppr_num_iterations += 1
 
             # Drain all nodes from all queues for processing in this iteration
+            loop_start = time.perf_counter()
             nodes_to_process: list[Set[Tuple[int, NodeType]]] = [
                 set() for _ in range(batch_size)
             ]
@@ -458,16 +465,20 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         cache_key = (node_id, etype)
                         if cache_key not in neighbor_cache:
                             nodes_by_edge_type[etype].add(node_id)
+            total_for_loop_time += time.perf_counter() - loop_start
 
             # Batch fetch neighbors per edge type
+            network_start = time.perf_counter()
             ppr_num_neighbor_lookups += await self._batch_fetch_neighbors(
                 nodes_by_edge_type, neighbor_cache, degree_cache, device
             )
+            total_network_time += time.perf_counter() - network_start
 
             # Track unique (batch_idx, v_node, v_type) that received residual updates
             nodes_with_residual: Set[Tuple[int, int, NodeType]] = set()
 
             # Process nodes and push residual
+            loop_start = time.perf_counter()
             for i in range(batch_size):
                 for u_node, u_type in nodes_to_process[i]:
                     ppr_total_nodes_processed += 1
@@ -519,6 +530,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     v_cache_key = (v_node, v_etype)
                     if v_cache_key not in degree_cache:
                         neighbors_needing_degree[v_etype].add(v_node)
+            total_for_loop_time += time.perf_counter() - loop_start
 
             # Batch fetch neighbors for all v_nodes not in cache to get their degrees.
             # We keep neighbors temporarily and only promote to neighbor_cache if they pass the residual threshold.
@@ -528,13 +540,16 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # and neighbor counts. However, GLT doesn't expose a lever for only getting neighbor counts, so we
             # fetch all neighbors and neighbor counts initially.
             # TODO (mkolodner-sc): Investigate and potentially upstream an item to GLT to expose lever for only getting neighbor counts.
+            network_start = time.perf_counter()
             temp_neighbors: dict[Tuple[int, EdgeType], list[int]] = {}
             ppr_num_neighbor_lookups += await self._batch_fetch_neighbors(
                 neighbors_needing_degree, temp_neighbors, degree_cache, device
             )
+            total_network_time += time.perf_counter() - network_start
 
             # Add high-residual neighbors to queue
             # Iterate only over nodes that received residual updates, avoiding redundant nested loops
+            loop_start = time.perf_counter()
             for i, v_node, v_type in nodes_with_residual:
                 key_v = (v_node, v_type)
 
@@ -560,11 +575,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         neighbor_key = (v_node, v_etype)
                         if neighbor_key in temp_neighbors:
                             neighbor_cache[neighbor_key] = temp_neighbors[neighbor_key]
+            total_for_loop_time += time.perf_counter() - loop_start
 
             del temp_neighbors, nodes_with_residual
 
         # Extract top-k nodes by PPR score, grouped by node type
         # Collect all node types that appear in results
+        loop_start = time.perf_counter()
         all_node_types: Set[NodeType] = set()
         for i in range(batch_size):
             for node_id, node_type in p[i].keys():
@@ -612,14 +629,22 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             )
             out_neighbor_ids = out_neighbor_ids[_PPR_HOMOGENEOUS_NODE_TYPE]
             out_weights = out_weights[_PPR_HOMOGENEOUS_NODE_TYPE]
+        total_for_loop_time += time.perf_counter() - loop_start
 
-        # Collect PPR iteration statistics for runtime tuning
-        ppr_stats: dict[str, int] = {
+        # Calculate total batch time
+        total_batch_time = time.perf_counter() - batch_start_time
+
+        # Collect PPR iteration statistics for runtime tuning (includes timing stats)
+        ppr_stats: dict[str, float] = {
             "ppr_num_iterations": ppr_num_iterations,
             "ppr_total_nodes_processed": ppr_total_nodes_processed,
             "ppr_num_neighbor_lookups": ppr_num_neighbor_lookups,
             "ppr_neighbor_cache_size": len(neighbor_cache),
             "ppr_degree_cache_size": len(degree_cache),
+            # Timing stats in milliseconds
+            "ppr_total_time_ms": total_batch_time * 1000,
+            "ppr_network_time_ms": total_network_time * 1000,
+            "ppr_for_loop_time_ms": total_for_loop_time * 1000,
         }
 
         return out_neighbor_ids, out_weights, ppr_stats
@@ -675,6 +700,22 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         metadata["ppr_degree_cache_size"] = torch.tensor(
             [ppr_stats["ppr_degree_cache_size"]],
             dtype=torch.long,
+            device=self.device,
+        )
+        # Add timing stats to metadata (in milliseconds)
+        metadata["ppr_total_time_ms"] = torch.tensor(
+            [ppr_stats["ppr_total_time_ms"]],
+            dtype=torch.float,
+            device=self.device,
+        )
+        metadata["ppr_network_time_ms"] = torch.tensor(
+            [ppr_stats["ppr_network_time_ms"]],
+            dtype=torch.float,
+            device=self.device,
+        )
+        metadata["ppr_for_loop_time_ms"] = torch.tensor(
+            [ppr_stats["ppr_for_loop_time_ms"]],
+            dtype=torch.float,
             device=self.device,
         )
 
