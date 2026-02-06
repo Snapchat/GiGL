@@ -368,7 +368,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     ) -> Tuple[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        dict[str, int],
+        dict[str, float],
     ]:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
