@@ -830,7 +830,6 @@ class DistPPRNeighborLoader(DistLoader):
             device=self.to_device,
             should_use_cpu_workers=should_use_cpu_workers,
             num_cpu_threads=num_cpu_threads,
-            process_start_gap_seconds=process_start_gap_seconds,
         )
         logger.info(
             f"Finished initializing PPR neighbor loader worker: {local_rank}/{local_world_size}"
@@ -873,6 +872,8 @@ class DistPPRNeighborLoader(DistLoader):
                 f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
             )
             torch.distributed.destroy_process_group()
+
+        time.sleep(process_start_gap_seconds * local_rank)
 
         # Initialize using custom PPR producer (similar to DistABLPLoader pattern)
         self.data = dataset

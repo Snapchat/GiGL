@@ -246,7 +246,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self,
         *args,
         alpha: float = 0.5,
-        eps: float = 1e-3,
+        eps: float = 1e-4,
         max_ppr_nodes: int = 50,
         default_node_id: int = -1,
         default_weight: float = 0.0,
@@ -267,7 +267,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             list
         )
 
-        if self.edge_types is not None:
+        if hasattr(self, "edge_types") and self.edge_types is not None:
             self._is_homogeneous = False
             # Heterogeneous case: map each node type to its outgoing/incoming edge types
             for etype in self.edge_types:
