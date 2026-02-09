@@ -235,7 +235,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         alpha: Restart probability (teleport probability back to seed). Higher values
                keep samples closer to seeds. Typical values: 0.15-0.25.
         eps: Convergence threshold. Smaller values give more accurate PPR scores
-             but require more computation. Typical values: 1e-4 to 1e-6.
+             but require more computation. Typical values: 1e-3 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         default_node_id: Node ID to use when fewer than max_ppr_nodes are found.
         default_weight: Weight to assign to padding nodes.
@@ -246,7 +246,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self,
         *args,
         alpha: float = 0.5,
-        eps: float = 1e-4,
+        eps: float = 1e-3,
         max_ppr_nodes: int = 50,
         default_node_id: int = -1,
         default_weight: float = 0.0,
@@ -472,8 +472,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             )
             total_network_time += time.perf_counter() - network_start
 
-            # Track unique (batch_idx, v_node, v_type) that received residual updates
-            nodes_with_residual: Set[Tuple[int, int, NodeType]] = set()
+            # Collect neighbors needing degree lookups while processing
+            neighbors_needing_degree: dict[EdgeType, Set[int]] = defaultdict(set)
 
             # Process nodes and push residual
             loop_start = time.perf_counter()
@@ -517,17 +517,15 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         for v_node in neighbor_list:
                             key_v = (v_node, v_type)
                             r[i][key_v] += push_value
-                            nodes_with_residual.add((i, v_node, v_type))
 
-            # Derive neighbors needing degree lookups from nodes_with_residual
-            # degree_cache check determines if fetch is needed, set handles deduplication
-            neighbors_needing_degree: dict[EdgeType, Set[int]] = defaultdict(set)
-            for _, v_node, v_type in nodes_with_residual:
-                edge_types_for_v = self._node_type_to_edge_types[v_type]
-                for v_etype in edge_types_for_v:
-                    v_cache_key = (v_node, v_etype)
-                    if v_cache_key not in degree_cache:
-                        neighbors_needing_degree[v_etype].add(v_node)
+                            # Collect neighbors needing degree lookups inline
+                            edge_types_for_v = self._node_type_to_edge_types.get(
+                                v_type, []
+                            )
+                            for v_etype in edge_types_for_v:
+                                v_cache_key = (v_node, v_etype)
+                                if v_cache_key not in degree_cache:
+                                    neighbors_needing_degree[v_etype].add(v_node)
             total_for_loop_time += time.perf_counter() - loop_start
 
             # Batch fetch neighbors for all v_nodes not in cache to get their degrees.
@@ -546,36 +544,48 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             total_network_time += time.perf_counter() - network_start
 
             # Add high-residual neighbors to queue
-            # Iterate only over nodes that received residual updates, avoiding redundant nested loops
             loop_start = time.perf_counter()
-            for i, v_node, v_type in nodes_with_residual:
-                key_v = (v_node, v_type)
+            for i in range(batch_size):
+                for u_node, u_type in nodes_to_process[i]:
+                    edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
+                    for etype in edge_types_for_node:
+                        cache_key = (u_node, etype)
+                        neighbor_list = neighbor_cache[cache_key]
+                        v_type = self._get_neighbor_type(etype)
 
-                if key_v in q[i]:
-                    continue
+                        for v_node in neighbor_list:
+                            key_v = (v_node, v_type)
 
-                res_v = r[i].get(key_v, 0.0)
-                if res_v == 0.0:
-                    continue
+                            if key_v in q[i]:
+                                continue
 
-                # Sum degrees across all edge types from v_type for threshold check
-                edge_types_for_v = self._node_type_to_edge_types[v_type]
-                total_v_degree = sum(
-                    degree_cache[(v_node, v_etype)] for v_etype in edge_types_for_v
-                )
+                            res_v = r[i].get(key_v, 0.0)
+                            if res_v == 0.0:
+                                continue
 
-                if res_v >= self._alpha_eps * total_v_degree:
-                    q[i].add(key_v)
-                    num_nodes_in_queue += 1
+                            # Sum degrees across all edge types from v_type for threshold check
+                            edge_types_for_v = self._node_type_to_edge_types.get(
+                                v_type, []
+                            )
+                            total_v_degree = sum(
+                                degree_cache[(v_node, v_etype)]
+                                for v_etype in edge_types_for_v
+                            )
 
-                    # Promote temp_neighbors to neighbor_cache
-                    for v_etype in edge_types_for_v:
-                        neighbor_key = (v_node, v_etype)
-                        if neighbor_key in temp_neighbors:
-                            neighbor_cache[neighbor_key] = temp_neighbors[neighbor_key]
+                            if res_v >= self._alpha_eps * total_v_degree:
+                                q[i].add(key_v)
+                                num_nodes_in_queue += 1
+
+                                # Promote temp_neighbors to neighbor_cache if available
+                                for v_etype in edge_types_for_v:
+                                    temp_key = (v_node, v_etype)
+                                    if temp_key in temp_neighbors:
+                                        neighbor_cache[temp_key] = temp_neighbors[
+                                            temp_key
+                                        ]
             total_for_loop_time += time.perf_counter() - loop_start
 
-            del temp_neighbors, nodes_with_residual
+            del temp_neighbors
 
         # Extract top-k nodes by PPR score, grouped by node type
         # Collect all node types that appear in results
