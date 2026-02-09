@@ -1,7 +1,7 @@
 """
 GiGL implementation of GLT DistServer.
 
-Main change here is that we use gigl DistAblpSamplingProducer instead of GLT DistMpSamplingProducer.
+Main change here is that we add create_dist_sampling_ablp_producer for use with GiGL ABLP tasks.
 
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
 """
