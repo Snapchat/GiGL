@@ -12,14 +12,14 @@ alwaysApply: false
 Use the standard unittest framework with descriptive test organization:
 
 ```python
-import unittest
 from pathlib import Path
 from typing import Dict, Any
 
 from gigl.common.utils.test_utils import TestArgs
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
+from tests.test_assets.test_case import TestCase
 
-class TestDataPreprocessor(unittest.TestCase):
+class TestDataPreprocessor(TestCase):
     """Test suite for DataPreprocessor component."""
 
     def setUp(self) -> None:
@@ -33,12 +33,14 @@ class TestDataPreprocessor(unittest.TestCase):
             shutil.rmtree(self.test_data_dir)
 ```
 
+NOTE: We use `tests.test_assets.test_case.TestCase` as our TestCase, *not* `unittest.TestCase`
+
 ### Test Data Management
 
 Use the `tests/test_assets/` directory for test data:
 
 ```python
-class TestWithAssets(unittest.TestCase):
+class TestWithAssets(TestCase):
     """Test class that uses test assets."""
 
     @classmethod
@@ -104,7 +106,7 @@ Use mocking for external services and expensive operations:
 ```python
 from unittest.mock import Mock, patch, MagicMock
 
-class TestWithMocks(unittest.TestCase):
+class TestWithMocks(TestCase):
     """Test class demonstrating mocking patterns."""
 
     @patch('gigl.common.services.dataproc.DataprocClient')
