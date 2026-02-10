@@ -17,7 +17,10 @@ from gigl.common.logger import Logger
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
-from gigl.distributed.dist_server import init_server, wait_and_shutdown_server
+from gigl.distributed.graph_store.dist_server import (
+    init_server,
+    wait_and_shutdown_server,
+)
 from gigl.distributed.graph_store.storage_utils import register_dataset
 from gigl.distributed.utils import get_free_ports_from_master_node, get_graph_store_info
 from gigl.distributed.utils.networking import get_free_ports_from_master_node
