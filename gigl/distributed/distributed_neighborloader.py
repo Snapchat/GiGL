@@ -241,7 +241,7 @@ class DistNeighborLoader(DistLoader):
                 num_workers,
             )
 
-        self._is_labeled_heterogeneous = dataset_metadata.is_labeled_heterogeneous
+        self._is_labeled_homogeneous = dataset_metadata.is_labeled_homogeneous
         self._node_feature_info = dataset_metadata.node_feature_info
         self._edge_feature_info = dataset_metadata.edge_feature_info
 
@@ -380,7 +380,7 @@ class DistNeighborLoader(DistLoader):
                 f"When using Graph Store mode, input nodes must be of type (dict[int, torch.Tensor] | (NodeType, dict[int, torch.Tensor])), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
             )
 
-        is_labeled_heterogeneous = False
+        is_labeled_homogeneous = False
         node_feature_info = dataset.get_node_feature_info()
         edge_feature_info = dataset.get_edge_feature_info()
         edge_types = dataset.get_edge_types()
@@ -455,7 +455,7 @@ class DistNeighborLoader(DistLoader):
             input_data,
             worker_options,
             DatasetSchema(
-                is_labeled_heterogeneous=is_labeled_heterogeneous,
+                is_labeled_homogeneous=is_labeled_homogeneous,
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
@@ -503,7 +503,7 @@ class DistNeighborLoader(DistLoader):
             raise ValueError(
                 f"When using Colocated mode, input nodes must be of type (torch.Tensor | (NodeType, torch.Tensor)), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
             )
-        is_labeled_heterogeneous = False
+        is_labeled_homogeneous = False
         if isinstance(input_nodes, torch.Tensor):
             node_ids = input_nodes
 
@@ -515,7 +515,7 @@ class DistNeighborLoader(DistLoader):
                     and DEFAULT_HOMOGENEOUS_NODE_TYPE in dataset.node_ids
                 ):
                     node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-                    is_labeled_heterogeneous = True
+                    is_labeled_homogeneous = True
                 else:
                     raise ValueError(
                         f"For heterogeneous datasets, input_nodes must be a tuple of (node_type, node_ids) OR if it is a labeled homogeneous dataset, input_nodes may be a torch.Tensor. Received node types: {dataset.node_ids.keys()}"
@@ -605,7 +605,7 @@ class DistNeighborLoader(DistLoader):
             input_data,
             worker_options,
             DatasetSchema(
-                is_labeled_heterogeneous=is_labeled_heterogeneous,
+                is_labeled_homogeneous=is_labeled_homogeneous,
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
@@ -623,6 +623,6 @@ class DistNeighborLoader(DistLoader):
         )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
-        if self._is_labeled_heterogeneous:
+        if self._is_labeled_homogeneous:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
         return data

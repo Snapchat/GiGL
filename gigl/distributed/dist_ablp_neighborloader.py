@@ -293,7 +293,7 @@ class DistABLPLoader(DistLoader):
             num_cpu_threads=num_cpu_threads,
         )
 
-        self._is_input_heterogeneous = dataset_metadata.is_labeled_heterogeneous
+        self._is_input_labeled_homogeneous = dataset_metadata.is_labeled_homogeneous
         self._node_feature_info = dataset_metadata.node_feature_info
         self._edge_feature_info = dataset_metadata.edge_feature_info
 
@@ -552,7 +552,7 @@ class DistABLPLoader(DistLoader):
             [sampler_input],
             worker_options,
             DatasetSchema(
-                is_labeled_heterogeneous=is_labeled_heterogeneous,
+                is_labeled_homogeneous=is_labeled_heterogeneous,
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
@@ -815,7 +815,7 @@ class DistABLPLoader(DistLoader):
         )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
-        if not self._is_input_heterogeneous:
+        if not self._is_input_labeled_homogeneous:
             if len(self._supervision_edge_types) != 1:
                 raise ValueError(
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
