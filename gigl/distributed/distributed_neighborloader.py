@@ -417,13 +417,14 @@ class DistNeighborLoader(DistLoader):
             require_edge_feature_info = True
         else:
             raise ValueError(
-                f"When using Graph Store mode, input nodes must be of type (list[torch.Tensor] | (NodeType, list[torch.Tensor])), received {type(input_nodes)}"
+                f"When using Graph Store mode, input nodes must be of type (dict[int, torch.Tensor] | (NodeType, dict[int, torch.Tensor])), received {type(input_nodes)}"
             )
 
         # Determine input_type based on edge_feature_info
         if isinstance(edge_types, list):
             if edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                is_labeled_homogeneous = True
             else:
                 input_type = fallback_input_type
         elif require_edge_feature_info:
