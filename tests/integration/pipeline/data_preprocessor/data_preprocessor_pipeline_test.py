@@ -50,6 +50,7 @@ from snapchat.research.gbml import (
     graph_schema_pb2,
     preprocessed_metadata_pb2,
 )
+from tests.test_assets.test_case import TestCase
 from tests.test_assets.uri_constants import DEFAULT_TEST_RESOURCE_CONFIG_URI
 
 logger = Logger()
@@ -63,7 +64,7 @@ DATA_PREPROCESSOR_PIPELINE_TIMEOUT_SECONDS = 1200
     platform.machine() == "arm64",
     "Skipping this test on M1 Mac. TFT is known to stall - need to investigate",
 )
-class DataPreprocessorPipelineTest(unittest.TestCase):
+class DataPreprocessorPipelineTest(TestCase):
     """
     This test checks the completion of preprocess pipeline with the Planetoid Cora dataset.
     Test will error out if it takes too long, or output files missing.

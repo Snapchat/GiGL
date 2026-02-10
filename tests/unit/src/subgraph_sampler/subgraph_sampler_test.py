@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, call, patch
 
@@ -18,6 +17,7 @@ from gigl.src.common.utils import metrics_service_provider
 from gigl.src.subgraph_sampler import subgraph_sampler
 from gigl.src.subgraph_sampler.lib.ingestion_protocol import BaseIngestion
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
+from tests.test_assets.test_case import TestCase
 
 
 # Class that's used as a dummy to be injected and then mocked out
@@ -30,7 +30,7 @@ class _Ingestor(BaseIngestion):
 _INGESTOR_FQN = f"{_Ingestor.__module__}.{_Ingestor.__name__}"
 
 
-class SubgraphSamplerTest(unittest.TestCase):
+class SubgraphSamplerTest(TestCase):
     test_dir: Path
     _tmp_dir: tempfile.TemporaryDirectory
     main_jar_local_path: Path

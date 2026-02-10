@@ -1,4 +1,3 @@
-import unittest
 from typing import Optional
 
 import torch
@@ -7,6 +6,7 @@ from parameterized import param, parameterized
 
 from gigl.src.common.modeling_task_specs.utils.early_stop import EarlyStopper
 from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 _EARLY_STOP_PATIENCE = 3
 
@@ -20,7 +20,7 @@ class _DummyModel(nn.Module):
         return x
 
 
-class EarlyStopTests(unittest.TestCase):
+class EarlyStopTests(TestCase):
     @parameterized.expand(
         [
             param(

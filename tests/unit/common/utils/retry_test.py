@@ -1,14 +1,14 @@
-import unittest
 from time import sleep, time
 
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
 from gigl.src.common.utils.timeout import TimedOutException
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class RetryUtilsTest(unittest.TestCase):
+class RetryUtilsTest(TestCase):
     def test_retry_deadline(self):
         @retry(deadline_s=1)
         def should_raise_timeout_exception_fn():

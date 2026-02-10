@@ -1,6 +1,6 @@
-import unittest
 from collections import abc
 
+from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
@@ -10,10 +10,11 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from tests.test_assets.test_case import TestCase
 
 
 # TODO(kmonte, mkolodner): Add more tests for heterogeneous datasets.
-class TestDatasetFactory(unittest.TestCase):
+class TestDatasetFactory(TestCase):
     def setUp(self):
         # Set up any necessary context or mock data
         self._dist_context = DistributedContext(
@@ -63,4 +64,4 @@ class TestDatasetFactory(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -1,6 +1,5 @@
-import unittest
-
 import torch
+from absl.testing import absltest
 
 from gigl.distributed.graph_store import storage_utils
 from gigl.src.common.types.graph_data import Relation
@@ -18,9 +17,10 @@ from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestRemoteDataset(unittest.TestCase):
+class TestRemoteDataset(TestCase):
     def setUp(self) -> None:
         """Reset the global dataset before each test."""
         storage_utils._dataset = None
@@ -557,4 +557,4 @@ class TestRemoteDataset(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

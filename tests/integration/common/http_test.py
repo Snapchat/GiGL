@@ -1,11 +1,11 @@
 import tempfile
-import unittest
 
 from gigl.common import HttpUri, LocalUri
 from gigl.common.utils.http import HttpUtils
+from tests.test_assets.test_case import TestCase
 
 
-class HttpUtilsTest(unittest.TestCase):
+class HttpUtilsTest(TestCase):
     def test_download_file_from_http(self):
         http_utils = HttpUtils()
         http_path = HttpUri(

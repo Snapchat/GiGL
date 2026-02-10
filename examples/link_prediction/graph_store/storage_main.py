@@ -66,9 +66,10 @@ the compute processes signal shutdown via `gigl.distributed.graph_store.compute.
 
 """
 import argparse
+import multiprocessing.context as py_mp_context
 import os
 from distutils.util import strtobool
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 # TODO(kmonte): Remove GLT imports from this file.
 import graphlearn_torch as glt
@@ -87,6 +88,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
 logger = Logger()
 
@@ -165,8 +167,10 @@ def storage_node_process(
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
     sample_edge_direction: Literal["in", "out"],
+    splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None,
     should_load_tf_records_in_parallel: bool = True,
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
+    ssl_positive_label_percentage: Optional[float] = None,
     storage_world_backend: Optional[str] = None,
 ) -> None:
     """Run a storage node process
@@ -177,8 +181,12 @@ def storage_node_process(
         storage_rank (int): The rank of the storage node.
         cluster_info (GraphStoreInfo): The cluster information.
         task_config_uri (Uri): The task config URI.
-        is_inference (bool): Whether the process is an inference process. Defaults to True.
+        sample_edge_direction (Literal["in", "out"]): The sample edge direction.
+        splitter (Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]]): The splitter to use. If None, will not split the dataset.
         tf_record_uri_pattern (str): The TF Record URI pattern.
+        ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
+            Must be None if supervised edge labels are provided in advance.
+            If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
         storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
@@ -203,33 +211,50 @@ def storage_node_process(
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
+    # TODO(kmonte): Add support for TFDatasetOptions.
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         should_load_tensors_in_parallel=should_load_tf_records_in_parallel,
         partitioner_class=DistRangePartitioner,
+        splitter=splitter,
+        _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
-    torch_process_port = get_free_ports_from_master_node(num_ports=1)[0]
+    inference_node_types = sorted(
+        gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
+    )
+    logger.info(f"Inference node types: {inference_node_types}")
+    torch_process_ports = get_free_ports_from_master_node(
+        num_ports=len(inference_node_types)
+    )
     torch.distributed.destroy_process_group()
-    server_processes = []
-    mp_context = torch.multiprocessing.get_context("spawn")
-    # TODO(kmonte): Enable more than one server process per machine
-    for i in range(1):
-        server_process = mp_context.Process(
-            target=_run_storage_process,
-            args=(
-                storage_rank + i,  # storage_rank
-                cluster_info,  # cluster_info
-                dataset,  # dataset
-                torch_process_port,  # torch_process_port
-                storage_world_backend,  # storage_world_backend
-            ),
+    for i, inference_node_type in enumerate(inference_node_types):
+        logger.info(
+            f"Starting storage node rank {storage_rank} / {cluster_info.num_storage_nodes} for inference node type {inference_node_type} (storage process group {i} / {len(inference_node_types)})"
         )
-        server_processes.append(server_process)
-    for server_process in server_processes:
-        server_process.start()
-    for server_process in server_processes:
-        server_process.join()
+        mp_context = torch.multiprocessing.get_context("spawn")
+        server_processes: list[py_mp_context.SpawnProcess] = []
+        # TODO(kmonte): Enable more than one server process per machine
+        num_server_processes = 1
+        for i in range(num_server_processes):
+            server_process = mp_context.Process(
+                target=_run_storage_process,
+                args=(
+                    storage_rank + i,  # storage_rank
+                    cluster_info,  # cluster_info
+                    dataset,  # dataset
+                    torch_process_ports[i],  # torch_process_port
+                    storage_world_backend,  # storage_world_backend
+                ),
+            )
+            server_processes.append(server_process)
+            for server_process in server_processes:
+                server_process.start()
+            for server_process in server_processes:
+                server_process.join()
+        logger.info(
+            f"All server processes on storage node rank {storage_rank} / {cluster_info.num_storage_nodes} joined for inference node type {inference_node_type}"
+        )
 
 
 if __name__ == "__main__":

@@ -1,14 +1,13 @@
-import unittest
-
 import torch
 
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class PygGraphDataTest(unittest.TestCase):
+class PygGraphDataTest(TestCase):
     def test_equality(self):
         data = PygGraphData()
         data["1"].x = torch.tensor([[1, 1], [2, 2]])
