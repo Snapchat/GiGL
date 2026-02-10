@@ -235,24 +235,42 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         alpha: Restart probability (teleport probability back to seed). Higher values
                keep samples closer to seeds. Typical values: 0.15-0.25.
         eps: Convergence threshold. Smaller values give more accurate PPR scores
-             but require more computation. Typical values: 1e-3 to 1e-6.
+             but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         default_node_id: Node ID to use when fewer than max_ppr_nodes are found.
         default_weight: Weight to assign to padding nodes.
         num_nbrs_per_hop: Maximum number of neighbors to fetch per hop.
+        degree_tensors: Optional pre-computed degree tensors for avoiding network calls.
+            For homogeneous graphs: torch.Tensor of shape [num_nodes] where degree_tensors[i]
+            is the degree of node i.
+            For heterogeneous graphs: dict[EdgeType, torch.Tensor] where each tensor is of
+            shape [max_node_id + 1] for the source/destination node type (depending on edge_dir)
+            of that edge type, containing the degree of each node for that edge type.
+            When provided, degree lookups are done via in-memory tensor indexing instead of
+            network calls, significantly reducing latency in the PPR computation.
     """
 
     def __init__(
         self,
         *args,
         alpha: float = 0.5,
-        eps: float = 1e-3,
+        eps: float = 1e-4,
         max_ppr_nodes: int = 50,
         default_node_id: int = -1,
         default_weight: float = 0.0,
-        num_nbrs_per_hop: int = 10000,
+        num_nbrs_per_hop: int = 100000,
+        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         **kwargs,
     ):
+        """Initialize the PPR neighbor sampler.
+
+        Args:
+            degree_tensors: Pre-computed degree tensors for efficient degree lookups.
+                For homogeneous graphs: a single tensor of shape [num_nodes].
+                For heterogeneous graphs: a dict mapping edge_type -> tensor.
+                These tensors contain the TRUE degree of each node, used for
+                PPR threshold calculations. Must be provided.
+        """
         super().__init__(*args, **kwargs)
         self._alpha = alpha
         self._eps = eps
@@ -261,6 +279,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self._default_weight = default_weight
         self._alpha_eps = alpha * eps
         self._num_nbrs_per_hop = num_nbrs_per_hop
+        self._degree_tensors = degree_tensors
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -284,6 +303,36 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 _PPR_HOMOGENEOUS_EDGE_TYPE
             ]
             self._is_homogeneous = True
+
+    def _get_degree_from_tensor(self, node_id: int, edge_type: EdgeType) -> int:
+        """
+        Look up the TRUE degree of a node for a specific edge type from in-memory tensors.
+
+        This returns the actual node degree (not capped), which is mathematically correct
+        for PPR algorithm calculations.
+
+        Args:
+            node_id: The ID of the node to look up.
+            edge_type: The edge type to get the degree for.
+
+        Returns:
+            The true degree of the node for the given edge type.
+        """
+        if self._is_homogeneous:
+            # For homogeneous graphs, degree_tensors is a single tensor
+            assert isinstance(self._degree_tensors, torch.Tensor)
+            if node_id >= len(self._degree_tensors):
+                return 0
+            return int(self._degree_tensors[node_id].item())
+        else:
+            # For heterogeneous graphs, degree_tensors is a dict keyed by edge type
+            assert isinstance(self._degree_tensors, dict)
+            if edge_type not in self._degree_tensors:
+                return 0
+            degree_tensor = self._degree_tensors[edge_type]
+            if node_id >= len(degree_tensor):
+                return 0
+            return int(degree_tensor[node_id].item())
 
     def _get_neighbor_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type of neighbors reached via an edge type."""
@@ -314,19 +363,18 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self,
         nodes_by_edge_type: dict[EdgeType, Set[int]],
         neighbor_target: dict[Tuple[int, EdgeType], list[int]],
-        degree_target: dict[Tuple[int, EdgeType], int],
         device: torch.device,
     ) -> int:
         """
         Batch fetch neighbors for nodes grouped by edge type.
 
         Fetches neighbors for all nodes in nodes_by_edge_type, populating
-        neighbor_target with neighbor lists and degree_target with counts.
+        neighbor_target with neighbor lists. Degrees are looked up separately
+        from the in-memory degree_tensors.
 
         Args:
             nodes_by_edge_type: Dict mapping edge type to set of node IDs to fetch
             neighbor_target: Dict to populate with (node_id, edge_type) -> neighbor list
-            degree_target: Dict to populate with (node_id, edge_type) -> degree count
             device: Torch device for tensor creation
 
         Returns:
@@ -356,7 +404,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             for node_id, count in zip(nodes_list, counts_list):
                 cache_key = (node_id, etype)
                 neighbor_target[cache_key] = neighbors_list[offset : offset + count]
-                degree_target[cache_key] = count
                 offset += count
 
         return num_lookups
@@ -426,7 +473,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         # Cache keyed by (node_id, edge_type) since same node can have different neighbors per edge type
         neighbor_cache: dict[Tuple[int, EdgeType], list[int]] = {}
-        degree_cache: dict[Tuple[int, EdgeType], int] = {}
+        # Degrees are looked up directly from self._degree_tensors, no cache needed
 
         num_nodes_in_queue = batch_size
 
@@ -435,6 +482,26 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         ppr_total_nodes_processed = 0
         ppr_num_neighbor_lookups = 0
 
+        # Detailed debugging stats
+        queue_sizes_per_iteration: list[
+            int
+        ] = []  # num_nodes_in_queue at start of each iteration
+        empty_queues_per_iteration: list[
+            int
+        ] = []  # count of empty q[i] at start of each iteration
+        degree_mismatch_count = (
+            0  # count of nodes where network neighbors != degree tensor
+        )
+        degree_mismatch_details: list[
+            tuple[int, int, int]
+        ] = []  # (node_id, network_count, tensor_degree)
+        total_network_neighbors = 0  # sum of neighbors returned by network
+        total_tensor_degrees = 0  # sum of degrees from tensor lookups
+        nodes_with_zero_degree = 0  # count of nodes where degree tensor returns 0
+        nodes_skipped_zero_total_degree = (
+            0  # count of nodes skipped due to total_degree == 0
+        )
+
         # Timing statistics (in seconds)
         total_network_time = 0.0
         total_for_loop_time = 0.0
@@ -442,6 +509,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         while num_nodes_in_queue > 0:
             ppr_num_iterations += 1
+
+            # Track queue stats at start of iteration
+            queue_sizes_per_iteration.append(num_nodes_in_queue)
+            empty_queues_count = sum(1 for i in range(batch_size) if not q[i])
+            empty_queues_per_iteration.append(empty_queues_count)
 
             # Drain all nodes from all queues and group by edge type for batched lookups
             loop_start = time.perf_counter()
@@ -468,12 +540,27 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # Batch fetch neighbors per edge type
             network_start = time.perf_counter()
             ppr_num_neighbor_lookups += await self._batch_fetch_neighbors(
-                nodes_by_edge_type, neighbor_cache, degree_cache, device
+                nodes_by_edge_type, neighbor_cache, device
             )
             total_network_time += time.perf_counter() - network_start
 
-            # Collect neighbors needing degree lookups while processing
-            neighbors_needing_degree: dict[EdgeType, Set[int]] = defaultdict(set)
+            # Validate network neighbors vs degree tensor for nodes we just fetched
+            for etype, node_ids in nodes_by_edge_type.items():
+                for node_id in node_ids:
+                    cache_key = (node_id, etype)
+                    network_count = len(neighbor_cache.get(cache_key, []))
+                    tensor_degree = self._get_degree_from_tensor(node_id, etype)
+                    total_network_neighbors += network_count
+                    total_tensor_degrees += tensor_degree
+                    if tensor_degree == 0:
+                        nodes_with_zero_degree += 1
+                    if network_count != tensor_degree:
+                        degree_mismatch_count += 1
+                        # Keep first 10 mismatches for debugging
+                        if len(degree_mismatch_details) < 10:
+                            degree_mismatch_details.append(
+                                (node_id, network_count, tensor_degree)
+                            )
 
             # Process nodes and push residual
             loop_start = time.perf_counter()
@@ -492,18 +579,21 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     edge_types_for_node = self._node_type_to_edge_types[u_type]
 
                     # Calculate total degree across all edge types for proper probability distribution
+                    # Degrees are looked up directly from in-memory tensors
                     total_degree = sum(
-                        degree_cache[(u_node, etype)] for etype in edge_types_for_node
+                        self._get_degree_from_tensor(u_node, etype)
+                        for etype in edge_types_for_node
                     )
 
                     if total_degree == 0:
+                        nodes_skipped_zero_total_degree += 1
                         continue
 
                     # Push residual proportionally based on degree per edge type
                     for etype in edge_types_for_node:
                         cache_key = (u_node, etype)
                         neighbor_list = neighbor_cache[cache_key]
-                        neighbor_count = degree_cache[cache_key]
+                        neighbor_count = self._get_degree_from_tensor(u_node, etype)
 
                         if neighbor_count == 0:
                             continue
@@ -517,33 +607,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         for v_node in neighbor_list:
                             key_v = (v_node, v_type)
                             r[i][key_v] += push_value
-
-                            # Collect neighbors needing degree lookups inline
-                            edge_types_for_v = self._node_type_to_edge_types.get(
-                                v_type, []
-                            )
-                            for v_etype in edge_types_for_v:
-                                v_cache_key = (v_node, v_etype)
-                                if v_cache_key not in degree_cache:
-                                    neighbors_needing_degree[v_etype].add(v_node)
             total_for_loop_time += time.perf_counter() - loop_start
 
-            # Batch fetch neighbors for all v_nodes not in cache to get their degrees.
-            # We keep neighbors temporarily and only promote to neighbor_cache if they pass the residual threshold.
-            # Doing it this way is more performant than always storing neighbors in the neighbor cache, and leads to ~20x less
-            # nodes polluting the neighbor cache.
-            # Note that it may be more performant to only fetch neighbor counts instead of both neighbors
-            # and neighbor counts. However, GLT doesn't expose a lever for only getting neighbor counts, so we
-            # fetch all neighbors and neighbor counts initially.
-            # TODO (mkolodner-sc): Investigate and potentially upstream an item to GLT to expose lever for only getting neighbor counts.
-            network_start = time.perf_counter()
-            temp_neighbors: dict[Tuple[int, EdgeType], list[int]] = {}
-            ppr_num_neighbor_lookups += await self._batch_fetch_neighbors(
-                neighbors_needing_degree, temp_neighbors, degree_cache, device
-            )
-            total_network_time += time.perf_counter() - network_start
-
             # Add high-residual neighbors to queue
+            # Degrees are looked up directly from in-memory tensors (no caching needed)
             loop_start = time.perf_counter()
             for i in range(batch_size):
                 for u_node, u_type in nodes_to_process[i]:
@@ -568,24 +635,14 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                                 v_type, []
                             )
                             total_v_degree = sum(
-                                degree_cache[(v_node, v_etype)]
+                                self._get_degree_from_tensor(v_node, v_etype)
                                 for v_etype in edge_types_for_v
                             )
 
                             if res_v >= self._alpha_eps * total_v_degree:
                                 q[i].add(key_v)
                                 num_nodes_in_queue += 1
-
-                                # Promote temp_neighbors to neighbor_cache if available
-                                for v_etype in edge_types_for_v:
-                                    temp_key = (v_node, v_etype)
-                                    if temp_key in temp_neighbors:
-                                        neighbor_cache[temp_key] = temp_neighbors[
-                                            temp_key
-                                        ]
             total_for_loop_time += time.perf_counter() - loop_start
-
-            del temp_neighbors
 
         # Extract top-k nodes by PPR score, grouped by node type
         # Collect all node types that appear in results
@@ -648,11 +705,19 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             "ppr_total_nodes_processed": ppr_total_nodes_processed,
             "ppr_num_neighbor_lookups": ppr_num_neighbor_lookups,
             "ppr_neighbor_cache_size": len(neighbor_cache),
-            "ppr_degree_cache_size": len(degree_cache),
             # Timing stats in milliseconds
             "ppr_total_time_ms": total_batch_time * 1000,
             "ppr_network_time_ms": total_network_time * 1000,
             "ppr_for_loop_time_ms": total_for_loop_time * 1000,
+            # Debugging stats for queue and degree validation
+            "ppr_queue_sizes_per_iteration": queue_sizes_per_iteration,
+            "ppr_empty_queues_per_iteration": empty_queues_per_iteration,
+            "ppr_degree_mismatch_count": degree_mismatch_count,
+            "ppr_degree_mismatch_details": degree_mismatch_details,  # list of (node_id, network_count, tensor_degree)
+            "ppr_total_network_neighbors": total_network_neighbors,
+            "ppr_total_tensor_degrees": total_tensor_degrees,
+            "ppr_nodes_with_zero_degree": nodes_with_zero_degree,
+            "ppr_nodes_skipped_zero_total_degree": nodes_skipped_zero_total_degree,
         }
 
         return out_neighbor_ids, out_weights, ppr_stats
@@ -705,11 +770,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             dtype=torch.long,
             device=self.device,
         )
-        metadata["ppr_degree_cache_size"] = torch.tensor(
-            [ppr_stats["ppr_degree_cache_size"]],
-            dtype=torch.long,
-            device=self.device,
-        )
         # Add timing stats to metadata (in milliseconds)
         metadata["ppr_total_time_ms"] = torch.tensor(
             [ppr_stats["ppr_total_time_ms"]],
@@ -724,6 +784,61 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         metadata["ppr_for_loop_time_ms"] = torch.tensor(
             [ppr_stats["ppr_for_loop_time_ms"]],
             dtype=torch.float,
+            device=self.device,
+        )
+        # Add debugging stats for queue sizes and degree validation
+        metadata["ppr_queue_sizes_per_iteration"] = torch.tensor(
+            ppr_stats["ppr_queue_sizes_per_iteration"]
+            if ppr_stats["ppr_queue_sizes_per_iteration"]
+            else [0],
+            dtype=torch.long,
+            device=self.device,
+        )
+        metadata["ppr_empty_queues_per_iteration"] = torch.tensor(
+            ppr_stats["ppr_empty_queues_per_iteration"]
+            if ppr_stats["ppr_empty_queues_per_iteration"]
+            else [0],
+            dtype=torch.long,
+            device=self.device,
+        )
+        metadata["ppr_degree_mismatch_count"] = torch.tensor(
+            [ppr_stats["ppr_degree_mismatch_count"]],
+            dtype=torch.long,
+            device=self.device,
+        )
+        # Store mismatch details as flattened tensor: [node_id, network_count, tensor_degree, ...]
+        mismatch_details = ppr_stats["ppr_degree_mismatch_details"]
+        if mismatch_details:
+            flattened_details = [val for tup in mismatch_details for val in tup]
+            metadata["ppr_degree_mismatch_details"] = torch.tensor(
+                flattened_details,
+                dtype=torch.long,
+                device=self.device,
+            )
+        else:
+            metadata["ppr_degree_mismatch_details"] = torch.tensor(
+                [],
+                dtype=torch.long,
+                device=self.device,
+            )
+        metadata["ppr_total_network_neighbors"] = torch.tensor(
+            [ppr_stats["ppr_total_network_neighbors"]],
+            dtype=torch.long,
+            device=self.device,
+        )
+        metadata["ppr_total_tensor_degrees"] = torch.tensor(
+            [ppr_stats["ppr_total_tensor_degrees"]],
+            dtype=torch.long,
+            device=self.device,
+        )
+        metadata["ppr_nodes_with_zero_degree"] = torch.tensor(
+            [ppr_stats["ppr_nodes_with_zero_degree"]],
+            dtype=torch.long,
+            device=self.device,
+        )
+        metadata["ppr_nodes_skipped_zero_total_degree"] = torch.tensor(
+            [ppr_stats["ppr_nodes_skipped_zero_total_degree"]],
+            dtype=torch.long,
             device=self.device,
         )
 

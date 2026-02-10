@@ -220,10 +220,15 @@ def _ppr_sampling_worker_loop(
     ppr_alpha: float,
     ppr_eps: float,
     ppr_max_nodes: int,
+    ppr_degree_tensors: Union[torch.Tensor, dict],
 ):
     """
     Worker loop for PPR-based sampling. Similar to _sampling_worker_loop but uses
     DistPPRNeighborSampler instead of DistABLPNeighborSampler.
+
+    Args:
+        ppr_degree_tensors: Pre-computed degree tensors for efficient degree lookups.
+            Required for PPR algorithm. Must be provided.
     """
     dist_sampler = None
     try:
@@ -280,6 +285,7 @@ def _ppr_sampling_worker_loop(
             alpha=ppr_alpha,
             eps=ppr_eps,
             max_ppr_nodes=ppr_max_nodes,
+            degree_tensors=ppr_degree_tensors,
         )
         dist_sampler.start_loop()
 
@@ -355,8 +361,16 @@ class DistPPRSamplingProducer(DistMpSamplingProducer):
 
     Args:
         ppr_alpha: Restart probability for PPR (default: 0.15)
-        ppr_eps: Convergence threshold for PPR (default: 1e-5)
+        ppr_eps: Convergence threshold for PPR (default: 1e-4)
         ppr_max_nodes: Maximum number of PPR neighbors to return per seed (default: 50)
+        ppr_degree_tensors: Pre-computed degree tensors for degree lookups.
+            Required for PPR algorithm.
+            For homogeneous graphs: torch.Tensor of shape [num_nodes] where tensor[i]
+            is the degree of node i.
+            For heterogeneous graphs: dict[EdgeType, torch.Tensor] where each tensor
+            contains the degree of each node for that edge type.
+            Degree lookups are done via in-memory tensor indexing instead of
+            network calls, significantly reducing latency in the PPR computation.
     """
 
     def __init__(
@@ -366,8 +380,9 @@ class DistPPRSamplingProducer(DistMpSamplingProducer):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         output_channel: ChannelBase,
+        ppr_degree_tensors: Union[torch.Tensor, dict],
         ppr_alpha: float = 0.15,
-        ppr_eps: float = 1e-5,
+        ppr_eps: float = 1e-4,
         ppr_max_nodes: int = 50,
     ):
         super().__init__(
@@ -376,6 +391,7 @@ class DistPPRSamplingProducer(DistMpSamplingProducer):
         self.ppr_alpha = ppr_alpha
         self.ppr_eps = ppr_eps
         self.ppr_max_nodes = ppr_max_nodes
+        self.ppr_degree_tensors = ppr_degree_tensors
 
     def init(self):
         r"""Create the subprocess pool. Init PPR samplers and rpc server."""
@@ -409,6 +425,7 @@ class DistPPRSamplingProducer(DistMpSamplingProducer):
                     self.ppr_alpha,
                     self.ppr_eps,
                     self.ppr_max_nodes,
+                    self.ppr_degree_tensors,
                 ),
             )
             w.daemon = True

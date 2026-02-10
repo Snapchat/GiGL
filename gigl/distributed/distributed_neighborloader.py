@@ -641,13 +641,17 @@ class DistPPRNeighborLoader(DistLoader):
     Note: Unlike standard neighbor loaders, this does not use a fixed fanout pattern.
     Neighbor selection is entirely controlled by PPR parameters (alpha, eps, max_nodes).
 
+    This loader automatically computes node degrees from the dataset's graph topology
+    and broadcasts them across all machines. This enables in-memory degree lookups
+    during PPR computation, significantly reducing network calls and latency.
+
     Args:
         dataset (DistDataset): The dataset to sample from.
         input_nodes: The indices of seed nodes to start sampling from.
         ppr_alpha (float): Restart probability for PPR. Higher values keep samples
             closer to seeds. (default: 0.15)
         ppr_eps (float): Convergence threshold for PPR. Smaller values give more
-            accurate scores but require more computation. (default: 1e-5)
+            accurate scores but require more computation. (default: 1e-4)
         ppr_max_nodes (int): Maximum number of neighbors to return per seed based
             on PPR scores. (default: 50)
         num_workers (int): How many workers to use for distributed sampling. (default: 1)
@@ -668,7 +672,7 @@ class DistPPRNeighborLoader(DistLoader):
             Union[torch.Tensor, Tuple[NodeType, torch.Tensor]]
         ] = None,
         ppr_alpha: float = 0.5,
-        ppr_eps: float = 1e-3,
+        ppr_eps: float = 1e-4,
         ppr_max_nodes: int = 50,
         num_workers: int = 1,
         batch_size: int = 1,
@@ -867,6 +871,16 @@ class DistPPRNeighborLoader(DistLoader):
             seed=None,
         )
 
+        # Compute and broadcast degree tensors across all machines for in-memory degree lookups.
+        # This significantly reduces network calls during PPR computation.
+        # Must be done before cleaning up process group and while distributed is initialized.
+        self._degree_tensors = self._compute_and_broadcast_degree_tensors(dataset)
+        logger.info(
+            f"Computed degree tensors: "
+            f"{type(self._degree_tensors).__name__} with "
+            f"{len(self._degree_tensors) if isinstance(self._degree_tensors, dict) else self._degree_tensors.numel()} entries"
+        )
+
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(
                 f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
@@ -945,8 +959,180 @@ class DistPPRNeighborLoader(DistLoader):
             ppr_alpha=ppr_alpha,
             ppr_eps=ppr_eps,
             ppr_max_nodes=ppr_max_nodes,
+            ppr_degree_tensors=self._degree_tensors,
         )
         self._mp_producer.init()
+
+    def _compute_and_broadcast_degree_tensors(
+        self,
+        dataset: DistDataset,
+    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+        """
+        Compute node degrees from the local graph partition and all-reduce across all machines.
+
+        This method extracts the graph topology from the dataset, computes the degree of each
+        node (number of edges) from the CSR row pointers, and then performs an all-reduce
+        operation to aggregate degrees across all partitions.
+
+        IMPORTANT: Since multiple local processes per machine share the same graph partition,
+        the all-reduce sums degrees from all ranks. We divide by local_world_size after
+        the all-reduce to correct for this over-counting.
+
+        For heterogeneous graphs, degrees are computed separately for each edge type.
+
+        Returns:
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
+                - For homogeneous graphs: A tensor of shape [num_nodes] where degree[i] is
+                  the total degree of node i across all partitions.
+                - For heterogeneous graphs: A dict mapping EdgeType to degree tensors, where
+                  each tensor contains degrees for the source/dest nodes of that edge type.
+        """
+        graph = dataset.graph
+
+        if graph is None:
+            raise ValueError(
+                "Dataset graph is None. Cannot compute degree tensors without graph topology."
+            )
+
+        # Get local_world_size to correct for over-counting from multiple local processes
+        is_distributed = torch.distributed.is_initialized()
+        local_world_size = 1
+        if is_distributed:
+            rank = torch.distributed.get_rank()
+
+            # Determine local_world_size (processes per machine)
+            rank_ip_addresses = gigl.distributed.utils.get_internal_ip_from_all_ranks()
+            count_ranks_per_ip_address = Counter(rank_ip_addresses)
+            local_world_size = count_ranks_per_ip_address[rank_ip_addresses[0]]
+
+            logger.info(
+                f"Degree computation: rank={rank}, local_world_size={local_world_size}"
+            )
+
+        # Create a gloo process group for CPU tensor all-reduce if needed.
+        # NCCL backend doesn't support CPU tensors, so we need gloo for this operation.
+        gloo_group = None
+        if is_distributed:
+            backend = torch.distributed.get_backend()
+            if backend != "gloo":
+                logger.info(
+                    f"Current backend is {backend}, creating gloo subgroup for CPU all-reduce"
+                )
+                gloo_group = torch.distributed.new_group(backend="gloo")
+            # else: gloo_group stays None, we'll use the default group
+
+        def all_reduce_with_size_sync(
+            local_degrees: torch.Tensor,
+        ) -> torch.Tensor:
+            """
+            Perform all-reduce on degree tensors, handling size mismatches across ranks.
+
+            Different partitions may have different indptr sizes, so we first synchronize
+            the maximum size, pad all tensors to that size, then perform the all-reduce.
+
+            After the all-reduce, we divide by local_world_size to correct for over-counting
+            since all local processes on the same machine have the same partition data.
+            """
+            if not is_distributed:
+                return local_degrees
+
+            # Get local size and find max size across all ranks
+            local_size = torch.tensor([local_degrees.size(0)], dtype=torch.long)
+            torch.distributed.all_reduce(
+                local_size, op=torch.distributed.ReduceOp.MAX, group=gloo_group
+            )
+            max_size = int(local_size.item())
+
+            # Pad local tensor to max size if needed
+            if local_degrees.size(0) < max_size:
+                padding = torch.zeros(
+                    max_size - local_degrees.size(0),
+                    dtype=local_degrees.dtype,
+                    device=local_degrees.device,
+                )
+                local_degrees = torch.cat([local_degrees, padding])
+
+            # Now all tensors are the same size, perform all-reduce
+            torch.distributed.all_reduce(
+                local_degrees, op=torch.distributed.ReduceOp.SUM, group=gloo_group
+            )
+
+            # Divide by local_world_size to correct for over-counting
+            # (all local processes on the same machine have the same partition data)
+            local_degrees = local_degrees // local_world_size
+
+            return local_degrees
+
+        is_heterogeneous = isinstance(graph, dict)
+
+        if is_heterogeneous:
+            # Heterogeneous case: compute degrees per edge type
+            degree_tensors: dict[EdgeType, torch.Tensor] = {}
+
+            for edge_type, edge_graph in graph.items():
+                topo = edge_graph.topo
+                if topo is None or topo.indptr is None:
+                    logger.warning(
+                        f"Topology or indptr not available for edge type {edge_type}, skipping."
+                    )
+                    continue
+
+                indptr = topo.indptr
+                num_nodes = indptr.size(0) - 1
+
+                # Compute local degrees from CSR row pointers
+                # degree[i] = indptr[i+1] - indptr[i]
+                local_degrees = indptr[1:] - indptr[:-1]
+
+                # Use int32 for all-reduce to avoid overflow, then convert to int32
+                local_degrees = local_degrees.contiguous().to(torch.int32)
+
+                # All-reduce to sum degrees across all partitions (with size synchronization)
+                local_degrees = all_reduce_with_size_sync(local_degrees)
+
+                # Clamp to int32 max and convert to save memory
+                max_int32 = torch.iinfo(torch.int32).max
+                local_degrees = local_degrees.clamp(max=max_int32).to(torch.int32)
+
+                degree_tensors[edge_type] = local_degrees
+                logger.info(
+                    f"Computed degrees for edge type {edge_type}: "
+                    f"{num_nodes} nodes, max degree = {local_degrees.max().item()}"
+                )
+
+            return degree_tensors
+        else:
+            # Homogeneous case: single graph
+            topo = graph.topo
+            if topo is None or topo.indptr is None:
+                raise ValueError(
+                    "Topology or indptr not available for homogeneous graph. "
+                    "Cannot compute degree tensors."
+                )
+
+            indptr = topo.indptr
+            num_nodes = indptr.size(0) - 1
+
+            # Compute local degrees from CSR row pointers
+            local_degrees = indptr[1:] - indptr[:-1]
+
+            # Use int32 for all-reduce to avoid overflow, then convert to int32
+            local_degrees = local_degrees.contiguous().to(torch.int32)
+
+            # All-reduce to sum degrees across all partitions (with size synchronization)
+            local_degrees = all_reduce_with_size_sync(local_degrees)
+
+            # Clamp to int32 max and convert to save memory
+            max_int32 = torch.iinfo(torch.int32).max
+            local_degrees = local_degrees.clamp(max=max_int32).to(torch.int32)
+
+            logger.info(
+                f"Computed degrees for homogeneous graph: "
+                f"{local_degrees.size(0)} nodes, max degree = {local_degrees.max().item()}, min degree = {local_degrees.min().item()}"
+            )
+            logger.info("Printing sample of degree tensor: %s", local_degrees[:100])
+
+            return local_degrees
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         data = super()._collate_fn(msg)
