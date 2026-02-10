@@ -4,6 +4,7 @@ from typing import Literal, Optional, Union
 
 import torch
 import torch.multiprocessing as mp
+from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
 from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
@@ -39,6 +40,7 @@ from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
 )
+from tests.test_assets.test_case import TestCase
 
 _POSITIVE_EDGE_TYPE = message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
 _NEGATIVE_EDGE_TYPE = message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
@@ -413,7 +415,7 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
     shutdown_rpc()
 
 
-class DistABLPLoaderTest(unittest.TestCase):
+class DistABLPLoaderTest(TestCase):
     def tearDown(self):
         if torch.distributed.is_initialized():
             print("Destroying process group")
@@ -987,4 +989,4 @@ class DistABLPLoaderTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from collections import OrderedDict
 from typing import Optional
 
@@ -32,11 +31,12 @@ from tests.test_assets.celeb_test_graph.assets import (
     get_celeb_rooted_node_neighborhood_sample,
 )
 from tests.test_assets.models.pass_through import PassThroughNet
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class NodeAnchorBasedLinkPredictionInferencerTest(unittest.TestCase):
+class NodeAnchorBasedLinkPredictionInferencerTest(TestCase):
     class _SimpleInferer(NodeAnchorBasedLinkPredictionBaseInferencer):
         @property
         def model(self) -> torch.nn.Module:

@@ -1,13 +1,15 @@
-import unittest
 from uuid import uuid4
+
+from absl.testing import absltest
 
 from gigl.common import GcsUri
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env import dep_constants
 from gigl.env.pipelines_config import get_resource_config
+from tests.test_assets.test_case import TestCase
 
 
-class GcsUtilsTest(unittest.TestCase):
+class GcsUtilsTest(TestCase):
     def setUp(self):
         super().setUp()
         self._scratch_gcs_path = GcsUri(
@@ -86,4 +88,4 @@ class GcsUtilsTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -5,10 +5,9 @@ This module contains comprehensive tests for the EdgeBatch class,
 focusing on construction to and from edge tensors round-trip functionality.
 """
 
-import unittest
-
 import torch
 import torchrec
+from absl.testing import absltest
 
 from gigl.experimental.knowledge_graph_embedding.lib.data.edge_batch import EdgeBatch
 from gigl.src.common.types.graph_data import (
@@ -16,9 +15,10 @@ from gigl.src.common.types.graph_data import (
     CondensedNodeType,
     NodeType,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestEdgeBatch(unittest.TestCase):
+class TestEdgeBatch(TestCase):
     """Test suite for the EdgeBatch class."""
 
     def setUp(self):
@@ -443,4 +443,4 @@ class TestEdgeBatch(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

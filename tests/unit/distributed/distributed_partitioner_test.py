@@ -1,12 +1,12 @@
 # Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
 
-import unittest
 from collections import abc, defaultdict
 from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
+from absl.testing import absltest
 from graphlearn_torch.distributed import init_rpc, init_worker_group
 from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
@@ -35,9 +35,10 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
     run_distributed_partitioner,
 )
 from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 
-class DistRandomPartitionerTestCase(unittest.TestCase):
+class DistRandomPartitionerTestCase(TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
 
@@ -1410,4 +1411,4 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

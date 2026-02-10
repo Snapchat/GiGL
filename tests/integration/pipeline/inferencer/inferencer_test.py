@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import LocalUri
@@ -24,11 +23,12 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from snapchat.research.gbml import gbml_config_pb2
 from snapchat.research.gbml.inference_metadata_pb2 import InferenceOutput
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class InferencerTest(unittest.TestCase):
+class InferencerTest(TestCase):
     def setUp(self) -> None:
         self.__bq_utils = BqUtils()
         self.__gcs_utils = GcsUtils()

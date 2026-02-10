@@ -1,6 +1,5 @@
 import io
 import tempfile
-import unittest
 from pathlib import Path
 from typing import Optional
 from unittest.mock import ANY, MagicMock, patch
@@ -9,6 +8,7 @@ from uuid import uuid4
 import fastavro
 import requests
 import torch
+from absl.testing import absltest
 from google.cloud.exceptions import GoogleCloudError
 from parameterized import param, parameterized
 
@@ -24,11 +24,12 @@ from gigl.common.data.export import (
     load_predictions_to_bigquery,
 )
 from gigl.common.utils.retry import RetriesFailedException
+from tests.test_assets.test_case import TestCase
 
 TEST_NODE_TYPE = "test_type"
 
 
-class TestEmbeddingExporter(unittest.TestCase):
+class TestEmbeddingExporter(TestCase):
     def setUp(self):
         super().setUp()
         self.maxDiff = 1_000  # Set a high maxDiff to see full error messages
@@ -427,7 +428,7 @@ class TestEmbeddingExporter(unittest.TestCase):
         self.assertEqual(load_job.output_rows, 1000)
 
 
-class TestPredictionsExporter(unittest.TestCase):
+class TestPredictionsExporter(TestCase):
     def setUp(self):
         super().setUp()
         self.maxDiff = 1_000  # Set a high maxDiff to see full error messages
@@ -780,4 +781,4 @@ class TestPredictionsExporter(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

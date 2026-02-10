@@ -1,14 +1,16 @@
 import os
 import tempfile
 import textwrap
-import unittest
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List
 from unittest.mock import MagicMock, patch
 
+from absl.testing import absltest
+
 from gigl.common import LocalUri
 from gigl.common.utils.yaml_loader import load_resolved_yaml
+from tests.test_assets.test_case import TestCase
 
 
 @dataclass
@@ -25,7 +27,7 @@ class _Complex_TestConfig:
     description: str
 
 
-class YamlLoaderTest(unittest.TestCase):
+class YamlLoaderTest(TestCase):
     def setUp(self):
         """Set up test fixtures."""
         super().setUp()
@@ -86,4 +88,4 @@ class YamlLoaderTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

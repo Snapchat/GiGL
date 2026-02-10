@@ -1,4 +1,4 @@
-import unittest
+from absl.testing import absltest
 
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.validation_check.libs.resource_config_checks import (
@@ -16,6 +16,7 @@ from gigl.src.validation_check.libs.resource_config_checks import (
     check_if_trainer_resource_config_valid,
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
+from tests.test_assets.test_case import TestCase
 
 # Helper functions for creating valid configurations
 
@@ -261,7 +262,7 @@ def _create_kfp_config_with_gpu() -> gigl_resource_config_pb2.KFPResourceConfig:
 # Test Classes
 
 
-class TestDataflowResourceConfig(unittest.TestCase):
+class TestDataflowResourceConfig(TestCase):
     """Test suite for Dataflow resource configuration validation."""
 
     def test_valid_dataflow_config(self):
@@ -299,7 +300,7 @@ class TestDataflowResourceConfig(unittest.TestCase):
             _check_if_dataflow_resource_config_valid(config)
 
 
-class TestSparkResourceConfig(unittest.TestCase):
+class TestSparkResourceConfig(TestCase):
     """Test suite for Spark resource configuration validation."""
 
     def test_valid_spark_config(self):
@@ -330,7 +331,7 @@ class TestSparkResourceConfig(unittest.TestCase):
             _check_if_spark_resource_config_valid(config)
 
 
-class TestSharedResourceConfig(unittest.TestCase):
+class TestSharedResourceConfig(TestCase):
     """Test suite for shared resource configuration validation."""
 
     def test_valid_shared_resource_config(self):
@@ -411,7 +412,7 @@ class TestSharedResourceConfig(unittest.TestCase):
             check_if_shared_resource_config_valid(config)
 
 
-class TestPreprocessorResourceConfig(unittest.TestCase):
+class TestPreprocessorResourceConfig(TestCase):
     """Test suite for preprocessor resource configuration validation."""
 
     def test_valid_preprocessor_config(self):
@@ -435,7 +436,7 @@ class TestPreprocessorResourceConfig(unittest.TestCase):
             check_if_preprocessor_resource_config_valid(config)
 
 
-class TestSubgraphSamplerResourceConfig(unittest.TestCase):
+class TestSubgraphSamplerResourceConfig(TestCase):
     """Test suite for subgraph sampler resource configuration validation."""
 
     def test_valid_subgraph_sampler_config(self):
@@ -452,7 +453,7 @@ class TestSubgraphSamplerResourceConfig(unittest.TestCase):
             check_if_subgraph_sampler_resource_config_valid(config)
 
 
-class TestSplitGeneratorResourceConfig(unittest.TestCase):
+class TestSplitGeneratorResourceConfig(TestCase):
     """Test suite for split generator resource configuration validation."""
 
     def test_valid_split_generator_config(self):
@@ -469,7 +470,7 @@ class TestSplitGeneratorResourceConfig(unittest.TestCase):
             check_if_split_generator_resource_config_valid(config)
 
 
-class TestTrainerResourceConfig(unittest.TestCase):
+class TestTrainerResourceConfig(TestCase):
     """Test suite for trainer resource configuration validation."""
 
     def test_valid_local_trainer_config(self):
@@ -588,7 +589,7 @@ class TestTrainerResourceConfig(unittest.TestCase):
             check_if_trainer_resource_config_valid(config)
 
 
-class TestInferencerResourceConfig(unittest.TestCase):
+class TestInferencerResourceConfig(TestCase):
     """Test suite for inferencer resource configuration validation."""
 
     def test_valid_dataflow_inferencer_config(self):
@@ -662,7 +663,7 @@ class TestInferencerResourceConfig(unittest.TestCase):
             check_if_inferencer_resource_config_valid(config)
 
 
-class TestAcceleratorTypeValidation(unittest.TestCase):
+class TestAcceleratorTypeValidation(TestCase):
     """Test suite for accelerator type validation helper."""
 
     def test_valid_gpu_config_vertex_ai(self):
@@ -705,7 +706,7 @@ class TestAcceleratorTypeValidation(unittest.TestCase):
             _validate_accelerator_type(config)
 
 
-class TestValidateMachineConfig(unittest.TestCase):
+class TestValidateMachineConfig(TestCase):
     """Test suite for _validate_machine_config error handling."""
 
     def test_valid_local_config(self):
@@ -774,7 +775,7 @@ def _create_gbml_config_without_graph_stores() -> GbmlConfigPbWrapper:
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
 
-class TestTrainerGraphStoreStorageCommand(unittest.TestCase):
+class TestTrainerGraphStoreStorageCommand(TestCase):
     """Test suite for trainer graph store storage_command validation."""
 
     def test_valid_storage_command(self):
@@ -796,7 +797,7 @@ class TestTrainerGraphStoreStorageCommand(unittest.TestCase):
         check_if_trainer_graph_store_storage_command_valid(gbml_config)
 
 
-class TestInferencerGraphStoreStorageCommand(unittest.TestCase):
+class TestInferencerGraphStoreStorageCommand(TestCase):
     """Test suite for inferencer graph store storage_command validation."""
 
     def test_valid_storage_command(self):
@@ -819,4 +820,4 @@ class TestInferencerGraphStoreStorageCommand(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

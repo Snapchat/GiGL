@@ -1,4 +1,4 @@
-import unittest
+from absl.testing import absltest
 
 from gigl.src.common.constants.graph_metadata import DEFAULT_CONDENSED_NODE_TYPE
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -6,9 +6,10 @@ from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class PreprocessedMetadataTest(unittest.TestCase):
+class PreprocessedMetadataTest(TestCase):
     def test_feature_schema_keys_match_original_keys(self):
         """
         We currently observe a bug in the FeatureEmbeddingLayer which occurs if we sort the feature keys, leading
@@ -56,4 +57,4 @@ class PreprocessedMetadataTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -1,10 +1,10 @@
-import unittest
 from typing import Optional, Union
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
+from absl.testing import absltest
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
 from torchrec.distributed.model_parallel import (
@@ -18,6 +18,7 @@ from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     get_process_group_init_method,
 )
+from tests.test_assets.test_case import TestCase
 
 # Embedding table name for default homogeneous node type
 # Constructed as f"node_embedding_{DEFAULT_HOMOGENEOUS_NODE_TYPE}" in LightGCN
@@ -64,7 +65,7 @@ class DummyDecoder(nn.Module):
         return query_embeddings + candidate_embeddings
 
 
-class TestLinkPredictionGNN(unittest.TestCase):
+class TestLinkPredictionGNN(TestCase):
     def setUp(self):
         self.device = torch.device("cpu")
 
@@ -148,7 +149,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
 
 
 # TODO(swong3): Move create model and graph data in individual tests, rather than using a method to do so
-class TestLightGCN(unittest.TestCase):
+class TestLightGCN(TestCase):
     def setUp(self):
         self.device = torch.device("cpu")
 
@@ -430,4 +431,4 @@ def _run_dmp_multiprocess_test(
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

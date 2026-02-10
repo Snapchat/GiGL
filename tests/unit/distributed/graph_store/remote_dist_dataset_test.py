@@ -1,12 +1,12 @@
-import unittest
 from typing import Optional
 from unittest.mock import patch
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from absl.testing import absltest
 
-from gigl.distributed.dist_server import DistServer
+from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.env.distributed import GraphStoreInfo
 from gigl.types.graph import FeatureInfo
@@ -27,6 +27,7 @@ from tests.test_assets.distributed.utils import (
     create_test_process_group,
     get_process_group_init_method,
 )
+from tests.test_assets.test_case import TestCase
 
 # Module-level test server instance used by mock functions
 _test_server: Optional[DistServer] = None
@@ -71,7 +72,7 @@ def _create_mock_graph_store_info(
     return MockGraphStoreInfo(real_info, compute_node_rank)
 
 
-class TestRemoteDistDataset(unittest.TestCase):
+class TestRemoteDistDataset(TestCase):
     def setUp(self) -> None:
         global _test_server
         # 10 nodes in DEFAULT_HOMOGENEOUS_EDGE_INDEX ring graph
@@ -147,7 +148,7 @@ class TestRemoteDistDataset(unittest.TestCase):
         assert_tensor_equality(result[0], torch.arange(5, 10))
 
 
-class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
+class TestRemoteDistDatasetHeterogeneous(TestCase):
     def setUp(self) -> None:
         global _test_server
         # 5 users, 5 stories in DEFAULT_HETEROGENEOUS_EDGE_INDICES
@@ -214,7 +215,7 @@ class TestRemoteDistDatasetHeterogeneous(unittest.TestCase):
         assert_tensor_equality(result[0], torch.arange(2, 5))
 
 
-class TestRemoteDistDatasetWithSplits(unittest.TestCase):
+class TestRemoteDistDatasetWithSplits(TestCase):
     """Tests for get_node_ids with train/val/test splits."""
 
     def tearDown(self) -> None:
@@ -298,6 +299,92 @@ class TestRemoteDistDatasetWithSplits(unittest.TestCase):
             torch.tensor([1, 2]),
         )
 
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_ablp_input(self, mock_async_request):
+        """Test get_ablp_input with train/val/test splits."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # Train split: nodes [0, 1, 2]
+        result = remote_dataset.get_ablp_input(
+            split="train", node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        self.assertIn(0, result)
+        anchors, positive_labels, negative_labels = result[0]
+        assert_tensor_equality(anchors, torch.tensor([0, 1, 2]))
+        assert_tensor_equality(positive_labels, torch.tensor([[0, 1], [1, 2], [2, 3]]))
+        assert negative_labels is not None
+        assert_tensor_equality(negative_labels, torch.tensor([[2], [3], [4]]))
+
+        # Val split: node [3]
+        result = remote_dataset.get_ablp_input(
+            split="val", node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        anchors, positive_labels, negative_labels = result[0]
+        assert_tensor_equality(anchors, torch.tensor([3]))
+        assert_tensor_equality(positive_labels, torch.tensor([[3, 4]]))
+        assert negative_labels is not None
+        assert_tensor_equality(negative_labels, torch.tensor([[0]]))
+
+        # Test split: node [4]
+        # Note: Labels are stored in CSR format which sorts by destination indices,
+        # so [4, 0] from the input becomes [0, 4] in the stored format.
+        result = remote_dataset.get_ablp_input(
+            split="test", node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        anchors, positive_labels, negative_labels = result[0]
+        assert_tensor_equality(anchors, torch.tensor([4]))
+        assert_tensor_equality(positive_labels, torch.tensor([[0, 4]]))
+        assert negative_labels is not None
+        assert_tensor_equality(negative_labels, torch.tensor([[1]]))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_ablp_input_with_sharding(self, mock_async_request):
+        """Test get_ablp_input with sharding across compute nodes."""
+        self._create_and_register_dataset_with_splits()
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # With sharding: train split [0, 1, 2] across 2 ranks
+        result_rank0 = remote_dataset.get_ablp_input(
+            split="train",
+            rank=0,
+            world_size=2,
+            node_type=USER,
+            supervision_edge_type=USER_TO_STORY,
+        )
+        anchors_0, positive_labels_0, negative_labels_0 = result_rank0[0]
+
+        # Rank 0 should get node 0
+        assert_tensor_equality(anchors_0, torch.tensor([0]))
+        assert_tensor_equality(positive_labels_0, torch.tensor([[0, 1]]))
+        assert negative_labels_0 is not None
+        assert_tensor_equality(negative_labels_0, torch.tensor([[2]]))
+
+        result_rank1 = remote_dataset.get_ablp_input(
+            split="train",
+            rank=1,
+            world_size=2,
+            node_type=USER,
+            supervision_edge_type=USER_TO_STORY,
+        )
+        anchors_1, positive_labels_1, negative_labels_1 = result_rank1[0]
+
+        # Rank 1 should get nodes 1, 2
+        assert_tensor_equality(anchors_1, torch.tensor([1, 2]))
+        assert_tensor_equality(positive_labels_1, torch.tensor([[1, 2], [2, 3]]))
+        assert negative_labels_1 is not None
+        assert_tensor_equality(negative_labels_1, torch.tensor([[3], [4]]))
+
 
 def _test_get_free_ports_on_storage_cluster(
     rank: int,
@@ -341,7 +428,7 @@ def _test_get_free_ports_on_storage_cluster(
         dist.destroy_process_group()
 
 
-class TestGetFreePortsOnStorageCluster(unittest.TestCase):
+class TestGetFreePortsOnStorageCluster(TestCase):
     def setUp(self) -> None:
         global _test_server
         dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
@@ -376,4 +463,4 @@ class TestGetFreePortsOnStorageCluster(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

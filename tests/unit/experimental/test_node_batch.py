@@ -5,16 +5,15 @@ This module contains comprehensive tests for the NodeBatch class,
 focusing on construction to and from node tensors round-trip functionality.
 """
 
-import unittest
-
 import torch
 import torchrec
 
 from gigl.experimental.knowledge_graph_embedding.lib.data.node_batch import NodeBatch
 from gigl.src.common.types.graph_data import CondensedNodeType, NodeType
+from tests.test_assets.test_case import TestCase
 
 
-class TestNodeBatch(unittest.TestCase):
+class TestNodeBatch(TestCase):
     """Test suite for the NodeBatch class."""
 
     def setUp(self):

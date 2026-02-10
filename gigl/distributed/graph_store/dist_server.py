@@ -31,7 +31,7 @@ from graphlearn_torch.sampler import (
 )
 
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistAblpSamplingProducer
+from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -69,7 +69,7 @@ class DistServer(object):
         # The mapping from the key in worker options (such as 'train', 'test')
         # to producer id
         self._worker_key2producer_id: dict[str, int] = {}
-        self._producer_pool: dict[int, DistAblpSamplingProducer] = {}
+        self._producer_pool: dict[int, DistABLPSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
 
@@ -367,9 +367,9 @@ class DistServer(object):
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
                 print(
-                    f"Creating DistMpSamplingProducer ({DistAblpSamplingProducer}) for worker key: {worker_options.worker_key} with producer id: {producer_id}"
+                    f"Creating DistMpSamplingProducer ({DistABLPSamplingProducer}) for worker key: {worker_options.worker_key} with producer id: {producer_id}"
                 )
-                producer = DistAblpSamplingProducer(
+                producer = DistABLPSamplingProducer(
                     self.dataset, sampler_input, sampling_config, worker_options, buffer
                 )
                 producer.init()

@@ -1,14 +1,13 @@
-import unittest
-
 import torch
 import torch_geometric
 from torch_geometric.data import HeteroData
 
 from gigl.src.common.models.pyg.heterogeneous import HGT
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from tests.test_assets.test_case import TestCase
 
 
-class TestHGT(unittest.TestCase):
+class TestHGT(TestCase):
     def setUp(self):
         self._default_use_segment_matmul = torch_geometric.backend.use_segment_matmul
         # Set this field to True so that it will be able to raise error if the HGTConv forward pass does not behave as expected

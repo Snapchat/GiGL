@@ -1,8 +1,7 @@
-import unittest
-
 import torch
+from absl.testing import absltest
 
-from gigl.distributed.dist_server import DistServer
+from gigl.distributed.graph_store import dist_server
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
@@ -18,10 +17,13 @@ from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestDistServerDatasetMethods(unittest.TestCase):
-    """Tests for DistServer dataset methods (formerly in storage_utils)."""
+class TestRemoteDataset(TestCase):
+    def setUp(self) -> None:
+        """Reset the global dataset before each test."""
+        dist_server._dist_server = None
 
     def tearDown(self) -> None:
         """Clean up after each test."""
@@ -33,7 +35,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         node_feature_info = server.get_node_feature_info()
 
@@ -45,7 +47,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         node_feature_info = server.get_node_feature_info()
 
@@ -57,7 +59,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         edge_feature_info = server.get_edge_feature_info()
 
@@ -69,7 +71,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         edge_feature_info = server.get_edge_feature_info()
 
@@ -81,7 +83,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Test with world_size=1, rank=0 (should get all nodes)
         node_ids = server.get_node_ids(rank=0, world_size=1, node_type=None)
@@ -94,7 +96,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Test with USER node type
         user_node_ids = server.get_node_ids(rank=0, world_size=1, node_type=USER)
@@ -113,7 +115,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Test with world_size=2
         rank_0_nodes = server.get_node_ids(rank=0, world_size=2, node_type=None)
@@ -137,7 +139,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         with self.assertRaises(ValueError):
             server.get_node_ids(rank=0, world_size=None)
@@ -150,7 +152,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
             server.get_node_ids(rank=0, world_size=1, node_type=USER)
 
@@ -161,7 +163,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
             server.get_node_ids(rank=0, world_size=1, node_type=None)
 
@@ -177,7 +179,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         train_nodes = server.get_node_ids(node_type=USER, split="train")
         assert_tensor_equality(train_nodes, torch.tensor([0, 1, 2]))
@@ -194,7 +196,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         val_nodes = server.get_node_ids(node_type=USER, split="val")
         assert_tensor_equality(val_nodes, torch.tensor([3]))
@@ -211,7 +213,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         test_nodes = server.get_node_ids(node_type=USER, split="test")
         assert_tensor_equality(test_nodes, torch.tensor([4]))
@@ -228,7 +230,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Train split has [0, 1, 2], shard across 2 ranks
         rank_0_nodes = server.get_node_ids(
@@ -246,7 +248,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         with self.assertRaises(ValueError):
             server.get_node_ids(split="invalid")
@@ -256,7 +258,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
         edge_dir = server.get_edge_dir()
         self.assertEqual(edge_dir, dataset.edge_dir)
 
@@ -265,7 +267,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
         node_feature_info = server.get_node_feature_info()
         self.assertEqual(node_feature_info, dataset.node_feature_info)
 
@@ -274,7 +276,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
         edge_feature_info = server.get_edge_feature_info()
         self.assertEqual(edge_feature_info, dataset.edge_feature_info)
 
@@ -283,7 +285,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
         edge_types = server.get_edge_types()
         self.assertIsNone(edge_types)
 
@@ -292,7 +294,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
         edge_types = server.get_edge_types()
         self.assertEqual(
             edge_types,
@@ -333,7 +335,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=split_to_user_ids["test"],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
@@ -386,7 +388,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=[],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Get training input for rank 0 of 2
 
@@ -443,7 +445,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         with self.assertRaises(ValueError):
             server.get_ablp_input(
@@ -475,7 +477,7 @@ class TestDistServerDatasetMethods(unittest.TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        server = DistServer(dataset)
+        server = dist_server.DistServer(dataset)
 
         anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
             split="train",
@@ -497,4 +499,4 @@ class TestDistServerDatasetMethods(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()
