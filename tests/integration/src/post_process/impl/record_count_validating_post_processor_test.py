@@ -5,7 +5,7 @@ import uuid
 
 from absl.testing import absltest
 
-from gigl.common import LocalUri
+from gigl.common import LocalUri, UriFactory
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -159,7 +159,9 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         validator.run(
             applied_task_identifier=AppliedTaskIdentifier(self._test_unique_name),
             task_config_uri=task_config_uri,
-            resource_config_uri=get_resource_config().get_resource_config_uri,
+            resource_config_uri=UriFactory.create_uri(
+                get_resource_config().get_resource_config_uri
+            ),
         )
 
     def test_validation_passes_when_counts_match(self):
