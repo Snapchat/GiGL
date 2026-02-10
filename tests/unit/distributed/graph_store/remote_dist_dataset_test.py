@@ -305,7 +305,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
     )
     def test_get_ablp_input(self, mock_async_request):
         """Test get_ablp_input with train/val/test splits."""
-        self._create_and_register_dataset_with_splits()
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
@@ -349,7 +349,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
     )
     def test_get_ablp_input_with_sharding(self, mock_async_request):
         """Test get_ablp_input with sharding across compute nodes."""
-        self._create_and_register_dataset_with_splits()
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
