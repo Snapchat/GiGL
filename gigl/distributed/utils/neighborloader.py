@@ -32,8 +32,9 @@ class DatasetSchema:
     Shared metadata between the local and remote datasets.
     """
 
-    # If the dataset is labeled heterogeneous. E.g. one node type, one edge type, and "label" edges.
-    is_labeled_heterogeneous: bool
+    # If the dataset is homogeneous with labeled edge type. E.g. one node type, one edge type, and "label" edges.
+    # This happens in an otherwise homogeneous dataset when doing ABLP and when we split the dataset.
+    is_homogeneous_with_labeled_edge_type: bool
     # List of all edge types in the graph.
     edge_types: Optional[list[EdgeType]]
     # Node feature info.
