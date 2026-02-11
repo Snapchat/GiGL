@@ -394,7 +394,7 @@ class DistNeighborLoader(DistLoader):
         )
         sampling_port = sampling_ports[node_rank]
 
-        # TODO(kmonte) - We need to be able to differentiate between differnt instance of the same loader.
+        # TODO(kmonte) - We need to be able to differentiate between different instance of the same loader.
         # e.g. if we have two different DistNeighborLoaders, then they will have conflicting worker keys.
         # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.

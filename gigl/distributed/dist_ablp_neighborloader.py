@@ -236,6 +236,9 @@ class DistABLPLoader(DistLoader):
                 )
 
         del supervision_edge_type
+        self.data: Optional[Union[DistDataset, RemoteDistDataset]] = None
+        if isinstance(dataset, DistDataset):
+            self.data = dataset
 
         if context:
             assert (
@@ -406,9 +409,8 @@ class DistABLPLoader(DistLoader):
 
             # Type narrowing for colocated mode
 
-            self.data = dataset
             self.input_data = sampler_input[0]
-            del dataset, sampler_input
+            del sampler_input
             assert isinstance(self.data, DistDataset)
             assert isinstance(self.input_data, ABLPNodeSamplerInput)
 
@@ -556,7 +558,7 @@ class DistABLPLoader(DistLoader):
             num_cpu_threads: Number of CPU threads for PyTorch.
 
         Returns:
-            Tuple of (ABLPNodeSamplerInput, MpDistSamplingWorkerOptions, DatasetSchema).
+            Tuple of (list[ABLPNodeSamplerInput], MpDistSamplingWorkerOptions, DatasetSchema).
         """
         # Validate input format - should not be Graph Store format
         if isinstance(input_nodes, abc.Mapping):
@@ -585,11 +587,11 @@ class DistABLPLoader(DistLoader):
             anchor_node_type, anchor_node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
-            for sup_edge_type in self._supervision_edge_types:
+            for supervision_edge_type in self._supervision_edge_types:
                 assert (
-                    sup_edge_type[0] == anchor_node_type
+                    supervision_edge_type[0] == anchor_node_type
                 ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
-                    got supervision edge type {sup_edge_type} with anchor node type {anchor_node_type}"
+                    got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
             if dataset.edge_dir == "in":
                 self._supervision_edge_types = [
                     reverse_edge_type(sup_edge_type)
@@ -646,11 +648,11 @@ class DistABLPLoader(DistLoader):
         self._negative_label_edge_types: list[EdgeType] = []
         positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        for sup_edge_type in self._supervision_edge_types:
+        for supervision_edge_type in self._supervision_edge_types:
             (
                 positive_label_edge_type,
                 negative_label_edge_type,
-            ) = select_label_edge_types(sup_edge_type, dataset.graph.keys())
+            ) = select_label_edge_types(supervision_edge_type, dataset.graph.keys())
             self._positive_label_edge_types.append(positive_label_edge_type)
             if negative_label_edge_type is not None:
                 self._negative_label_edge_types.append(negative_label_edge_type)
@@ -703,6 +705,7 @@ class DistABLPLoader(DistLoader):
             master_worker_port=neighbor_loader_port_for_current_rank,
             device=device,
             should_use_cpu_workers=should_use_cpu_workers,
+            # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
         )
         logger.info(
@@ -716,10 +719,18 @@ class DistABLPLoader(DistLoader):
         dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
         worker_options = MpDistSamplingWorkerOptions(
             num_workers=num_workers,
+            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
+            # need to be connected. Thus, we need master ip address and master port to
+            # initate the connection.
+            # Note that different groups of workers are independent, and thus
+            # the sampling processes in different groups should be independent, and should
+            # use different master ports.
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
             master_addr=master_ip_address,
             master_port=dist_sampling_port_for_current_rank,
+            # Load testing shows that when num_rpc_threads exceed 16, the performance
+            # will degrade.
             num_rpc_threads=min(dataset.num_partitions, 16),
             rpc_timeout=600,
             channel_size=channel_size,
@@ -809,7 +820,7 @@ class DistABLPLoader(DistLoader):
         )
         sampling_port = sampling_ports[node_rank]
 
-        # TODO(kmonte) - We need to be able to differentiate between differnt instance of the same loader.
+        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.
         # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
         # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
@@ -930,10 +941,6 @@ class DistABLPLoader(DistLoader):
             dataset_metadata: Metadata about the dataset schema.
         """
         # Set instance variables (like DistLoader does)
-        # Note: We assign to self.data and self.input_data which are also set in the colocated
-        # branch. For Graph Store mode, data is None and input_data is a list.
-        object.__setattr__(self, "data", None)  # No local data in Graph Store mode
-        object.__setattr__(self, "input_data", sampler_input)
         self.sampling_type = sampling_config.sampling_type
         self.num_neighbors = sampling_config.num_neighbors
         self.batch_size = sampling_config.batch_size
