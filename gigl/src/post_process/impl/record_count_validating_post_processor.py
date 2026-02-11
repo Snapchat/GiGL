@@ -1,4 +1,5 @@
 from gigl.common.logger import Logger
+from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
@@ -15,6 +16,11 @@ class RecordCountValidatingPostProcessor(BasePostProcessor):
 
     Only applicable for the GLT backend path.
     """
+
+    # We need __init__ as applied_task_identified gets injected PostProcessor._run_post_process
+    # But we have no need for it.
+    def __init__(self, applied_task_identifier: AppliedTaskIdentifier):
+        pass
 
     # TODO: Add edge-level validation support.
 
