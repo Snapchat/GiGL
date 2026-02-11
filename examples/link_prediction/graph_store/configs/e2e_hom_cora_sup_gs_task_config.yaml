@@ -15,13 +15,19 @@ datasetConfig:
     dataPreprocessorArgs:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
-# TODO(kmonte): Add GS trainer
 trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
-  command: python -m examples.link_prediction.homogeneous_training
+  command: python -m examples.link_prediction.graph_store.homogeneous_training
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
+      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": True, "num_val": 0.1, "num_test": 0.1}'
+      num_server_sessions: "1"
 # TODO(kmonte): Move to user-defined server code
 inferencerConfig:
   inferencerArgs:
