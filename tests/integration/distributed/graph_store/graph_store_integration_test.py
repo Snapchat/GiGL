@@ -15,6 +15,7 @@ from torch_geometric.data import Data, HeteroData
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
@@ -207,6 +208,70 @@ def _run_compute_train_tests(
     )
 
     _assert_ablp_input(cluster_info, ablp_result)
+    # For labeled homogeneous, pass the dict directly (not as tuple)
+    input_nodes = ablp_result
+
+    ablp_loader = DistABLPLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        supervision_edge_type=supervision_edge_type,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+    )
+
+    random_negative_input = remote_dist_dataset.get_node_ids(
+        split="train",
+        node_type=test_node_type,
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+    )
+
+    # Test that two loaders can both be initialized and sampled from simultaneously.
+    random_negative_loader = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=random_negative_input,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+    )
+    count = 0
+    for i, (ablp_batch, random_negative_batch) in enumerate(
+        zip(ablp_loader, random_negative_loader)
+    ):
+        # Verify batch structure
+        assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
+        # y_positive should be dict mapping local anchor idx -> local label indices
+        assert isinstance(
+            ablp_batch.y_positive, dict
+        ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        count += 1
+
+    torch.distributed.barrier()
+    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} ABLP batches")
+
+    # Verify total count across all ranks
+    count_tensor = torch.tensor(count, dtype=torch.int64)
+    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
+
+    # Calculate expected total anchors by summing across all compute nodes
+    # Each process on the same compute node has the same anchor count, so we sum
+    # across all processes and divide by num_processes_per_compute to get the true total
+    local_total_anchors = sum(
+        ablp_result[server_rank][0].shape[0] for server_rank in ablp_result
+    )
+    expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
+    torch.distributed.all_reduce(
+        expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
+    )
+    expected_batches = (
+        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
+    )
+    assert (
+        count_tensor.item() == expected_batches
+    ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
 
     shutdown_compute_proccess()
 
