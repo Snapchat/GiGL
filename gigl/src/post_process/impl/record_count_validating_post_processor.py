@@ -1,43 +1,28 @@
-from gigl.common import Uri
 from gigl.common.logger import Logger
-from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
-from gigl.src.post_process.post_processor import PostProcessor
+from gigl.src.post_process.lib.base_post_processor import BasePostProcessor
+from snapchat.research.gbml import gbml_config_pb2
 
 logger = Logger()
 
 
-class RecordCountValidatingPostProcessor(PostProcessor):
+class RecordCountValidatingPostProcessor(BasePostProcessor):
     """
-    Post processor that extends PostProcessor with record count validation.
+        Post processor that extends PostProcessor with record count validation.
 
-    Runs all standard PostProcessor logic (unenumeration, user-defined
-    post-processing, metric export, cleanup), then validates that for each
-    node type, the unenumerated output tables (embeddings, predictions) have
-    the same number of rows as the corresponding enumerated_node_ids_bq_table.
 
     Only applicable for the GLT backend path.
     """
 
     # TODO: Add edge-level validation support.
 
-    def _run(
+    def run_post_process(
         self,
-        applied_task_identifier: AppliedTaskIdentifier,
-        task_config_uri: Uri,
+        gbml_config_pb: gbml_config_pb2.GbmlConfig,
     ):
-        # Run all standard PostProcessor logic first
-        super()._run(
-            applied_task_identifier=applied_task_identifier,
-            task_config_uri=task_config_uri,
-        )
-
-        # Then validate record counts
-        gbml_config_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-            gbml_config_uri=task_config_uri
-        )
+        gbml_config_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
         self._validate_record_counts(gbml_config_wrapper=gbml_config_wrapper)
 
     def _validate_record_counts(

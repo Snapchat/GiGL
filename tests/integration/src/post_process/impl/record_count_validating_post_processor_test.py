@@ -5,10 +5,9 @@ import uuid
 
 from absl.testing import absltest
 
-from gigl.common import LocalUri, UriFactory
+from gigl.common import LocalUri
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.post_process.impl.record_count_validating_post_processor import (
     RecordCountValidatingPostProcessor,
@@ -67,13 +66,13 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         """Track a temp file for cleanup in tearDown."""
         self._temp_files_to_cleanup.append(path)
 
-    def _build_task_config_uri(
+    def _build_gbml_config_pb(
         self,
         node_types: list[str],
         enumerated_tables: dict[str, str],
         embeddings_tables: dict[str, str] | None = None,
         predictions_tables: dict[str, str] | None = None,
-    ) -> LocalUri:
+    ) -> gbml_config_pb2.GbmlConfig:
         """Build a GbmlConfig proto, write it to a temp YAML file, and return the URI.
 
         The config is set up so that PostProcessor._run() completes without side effects:
@@ -145,23 +144,13 @@ class RecordCountValidatingPostProcessorTest(TestCase):
             if nt in predictions_tables:
                 inference_output.predictions_path = predictions_tables[nt]
 
-        # Write GbmlConfig to temp file
-        task_config_file = tempfile.NamedTemporaryFile(delete=False, suffix=".yaml")
-        task_config_uri = LocalUri(task_config_file.name)
-        self._track_temp_file(task_config_file.name)
-        self._proto_utils.write_proto_to_yaml(proto=gbml_config, uri=task_config_uri)
+        return gbml_config
 
-        return task_config_uri
-
-    def _run_validator(self, task_config_uri: LocalUri) -> None:
+    def _run_validator(self, gbml_config_pb: gbml_config_pb2.GbmlConfig) -> None:
         """Run the RecordCountValidatingPostProcessor via its public run() API."""
         validator = RecordCountValidatingPostProcessor()
-        validator.run(
-            applied_task_identifier=AppliedTaskIdentifier(self._test_unique_name),
-            task_config_uri=task_config_uri,
-            resource_config_uri=UriFactory.create_uri(
-                get_resource_config().get_resource_config_uri
-            ),
+        validator.run_post_process(
+            gbml_config_pb=gbml_config_pb,
         )
 
     def test_validation_passes_when_counts_match(self):
@@ -173,78 +162,78 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         self._create_test_table(enum_table, num_rows)
         self._create_test_table(emb_table, num_rows)
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             embeddings_tables={"paper": emb_table},
         )
 
         # Should not raise
-        self._run_validator(task_config_uri)
+        self._run_validator(gbml_config_pb)
 
     def test_validation_fails_on_row_count_mismatch(self):
-        """Embeddings table has fewer rows — should raise SystemExit."""
+        """Embeddings table has fewer rows — should raise ValueError."""
         enum_table = self._make_table_path("enum_paper")
         emb_table = self._make_table_path("emb_paper")
 
         self._create_test_table(enum_table, 50)
         self._create_test_table(emb_table, 30)
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             embeddings_tables={"paper": emb_table},
         )
 
-        with self.assertRaises(SystemExit):
-            self._run_validator(task_config_uri)
+        with self.assertRaises(ValueError):
+            self._run_validator(gbml_config_pb)
 
     def test_validation_fails_on_missing_embeddings_table(self):
-        """embeddings_path is set but BQ table does not exist — should raise SystemExit."""
+        """embeddings_path is set but BQ table does not exist — should raise ValueError."""
         enum_table = self._make_table_path("enum_paper")
         self._create_test_table(enum_table, 25)
 
         nonexistent_emb_table = self._make_table_path("emb_nonexistent")
         # Do NOT create this table — it should not exist
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             embeddings_tables={"paper": nonexistent_emb_table},
         )
 
-        with self.assertRaises(SystemExit):
-            self._run_validator(task_config_uri)
+        with self.assertRaises(ValueError):
+            self._run_validator(gbml_config_pb)
 
     def test_validation_fails_on_missing_predictions_table(self):
-        """predictions_path is set but BQ table does not exist — should raise SystemExit."""
+        """predictions_path is set but BQ table does not exist — should raise ValueError."""
         enum_table = self._make_table_path("enum_paper")
         self._create_test_table(enum_table, 25)
 
         nonexistent_pred_table = self._make_table_path("pred_nonexistent")
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             predictions_tables={"paper": nonexistent_pred_table},
         )
 
-        with self.assertRaises(SystemExit):
-            self._run_validator(task_config_uri)
+        with self.assertRaises(ValueError):
+            self._run_validator(gbml_config_pb)
 
     def test_validation_fails_when_no_output_paths_set(self):
-        """Neither embeddings nor predictions is set — should raise SystemExit."""
+        """Neither embeddings nor predictions is set — should raise ValueError."""
         enum_table = self._make_table_path("enum_paper")
         self._create_test_table(enum_table, 25)
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             # No embeddings or predictions
         )
 
-        with self.assertRaises(SystemExit):
-            self._run_validator(task_config_uri)
+        with self.assertRaises(ValueError):
+            self._run_validator(gbml_config_pb)
 
     def test_validation_with_multiple_node_types(self):
         """Heterogeneous graph with multiple node types — each validated independently."""
@@ -261,7 +250,7 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         self._create_test_table(enum_paper, num_rows_paper)
         self._create_test_table(emb_paper, num_rows_paper)
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["author", "paper"],
             enumerated_tables={
                 "author": enum_author,
@@ -274,7 +263,7 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         )
 
         # Should not raise
-        self._run_validator(task_config_uri)
+        self._run_validator(gbml_config_pb)
 
     def test_validation_partial_output_only_embeddings(self):
         """Only embeddings (no predictions) for a node type — should pass."""
@@ -285,7 +274,7 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         self._create_test_table(enum_table, num_rows)
         self._create_test_table(emb_table, num_rows)
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             embeddings_tables={"paper": emb_table},
@@ -293,7 +282,7 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         )
 
         # Should not raise
-        self._run_validator(task_config_uri)
+        self._run_validator(gbml_config_pb)
 
     def test_multiple_errors_collected(self):
         """One table missing AND one count mismatch — both errors appear in exception."""
@@ -307,7 +296,7 @@ class RecordCountValidatingPostProcessorTest(TestCase):
 
         nonexistent_emb_paper = self._make_table_path("emb_paper_missing")
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["author", "paper"],
             enumerated_tables={
                 "author": enum_author,
@@ -319,8 +308,8 @@ class RecordCountValidatingPostProcessorTest(TestCase):
             },
         )
 
-        with self.assertRaises(SystemExit) as ctx:
-            self._run_validator(task_config_uri)
+        with self.assertRaises(ValueError) as ctx:
+            self._run_validator(gbml_config_pb)
 
         error_message = str(ctx.exception)
         self.assertIn("2 error(s)", error_message)
@@ -338,7 +327,7 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         self._create_test_table(emb_table, num_rows)
         self._create_test_table(pred_table, num_rows)
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             embeddings_tables={"paper": emb_table},
@@ -346,24 +335,24 @@ class RecordCountValidatingPostProcessorTest(TestCase):
         )
 
         # Should not raise
-        self._run_validator(task_config_uri)
+        self._run_validator(gbml_config_pb)
 
     def test_validation_fails_on_predictions_count_mismatch(self):
-        """Predictions table has more rows — should raise SystemExit."""
+        """Predictions table has more rows — should raise ValueError."""
         enum_table = self._make_table_path("enum_paper")
         pred_table = self._make_table_path("pred_paper")
 
         self._create_test_table(enum_table, 40)
         self._create_test_table(pred_table, 60)
 
-        task_config_uri = self._build_task_config_uri(
+        gbml_config_pb = self._build_gbml_config_pb(
             node_types=["paper"],
             enumerated_tables={"paper": enum_table},
             predictions_tables={"paper": pred_table},
         )
 
-        with self.assertRaises(SystemExit):
-            self._run_validator(task_config_uri)
+        with self.assertRaises(ValueError):
+            self._run_validator(gbml_config_pb)
 
 
 if __name__ == "__main__":
