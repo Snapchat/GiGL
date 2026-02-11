@@ -150,6 +150,8 @@ class DistABLPLoader(DistLoader):
                     If set to `None` for homogeneous settings, all nodes will be considered.
                     In heterogeneous graphs, this flag must be passed in as a tuple that holds
                     the node type and node indices.
+                    NOTE: We intend to migrate colocated mode to have a similar input format to Graph Store mode in the future.
+                    We want to do this so that users can easily control labels per anchor.
                 For Graph Store mode: `dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]`
                     or `tuple[NodeType, dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]]`.
                     The dict maps server_rank to (anchor_nodes, positive_labels, negative_labels).
@@ -230,7 +232,7 @@ class DistABLPLoader(DistLoader):
         # TODO(kmonte): Support multiple supervision edge types in Graph Store mode
         if self._sampling_cluster_setup == SamplingClusterSetup.GRAPH_STORE:
             if len(self._supervision_edge_types) > 1:
-                raise ValueError(
+                raise NotImplementedError(
                     "Graph Store mode currently only supports a single supervision edge type. "
                     f"Received {len(self._supervision_edge_types)} edge types: {self._supervision_edge_types}"
                 )
