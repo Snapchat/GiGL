@@ -3,22 +3,28 @@ from collections import Counter, abc
 from typing import Optional, Tuple, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
-    DistLoader,
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
+from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
+from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.sampling_engine import (
+    ColocatedSamplingEngine,
+    GraphStoreSamplingEngine,
+)
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
@@ -42,7 +48,7 @@ logger = Logger()
 DEFAULT_NUM_CPU_THREADS = 2
 
 
-class DistNeighborLoader(DistLoader):
+class DistNeighborLoader(BaseDistLoader):
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -124,9 +130,6 @@ class DistNeighborLoader(DistLoader):
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
-        # We set to `True` as we don't need to cleanup right away, and this will get set
-        # to `False` in super().__init__()` e.g.
-        # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
 
         node_world_size: int
@@ -285,26 +288,49 @@ class DistNeighborLoader(DistLoader):
                 f"---Machine {rank} local process number {local_rank} preparing to sleep for {process_start_gap_seconds * local_rank} seconds"
             )
             time.sleep(process_start_gap_seconds * local_rank)
+
+            channel = ShmChannel(
+                worker_options.channel_capacity, worker_options.channel_size
+            )
+            if worker_options.pin_memory:
+                channel.pin_memory()
+
+            producer = DistMpSamplingProducer(
+                dataset, input_data, sampling_config, worker_options, channel
+            )
+            producer.init()
+
+            colocated_engine = ColocatedSamplingEngine(
+                producer=producer,
+                channel=channel,
+                input_len=len(input_data),
+                batch_size=batch_size,
+                drop_last=drop_last,
+            )
+            input_type = input_data.input_type
+            assert isinstance(dataset, DistDataset)
+            node_types = dataset.get_node_types()
+            edge_types_for_collation = dataset.get_edge_types()
+
             super().__init__(
-                dataset,  # Pass in the dataset for colocated mode.
-                input_data,
-                sampling_config,
-                device,
-                worker_options,
+                engine=colocated_engine,
+                sampling_config=sampling_config,
+                to_device=device,
+                input_type=input_type,
+                node_types=node_types,
+                edge_types=edge_types_for_collation,
             )
         else:
-            # For Graph Store mode, we need to start the communcation between compute and storage nodes sequentially, by compute node.
-            # E.g. intialize connections between compute node 0 and storage nodes 0, 1, 2, 3, then compute node 1 and storage nodes 0, 1, 2, 3, etc.
+            # For Graph Store mode, we need to start the communication between compute and storage nodes sequentially, by compute node.
+            # E.g. initialize connections between compute node 0 and storage nodes 0, 1, 2, 3, then compute node 1 and storage nodes 0, 1, 2, 3, etc.
             # Note that each compute node may have multiple connections to each storage node, once per compute process.
             # It's important to distinguish "compute node" (e.g. physical compute machine) from "compute process" (e.g. process running on the compute node).
             # Since in practice we have multiple compute processes per compute node, and each compute process needs to initialize the connection to the storage nodes.
             # E.g. if there are 4 gpus per compute node, then there will be 4 connections from each compute node to each storage node.
-            # We need to this because if we don't, then there is a race condition when initalizing the samplers on the storage nodes [1]
+            # We need to this because if we don't, then there is a race condition when initializing the samplers on the storage nodes [1]
             # Where since the lock is per *server* (e.g. per storage node), if we try to start one connection from compute node 0, and compute node 1
             # Then we deadlock and fail.
-            # Specifically, the race condition happens in `DistLoader.__init__` when it initializes the sampling producers on the storage nodes. [2]
             # [1]: https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py#L129-L167
-            # [2]: https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_loader.py#L187-L193
 
             # See below for a connection setup.
             # ╔═══════════════════════════════════════════════════════════════════════════════════════╗
@@ -338,21 +364,32 @@ class DistNeighborLoader(DistLoader):
             #   │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
             #   └─────────────────────────────────────────────────────────────────────────────┘
             node_rank = dataset.cluster_info.compute_node_rank
+
+            gs_engine = GraphStoreSamplingEngine(
+                server_ranks=list(range(dataset.cluster_info.num_storage_nodes)),
+                input_data_list=input_data,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
+                server_create_fn=DistServer.create_sampling_producer,
+            )
+
+            # Barrier loop: only setup_rpc() needs barrier protection
             for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
                 if node_rank == target_node_rank:
-                    # TODO: (kmontemayor2-sc) Evaluate if we need to stagger the initialization of the data loaders
-                    # to smooth the memory usage.
-                    super().__init__(
-                        None,  # Pass in None for Graph Store mode.
-                        input_data,
-                        sampling_config,
-                        device,
-                        worker_options,
-                    )
+                    gs_engine.setup_rpc()
                     logger.info(f"node_rank {node_rank} initialized the dist loader")
                 torch.distributed.barrier()
             torch.distributed.barrier()
             logger.info("All node ranks initialized the dist loader")
+
+            super().__init__(
+                engine=gs_engine,
+                sampling_config=sampling_config,
+                to_device=device,
+                input_type=gs_engine._input_type,
+                node_types=gs_engine.node_types,
+                edge_types=gs_engine.edge_types,
+            )
 
     def _setup_for_graph_store(
         self,
@@ -366,7 +403,7 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
-    ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetSchema]:
+    ) -> tuple[list[NodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
             raise ValueError(
                 f"When using Graph Store mode, input nodes must be provided, received {input_nodes}"
@@ -617,7 +654,7 @@ class DistNeighborLoader(DistLoader):
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        data = super()._collate_fn(msg)
+        data = self._base_collate(msg)
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
