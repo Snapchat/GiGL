@@ -16,10 +16,7 @@ from tests.test_assets.distributed.test_dataset import (
     create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
-from tests.test_assets.distributed.utils import (
-    assert_tensor_equality,
-    create_test_process_group,
-)
+from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
 
 
@@ -57,7 +54,7 @@ class TestCreateHomogeneousDataset(TestCase):
         node_ids = dataset.node_ids
         assert isinstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 3)
-        assert_tensor_equality(node_ids, torch.arange(3))
+        self.assert_tensor_equality(node_ids, torch.arange(3))
 
         # Verify feature dimension from custom features
         self.assertEqual(
@@ -72,7 +69,7 @@ class TestCreateHomogeneousDataset(TestCase):
         original = DEFAULT_HOMOGENEOUS_EDGE_INDEX.clone()
         _ = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
 
-        assert_tensor_equality(DEFAULT_HOMOGENEOUS_EDGE_INDEX, original)
+        self.assert_tensor_equality(DEFAULT_HOMOGENEOUS_EDGE_INDEX, original)
 
 
 class TestCreateHeterogeneousDataset(TestCase):
@@ -152,7 +149,7 @@ class TestCreateHeterogeneousDataset(TestCase):
         )
 
         for edge_type, edge_index in DEFAULT_HETEROGENEOUS_EDGE_INDICES.items():
-            assert_tensor_equality(edge_index, original[edge_type])
+            self.assert_tensor_equality(edge_index, original[edge_type])
 
 
 class TestCreateHeterogeneousDatasetWithLabels(TestCase):
