@@ -72,7 +72,8 @@ class DistServer(GltDistServer):
         self._producer_pool: dict[int, DistABLPSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
-        self._producer_lock: dict[int, threading.RLock] = {}
+        # TODO(kmonte): Re-enable this once we always use GiGL dist server.
+        # self._producer_lock: dict[int, threading.RLock] = {}
 
     def shutdown(self) -> None:
         for producer_id in list(self._producer_pool.keys()):
@@ -267,7 +268,8 @@ class DistServer(GltDistServer):
                     self.dataset, sampler_input, sampling_config, worker_options, buffer
                 )
                 producer.init()
-                self._producer_lock[producer_id] = threading.RLock()
+                # TODO(kmonte): Re-enable this once we always use GiGL dist server.
+                # self._producer_lock[producer_id] = threading.RLock()
                 self._producer_pool[producer_id] = producer
                 self._msg_buffer_pool[producer_id] = buffer
                 self._epoch[producer_id] = -1
@@ -277,15 +279,15 @@ class DistServer(GltDistServer):
         r"""Shutdown and destroy a sampling producer managed by this server with
         its producer id.
         """
-        with self._producer_lock[producer_id]:
+        with self._lock:
             producer = self._producer_pool.get(producer_id, None)
             if producer is not None:
-                print(f"Shutting down sampling producer {producer_id}")
                 producer.shutdown()
                 self._producer_pool.pop(producer_id)
                 self._msg_buffer_pool.pop(producer_id)
                 self._epoch.pop(producer_id)
-                self._producer_lock.pop(producer_id)
+                # TODO(kmonte): Re-enable this once we always use GiGL dist server.
+                # self._producer_lock.pop(producer_id)
                 # Clean up worker_key -> producer_id mapping to avoid stale
                 # cache entries if a loader with the same key is re-created.
                 keys_to_remove = [
