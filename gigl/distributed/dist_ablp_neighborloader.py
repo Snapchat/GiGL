@@ -62,40 +62,6 @@ logger = Logger()
 class DistABLPLoader(DistLoader):
     _instance_counter: itertools.count = itertools.count()
 
-    def _init_timing_stats(self) -> None:
-        """Initialize timing accumulators for performance profiling."""
-        self._timing_stats: dict[str, float] = {}
-        self._timing_counts: dict[str, int] = {}
-
-    def _add_timing(self, key: str, elapsed: float) -> None:
-        """Accumulate timing for a given key."""
-        self._timing_stats[key] = self._timing_stats.get(key, 0.0) + elapsed
-        self._timing_counts[key] = self._timing_counts.get(key, 0) + 1
-
-    def _log_timing_summary(self) -> None:
-        """Log accumulated timing stats."""
-        if not hasattr(self, "_timing_stats") or not self._timing_stats:
-            return
-        rank = (
-            torch.distributed.get_rank() if torch.distributed.is_initialized() else "?"
-        )
-        total = sum(self._timing_stats.values())
-        logger.info(f"\n{'='*80}")
-        logger.info(
-            f"TIMING SUMMARY: {self.__class__.__name__} instance={self._instance_id} rank={rank}"
-        )
-        logger.info(f"{'='*80}")
-        for key in self._timing_stats:
-            elapsed = self._timing_stats[key]
-            count = self._timing_counts[key]
-            pct = (elapsed / total * 100) if total > 0 else 0
-            avg = (elapsed / count) if count > 0 else 0
-            logger.info(
-                f"  {key:.<55s} {elapsed:8.3f}s  ({pct:5.1f}%)  n={count:5d}  avg={avg:.4f}s"
-            )
-        logger.info(f"  {'TOTAL':.<55s} {total:8.3f}s")
-        logger.info(f"{'='*80}")
-
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -238,8 +204,6 @@ class DistABLPLoader(DistLoader):
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
         self._instance_id = next(DistABLPLoader._instance_counter)
-        self._init_timing_stats()
-        _init_start = time.monotonic()
 
         node_world_size: int
         node_rank: int
@@ -532,7 +496,6 @@ class DistABLPLoader(DistLoader):
             node_rank = dataset.cluster_info.compute_node_rank
             for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
                 if node_rank == target_node_rank:
-                    _t0 = time.monotonic()
                     self._init_remote_worker(
                         dataset=dataset,
                         sampler_input=sampler_input,
@@ -540,17 +503,11 @@ class DistABLPLoader(DistLoader):
                         worker_options=worker_options,
                         dataset_metadata=dataset_metadata,
                     )
-                    self._add_timing("init._init_remote_worker", time.monotonic() - _t0)
                     logger.info(
                         f"node_rank {node_rank} / {dataset.cluster_info.num_compute_nodes} initialized the dist loader"
                     )
-                _t0 = time.monotonic()
                 torch.distributed.barrier()
-                self._add_timing("init.barrier_per_node_rank", time.monotonic() - _t0)
-            _t0 = time.monotonic()
             torch.distributed.barrier()
-            self._add_timing("init.final_barrier", time.monotonic() - _t0)
-            self._add_timing("init.total", time.monotonic() - _init_start)
             logger.info(
                 f"node_rank {node_rank} / {dataset.cluster_info.num_compute_nodes} finished initializing the dist loader"
             )
@@ -1047,7 +1004,6 @@ class DistABLPLoader(DistLoader):
             input_data.to(torch.device("cpu"))
 
         self._producer_id_list = []
-        _t0 = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [
                 executor.submit(
@@ -1066,18 +1022,15 @@ class DistABLPLoader(DistLoader):
         for future in futures:
             producer_id = future.result()
             self._producer_id_list.append(producer_id)
-        self._add_timing("init.create_producers_rpc", time.monotonic() - _t0)
         logger.info(
             f"DistABLPLoader rank {torch.distributed.get_rank()} producers: ({[producer_id for producer_id in self._producer_id_list]})"
         )
         # Create remote receiving channel for cross-machine message passing
-        _t0 = time.monotonic()
         self._channel = RemoteReceivingChannel(
             self._server_rank_list,
             self._producer_id_list,
             self.worker_options.prefetch_size,
         )
-        self._add_timing("init.create_channel", time.monotonic() - _t0)
 
     def _get_labels(
         self, msg: SampleMessage
@@ -1231,60 +1184,22 @@ class DistABLPLoader(DistLoader):
             data.y_negative = output_negative_labels
         return data
 
-    def __next__(self):
-        if self._num_recv == self._num_expected:
-            raise StopIteration
-
-        _t0 = time.monotonic()
-        if self._with_channel:
-            msg = self._channel.recv()
-        else:
-            msg = self._collocated_producer.sample()
-        self._add_timing("next.channel_recv", time.monotonic() - _t0)
-
-        _t0 = time.monotonic()
-        result = self._collate_fn(msg)
-        self._add_timing("next.collate_fn", time.monotonic() - _t0)
-
-        self._num_recv += 1
-        return result
-
-    def shutdown(self):
-        self._log_timing_summary()
-        super().shutdown()
-
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        _t0 = time.monotonic()
         msg, positive_labels, negative_labels = self._get_labels(msg)
-        self._add_timing("collate.get_labels", time.monotonic() - _t0)
-
-        _t0 = time.monotonic()
         data = super()._collate_fn(msg)
-        self._add_timing("collate.super", time.monotonic() - _t0)
-
-        _t0 = time.monotonic()
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
             edge_feature_info=self._edge_feature_info,
             device=self.to_device,
         )
-        self._add_timing("collate.set_missing_features", time.monotonic() - _t0)
-
         if isinstance(data, HeteroData):
-            _t0 = time.monotonic()
             data = strip_label_edges(data)
-            self._add_timing("collate.strip_label_edges", time.monotonic() - _t0)
         if not self.is_homogeneous_with_labeled_edge_type:
             if len(self._supervision_edge_types) != 1:
                 raise ValueError(
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
-            _t0 = time.monotonic()
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
-            self._add_timing("collate.labeled_to_homogeneous", time.monotonic() - _t0)
-
-        _t0 = time.monotonic()
         data = self._set_labels(data, positive_labels, negative_labels)
-        self._add_timing("collate.set_labels", time.monotonic() - _t0)
         return data

@@ -2,7 +2,6 @@ import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
-import time
 import traceback
 import unittest
 from collections.abc import MutableMapping
@@ -306,33 +305,19 @@ def _run_compute_multiple_loaders_test(
     Phase 2: After shutting down phase 1 loaders (to free server-side producers and RPC
              resources), creates one more ABLP + one DistNeighborLoader pair sequentially.
     """
-    timings: dict[str, float] = {}
-    rank_str = ""  # populated after init
-
-    # --- init_compute_process ---
-    t0 = time.monotonic()
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
-    timings["init_compute_process"] = time.monotonic() - t0
-    rank_str = (
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()}"
-    )
 
-    # --- RemoteDistDataset creation ---
-    t0 = time.monotonic()
     remote_dist_dataset = RemoteDistDataset(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=mp_sharing_dict,
     )
-    timings["create_remote_dist_dataset"] = time.monotonic() - t0
 
     test_node_type = (
         node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
     )
     supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
-    # --- get_ablp_input ---
-    t0 = time.monotonic()
     ablp_result = remote_dist_dataset.get_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
@@ -340,17 +325,13 @@ def _run_compute_multiple_loaders_test(
         node_type=test_node_type,
         supervision_edge_type=supervision_edge_type,
     )
-    timings["get_ablp_input"] = time.monotonic() - t0
 
-    # --- get_node_ids ---
-    t0 = time.monotonic()
     random_negative_input = remote_dist_dataset.get_node_ids(
         split="train",
         node_type=test_node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
-    timings["get_node_ids"] = time.monotonic() - t0
 
     # Calculate expected batch count (same logic as _run_compute_train_tests).
     local_total_anchors = sum(
@@ -373,7 +354,7 @@ def _run_compute_multiple_loaders_test(
         expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
     )
     logger.info(
-        f"{rank_str} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
     )
 
     # ------------------------------------------------------------------
@@ -382,9 +363,6 @@ def _run_compute_multiple_loaders_test(
     # Use prefetch_size=2 to limit concurrent fetch_one_sampled_message RPC calls
     # per server. With 4 loaders × 2 compute nodes × 2 prefetch = 16 calls,
     # matching the 16 RPC thread limit on the server.
-
-    # --- Phase 1: Create ablp_loader_1 ---
-    t0 = time.monotonic()
     ablp_loader_1 = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -394,13 +372,9 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         prefetch_size=2,
     )
-    timings["p1_create_ablp_loader_1"] = time.monotonic() - t0
     logger.info(
-        f"{rank_str} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
     )
-
-    # --- Phase 1: Create ablp_loader_2 ---
-    t0 = time.monotonic()
     ablp_loader_2 = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -410,13 +384,9 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         prefetch_size=2,
     )
-    timings["p1_create_ablp_loader_2"] = time.monotonic() - t0
     logger.info(
-        f"{rank_str} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
     )
-
-    # --- Phase 1: Create neighbor_loader_1 ---
-    t0 = time.monotonic()
     neighbor_loader_1 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -426,13 +396,9 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         prefetch_size=2,
     )
-    timings["p1_create_neighbor_loader_1"] = time.monotonic() - t0
     logger.info(
-        f"{rank_str} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
     )
-
-    # --- Phase 1: Create neighbor_loader_2 ---
-    t0 = time.monotonic()
     neighbor_loader_2 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -442,20 +408,13 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         prefetch_size=2,
     )
-    timings["p1_create_neighbor_loader_2"] = time.monotonic() - t0
     logger.info(
-        f"{rank_str} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
     )
-
-    logger.info(f"{rank_str} phase 1: loading batches from 4 parallel loaders")
-
-    # --- Phase 1: Barrier before iteration ---
-    t0 = time.monotonic()
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loading batches from 4 parallel loaders"
+    )
     torch.distributed.barrier()
-    timings["p1_barrier_before_iteration"] = time.monotonic() - t0
-
-    # --- Phase 1: Iterate 4 loaders ---
-    t0 = time.monotonic()
     phase1_count = 0
     for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip(
         ablp_loader_1, ablp_loader_2, neighbor_loader_1, neighbor_loader_2
@@ -467,56 +426,37 @@ def _run_compute_multiple_loaders_test(
             ablp_batch_2, "y_positive"
         ), "ABLP batch 2 should have y_positive"
         phase1_count += 1
-    timings["p1_iterate_4_loaders"] = time.monotonic() - t0
     logger.info(
-        f"{rank_str} phase 1: loaded {phase1_count} batches from 4 parallel loaders"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loaded {phase1_count} batches from 4 parallel loaders"
     )
-
-    # --- Phase 1: Barrier after iteration ---
-    t0 = time.monotonic()
     torch.distributed.barrier()
-    timings["p1_barrier_after_iteration"] = time.monotonic() - t0
     logger.info("All ranks have loaded phase 1 batches")
 
     phase1_count_tensor = torch.tensor(phase1_count, dtype=torch.int64)
     torch.distributed.all_reduce(phase1_count_tensor, op=torch.distributed.ReduceOp.SUM)
     logger.info(
-        f"{rank_str} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
     )
 
     assert (
         phase1_count_tensor.item() == expected_batches
     ), f"Phase 1: Expected {expected_batches} total batches, got {phase1_count_tensor.item()}"
 
-    # --- Phase 1: Shutdown loaders ---
-    t0 = time.monotonic()
+    # Shut down phase 1 loaders to free server-side producers and RPC resources
+    # before creating new loaders. This mirrors GLT's DistLoader.shutdown() which
+    # calls DistServer.destroy_sampling_producer for each remote producer.
     ablp_loader_1.shutdown()
-    timings["p1_shutdown_ablp_loader_1"] = time.monotonic() - t0
-
-    t0 = time.monotonic()
     ablp_loader_2.shutdown()
-    timings["p1_shutdown_ablp_loader_2"] = time.monotonic() - t0
-
-    t0 = time.monotonic()
     neighbor_loader_1.shutdown()
-    timings["p1_shutdown_neighbor_loader_1"] = time.monotonic() - t0
-
-    t0 = time.monotonic()
     neighbor_loader_2.shutdown()
-    timings["p1_shutdown_neighbor_loader_2"] = time.monotonic() - t0
-    logger.info(f"{rank_str} shut down phase 1 loaders")
-
-    # --- Phase 1: Barrier after shutdown ---
-    t0 = time.monotonic()
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} shut down phase 1 loaders"
+    )
     torch.distributed.barrier()
-    timings["p1_barrier_after_shutdown"] = time.monotonic() - t0
 
     # ------------------------------------------------------------------
     # Phase 2: One more ABLP + one more DistNeighborLoader (sequential)
     # ------------------------------------------------------------------
-
-    # --- Phase 2: Create ablp_loader_3 ---
-    t0 = time.monotonic()
     ablp_loader_3 = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -526,13 +466,9 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         prefetch_size=2,
     )
-    timings["p2_create_ablp_loader_3"] = time.monotonic() - t0
     logger.info(
-        f"{rank_str} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
     )
-
-    # --- Phase 2: Create neighbor_loader_3 ---
-    t0 = time.monotonic()
     neighbor_loader_3 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -542,66 +478,34 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         prefetch_size=2,
     )
-    timings["p2_create_neighbor_loader_3"] = time.monotonic() - t0
     logger.info(
-        f"{rank_str} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
     )
-
-    # --- Phase 2: Iterate 2 loaders ---
-    t0 = time.monotonic()
     phase2_count = 0
-    logger.info(f"{rank_str} phase 2: loading batches from 2 sequential loaders")
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loading batches from 2 sequential loaders"
+    )
     for ablp_batch_3, neg_batch_3 in zip(ablp_loader_3, neighbor_loader_3):
         assert hasattr(
             ablp_batch_3, "y_positive"
         ), "ABLP batch 3 should have y_positive"
         phase2_count += 1
-    timings["p2_iterate_2_loaders"] = time.monotonic() - t0
 
     logger.info(
-        f"{rank_str} phase 2: loaded {phase2_count} batches from 2 sequential loaders"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count} batches from 2 sequential loaders"
     )
-
-    # --- Phase 2: Barrier after iteration ---
-    t0 = time.monotonic()
     torch.distributed.barrier()
-    timings["p2_barrier_after_iteration"] = time.monotonic() - t0
 
     phase2_count_tensor = torch.tensor(phase2_count, dtype=torch.int64)
     torch.distributed.all_reduce(phase2_count_tensor, op=torch.distributed.ReduceOp.SUM)
     logger.info(
-        f"{rank_str} phase 2: loaded {phase2_count_tensor.item()} batches from 2 sequential loaders"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count_tensor.item()} batches from 2 sequential loaders"
     )
     assert (
         phase2_count_tensor.item() == expected_batches
     ), f"Phase 2: Expected {expected_batches} total batches, got {phase2_count_tensor.item()}"
 
-    # --- Phase 2: Shutdown loaders (triggers timing summary logs) ---
-    t0 = time.monotonic()
-    ablp_loader_3.shutdown()
-    timings["p2_shutdown_ablp_loader_3"] = time.monotonic() - t0
-
-    t0 = time.monotonic()
-    neighbor_loader_3.shutdown()
-    timings["p2_shutdown_neighbor_loader_3"] = time.monotonic() - t0
-
-    # --- shutdown_compute_proccess ---
-    t0 = time.monotonic()
     shutdown_compute_proccess()
-    timings["shutdown_compute_process"] = time.monotonic() - t0
-
-    # ------------------------------------------------------------------
-    # Print timing summary
-    # ------------------------------------------------------------------
-    total_time = sum(timings.values())
-    logger.info(f"\n{'='*70}")
-    logger.info(f"TIMING SUMMARY for {rank_str} (client_rank={client_rank})")
-    logger.info(f"{'='*70}")
-    for label, elapsed in timings.items():
-        pct = (elapsed / total_time * 100) if total_time > 0 else 0
-        logger.info(f"  {label:.<50s} {elapsed:7.3f}s  ({pct:5.1f}%)")
-    logger.info(f"  {'TOTAL':.<50s} {total_time:7.3f}s")
-    logger.info(f"{'='*70}")
 
 
 @dataclass(frozen=True)
@@ -661,13 +565,8 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
     )
     process_name = f"client_multiple_loaders_{args.client_rank}"
     try:
-        t_start = time.monotonic()
-
-        t0 = time.monotonic()
         mp_context = torch.multiprocessing.get_context("spawn")
         mp_sharing_dict = torch.multiprocessing.Manager().dict()
-        mp_setup_time = time.monotonic() - t0
-
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting multiple loaders client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -681,26 +580,10 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
                 ],
             )
             client_processes.append(client_process)
-
-        t0 = time.monotonic()
         for client_process in client_processes:
             client_process.start()
-        process_start_time = time.monotonic() - t0
-
-        t0 = time.monotonic()
         for client_process in client_processes:
             client_process.join(DEFAULT_TIMEOUT_SECONDS)
-        process_join_time = time.monotonic() - t0
-
-        total_client_time = time.monotonic() - t_start
-        logger.info(f"\n{'='*70}")
-        logger.info(f"CLIENT PROCESS TIMING for client_rank={args.client_rank}")
-        logger.info(f"{'='*70}")
-        logger.info(f"  mp_context + Manager setup .... {mp_setup_time:7.3f}s")
-        logger.info(f"  Process.start() .............. {process_start_time:7.3f}s")
-        logger.info(f"  Process.join() ............... {process_join_time:7.3f}s")
-        logger.info(f"  TOTAL ........................ {total_client_time:7.3f}s")
-        logger.info(f"{'='*70}")
     except Exception:
         args.exception_dict[process_name] = traceback.format_exc()
         raise
@@ -967,7 +850,7 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def _test_graph_store_homogeneous(self):
+    def test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -1066,7 +949,7 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    def _test_homogeneous_training(self):
+    def test_homogeneous_training(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -1163,9 +1046,6 @@ class GraphStoreIntegrationTest(TestCase):
         """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
         in parallel, followed by another (ABLP, DistNeighborLoader) pair sequentially.
         """
-        test_start = time.monotonic()
-
-        t0 = time.monotonic()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -1192,12 +1072,7 @@ class GraphStoreIntegrationTest(TestCase):
             rpc_master_port=rpc_master_port,
             rpc_wait_port=rpc_wait_port,
         )
-        setup_time = time.monotonic() - t0
-        logger.info(
-            f"[TIMING] Test setup (config, ports, cluster_info): {setup_time:.3f}s"
-        )
 
-        t0 = time.monotonic()
         ctx = mp.get_context("spawn")
         launched_processes: list[py_mp_context.SpawnProcess] = []
         exception_dict = mp.Manager().dict()
@@ -1228,12 +1103,7 @@ class GraphStoreIntegrationTest(TestCase):
                 )
                 client_process.start()
                 launched_processes.append(client_process)
-        client_spawn_time = time.monotonic() - t0
-        logger.info(
-            f"[TIMING] Spawn compute client processes: {client_spawn_time:.3f}s"
-        )
 
-        t0 = time.monotonic()
         splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in",
             should_convert_labels_to_edges=True,
@@ -1266,30 +1136,8 @@ class GraphStoreIntegrationTest(TestCase):
                 )
                 server_process.start()
                 launched_processes.append(server_process)
-        server_spawn_time = time.monotonic() - t0
-        logger.info(
-            f"[TIMING] Spawn storage server processes: {server_spawn_time:.3f}s"
-        )
 
-        t0 = time.monotonic()
         self.assert_all_processes_succeed(launched_processes, exception_dict)
-        join_time = time.monotonic() - t0
-        logger.info(f"[TIMING] Wait for all processes (join): {join_time:.3f}s")
-
-        total_test_time = time.monotonic() - test_start
-        logger.info(f"\n{'='*70}")
-        logger.info(f"TOP-LEVEL TEST TIMING SUMMARY")
-        logger.info(f"{'='*70}")
-        logger.info(f"  Setup (config, ports, cluster_info) ... {setup_time:7.3f}s")
-        logger.info(
-            f"  Spawn compute clients ................ {client_spawn_time:7.3f}s"
-        )
-        logger.info(
-            f"  Spawn storage servers ................ {server_spawn_time:7.3f}s"
-        )
-        logger.info(f"  Wait for all processes (join) ........ {join_time:7.3f}s")
-        logger.info(f"  TOTAL ................................ {total_test_time:7.3f}s")
-        logger.info(f"{'='*70}")
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
