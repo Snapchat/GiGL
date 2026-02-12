@@ -349,8 +349,8 @@ def _run_compute_multiple_loaders_test(
     torch.distributed.all_reduce(
         total_negative_seeds_tensor, op=torch.distributed.ReduceOp.SUM
     )
-    total_negative_seeds = total_negative_seeds_tensor.item()
-    expected_batches = (
+    total_negative_seeds = int(total_negative_seeds_tensor.item())
+    expected_batches = int(
         expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
     )
     logger.info(

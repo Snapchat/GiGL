@@ -8,8 +8,6 @@ We keep this around so we can use the utils in tests/integration/distributed/gra
 import argparse
 import multiprocessing.context as py_mp_context
 import os
-import pathlib
-import pickle
 from typing import Literal, Optional, Union
 
 import torch
@@ -171,7 +169,7 @@ def storage_node_process(
             for server_process in server_processes:
                 server_process.start()
             for server_process in server_processes:
-                server_process.join()
+                server_process.join(timeout_seconds)
             logger.info(
                 f"All server processes for inference node type {inference_node_type} joined"
             )
