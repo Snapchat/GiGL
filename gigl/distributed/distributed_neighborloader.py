@@ -1,15 +1,26 @@
+import sys
 import time
 from collections import Counter, abc
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
-from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+from graphlearn_torch.distributed.dist_client import (
+    async_request_server,
+    request_server,
+)
+from graphlearn_torch.distributed.dist_context import get_context
+from graphlearn_torch.sampler import (
+    NodeSamplerInput,
+    RemoteSamplerInput,
+    SamplingConfig,
+    SamplingType,
+)
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -18,6 +29,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
@@ -40,6 +52,11 @@ logger = Logger()
 
 # When using CPU based inference/training, we default cpu threads for neighborloading on top of the per process parallelism.
 DEFAULT_NUM_CPU_THREADS = 2
+
+
+def flush():
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 
 class DistNeighborLoader(DistLoader):
@@ -239,6 +256,7 @@ class DistNeighborLoader(DistLoader):
                 input_nodes,
                 dataset,
                 num_workers,
+                channel_size,
             )
 
         self._is_homogeneous_with_labeled_edge_type = (
@@ -293,66 +311,187 @@ class DistNeighborLoader(DistLoader):
                 worker_options,
             )
         else:
-            # For Graph Store mode, we need to start the communcation between compute and storage nodes sequentially, by compute node.
-            # E.g. intialize connections between compute node 0 and storage nodes 0, 1, 2, 3, then compute node 1 and storage nodes 0, 1, 2, 3, etc.
-            # Note that each compute node may have multiple connections to each storage node, once per compute process.
-            # It's important to distinguish "compute node" (e.g. physical compute machine) from "compute process" (e.g. process running on the compute node).
-            # Since in practice we have multiple compute processes per compute node, and each compute process needs to initialize the connection to the storage nodes.
-            # E.g. if there are 4 gpus per compute node, then there will be 4 connections from each compute node to each storage node.
-            # We need to this because if we don't, then there is a race condition when initalizing the samplers on the storage nodes [1]
-            # Where since the lock is per *server* (e.g. per storage node), if we try to start one connection from compute node 0, and compute node 1
-            # Then we deadlock and fail.
-            # Specifically, the race condition happens in `DistLoader.__init__` when it initializes the sampling producers on the storage nodes. [2]
-            # [1]: https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py#L129-L167
-            # [2]: https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_loader.py#L187-L193
+            # Graph Store mode — initialize DistLoader attributes directly instead of
+            # calling super().__init__() to avoid the ThreadPoolExecutor deadlock at scale.
+            #
+            # GLT's DistLoader.__init__() dispatches create_sampling_producer RPCs via
+            # ThreadPoolExecutor(max_workers=32). With 60+ servers, only 32 threads run,
+            # causing a TensorPipe rendezvous deadlock. Instead, we inline the DistLoader
+            # init code and dispatch all RPCs asynchronously in a simple loop.
+            #
+            # See docs/graph_store_scale_debug.md for full analysis.
 
-            # See below for a connection setup.
-            # ╔═══════════════════════════════════════════════════════════════════════════════════════╗
-            # ║                         COMPUTE TO STORAGE NODE CONNECTIONS                            ║
-            # ╚═══════════════════════════════════════════════════════════════════════════════════════╝
-
-            #      COMPUTE NODES                                              STORAGE NODES
-            #      ═════════════                                              ═════════════
-
-            #   ┌──────────────────────┐          (1)                      ┌───────────────┐
-            #   │    COMPUTE NODE 0    │                                   │               │
-            #   │  ┌────┬────┬────┬────┤ ══════════════════════════════════│   STORAGE 0   │
-            #   │  │GPU │GPU │GPU │GPU │                                 ╱ │               │
-            #   │  │ 0  │ 1  │ 2  │ 3  │ ════════════════════╲         ╱   └───────────────┘
-            #   │  └────┴────┴────┴────┤          (2)          ╲     ╱
-            #   └──────────────────────┘                         ╲ ╱
-            #                                                     ╳
-            #                                           (3)     ╱   ╲     (4)
-            #   ┌──────────────────────┐                      ╱       ╲    ┌───────────────┐
-            #   │    COMPUTE NODE 1    │                    ╱           ╲  │               │
-            #   │  ┌────┬────┬────┬────┤ ═════════════════╱               ═│   STORAGE 1   │
-            #   │  │GPU │GPU │GPU │GPU │                                   │               │
-            #   │  │ 0  │ 1  │ 2  │ 3  │ ══════════════════════════════════│               │
-            #   │  └────┴────┴────┴────┤                                   └───────────────┘
-            #   └──────────────────────┘
-
-            #   ┌─────────────────────────────────────────────────────────────────────────────┐
-            #   │  (1) Compute Node 0  →  Storage 0   (4 connections, one per GPU)            │
-            #   │  (2) Compute Node 0  →  Storage 1   (4 connections, one per GPU)            │
-            #   │  (3) Compute Node 1  →  Storage 0   (4 connections, one per GPU)            │
-            #   │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
-            #   └─────────────────────────────────────────────────────────────────────────────┘
             node_rank = dataset.cluster_info.compute_node_rank
+            num_storage_nodes = dataset.cluster_info.num_storage_nodes
+
+            # --- Set all DistLoader attributes (mirrors GLT DistLoader.__init__) ---
+            # These are required by inherited methods: shutdown(), __iter__(), __next__(),
+            # __del__(), _collate_fn(), _set_ntypes_and_etypes().
+            self.data = None  # No local data in Graph Store mode
+            self.input_data = input_data
+            self.sampling_type = sampling_config.sampling_type
+            self.num_neighbors = sampling_config.num_neighbors
+            self.batch_size = sampling_config.batch_size
+            self.shuffle = sampling_config.shuffle
+            self.drop_last = sampling_config.drop_last
+            self.with_edge = sampling_config.with_edge
+            self.with_weight = sampling_config.with_weight
+            self.collect_features = sampling_config.collect_features
+            self.edge_dir = sampling_config.edge_dir
+            self.sampling_config = sampling_config
+            self.to_device = device
+            self.worker_options = worker_options
+            self._shutdowned = False
+
+            self._is_collocated_worker = False
+            self._is_mp_worker = False
+            self._is_remote_worker = True
+
+            self._num_recv = 0
+            self._epoch = 0
+
+            # Context validation
+            ctx = get_context()
+            if ctx is None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}': the distributed context "
+                    f"has not been initialized."
+                )
+            if not ctx.is_client():
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}': must be used on a client "
+                    f"worker process."
+                )
+
+            # Remote worker attributes
+            self._num_expected = float("inf")
+            self._with_channel = True
+
+            self._server_rank_list: list[int] = (
+                self.worker_options.server_rank
+                if isinstance(self.worker_options.server_rank, list)
+                else [self.worker_options.server_rank]
+            )
+            self._input_data_list: list[NodeSamplerInput] = (
+                self.input_data
+                if isinstance(self.input_data, list)
+                else [self.input_data]
+            )
+            self._input_type = self._input_data_list[0].input_type
+
+            # --- Barrier loop: one compute node at a time ---
+            logger.info(
+                f"node_rank {node_rank} starting barrier loop with "
+                f"{dataset.cluster_info.num_compute_nodes} compute nodes"
+            )
+            flush()
             for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
+                start_time = time.time()
                 if node_rank == target_node_rank:
-                    # TODO: (kmontemayor2-sc) Evaluate if we need to stagger the initialization of the data loaders
-                    # to smooth the memory usage.
-                    super().__init__(
-                        None,  # Pass in None for Graph Store mode.
-                        input_data,
-                        sampling_config,
-                        device,
-                        worker_options,
+                    # Step 1: Get dataset metadata via RPC (single call, fast)
+                    (
+                        self.num_data_partitions,
+                        self.data_partition_idx,
+                        ntypes,
+                        etypes,
+                    ) = request_server(
+                        self._server_rank_list[0],
+                        GiglDistServer.get_dataset_meta,
                     )
-                    logger.info(f"node_rank {node_rank} initialized the dist loader")
-                torch.distributed.barrier()
-            torch.distributed.barrier()
-            logger.info("All node ranks initialized the dist loader")
+                    self._set_ntypes_and_etypes(ntypes, etypes)
+
+                    # Step 2: Move input data to CPU if needed
+                    for i, inp in enumerate(self._input_data_list):
+                        if not isinstance(inp, RemoteSamplerInput):
+                            self._input_data_list[i] = inp.to(torch.device("cpu"))
+
+                    # Step 3: Dispatch ALL create_sampling_producer RPCs async.
+                    #
+                    # This is the key fix: async_request_server queues the RPC
+                    # in TensorPipe and returns immediately. By dispatching all
+                    # N RPCs in a loop BEFORE waiting for any response, all
+                    # storage nodes receive the RPC and start their worker
+                    # rendezvous simultaneously. No ThreadPoolExecutor needed.
+                    logger.info(
+                        f"node_rank={node_rank} dispatching "
+                        f"create_sampling_producer to "
+                        f"{num_storage_nodes} servers"
+                    )
+                    flush()
+                    t_dispatch = time.time()
+                    rpc_futures: list[tuple[int, Any]] = []
+                    for server_rank, inp_data in zip(
+                        self._server_rank_list, self._input_data_list
+                    ):
+                        fut = async_request_server(
+                            server_rank,
+                            GiglDistServer.create_sampling_producer,
+                            inp_data,
+                            self.sampling_config,
+                            self.worker_options,
+                        )
+                        rpc_futures.append((server_rank, fut))
+                    logger.info(
+                        f"node_rank={node_rank} all "
+                        f"{len(rpc_futures)} RPCs dispatched in "
+                        f"{time.time() - t_dispatch:.3f}s, "
+                        f"waiting for responses"
+                    )
+                    flush()
+
+                    # Step 4: Wait for all results
+                    self._producer_id_list: list[int] = []
+                    for server_rank, fut in rpc_futures:
+                        t_wait = time.time()
+                        producer_id: int = fut.wait()
+                        logger.info(
+                            f"node_rank={node_rank} "
+                            f"create_sampling_producer"
+                            f"(server_rank={server_rank}) returned "
+                            f"producer_id={producer_id} in "
+                            f"{time.time() - t_wait:.2f}s"
+                        )
+                        flush()
+                        self._producer_id_list.append(producer_id)
+                    logger.info(
+                        f"node_rank={node_rank} all "
+                        f"{len(self._producer_id_list)} producers created "
+                        f"in {time.time() - t_dispatch:.2f}s total"
+                    )
+                    flush()
+
+                    # Step 5: Create remote receiving channel
+                    self._channel = RemoteReceivingChannel(
+                        self._server_rank_list,
+                        self._producer_id_list,
+                        self.worker_options.prefetch_size,
+                    )
+
+                    logger.info(
+                        f"node_rank {node_rank} initialized the dist loader in "
+                        f"{time.time() - start_time:.2f}s"
+                    )
+                    flush()
+                else:
+                    logger.info(
+                        f"node_rank {node_rank} waiting for barrier "
+                        f"for rank {target_node_rank}"
+                    )
+                    flush()
+                torch.distributed.barrier(device_ids=torch.device("cpu"))
+                logger.info(
+                    f"node_rank {node_rank} barrier for rank "
+                    f"{target_node_rank} in {time.time() - start_time:.2f}s"
+                )
+                flush()
+
+            torch.distributed.barrier(device_ids=torch.device("cpu"))
+            logger.info(
+                f"node_rank {node_rank}: all "
+                f"{dataset.cluster_info.num_compute_nodes} node ranks "
+                f"initialized the dist loader"
+            )
+            flush()
 
     def _setup_for_graph_store(
         self,
@@ -366,6 +505,7 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
+        channel_size: str,
     ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
             raise ValueError(
@@ -399,6 +539,7 @@ class DistNeighborLoader(DistLoader):
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for i in range(num_workers)],
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
+            buffer_size=channel_size,
             master_port=sampling_port,
             worker_key=f"compute_rank_{node_rank}",
         )
@@ -419,14 +560,13 @@ class DistNeighborLoader(DistLoader):
             require_edge_feature_info = True
         else:
             raise ValueError(
-                f"When using Graph Store mode, input nodes must be of type (dict[int, torch.Tensor] | (NodeType, dict[int, torch.Tensor])), received {type(input_nodes)}"
+                f"When using Graph Store mode, input nodes must be of type (list[torch.Tensor] | (NodeType, list[torch.Tensor])), received {type(input_nodes)}"
             )
 
         # Determine input_type based on edge_feature_info
         if isinstance(edge_types, list):
             if edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
-                is_homogeneous_with_labeled_edge_type = True
             else:
                 input_type = fallback_input_type
         elif require_edge_feature_info:
