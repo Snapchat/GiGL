@@ -7,14 +7,7 @@ import torch
 from graphlearn_torch.distributed import async_request_server, request_server
 
 from gigl.common.logger import Logger
-from gigl.distributed.graph_store.storage_utils import (
-    get_ablp_input,
-    get_edge_dir,
-    get_edge_feature_info,
-    get_edge_types,
-    get_node_feature_info,
-    get_node_ids,
-)
+from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -83,7 +76,7 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_node_feature_info,
+            DistServer.get_node_feature_info,
         )
 
     def get_edge_feature_info(
@@ -99,7 +92,7 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_edge_feature_info,
+            DistServer.get_edge_feature_info,
         )
 
     def get_edge_dir(self) -> Union[str, Literal["in", "out"]]:
@@ -110,7 +103,7 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_edge_dir,
+            DistServer.get_edge_dir,
         )
 
     def _get_node_ids(
@@ -130,7 +123,7 @@ class RemoteDistDataset:
             futures.append(
                 async_request_server(
                     server_rank,
-                    get_node_ids,
+                    DistServer.get_node_ids,
                     rank=rank,
                     world_size=world_size,
                     split=split,
@@ -303,7 +296,7 @@ class RemoteDistDataset:
             futures.append(
                 async_request_server(
                     server_rank,
-                    get_ablp_input,
+                    DistServer.get_ablp_input,
                     split=split,
                     rank=rank,
                     world_size=world_size,
@@ -457,5 +450,5 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_edge_types,
+            DistServer.get_edge_types,
         )
