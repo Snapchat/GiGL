@@ -40,6 +40,12 @@ SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
 r""" Interval (in seconds) to check exit status of server.
 """
 
+FETCH_MESSAGE_TIMEOUT_SECONDS = 300.0
+r""" Overall timeout (in seconds) for fetch_one_sampled_message polling.
+If a producer does not yield any sampled message within this duration,
+the call raises a TimeoutError instead of polling forever.
+"""
+
 
 # TODO(kmonte): Migrate graph_store/storage_utils to this class.
 class DistServer(GltDistServer):
@@ -66,6 +72,7 @@ class DistServer(GltDistServer):
         self._producer_pool: dict[int, DistABLPSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
+        self._producer_lock: dict[int, threading.RLock] = {}
 
     def shutdown(self) -> None:
         for producer_id in list(self._producer_pool.keys()):
@@ -260,6 +267,7 @@ class DistServer(GltDistServer):
                     self.dataset, sampler_input, sampling_config, worker_options, buffer
                 )
                 producer.init()
+                self._producer_lock[producer_id] = threading.RLock()
                 self._producer_pool[producer_id] = producer
                 self._msg_buffer_pool[producer_id] = buffer
                 self._epoch[producer_id] = -1
@@ -269,13 +277,27 @@ class DistServer(GltDistServer):
         r"""Shutdown and destroy a sampling producer managed by this server with
         its producer id.
         """
-        with self._lock:
+        with self._producer_lock[producer_id]:
             producer = self._producer_pool.get(producer_id, None)
             if producer is not None:
+                print(f"Shutting down sampling producer {producer_id}")
                 producer.shutdown()
                 self._producer_pool.pop(producer_id)
                 self._msg_buffer_pool.pop(producer_id)
                 self._epoch.pop(producer_id)
+                self._producer_lock.pop(producer_id)
+                # Clean up worker_key -> producer_id mapping to avoid stale
+                # cache entries if a loader with the same key is re-created.
+                keys_to_remove = [
+                    k
+                    for k, v in self._worker_key2producer_id.items()
+                    if v == producer_id
+                ]
+                for k in keys_to_remove:
+                    self._worker_key2producer_id.pop(k)
+                print(
+                    f"Remaining producers: {len(self._producer_pool)}, ({sorted(self._producer_pool.keys())})"
+                )
 
     def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> None:
         r"""Start a new epoch sampling tasks for a specific sampling producer
@@ -294,21 +316,36 @@ class DistServer(GltDistServer):
     ) -> tuple[Optional[SampleMessage], bool]:
         r"""Fetch a sampled message from the buffer of a specific sampling
         producer with its producer id.
+
+        This method polls the producer's ShmChannel buffer with a 500ms
+        per-iteration timeout. An overall timeout of
+        ``FETCH_MESSAGE_TIMEOUT_SECONDS`` prevents indefinite blocking
+        when sampling workers are unable to produce data (e.g. due to
+        resource contention or worker failure).
         """
         producer = self._producer_pool.get(producer_id, None)
         if producer is None:
-            warnings.warn("invalid producer_id {producer_id}")
+            warnings.warn(f"invalid producer_id {producer_id}")
             return None, False
         if producer.is_all_sampling_completed_and_consumed():
             return None, True
         buffer = self._msg_buffer_pool.get(producer_id, None)
+        start_time = time.monotonic()
         while True:
             try:
                 msg = buffer.recv(timeout_ms=500)
                 return msg, False
-            except QueueTimeoutError as e:
+            except QueueTimeoutError:
                 if producer.is_all_sampling_completed():
                     return None, True
+                elapsed = time.monotonic() - start_time
+                if elapsed > FETCH_MESSAGE_TIMEOUT_SECONDS:
+                    raise TimeoutError(
+                        f"fetch_one_sampled_message timed out after "
+                        f"{elapsed:.1f}s for producer {producer_id}. "
+                        f"Sampling workers may have failed or are under "
+                        f"extreme resource contention."
+                    )
 
 
 _dist_server: Optional[DistServer] = None

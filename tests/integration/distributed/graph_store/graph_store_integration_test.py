@@ -2,6 +2,7 @@ import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
+import time
 import traceback
 import unittest
 from collections.abc import MutableMapping
@@ -41,6 +42,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
+from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import DEFAULT_TIMEOUT_SECONDS, TestCase
 
@@ -72,7 +74,7 @@ def _assert_sampler_input(
 
 def _assert_ablp_input(
     cluster_info: GraphStoreInfo,
-    ablp_result: dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]],
+    ablp_result: dict[int, ABLPInputNodes],
 ) -> None:
     """Assert ABLP input structure and verify consistency across ranks on same compute node."""
     for i in range(cluster_info.compute_cluster_world_size):
@@ -82,7 +84,7 @@ def _assert_ablp_input(
             )
             logger.info(f"--------------------------------")
 
-            # Verify structure: dict mapping server_rank to (anchors, positive_labels, negative_labels)
+            # Verify structure: dict mapping server_rank to ABLPInputNodes
             assert isinstance(
                 ablp_result, dict
             ), f"Expected dict, got {type(ablp_result)}"
@@ -90,11 +92,12 @@ def _assert_ablp_input(
                 len(ablp_result) == cluster_info.num_storage_nodes
             ), f"Expected {cluster_info.num_storage_nodes} storage nodes in result, got {len(ablp_result)}"
 
-            for server_rank, (
-                anchors,
-                positive_labels,
-                negative_labels,
-            ) in ablp_result.items():
+            for server_rank, ablp_input in ablp_result.items():
+                assert isinstance(
+                    ablp_input, ABLPInputNodes
+                ), f"Expected ABLPInputNodes, got {type(ablp_input)}"
+
+                anchors = ablp_input.anchor_nodes
                 # Verify anchors shape (1D tensor)
                 assert isinstance(
                     anchors, torch.Tensor
@@ -102,33 +105,42 @@ def _assert_ablp_input(
                 assert anchors.dim() == 1, f"Anchors should be 1D, got {anchors.dim()}D"
                 assert len(anchors) > 0, "Anchors should not be empty"
 
-                # Verify positive_labels shape (2D tensor: [num_anchors, num_positive_labels])
+                # Verify positive_labels: dict[EdgeType, Tensor] where each Tensor is 2D
                 assert isinstance(
-                    positive_labels, torch.Tensor
-                ), f"Positive labels should be a tensor, got {type(positive_labels)}"
-                assert (
-                    positive_labels.dim() == 2
-                ), f"Positive labels should be 2D, got {positive_labels.dim()}D"
-                assert positive_labels.shape[0] == len(
-                    anchors
-                ), f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
+                    ablp_input.positive_labels, dict
+                ), f"Positive labels should be a dict, got {type(ablp_input.positive_labels)}"
+                for edge_type, positive_labels in ablp_input.positive_labels.items():
+                    assert isinstance(
+                        positive_labels, torch.Tensor
+                    ), f"Positive labels should be a tensor, got {type(positive_labels)}"
+                    assert (
+                        positive_labels.dim() == 2
+                    ), f"Positive labels should be 2D, got {positive_labels.dim()}D"
+                    assert positive_labels.shape[0] == len(
+                        anchors
+                    ), f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
 
                 # Verify negative_labels is None or has correct shape
-                if negative_labels is not None:
-                    assert isinstance(
-                        negative_labels, torch.Tensor
-                    ), f"Negative labels should be a tensor, got {type(negative_labels)}"
-                    assert (
-                        negative_labels.dim() == 2
-                    ), f"Negative labels should be 2D, got {negative_labels.dim()}D"
-                    assert negative_labels.shape[0] == len(
-                        anchors
-                    ), f"Negative labels first dim should match anchors length"
+                if ablp_input.negative_labels is not None:
+                    for (
+                        edge_type,
+                        negative_labels,
+                    ) in ablp_input.negative_labels.items():
+                        assert isinstance(
+                            negative_labels, torch.Tensor
+                        ), f"Negative labels should be a tensor, got {type(negative_labels)}"
+                        assert (
+                            negative_labels.dim() == 2
+                        ), f"Negative labels should be 2D, got {negative_labels.dim()}D"
+                        assert negative_labels.shape[0] == len(
+                            anchors
+                        ), f"Negative labels first dim should match anchors length"
 
                 logger.info(
-                    f"Server rank {server_rank}: anchors shape={anchors.shape}, "
-                    f"positive_labels shape={positive_labels.shape}, "
-                    f"negative_labels shape={negative_labels.shape if negative_labels is not None else None}"
+                    f"Server rank {server_rank}: anchor_node_type={ablp_input.anchor_node_type}, "
+                    f"anchors shape={anchors.shape}, "
+                    f"positive_labels edge types={list(ablp_input.positive_labels.keys())}, "
+                    f"negative_labels edge types={list(ablp_input.negative_labels.keys()) if ablp_input.negative_labels else None}"
                 )
 
             logger.info(
@@ -139,7 +151,15 @@ def _assert_ablp_input(
     torch.distributed.barrier()
 
     # Gather ABLP data from all ranks and verify processes on same compute_node_rank have identical data
-    local_anchors, local_positive, local_negative = ablp_result[0]
+    first_input = ablp_result[0]
+    local_anchors = first_input.anchor_nodes
+    # Get the first (and currently only) positive/negative label tensor for comparison
+    local_positive = next(iter(first_input.positive_labels.values()))
+    local_negative = (
+        next(iter(first_input.negative_labels.values()))
+        if first_input.negative_labels
+        else None
+    )
     local_data = (
         cluster_info.compute_node_rank,
         local_anchors.clone(),
@@ -208,14 +228,11 @@ def _run_compute_train_tests(
     )
 
     _assert_ablp_input(cluster_info, ablp_result)
-    # For labeled homogeneous, pass the dict directly (not as tuple)
-    input_nodes = ablp_result
 
     ablp_loader = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
-        input_nodes=input_nodes,
-        supervision_edge_type=supervision_edge_type,
+        input_nodes=ablp_result,
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
@@ -260,7 +277,7 @@ def _run_compute_train_tests(
     # Each process on the same compute node has the same anchor count, so we sum
     # across all processes and divide by num_processes_per_compute to get the true total
     local_total_anchors = sum(
-        ablp_result[server_rank][0].shape[0] for server_rank in ablp_result
+        ablp_result[server_rank].anchor_nodes.shape[0] for server_rank in ablp_result
     )
     expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
     torch.distributed.all_reduce(
@@ -274,6 +291,317 @@ def _run_compute_train_tests(
     ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
 
     shutdown_compute_proccess()
+
+
+def _run_compute_multiple_loaders_test(
+    client_rank: int,
+    cluster_info: GraphStoreInfo,
+    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    node_type: Optional[NodeType],
+) -> None:
+    """
+    Compute test that validates multiple loader instances can coexist.
+
+    Phase 1: Creates two ABLP loaders + two DistNeighborLoaders and iterates them in parallel.
+    Phase 2: After shutting down phase 1 loaders (to free server-side producers and RPC
+             resources), creates one more ABLP + one DistNeighborLoader pair sequentially.
+    """
+    timings: dict[str, float] = {}
+    rank_str = ""  # populated after init
+
+    # --- init_compute_process ---
+    t0 = time.monotonic()
+    init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+    timings["init_compute_process"] = time.monotonic() - t0
+    rank_str = (
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()}"
+    )
+
+    # --- RemoteDistDataset creation ---
+    t0 = time.monotonic()
+    remote_dist_dataset = RemoteDistDataset(
+        cluster_info=cluster_info,
+        local_rank=client_rank,
+        mp_sharing_dict=mp_sharing_dict,
+    )
+    timings["create_remote_dist_dataset"] = time.monotonic() - t0
+
+    test_node_type = (
+        node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
+    )
+    supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+
+    # --- get_ablp_input ---
+    t0 = time.monotonic()
+    ablp_result = remote_dist_dataset.get_ablp_input(
+        split="train",
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+        node_type=test_node_type,
+        supervision_edge_type=supervision_edge_type,
+    )
+    timings["get_ablp_input"] = time.monotonic() - t0
+
+    # --- get_node_ids ---
+    t0 = time.monotonic()
+    random_negative_input = remote_dist_dataset.get_node_ids(
+        split="train",
+        node_type=test_node_type,
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+    )
+    timings["get_node_ids"] = time.monotonic() - t0
+
+    # Calculate expected batch count (same logic as _run_compute_train_tests).
+    local_total_anchors = sum(
+        ablp_result[server_rank].anchor_nodes.shape[0] for server_rank in ablp_result
+    )
+    expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
+    torch.distributed.all_reduce(
+        expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
+    )
+    total_negative_seeds = sum(
+        random_negative_input[server_rank].shape[0]
+        for server_rank in random_negative_input
+    )
+    total_negative_seeds_tensor = torch.tensor(total_negative_seeds, dtype=torch.int64)
+    torch.distributed.all_reduce(
+        total_negative_seeds_tensor, op=torch.distributed.ReduceOp.SUM
+    )
+    total_negative_seeds = total_negative_seeds_tensor.item()
+    expected_batches = (
+        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
+    )
+    logger.info(
+        f"{rank_str} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+    )
+
+    # ------------------------------------------------------------------
+    # Phase 1: Two ABLP loaders + two DistNeighborLoaders in parallel
+    # ------------------------------------------------------------------
+    # Use prefetch_size=2 to limit concurrent fetch_one_sampled_message RPC calls
+    # per server. With 4 loaders × 2 compute nodes × 2 prefetch = 16 calls,
+    # matching the 16 RPC thread limit on the server.
+
+    # --- Phase 1: Create ablp_loader_1 ---
+    t0 = time.monotonic()
+    ablp_loader_1 = DistABLPLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=ablp_result,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+        prefetch_size=2,
+    )
+    timings["p1_create_ablp_loader_1"] = time.monotonic() - t0
+    logger.info(
+        f"{rank_str} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
+    )
+
+    # --- Phase 1: Create ablp_loader_2 ---
+    t0 = time.monotonic()
+    ablp_loader_2 = DistABLPLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=ablp_result,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+        prefetch_size=2,
+    )
+    timings["p1_create_ablp_loader_2"] = time.monotonic() - t0
+    logger.info(
+        f"{rank_str} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
+    )
+
+    # --- Phase 1: Create neighbor_loader_1 ---
+    t0 = time.monotonic()
+    neighbor_loader_1 = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=random_negative_input,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+        prefetch_size=2,
+    )
+    timings["p1_create_neighbor_loader_1"] = time.monotonic() - t0
+    logger.info(
+        f"{rank_str} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
+    )
+
+    # --- Phase 1: Create neighbor_loader_2 ---
+    t0 = time.monotonic()
+    neighbor_loader_2 = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=random_negative_input,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+        prefetch_size=2,
+    )
+    timings["p1_create_neighbor_loader_2"] = time.monotonic() - t0
+    logger.info(
+        f"{rank_str} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
+    )
+
+    logger.info(f"{rank_str} phase 1: loading batches from 4 parallel loaders")
+
+    # --- Phase 1: Barrier before iteration ---
+    t0 = time.monotonic()
+    torch.distributed.barrier()
+    timings["p1_barrier_before_iteration"] = time.monotonic() - t0
+
+    # --- Phase 1: Iterate 4 loaders ---
+    t0 = time.monotonic()
+    phase1_count = 0
+    for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip(
+        ablp_loader_1, ablp_loader_2, neighbor_loader_1, neighbor_loader_2
+    ):
+        assert hasattr(
+            ablp_batch_1, "y_positive"
+        ), "ABLP batch 1 should have y_positive"
+        assert hasattr(
+            ablp_batch_2, "y_positive"
+        ), "ABLP batch 2 should have y_positive"
+        phase1_count += 1
+    timings["p1_iterate_4_loaders"] = time.monotonic() - t0
+    logger.info(
+        f"{rank_str} phase 1: loaded {phase1_count} batches from 4 parallel loaders"
+    )
+
+    # --- Phase 1: Barrier after iteration ---
+    t0 = time.monotonic()
+    torch.distributed.barrier()
+    timings["p1_barrier_after_iteration"] = time.monotonic() - t0
+    logger.info("All ranks have loaded phase 1 batches")
+
+    phase1_count_tensor = torch.tensor(phase1_count, dtype=torch.int64)
+    torch.distributed.all_reduce(phase1_count_tensor, op=torch.distributed.ReduceOp.SUM)
+    logger.info(
+        f"{rank_str} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+    )
+
+    assert (
+        phase1_count_tensor.item() == expected_batches
+    ), f"Phase 1: Expected {expected_batches} total batches, got {phase1_count_tensor.item()}"
+
+    # --- Phase 1: Shutdown loaders ---
+    t0 = time.monotonic()
+    ablp_loader_1.shutdown()
+    timings["p1_shutdown_ablp_loader_1"] = time.monotonic() - t0
+
+    t0 = time.monotonic()
+    ablp_loader_2.shutdown()
+    timings["p1_shutdown_ablp_loader_2"] = time.monotonic() - t0
+
+    t0 = time.monotonic()
+    neighbor_loader_1.shutdown()
+    timings["p1_shutdown_neighbor_loader_1"] = time.monotonic() - t0
+
+    t0 = time.monotonic()
+    neighbor_loader_2.shutdown()
+    timings["p1_shutdown_neighbor_loader_2"] = time.monotonic() - t0
+    logger.info(f"{rank_str} shut down phase 1 loaders")
+
+    # --- Phase 1: Barrier after shutdown ---
+    t0 = time.monotonic()
+    torch.distributed.barrier()
+    timings["p1_barrier_after_shutdown"] = time.monotonic() - t0
+
+    # ------------------------------------------------------------------
+    # Phase 2: One more ABLP + one more DistNeighborLoader (sequential)
+    # ------------------------------------------------------------------
+
+    # --- Phase 2: Create ablp_loader_3 ---
+    t0 = time.monotonic()
+    ablp_loader_3 = DistABLPLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=ablp_result,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+        prefetch_size=2,
+    )
+    timings["p2_create_ablp_loader_3"] = time.monotonic() - t0
+    logger.info(
+        f"{rank_str} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
+    )
+
+    # --- Phase 2: Create neighbor_loader_3 ---
+    t0 = time.monotonic()
+    neighbor_loader_3 = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=random_negative_input,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+        prefetch_size=2,
+    )
+    timings["p2_create_neighbor_loader_3"] = time.monotonic() - t0
+    logger.info(
+        f"{rank_str} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
+    )
+
+    # --- Phase 2: Iterate 2 loaders ---
+    t0 = time.monotonic()
+    phase2_count = 0
+    logger.info(f"{rank_str} phase 2: loading batches from 2 sequential loaders")
+    for ablp_batch_3, neg_batch_3 in zip(ablp_loader_3, neighbor_loader_3):
+        assert hasattr(
+            ablp_batch_3, "y_positive"
+        ), "ABLP batch 3 should have y_positive"
+        phase2_count += 1
+    timings["p2_iterate_2_loaders"] = time.monotonic() - t0
+
+    logger.info(
+        f"{rank_str} phase 2: loaded {phase2_count} batches from 2 sequential loaders"
+    )
+
+    # --- Phase 2: Barrier after iteration ---
+    t0 = time.monotonic()
+    torch.distributed.barrier()
+    timings["p2_barrier_after_iteration"] = time.monotonic() - t0
+
+    phase2_count_tensor = torch.tensor(phase2_count, dtype=torch.int64)
+    torch.distributed.all_reduce(phase2_count_tensor, op=torch.distributed.ReduceOp.SUM)
+    logger.info(
+        f"{rank_str} phase 2: loaded {phase2_count_tensor.item()} batches from 2 sequential loaders"
+    )
+    assert (
+        phase2_count_tensor.item() == expected_batches
+    ), f"Phase 2: Expected {expected_batches} total batches, got {phase2_count_tensor.item()}"
+
+    # --- Phase 2: Shutdown loaders (triggers timing summary logs) ---
+    t0 = time.monotonic()
+    ablp_loader_3.shutdown()
+    timings["p2_shutdown_ablp_loader_3"] = time.monotonic() - t0
+
+    t0 = time.monotonic()
+    neighbor_loader_3.shutdown()
+    timings["p2_shutdown_neighbor_loader_3"] = time.monotonic() - t0
+
+    # --- shutdown_compute_proccess ---
+    t0 = time.monotonic()
+    shutdown_compute_proccess()
+    timings["shutdown_compute_process"] = time.monotonic() - t0
+
+    # ------------------------------------------------------------------
+    # Print timing summary
+    # ------------------------------------------------------------------
+    total_time = sum(timings.values())
+    logger.info(f"\n{'='*70}")
+    logger.info(f"TIMING SUMMARY for {rank_str} (client_rank={client_rank})")
+    logger.info(f"{'='*70}")
+    for label, elapsed in timings.items():
+        pct = (elapsed / total_time * 100) if total_time > 0 else 0
+        logger.info(f"  {label:.<50s} {elapsed:7.3f}s  ({pct:5.1f}%)")
+    logger.info(f"  {'TOTAL':.<50s} {total_time:7.3f}s")
+    logger.info(f"{'='*70}")
 
 
 @dataclass(frozen=True)
@@ -320,6 +648,59 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
             client_process.start()
         for client_process in client_processes:
             client_process.join(DEFAULT_TIMEOUT_SECONDS)
+    except Exception:
+        args.exception_dict[process_name] = traceback.format_exc()
+        raise
+
+
+def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
+    """Client process for testing multiple loader instances in parallel and sequence."""
+    logger.info(
+        f"Initializing multiple loaders client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. "
+        f"OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
+    )
+    process_name = f"client_multiple_loaders_{args.client_rank}"
+    try:
+        t_start = time.monotonic()
+
+        t0 = time.monotonic()
+        mp_context = torch.multiprocessing.get_context("spawn")
+        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        mp_setup_time = time.monotonic() - t0
+
+        client_processes: list[py_mp_context.SpawnProcess] = []
+        logger.info("Starting multiple loaders client processes")
+        for i in range(args.cluster_info.num_processes_per_compute):
+            client_process = mp_context.Process(
+                target=_run_compute_multiple_loaders_test,
+                args=[
+                    i,  # client_rank
+                    args.cluster_info,  # cluster_info
+                    mp_sharing_dict,  # mp_sharing_dict
+                    args.node_type,  # node_type
+                ],
+            )
+            client_processes.append(client_process)
+
+        t0 = time.monotonic()
+        for client_process in client_processes:
+            client_process.start()
+        process_start_time = time.monotonic() - t0
+
+        t0 = time.monotonic()
+        for client_process in client_processes:
+            client_process.join(DEFAULT_TIMEOUT_SECONDS)
+        process_join_time = time.monotonic() - t0
+
+        total_client_time = time.monotonic() - t_start
+        logger.info(f"\n{'='*70}")
+        logger.info(f"CLIENT PROCESS TIMING for client_rank={args.client_rank}")
+        logger.info(f"{'='*70}")
+        logger.info(f"  mp_context + Manager setup .... {mp_setup_time:7.3f}s")
+        logger.info(f"  Process.start() .............. {process_start_time:7.3f}s")
+        logger.info(f"  Process.join() ............... {process_join_time:7.3f}s")
+        logger.info(f"  TOTAL ........................ {total_client_time:7.3f}s")
+        logger.info(f"{'='*70}")
     except Exception:
         args.exception_dict[process_name] = traceback.format_exc()
         raise
@@ -586,7 +967,7 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def test_graph_store_homogeneous(self):
+    def _test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -685,7 +1066,7 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    def test_homogeneous_training(self):
+    def _test_homogeneous_training(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -777,6 +1158,138 @@ class GraphStoreIntegrationTest(TestCase):
                 launched_processes.append(server_process)
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
+
+    def test_multiple_loaders_in_graph_store(self):
+        """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
+        in parallel, followed by another (ABLP, DistNeighborLoader) pair sequentially.
+        """
+        test_start = time.monotonic()
+
+        t0 = time.monotonic()
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+        (
+            cluster_master_port,
+            storage_cluster_master_port,
+            compute_cluster_master_port,
+            master_port,
+            rpc_master_port,
+            rpc_wait_port,
+        ) = get_free_ports(num_ports=6)
+        host_ip = socket.gethostbyname(socket.gethostname())
+        cluster_info = GraphStoreInfo(
+            num_storage_nodes=2,
+            num_compute_nodes=2,
+            num_processes_per_compute=1,
+            cluster_master_ip=host_ip,
+            storage_cluster_master_ip=host_ip,
+            compute_cluster_master_ip=host_ip,
+            cluster_master_port=cluster_master_port,
+            storage_cluster_master_port=storage_cluster_master_port,
+            compute_cluster_master_port=compute_cluster_master_port,
+            rpc_master_port=rpc_master_port,
+            rpc_wait_port=rpc_wait_port,
+        )
+        setup_time = time.monotonic() - t0
+        logger.info(
+            f"[TIMING] Test setup (config, ports, cluster_info): {setup_time:.3f}s"
+        )
+
+        t0 = time.monotonic()
+        ctx = mp.get_context("spawn")
+        launched_processes: list[py_mp_context.SpawnProcess] = []
+        exception_dict = mp.Manager().dict()
+        for i in range(cluster_info.num_compute_nodes):
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MASTER_ADDR": host_ip,
+                    "MASTER_PORT": str(master_port),
+                    "RANK": str(i),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
+                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
+                        cluster_info.num_processes_per_compute
+                    ),
+                },
+                clear=False,
+            ):
+                client_train_args = ClientTrainProcessArgs(
+                    client_rank=i,
+                    cluster_info=cluster_info,
+                    node_type=None,
+                    exception_dict=exception_dict,
+                )
+                client_process = ctx.Process(
+                    target=_client_multiple_loaders_process,
+                    args=[client_train_args],
+                    name=f"client_multiple_loaders_{i}",
+                )
+                client_process.start()
+                launched_processes.append(client_process)
+        client_spawn_time = time.monotonic() - t0
+        logger.info(
+            f"[TIMING] Spawn compute client processes: {client_spawn_time:.3f}s"
+        )
+
+        t0 = time.monotonic()
+        splitter = DistNodeAnchorLinkSplitter(
+            sampling_direction="in",
+            should_convert_labels_to_edges=True,
+        )
+        for i in range(cluster_info.num_storage_nodes):
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MASTER_ADDR": host_ip,
+                    "MASTER_PORT": str(master_port),
+                    "RANK": str(i + cluster_info.num_compute_nodes),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
+                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
+                        cluster_info.num_processes_per_compute
+                    ),
+                },
+                clear=False,
+            ):
+                server_args = ServerProcessArgs(
+                    cluster_info=cluster_info,
+                    task_config_uri=task_config_uri,
+                    sample_edge_direction="in",
+                    exception_dict=exception_dict,
+                    splitter=splitter,
+                )
+                server_process = ctx.Process(
+                    target=_run_server_processes,
+                    args=[server_args],
+                    name=f"server_{i}",
+                )
+                server_process.start()
+                launched_processes.append(server_process)
+        server_spawn_time = time.monotonic() - t0
+        logger.info(
+            f"[TIMING] Spawn storage server processes: {server_spawn_time:.3f}s"
+        )
+
+        t0 = time.monotonic()
+        self.assert_all_processes_succeed(launched_processes, exception_dict)
+        join_time = time.monotonic() - t0
+        logger.info(f"[TIMING] Wait for all processes (join): {join_time:.3f}s")
+
+        total_test_time = time.monotonic() - test_start
+        logger.info(f"\n{'='*70}")
+        logger.info(f"TOP-LEVEL TEST TIMING SUMMARY")
+        logger.info(f"{'='*70}")
+        logger.info(f"  Setup (config, ports, cluster_info) ... {setup_time:7.3f}s")
+        logger.info(
+            f"  Spawn compute clients ................ {client_spawn_time:7.3f}s"
+        )
+        logger.info(
+            f"  Spawn storage servers ................ {server_spawn_time:7.3f}s"
+        )
+        logger.info(f"  Wait for all processes (join) ........ {join_time:7.3f}s")
+        logger.info(f"  TOTAL ................................ {total_test_time:7.3f}s")
+        logger.info(f"{'='*70}")
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")

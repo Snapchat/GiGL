@@ -8,6 +8,8 @@ We keep this around so we can use the utils in tests/integration/distributed/gra
 import argparse
 import multiprocessing.context as py_mp_context
 import os
+import pathlib
+import pickle
 from typing import Literal, Optional, Union
 
 import torch
@@ -126,13 +128,20 @@ def storage_node_process(
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
     # TODO(kmonte): Add support for TFDatasetOptions.
-    dataset = build_dataset(
-        serialized_graph_metadata=serialized_graph_metadata,
-        sample_edge_direction=sample_edge_direction,
-        partitioner_class=DistRangePartitioner,
-        splitter=splitter,
-        _ssl_positive_label_percentage=ssl_positive_label_percentage,
-    )
+    dataset_cache_path = pathlib.Path(f"/tmp/gigl_dataset_cache_{storage_rank}")
+    if dataset_cache_path.exists():
+        ipc_handle = pickle.load(dataset_cache_path.open("rb"))
+        dataset = DistDataset.from_ipc_handle(ipc_handle)
+    else:
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction=sample_edge_direction,
+            partitioner_class=DistRangePartitioner,
+            splitter=splitter,
+            _ssl_positive_label_percentage=ssl_positive_label_percentage,
+        )
+        ipc_handle = dataset.share_ipc()
+        pickle.dump(ipc_handle, dataset_cache_path.open("wb"))
     task_config = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
     )

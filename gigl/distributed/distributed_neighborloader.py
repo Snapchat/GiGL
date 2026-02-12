@@ -1,3 +1,4 @@
+import itertools
 import time
 from collections import Counter, abc
 from typing import Optional, Tuple, Union
@@ -43,6 +44,42 @@ DEFAULT_NUM_CPU_THREADS = 2
 
 
 class DistNeighborLoader(DistLoader):
+    _instance_counter: itertools.count = itertools.count()
+
+    def _init_timing_stats(self) -> None:
+        """Initialize timing accumulators for performance profiling."""
+        self._timing_stats: dict[str, float] = {}
+        self._timing_counts: dict[str, int] = {}
+
+    def _add_timing(self, key: str, elapsed: float) -> None:
+        """Accumulate timing for a given key."""
+        self._timing_stats[key] = self._timing_stats.get(key, 0.0) + elapsed
+        self._timing_counts[key] = self._timing_counts.get(key, 0) + 1
+
+    def _log_timing_summary(self) -> None:
+        """Log accumulated timing stats."""
+        if not hasattr(self, "_timing_stats") or not self._timing_stats:
+            return
+        rank = (
+            torch.distributed.get_rank() if torch.distributed.is_initialized() else "?"
+        )
+        total = sum(self._timing_stats.values())
+        logger.info(f"\n{'='*80}")
+        logger.info(
+            f"TIMING SUMMARY: {self.__class__.__name__} instance={self._instance_id} rank={rank}"
+        )
+        logger.info(f"{'='*80}")
+        for key in self._timing_stats:
+            elapsed = self._timing_stats[key]
+            count = self._timing_counts[key]
+            pct = (elapsed / total * 100) if total > 0 else 0
+            avg = (elapsed / count) if count > 0 else 0
+            logger.info(
+                f"  {key:.<55s} {elapsed:8.3f}s  ({pct:5.1f}%)  n={count:5d}  avg={avg:.4f}s"
+            )
+        logger.info(f"  {'TOTAL':.<55s} {total:8.3f}s")
+        logger.info(f"{'='*80}")
+
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -62,6 +99,7 @@ class DistNeighborLoader(DistLoader):
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
+        prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
@@ -109,6 +147,11 @@ class DistNeighborLoader(DistLoader):
                 worker. Load testing has showed that setting worker_concurrency to 4 yields the best performance
                 for sampling. Although, you may whish to explore higher/lower settings when performance tuning.
                 (default: `4`).
+            prefetch_size (int, optional): Max number of sampled messages to prefetch on the
+                client side, per server. Only applies to Graph Store mode (remote workers).
+                Lower values reduce server-side RPC thread contention when multiple loaders
+                are active concurrently. If ``None``, defaults to GLT's built-in default (4).
+                (default: ``None``).
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
@@ -128,6 +171,9 @@ class DistNeighborLoader(DistLoader):
         # to `False` in super().__init__()` e.g.
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
+        self._instance_id = next(DistNeighborLoader._instance_counter)
+        self._init_timing_stats()
+        _init_start = time.monotonic()
 
         node_world_size: int
         node_rank: int
@@ -239,6 +285,8 @@ class DistNeighborLoader(DistLoader):
                 input_nodes,
                 dataset,
                 num_workers,
+                worker_concurrency=worker_concurrency,
+                prefetch_size=prefetch_size,
             )
 
         self._is_homogeneous_with_labeled_edge_type = (
@@ -342,6 +390,7 @@ class DistNeighborLoader(DistLoader):
                 if node_rank == target_node_rank:
                     # TODO: (kmontemayor2-sc) Evaluate if we need to stagger the initialization of the data loaders
                     # to smooth the memory usage.
+                    _t0 = time.monotonic()
                     super().__init__(
                         None,  # Pass in None for Graph Store mode.
                         input_data,
@@ -349,10 +398,19 @@ class DistNeighborLoader(DistLoader):
                         device,
                         worker_options,
                     )
+                    self._add_timing("init.super().__init__", time.monotonic() - _t0)
                     logger.info(f"node_rank {node_rank} initialized the dist loader")
+                _t0 = time.monotonic()
                 torch.distributed.barrier()
+                self._add_timing("init.barrier_per_node_rank", time.monotonic() - _t0)
+            _t0 = time.monotonic()
             torch.distributed.barrier()
+            self._add_timing("init.final_barrier", time.monotonic() - _t0)
+            self._add_timing("init.total", time.monotonic() - _init_start)
             logger.info("All node ranks initialized the dist loader")
+            logger.info(
+                f"DistLoader rank {torch.distributed.get_rank()} producers: ({self._producer_id_list})"
+            )
 
     def _setup_for_graph_store(
         self,
@@ -366,6 +424,8 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
+        worker_concurrency: int = 4,
+        prefetch_size: Optional[int] = None,
     ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
             raise ValueError(
@@ -394,17 +454,20 @@ class DistNeighborLoader(DistLoader):
         )
         sampling_port = sampling_ports[node_rank]
 
-        # TODO(kmonte) - We need to be able to differentiate between different instance of the same loader.
-        # e.g. if we have two different DistNeighborLoaders, then they will have conflicting worker keys.
-        # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
-        # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
+        worker_key = f"compute_loader_rank_{node_rank}_instance_{self._instance_id}"
+        logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
+        prefetch_kwargs = {}
+        if prefetch_size is not None:
+            prefetch_kwargs["prefetch_size"] = prefetch_size
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for i in range(num_workers)],
+            worker_concurrency=worker_concurrency,
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             master_port=sampling_port,
-            worker_key=f"compute_loader_rank_{node_rank}",
+            worker_key=worker_key,
+            **prefetch_kwargs,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
@@ -620,16 +683,48 @@ class DistNeighborLoader(DistLoader):
             ),
         )
 
+    def __next__(self):
+        if self._num_recv == self._num_expected:
+            raise StopIteration
+
+        _t0 = time.monotonic()
+        if self._with_channel:
+            msg = self._channel.recv()
+        else:
+            msg = self._collocated_producer.sample()
+        self._add_timing("next.channel_recv", time.monotonic() - _t0)
+
+        _t0 = time.monotonic()
+        result = self._collate_fn(msg)
+        self._add_timing("next.collate_fn", time.monotonic() - _t0)
+
+        self._num_recv += 1
+        return result
+
+    def shutdown(self):
+        self._log_timing_summary()
+        super().shutdown()
+
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        _t0 = time.monotonic()
         data = super()._collate_fn(msg)
+        self._add_timing("collate.super", time.monotonic() - _t0)
+
+        _t0 = time.monotonic()
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
             edge_feature_info=self._edge_feature_info,
             device=self.to_device,
         )
+        self._add_timing("collate.set_missing_features", time.monotonic() - _t0)
+
         if isinstance(data, HeteroData):
+            _t0 = time.monotonic()
             data = strip_label_edges(data)
+            self._add_timing("collate.strip_label_edges", time.monotonic() - _t0)
         if self._is_homogeneous_with_labeled_edge_type:
+            _t0 = time.monotonic()
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+            self._add_timing("collate.labeled_to_homogeneous", time.monotonic() - _t0)
         return data
