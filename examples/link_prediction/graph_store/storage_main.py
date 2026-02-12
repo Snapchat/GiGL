@@ -66,6 +66,7 @@ the compute processes signal shutdown via `gigl.distributed.graph_store.compute.
 
 """
 import argparse
+import ast
 import multiprocessing.context as py_mp_context
 import os
 from distutils.util import strtobool
@@ -75,6 +76,7 @@ import torch
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.os_utils import import_obj
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -174,6 +176,7 @@ def storage_node_process(
     tf_record_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
     ssl_positive_label_percentage: Optional[float] = None,
     storage_world_backend: Optional[str] = None,
+    num_server_sessions: Optional[int] = None,
 ) -> None:
     """Run a storage node process
 
@@ -190,6 +193,9 @@ def storage_node_process(
             Must be None if supervised edge labels are provided in advance.
             If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
         storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
+        num_server_sessions (Optional[int]): Number of server sessions to run. For training, this should be 1
+            (a single session for the entire training + testing lifecycle). If None, defaults to one session
+            per inference node type (the existing inference behavior).
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
@@ -222,17 +228,29 @@ def storage_node_process(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
-    inference_node_types = sorted(
-        gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
-    )
-    logger.info(f"Inference node types: {inference_node_types}")
+    # Determine the number of server sessions.
+    # For inference, we default to one session per inference node type (each node type gets its own
+    # complete RPC lifecycle). For training, the caller should set num_server_sessions=1 since the
+    # compute side runs a single session for the entire training + testing lifecycle.
+    if num_server_sessions is None:
+        inference_node_types = sorted(
+            gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
+        )
+        num_sessions = len(inference_node_types)
+        logger.info(
+            f"num_server_sessions not set, defaulting to {num_sessions} sessions (one per inference node type: {inference_node_types})"
+        )
+    else:
+        num_sessions = num_server_sessions
+        logger.info(f"num_server_sessions explicitly set to {num_sessions}")
+
     torch_process_ports = get_free_ports_from_master_node(
-        num_ports=len(inference_node_types)
+        num_ports=num_sessions
     )
     torch.distributed.destroy_process_group()
-    for i, inference_node_type in enumerate(inference_node_types):
+    for session_idx in range(num_sessions):
         logger.info(
-            f"Starting storage node rank {storage_rank} / {cluster_info.num_storage_nodes} for inference node type {inference_node_type} (storage process group {i} / {len(inference_node_types)})"
+            f"Starting storage node rank {storage_rank} / {cluster_info.num_storage_nodes} for server session {session_idx} / {num_sessions}"
         )
         mp_context = torch.multiprocessing.get_context("spawn")
         server_processes: list[py_mp_context.SpawnProcess] = []
@@ -245,7 +263,7 @@ def storage_node_process(
                     storage_rank + i,  # storage_rank
                     cluster_info,  # cluster_info
                     dataset,  # dataset
-                    torch_process_ports[i],  # torch_process_port
+                    torch_process_ports[session_idx],  # torch_process_port
                     storage_world_backend,  # storage_world_backend
                 ),
             )
@@ -255,12 +273,11 @@ def storage_node_process(
             for server_process in server_processes:
                 server_process.join()
         logger.info(
-            f"All server processes on storage node rank {storage_rank} / {cluster_info.num_storage_nodes} joined for inference node type {inference_node_type}"
+            f"All server processes on storage node rank {storage_rank} / {cluster_info.num_storage_nodes} joined for server session {session_idx} / {num_sessions}"
         )
 
 
 if __name__ == "__main__":
-    # TODO(kmonte): We want to expose splitter class here probably.
     parser = argparse.ArgumentParser()
     parser.add_argument("--task_config_uri", type=str, required=True)
     parser.add_argument("--resource_config_uri", type=str, required=True)
@@ -269,8 +286,58 @@ if __name__ == "__main__":
     parser.add_argument(
         "--should_load_tf_records_in_parallel", type=str, default="True"
     )
+    # Splitter configuration: use import_obj to dynamically load a splitter class.
+    # This is needed for training (where the dataset needs train/val/test splits) but not for inference.
+    parser.add_argument(
+        "--splitter_cls_path",
+        type=str,
+        default=None,
+        help="Fully qualified import path to splitter class, e.g. 'gigl.utils.data_splitters.DistNodeAnchorLinkSplitter'",
+    )
+    parser.add_argument(
+        "--splitter_kwargs",
+        type=str,
+        default=None,
+        help="Python dict literal of keyword arguments for the splitter constructor, "
+        "parsed with ast.literal_eval. Tuples are supported directly, e.g. "
+        "'supervision_edge_types': [('paper', 'to', 'author')].",
+    )
+    parser.add_argument(
+        "--ssl_positive_label_percentage",
+        type=str,
+        default=None,
+        help="Percentage of edges to select as self-supervised labels. "
+        "Must be None if supervised edge labels are provided in advance.",
+    )
+    parser.add_argument(
+        "--num_server_sessions",
+        type=str,
+        default=None,
+        help="Number of server sessions. For training use '1'. "
+        "If not set, defaults to one session per inference node type.",
+    )
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
+
+    # Build splitter from args if provided.
+    # We use ast.literal_eval instead of json.loads so that Python tuples (e.g. for EdgeType)
+    # can be passed directly in the splitter_kwargs string without needing custom serialization.
+    splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
+    ssl_positive_label_percentage: Optional[float] = None
+    if args.splitter_cls_path:
+        splitter_cls = import_obj(args.splitter_cls_path)
+        splitter_kwargs = (
+            ast.literal_eval(args.splitter_kwargs) if args.splitter_kwargs else {}
+        )
+        splitter = splitter_cls(**splitter_kwargs)
+        logger.info(f"Built splitter: {splitter}")
+
+    if args.ssl_positive_label_percentage:
+        ssl_positive_label_percentage = float(args.ssl_positive_label_percentage)
+
+    num_server_sessions = (
+        int(args.num_server_sessions) if args.num_server_sessions else None
+    )
 
     # Setup cluster-wide (e.g. storage and compute nodes) Torch Distributed process group.
     # This is needed so we can get the cluster information (e.g. number of storage and compute nodes) and rank/world_size.
@@ -280,7 +347,7 @@ if __name__ == "__main__":
     logger.info(
         f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
     )
-    # Tear down the """"global""" process group so we can have a server-specific process group.
+    # Tear down the "global" process group so we can have a server-specific process group.
 
     torch.distributed.destroy_process_group()
     storage_node_process(
@@ -288,7 +355,10 @@ if __name__ == "__main__":
         cluster_info=cluster_info,
         task_config_uri=UriFactory.create_uri(args.task_config_uri),
         sample_edge_direction=args.sample_edge_direction,
+        splitter=splitter,
+        ssl_positive_label_percentage=ssl_positive_label_percentage,
         should_load_tf_records_in_parallel=bool(
             strtobool(args.should_load_tf_records_in_parallel)
         ),
+        num_server_sessions=num_server_sessions,
     )

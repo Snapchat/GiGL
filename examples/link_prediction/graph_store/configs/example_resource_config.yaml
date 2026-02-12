@@ -46,13 +46,18 @@ preprocessor_config:
     max_num_workers: 4
     machine_type: "n2-standard-16"
     disk_size_gb: 300
-# TODO(kmonte): Update
 trainer_resource_config:
-  vertex_ai_trainer_config:
-    machine_type: n1-standard-16
-    gpu_type: NVIDIA_TESLA_T4
-    gpu_limit: 2
-    num_replicas: 2
+  vertex_ai_graph_store_trainer_config:
+    graph_store_pool:
+      machine_type: n2-highmem-32
+      gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+      gpu_limit: 0
+      num_replicas: 2
+    compute_pool:
+      machine_type: n1-standard-16
+      gpu_type: NVIDIA_TESLA_T4
+      gpu_limit: 2
+      num_replicas: 2
 inferencer_resource_config:
   vertex_ai_graph_store_inferencer_config:
     graph_store_pool:

@@ -29,7 +29,6 @@ datasetConfig:
     dataPreprocessorArgs:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'dblp_node_anchor_edge_features_lp'
-# TODO(kmonte): Add GS trainer
 trainerConfig:
   trainerArgs:
     # Example argument to trainer
@@ -49,7 +48,15 @@ trainerConfig:
         ("paper", "to", "author"): [15, 15],
         ("author", "to", "paper"): [20, 20]
       }
-  command: python -m examples.link_prediction.heterogeneous_training
+  command: python -m examples.link_prediction.graph_store.heterogeneous_training
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
+      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": True, "num_val": 0.1, "num_test": 0.1, "supervision_edge_types": [("paper", "to", "author")]}'
+      ssl_positive_label_percentage: "0.05"
+      num_server_sessions: "1"
 # TODO(kmonte): Move to user-defined server code
 inferencerConfig:
   inferencerArgs:
