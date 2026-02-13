@@ -214,11 +214,6 @@ class DistABLPLoader(DistLoader):
         # Determine sampling cluster setup based on dataset type
         if isinstance(dataset, RemoteDistDataset):
             self._sampling_cluster_setup = SamplingClusterSetup.GRAPH_STORE
-        else:
-            self._sampling_cluster_setup = SamplingClusterSetup.COLOCATED
-        logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
-
-        if self._sampling_cluster_setup == SamplingClusterSetup.GRAPH_STORE:
             if supervision_edge_type is not None:
                 raise ValueError(
                     "supervision_edge_type must not be provided when using Graph Store mode. "
@@ -226,6 +221,7 @@ class DistABLPLoader(DistLoader):
                 )
             # self._supervision_edge_types will be set in _setup_for_graph_store
         else:
+            self._sampling_cluster_setup = SamplingClusterSetup.COLOCATED
             if supervision_edge_type is None:
                 self._supervision_edge_types: list[EdgeType] = [
                     DEFAULT_HOMOGENEOUS_EDGE_TYPE
@@ -238,6 +234,7 @@ class DistABLPLoader(DistLoader):
                 self._supervision_edge_types = supervision_edge_type
             else:
                 self._supervision_edge_types = [supervision_edge_type]
+        logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
         self.data: Optional[Union[DistDataset, RemoteDistDataset]] = None
@@ -855,22 +852,6 @@ class DistABLPLoader(DistLoader):
             label_edge_type_to_message_passing_edge_type(et)
             for et in self._positive_label_edge_types
         ]
-
-        # Validate that the negative label edge types (if present) correspond to the
-        # same supervision edge types as the positive labels.
-        if self._negative_label_edge_types:
-            negative_supervision_edge_types = [
-                label_edge_type_to_message_passing_edge_type(et)
-                for et in self._negative_label_edge_types
-            ]
-            if set(negative_supervision_edge_types) != set(
-                self._supervision_edge_types
-            ):
-                raise ValueError(
-                    f"The negative label edge types in ABLPInputNodes do not match the positive label edge types. "
-                    f"Negative labels map to supervision edge types: {negative_supervision_edge_types}, "
-                    f"but positive labels map to: {self._supervision_edge_types}"
-                )
 
         logger.info(f"Positive label edge types: {self._positive_label_edge_types}")
         logger.info(f"Negative label edge types: {self._negative_label_edge_types}")
