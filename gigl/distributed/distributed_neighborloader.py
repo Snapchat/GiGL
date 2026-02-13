@@ -1,7 +1,7 @@
 import sys
 import time
 from collections import Counter, abc
-from typing import Any, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage
@@ -385,6 +385,50 @@ class DistNeighborLoader(DistLoader):
                 f"{dataset.cluster_info.num_compute_nodes} compute nodes"
             )
             flush()
+            # For Graph Store mode, we need to start the communcation between compute and storage nodes sequentially, by compute node.
+            # E.g. intialize connections between compute node 0 and storage nodes 0, 1, 2, 3, then compute node 1 and storage nodes 0, 1, 2, 3, etc.
+            # Note that each compute node may have multiple connections to each storage node, once per compute process.
+            # It's important to distinguish "compute node" (e.g. physical compute machine) from "compute process" (e.g. process running on the compute node).
+            # Since in practice we have multiple compute processes per compute node, and each compute process needs to initialize the connection to the storage nodes.
+            # E.g. if there are 4 gpus per compute node, then there will be 4 connections from each compute node to each storage node.
+            # We need to this because if we don't, then there is a race condition when initalizing the samplers on the storage nodes [1]
+            # Where since the lock is per *server* (e.g. per storage node), if we try to start one connection from compute node 0, and compute node 1
+            # Then we deadlock and fail.
+            # Specifically, the race condition happens in `DistLoader.__init__` when it initializes the sampling producers on the storage nodes. [2]
+            # [1]: https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py#L129-L167
+            # [2]: https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_loader.py#L187-L193
+
+            # See below for a connection setup.
+            # ╔═══════════════════════════════════════════════════════════════════════════════════════╗
+            # ║                         COMPUTE TO STORAGE NODE CONNECTIONS                            ║
+            # ╚═══════════════════════════════════════════════════════════════════════════════════════╝
+
+            #      COMPUTE NODES                                              STORAGE NODES
+            #      ═════════════                                              ═════════════
+
+            #   ┌──────────────────────┐          (1)                      ┌───────────────┐
+            #   │    COMPUTE NODE 0    │                                   │               │
+            #   │  ┌────┬────┬────┬────┤ ══════════════════════════════════│   STORAGE 0   │
+            #   │  │GPU │GPU │GPU │GPU │                                 ╱ │               │
+            #   │  │ 0  │ 1  │ 2  │ 3  │ ════════════════════╲         ╱   └───────────────┘
+            #   │  └────┴────┴────┴────┤          (2)          ╲     ╱
+            #   └──────────────────────┘                         ╲ ╱
+            #                                                     ╳
+            #                                           (3)     ╱   ╲     (4)
+            #   ┌──────────────────────┐                      ╱       ╲    ┌───────────────┐
+            #   │    COMPUTE NODE 1    │                    ╱           ╲  │               │
+            #   │  ┌────┬────┬────┬────┤ ═════════════════╱               ═│   STORAGE 1   │
+            #   │  │GPU │GPU │GPU │GPU │                                   │               │
+            #   │  │ 0  │ 1  │ 2  │ 3  │ ══════════════════════════════════│               │
+            #   │  └────┴────┴────┴────┤                                   └───────────────┘
+            #   └──────────────────────┘
+
+            #   ┌─────────────────────────────────────────────────────────────────────────────┐
+            #   │  (1) Compute Node 0  →  Storage 0   (4 connections, one per GPU)            │
+            #   │  (2) Compute Node 0  →  Storage 1   (4 connections, one per GPU)            │
+            #   │  (3) Compute Node 1  →  Storage 0   (4 connections, one per GPU)            │
+            #   │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
+            #   └─────────────────────────────────────────────────────────────────────────────┘
             for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
                 start_time = time.time()
                 if node_rank == target_node_rank:
@@ -419,7 +463,7 @@ class DistNeighborLoader(DistLoader):
                     )
                     flush()
                     t_dispatch = time.time()
-                    rpc_futures: list[tuple[int, Any]] = []
+                    rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
                     for server_rank, inp_data in zip(
                         self._server_rank_list, self._input_data_list
                     ):
@@ -498,9 +542,9 @@ class DistNeighborLoader(DistLoader):
         input_nodes: Optional[
             Union[
                 torch.Tensor,
-                Tuple[NodeType, torch.Tensor],
+                tuple[NodeType, torch.Tensor],
                 abc.Mapping[int, torch.Tensor],
-                Tuple[NodeType, abc.Mapping[int, torch.Tensor]],
+                tuple[NodeType, abc.Mapping[int, torch.Tensor]],
             ]
         ],
         dataset: RemoteDistDataset,
@@ -560,7 +604,7 @@ class DistNeighborLoader(DistLoader):
             require_edge_feature_info = True
         else:
             raise ValueError(
-                f"When using Graph Store mode, input nodes must be of type (list[torch.Tensor] | (NodeType, list[torch.Tensor])), received {type(input_nodes)}"
+                f"When using Graph Store mode, input nodes must be of type (abc.Mapping[int, torch.Tensor] | (NodeType, abc.Mapping[int, torch.Tensor])), received {type(input_nodes)}"
             )
 
         # Determine input_type based on edge_feature_info
