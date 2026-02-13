@@ -1,6 +1,5 @@
 import ast
 import concurrent.futures
-import itertools
 import time
 from collections import Counter, abc, defaultdict
 from typing import Optional, Union
@@ -60,8 +59,6 @@ logger = Logger()
 
 
 class DistABLPLoader(DistLoader):
-    _instance_counter: itertools.count = itertools.count()
-
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -203,7 +200,6 @@ class DistABLPLoader(DistLoader):
         # to `False` in super().__init__()` e.g.
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
-        self._instance_id = next(DistABLPLoader._instance_counter)
 
         node_world_size: int
         node_rank: int
@@ -586,8 +582,8 @@ class DistABLPLoader(DistLoader):
                     got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
             if dataset.edge_dir == "in":
                 self._supervision_edge_types = [
-                    reverse_edge_type(sup_edge_type)
-                    for sup_edge_type in self._supervision_edge_types
+                    reverse_edge_type(supervision_edge_type)
+                    for supervision_edge_type in self._supervision_edge_types
                 ]
         elif isinstance(input_nodes, torch.Tensor):
             if self._supervision_edge_types != [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
@@ -779,9 +775,11 @@ class DistABLPLoader(DistLoader):
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
-        worker_key = (
-            f"compute_ablp_loader_rank_{node_rank}_instance_{self._instance_id}"
-        )
+        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.Expand commentComment on line R823Resolved
+        # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
+        # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
+        # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
+        worker_key = f"compute_ablp_loader_rank_{node_rank}"
         logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
         prefetch_kwargs = {}
         if prefetch_size is not None:

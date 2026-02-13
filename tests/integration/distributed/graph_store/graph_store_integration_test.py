@@ -1042,6 +1042,7 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
+    @unittest.skip("Not supported yet - skipping for now")
     def test_multiple_loaders_in_graph_store(self):
         """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
         in parallel, followed by another (ABLP, DistNeighborLoader) pair sequentially.
