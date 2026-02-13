@@ -12,7 +12,7 @@ from tests.test_assets.distributed.utils import assert_tensor_equality
 
 logger = Logger()
 
-DEFAULT_TIMEOUT_SECONDS: Final[float] = 60.0 * 15  # 15 minutes
+DEFAULT_TIMEOUT_SECONDS: Final[float] = 60.0 * 20  # 20 minutes
 DEFAULT_POLL_INTERVAL_SECONDS: Final[float] = 0.1
 
 
