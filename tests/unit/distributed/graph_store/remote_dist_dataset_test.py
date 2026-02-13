@@ -1,3 +1,4 @@
+from typing import Optional
 from unittest.mock import patch
 
 import torch
@@ -5,7 +6,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
 
-from gigl.distributed.graph_store import storage_utils
+from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.env.distributed import GraphStoreInfo
 from gigl.types.graph import FeatureInfo
@@ -28,16 +29,23 @@ from tests.test_assets.distributed.utils import (
 )
 from tests.test_assets.test_case import TestCase
 
+# Module-level test server instance used by mock functions
+_test_server: Optional[DistServer] = None
+
 
 def _mock_request_server(server_rank, func, *args, **kwargs):
-    """Mock request_server that directly calls the function."""
-    return func(*args, **kwargs)
+    """Mock request_server that calls the method on the test DistServer instance."""
+    if _test_server is None:
+        raise RuntimeError("Test server not initialized")
+    return func(_test_server, *args, **kwargs)
 
 
 def _mock_async_request_server(server_rank, func, *args, **kwargs):
-    """Mock async_request_server that returns a completed future with the function result."""
+    """Mock async_request_server that returns a completed future with the method result."""
+    if _test_server is None:
+        raise RuntimeError("Test server not initialized")
     future: torch.futures.Future = torch.futures.Future()
-    future.set_result(func(*args, **kwargs))
+    future.set_result(func(_test_server, *args, **kwargs))
     return future
 
 
@@ -66,18 +74,18 @@ def _create_mock_graph_store_info(
 
 class TestRemoteDistDataset(TestCase):
     def setUp(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
         # 10 nodes in DEFAULT_HOMOGENEOUS_EDGE_INDEX ring graph
         node_features = torch.zeros(10, 3)
-        storage_utils.register_dataset(
-            create_homogeneous_dataset(
-                edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
-                node_features=node_features,
-            )
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+            node_features=node_features,
         )
+        _test_server = DistServer(dataset)
 
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -142,21 +150,21 @@ class TestRemoteDistDataset(TestCase):
 
 class TestRemoteDistDatasetHeterogeneous(TestCase):
     def setUp(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
         # 5 users, 5 stories in DEFAULT_HETEROGENEOUS_EDGE_INDICES
         node_features = {
             USER: torch.zeros(5, 2),
             STORY: torch.zeros(5, 2),
         }
-        storage_utils.register_dataset(
-            create_heterogeneous_dataset(
-                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
-                node_features=node_features,
-            )
+        dataset = create_heterogeneous_dataset(
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+            node_features=node_features,
         )
+        _test_server = DistServer(dataset)
 
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -210,16 +218,15 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
 class TestRemoteDistDatasetWithSplits(TestCase):
     """Tests for get_node_ids with train/val/test splits."""
 
-    def setUp(self) -> None:
-        storage_utils._dataset = None
-
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
-    def _create_and_register_dataset_with_splits(self) -> None:
-        """Create and register a dataset with train/val/test splits."""
+    def _create_server_with_splits(self) -> None:
+        """Create a DistServer with a dataset that has train/val/test splits."""
+        global _test_server
         create_test_process_group()
 
         positive_labels = {
@@ -245,7 +252,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        _test_server = DistServer(dataset)
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
@@ -253,7 +260,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
     )
     def test_get_node_ids_with_splits(self, mock_async_request):
         """Test get_node_ids with train/val/test splits and optional sharding."""
-        self._create_and_register_dataset_with_splits()
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
@@ -297,8 +304,8 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         side_effect=_mock_async_request_server,
     )
     def test_get_ablp_input(self, mock_async_request):
-        """Test get_ablp_input with train/val/test splits returns ABLPInputNodes."""
-        self._create_and_register_dataset_with_splits()
+        """Test get_ablp_input with train/val/test splits."""
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
@@ -371,8 +378,8 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         side_effect=_mock_async_request_server,
     )
     def test_get_ablp_input_with_sharding(self, mock_async_request):
-        """Test get_ablp_input with sharding across compute nodes returns ABLPInputNodes."""
-        self._create_and_register_dataset_with_splits()
+        """Test get_ablp_input with sharding across compute nodes."""
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
@@ -476,13 +483,13 @@ def _test_get_free_ports_on_storage_cluster(
 
 class TestGetFreePortsOnStorageCluster(TestCase):
     def setUp(self) -> None:
-        storage_utils._dataset = None
-        storage_utils.register_dataset(
-            create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
-        )
+        global _test_server
+        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+        _test_server = DistServer(dataset)
 
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 

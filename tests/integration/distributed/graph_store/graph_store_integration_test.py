@@ -394,7 +394,6 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
-        prefetch_size=2,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
@@ -406,7 +405,6 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
-        prefetch_size=2,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
@@ -464,7 +462,6 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
-        prefetch_size=2,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
@@ -476,7 +473,6 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
-        prefetch_size=2,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"

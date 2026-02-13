@@ -21,7 +21,6 @@ from gigl.distributed.graph_store.dist_server import (
     init_server,
     wait_and_shutdown_server,
 )
-from gigl.distributed.graph_store.storage_utils import register_dataset
 from gigl.distributed.utils import get_free_ports_from_master_node, get_graph_store_info
 from gigl.distributed.utils.networking import get_free_ports_from_master_node
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
@@ -41,7 +40,6 @@ def _run_storage_process(
     torch_process_port: int,
     storage_world_backend: Optional[str],
 ) -> None:
-    register_dataset(dataset)
     cluster_master_ip = cluster_info.storage_cluster_master_ip
     logger.info(
         f"Initializing GLT server for storage node process group {storage_rank} / {cluster_info.num_storage_nodes} on {cluster_master_ip}:{cluster_info.rpc_master_port}"
