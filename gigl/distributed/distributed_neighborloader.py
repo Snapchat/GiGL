@@ -597,8 +597,6 @@ class DistNeighborLoader(DistLoader):
         # ThreadPoolExecutor(max_workers=32). With 60+ servers, only 32 threads run,
         # causing a TensorPipe rendezvous deadlock. Instead, we inline the DistLoader
         # init code and dispatch all RPCs asynchronously in a simple loop.
-        #
-        # See docs/graph_store_scale_debug.md for full analysis.
 
         node_rank = dataset.cluster_info.compute_node_rank
         num_storage_nodes = dataset.cluster_info.num_storage_nodes
