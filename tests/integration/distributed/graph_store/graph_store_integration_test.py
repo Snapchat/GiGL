@@ -1059,9 +1059,10 @@ class GraphStoreIntegrationTest(TestCase):
             rpc_wait_port,
         ) = get_free_ports(num_ports=6)
         host_ip = socket.gethostbyname(socket.gethostname())
+        # Very small cluster to avoid OOMing on CICD.
         cluster_info = GraphStoreInfo(
-            num_storage_nodes=2,
-            num_compute_nodes=2,
+            num_storage_nodes=1,
+            num_compute_nodes=1,
             num_processes_per_compute=1,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
