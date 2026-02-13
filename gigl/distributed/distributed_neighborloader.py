@@ -1,4 +1,3 @@
-import itertools
 import time
 from collections import Counter, abc
 from typing import Optional, Tuple, Union
@@ -44,8 +43,6 @@ DEFAULT_NUM_CPU_THREADS = 2
 
 
 class DistNeighborLoader(DistLoader):
-    _instance_counter: itertools.count = itertools.count()
-
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -65,7 +62,6 @@ class DistNeighborLoader(DistLoader):
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
-        prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
@@ -113,11 +109,6 @@ class DistNeighborLoader(DistLoader):
                 worker. Load testing has showed that setting worker_concurrency to 4 yields the best performance
                 for sampling. Although, you may whish to explore higher/lower settings when performance tuning.
                 (default: `4`).
-            prefetch_size (int, optional): Max number of sampled messages to prefetch on the
-                client side, per server. Only applies to Graph Store mode (remote workers).
-                Lower values reduce server-side RPC thread contention when multiple loaders
-                are active concurrently. If ``None``, defaults to GLT's built-in default (4).
-                (default: ``None``).
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
@@ -137,7 +128,6 @@ class DistNeighborLoader(DistLoader):
         # to `False` in super().__init__()` e.g.
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
-        self._instance_id = next(DistNeighborLoader._instance_counter)
 
         node_world_size: int
         node_rank: int
@@ -249,8 +239,6 @@ class DistNeighborLoader(DistLoader):
                 input_nodes,
                 dataset,
                 num_workers,
-                worker_concurrency=worker_concurrency,
-                prefetch_size=prefetch_size,
             )
 
         self._is_homogeneous_with_labeled_edge_type = (
@@ -365,9 +353,6 @@ class DistNeighborLoader(DistLoader):
                 torch.distributed.barrier()
             torch.distributed.barrier()
             logger.info("All node ranks initialized the dist loader")
-            logger.info(
-                f"DistLoader rank {torch.distributed.get_rank()} producers: ({self._producer_id_list})"
-            )
 
     def _setup_for_graph_store(
         self,
@@ -381,8 +366,6 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
-        worker_concurrency: int = 4,
-        prefetch_size: Optional[int] = None,
     ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
             raise ValueError(
@@ -411,20 +394,13 @@ class DistNeighborLoader(DistLoader):
         )
         sampling_port = sampling_ports[node_rank]
 
-        worker_key = f"compute_loader_rank_{node_rank}_instance_{self._instance_id}"
-        logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
-        prefetch_kwargs = {}
-        if prefetch_size is not None:
-            prefetch_kwargs["prefetch_size"] = prefetch_size
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for i in range(num_workers)],
-            worker_concurrency=worker_concurrency,
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             master_port=sampling_port,
-            worker_key=worker_key,
-            **prefetch_kwargs,
+            worker_key=f"compute_rank_{node_rank}",
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
@@ -448,7 +424,7 @@ class DistNeighborLoader(DistLoader):
 
         # Determine input_type based on edge_feature_info
         if isinstance(edge_types, list):
-            if DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
+            if edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
                 is_homogeneous_with_labeled_edge_type = True
             else:
