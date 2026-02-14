@@ -15,8 +15,6 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
-    message_passing_to_negative_label,
-    message_passing_to_positive_label,
 )
 from gigl.utils.sampling import ABLPInputNodes
 
@@ -313,12 +311,13 @@ class RemoteDistDataset:
             for server_rank, ablp_input in enumerate(ablp_inputs)
         }
 
+    # TODO(#488) - support multiple supervision edge types
     def get_ablp_input(
         self,
         split: Literal["train", "val", "test"],
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
-        node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
+        anchor_node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
         supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     ) -> dict[int, ABLPInputNodes]:
         """
@@ -339,7 +338,7 @@ class RemoteDistDataset:
                 Must be provided if world_size is provided.
             world_size (Optional[int]): The total number of processes in the distributed setup.
                 Must be provided if rank is provided.
-            node_type (NodeType): The type of nodes to retrieve.
+            anchor_node_type (NodeType): The type of the anchor nodes to retrieve.
                 Defaults to DEFAULT_HOMOGENEOUS_NODE_TYPE.
             supervision_edge_type (EdgeType): The edge type for supervision.
                 Defaults to DEFAULT_HOMOGENEOUS_EDGE_TYPE.
@@ -387,20 +386,10 @@ class RemoteDistDataset:
         def negative_labels_key(server_rank: int) -> str:
             return f"ablp_server_{server_rank}_negative_labels"
 
-        # Derive the label edge types from the supervision edge type.
-        # These are deterministic naming conventions, so we can compute them locally
-        # without an RPC call. The storage node uses the same convention.
-        positive_label_edge_type = message_passing_to_positive_label(
-            supervision_edge_type
-        )
-        negative_label_edge_type = message_passing_to_negative_label(
-            supervision_edge_type
-        )
-
         # anchor_node_type is None for labeled homogeneous graphs,
         # and set to the actual node type for heterogeneous graphs.
         resolved_anchor_node_type: Optional[NodeType] = (
-            None if node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE else node_type
+            None if anchor_node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE else anchor_node_type
         )
 
         def _wrap_ablp_input(
@@ -409,15 +398,12 @@ class RemoteDistDataset:
             negative_labels: Optional[torch.Tensor],
         ) -> ABLPInputNodes:
             """Convert raw tensors into an ABLPInputNodes dataclass."""
-            positive_labels_dict = {positive_label_edge_type: positive_labels}
-            negative_labels_dict: Optional[dict[EdgeType, torch.Tensor]] = None
-            if negative_labels is not None:
-                negative_labels_dict = {negative_label_edge_type: negative_labels}
             return ABLPInputNodes(
                 anchor_node_type=resolved_anchor_node_type,
                 anchor_nodes=anchors,
-                positive_labels=positive_labels_dict,
-                negative_labels=negative_labels_dict,
+                labels={
+                    supervision_edge_type: (positive_labels, negative_labels)
+                },
             )
 
         if self._mp_sharing_dict is not None:
@@ -427,7 +413,7 @@ class RemoteDistDataset:
                     f"Compute rank {torch.distributed.get_rank()} is getting ABLP input from storage nodes"
                 )
                 raw_ablp_inputs = self._get_ablp_input(
-                    split, rank, world_size, node_type, supervision_edge_type
+                    split, rank, world_size, anchor_node_type, supervision_edge_type
                 )
                 for server_rank, (
                     anchors,
@@ -468,7 +454,7 @@ class RemoteDistDataset:
             return returned_ablp_inputs
         else:
             raw_inputs = self._get_ablp_input(
-                split, rank, world_size, node_type, supervision_edge_type
+                split, rank, world_size, anchor_node_type, supervision_edge_type
             )
             return {
                 server_rank: _wrap_ablp_input(anchors, positive_labels, negative_labels)

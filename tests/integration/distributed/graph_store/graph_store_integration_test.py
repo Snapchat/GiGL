@@ -104,11 +104,11 @@ def _assert_ablp_input(
                 assert anchors.dim() == 1, f"Anchors should be 1D, got {anchors.dim()}D"
                 assert len(anchors) > 0, "Anchors should not be empty"
 
-                # Verify positive_labels: dict[EdgeType, Tensor] where each Tensor is 2D
+                # Verify labels: dict[EdgeType, tuple[Tensor, Optional[Tensor]]]
                 assert isinstance(
-                    ablp_input.positive_labels, dict
-                ), f"Positive labels should be a dict, got {type(ablp_input.positive_labels)}"
-                for edge_type, positive_labels in ablp_input.positive_labels.items():
+                    ablp_input.labels, dict
+                ), f"Labels should be a dict, got {type(ablp_input.labels)}"
+                for edge_type, (positive_labels, negative_labels) in ablp_input.labels.items():
                     assert isinstance(
                         positive_labels, torch.Tensor
                     ), f"Positive labels should be a tensor, got {type(positive_labels)}"
@@ -119,12 +119,8 @@ def _assert_ablp_input(
                         anchors
                     ), f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
 
-                # Verify negative_labels is None or has correct shape
-                if ablp_input.negative_labels is not None:
-                    for (
-                        edge_type,
-                        negative_labels,
-                    ) in ablp_input.negative_labels.items():
+                    # Verify negative_labels is None or has correct shape
+                    if negative_labels is not None:
                         assert isinstance(
                             negative_labels, torch.Tensor
                         ), f"Negative labels should be a tensor, got {type(negative_labels)}"
@@ -135,11 +131,12 @@ def _assert_ablp_input(
                             anchors
                         ), f"Negative labels first dim should match anchors length"
 
+                _has_negatives = any(neg is not None for _, neg in ablp_input.labels.values())
                 logger.info(
                     f"Server rank {server_rank}: anchor_node_type={ablp_input.anchor_node_type}, "
                     f"anchors shape={anchors.shape}, "
-                    f"positive_labels edge types={list(ablp_input.positive_labels.keys())}, "
-                    f"negative_labels edge types={list(ablp_input.negative_labels.keys()) if ablp_input.negative_labels else None}"
+                    f"labels edge types={list(ablp_input.labels.keys())}, "
+                    f"has_negatives={_has_negatives}"
                 )
 
             logger.info(
@@ -153,12 +150,9 @@ def _assert_ablp_input(
     first_input = ablp_result[0]
     local_anchors = first_input.anchor_nodes
     # Get the first (and currently only) positive/negative label tensor for comparison
-    local_positive = next(iter(first_input.positive_labels.values()))
-    local_negative = (
-        next(iter(first_input.negative_labels.values()))
-        if first_input.negative_labels
-        else None
-    )
+    first_pos, first_neg = next(iter(first_input.labels.values()))
+    local_positive = first_pos
+    local_negative = first_neg
     local_data = (
         cluster_info.compute_node_rank,
         local_anchors.clone(),
@@ -222,7 +216,7 @@ def _run_compute_train_tests(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        node_type=test_node_type,
+        anchor_node_type=test_node_type,
         supervision_edge_type=supervision_edge_type,
     )
 
@@ -322,7 +316,7 @@ def _run_compute_multiple_loaders_test(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        node_type=test_node_type,
+        anchor_node_type=test_node_type,
         supervision_edge_type=supervision_edge_type,
     )
 

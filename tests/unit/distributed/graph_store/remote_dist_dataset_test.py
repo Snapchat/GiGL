@@ -310,48 +310,41 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
-        from gigl.types.graph import (
-            message_passing_to_negative_label,
-            message_passing_to_positive_label,
-        )
-
-        positive_label_edge_type = message_passing_to_positive_label(USER_TO_STORY)
-        negative_label_edge_type = message_passing_to_negative_label(USER_TO_STORY)
-
         # Train split: nodes [0, 1, 2]
         result = remote_dataset.get_ablp_input(
-            split="train", node_type=USER, supervision_edge_type=USER_TO_STORY
+            split="train", anchor_node_type=USER, supervision_edge_type=USER_TO_STORY
         )
         self.assertIn(0, result)
         ablp_input = result[0]
         self.assertIsInstance(ablp_input, ABLPInputNodes)
         self.assertEqual(ablp_input.anchor_node_type, USER)
         self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([0, 1, 2]))
-        self.assertIn(positive_label_edge_type, ablp_input.positive_labels)
+        self.assertIn(USER_TO_STORY, ablp_input.labels)
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
         self.assert_tensor_equality(
-            ablp_input.positive_labels[positive_label_edge_type],
+            pos_labels,
             torch.tensor([[0, 1], [1, 2], [2, 3]]),
         )
-        assert ablp_input.negative_labels is not None
-        self.assertIn(negative_label_edge_type, ablp_input.negative_labels)
+        assert neg_labels is not None
         self.assert_tensor_equality(
-            ablp_input.negative_labels[negative_label_edge_type],
+            neg_labels,
             torch.tensor([[2], [3], [4]]),
         )
 
         # Val split: node [3]
         result = remote_dataset.get_ablp_input(
-            split="val", node_type=USER, supervision_edge_type=USER_TO_STORY
+            split="val", anchor_node_type=USER, supervision_edge_type=USER_TO_STORY
         )
         ablp_input = result[0]
         self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([3]))
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
         self.assert_tensor_equality(
-            ablp_input.positive_labels[positive_label_edge_type],
+            pos_labels,
             torch.tensor([[3, 4]]),
         )
-        assert ablp_input.negative_labels is not None
+        assert neg_labels is not None
         self.assert_tensor_equality(
-            ablp_input.negative_labels[negative_label_edge_type],
+            neg_labels,
             torch.tensor([[0]]),
         )
 
@@ -359,17 +352,18 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         # Note: Labels are stored in CSR format which sorts by destination indices,
         # so [4, 0] from the input becomes [0, 4] in the stored format.
         result = remote_dataset.get_ablp_input(
-            split="test", node_type=USER, supervision_edge_type=USER_TO_STORY
+            split="test", anchor_node_type=USER, supervision_edge_type=USER_TO_STORY
         )
         ablp_input = result[0]
         self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([4]))
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
         self.assert_tensor_equality(
-            ablp_input.positive_labels[positive_label_edge_type],
+            pos_labels,
             torch.tensor([[0, 4]]),
         )
-        assert ablp_input.negative_labels is not None
+        assert neg_labels is not None
         self.assert_tensor_equality(
-            ablp_input.negative_labels[negative_label_edge_type],
+            neg_labels,
             torch.tensor([[1]]),
         )
 
@@ -384,20 +378,12 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
-        from gigl.types.graph import (
-            message_passing_to_negative_label,
-            message_passing_to_positive_label,
-        )
-
-        positive_label_edge_type = message_passing_to_positive_label(USER_TO_STORY)
-        negative_label_edge_type = message_passing_to_negative_label(USER_TO_STORY)
-
         # With sharding: train split [0, 1, 2] across 2 ranks
         result_rank0 = remote_dataset.get_ablp_input(
             split="train",
             rank=0,
             world_size=2,
-            node_type=USER,
+            anchor_node_type=USER,
             supervision_edge_type=USER_TO_STORY,
         )
         ablp_0 = result_rank0[0]
@@ -406,13 +392,14 @@ class TestRemoteDistDatasetWithSplits(TestCase):
 
         # Rank 0 should get node 0
         self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0]))
+        pos_labels_0, neg_labels_0 = ablp_0.labels[USER_TO_STORY]
         self.assert_tensor_equality(
-            ablp_0.positive_labels[positive_label_edge_type],
+            pos_labels_0,
             torch.tensor([[0, 1]]),
         )
-        assert ablp_0.negative_labels is not None
+        assert neg_labels_0 is not None
         self.assert_tensor_equality(
-            ablp_0.negative_labels[negative_label_edge_type],
+            neg_labels_0,
             torch.tensor([[2]]),
         )
 
@@ -420,7 +407,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
             split="train",
             rank=1,
             world_size=2,
-            node_type=USER,
+            anchor_node_type=USER,
             supervision_edge_type=USER_TO_STORY,
         )
         ablp_1 = result_rank1[0]
@@ -428,13 +415,14 @@ class TestRemoteDistDatasetWithSplits(TestCase):
 
         # Rank 1 should get nodes 1, 2
         self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([1, 2]))
+        pos_labels_1, neg_labels_1 = ablp_1.labels[USER_TO_STORY]
         self.assert_tensor_equality(
-            ablp_1.positive_labels[positive_label_edge_type],
+            pos_labels_1,
             torch.tensor([[1, 2], [2, 3]]),
         )
-        assert ablp_1.negative_labels is not None
+        assert neg_labels_1 is not None
         self.assert_tensor_equality(
-            ablp_1.negative_labels[negative_label_edge_type],
+            neg_labels_1,
             torch.tensor([[3], [4]]),
         )
 
