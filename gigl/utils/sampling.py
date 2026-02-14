@@ -1,8 +1,11 @@
 import ast
-from typing import Any, Union
+from dataclasses import dataclass
+from typing import Any, Optional, Union
+
+import torch
 
 from gigl.common.logger import Logger
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 logger = Logger()
 
@@ -83,3 +86,58 @@ def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]
         raise ValueError(
             f"Fanout must be parsed as either a dictionary or a list, got {loaded_fanout} of type {type(loaded_fanout)}"
         )
+
+
+@dataclass(frozen=True)
+class ABLPInputNodes:
+    """Represents ABLP (Anchor Based Link Prediction) input for a single storage server.
+
+    This dataclass encapsulates all the information needed for ABLP sampling from
+    a single storage node in the graph store distributed setup.
+
+    Fields:
+        anchor_nodes: 1D tensor of anchor node IDs to sample around.
+        labels: Dict mapping a supervision EdgeType to a tuple of
+            (positive_labels, negative_labels). The positive labels tensor is a
+            2D tensor [N, M] of positive label node IDs, where N is the number of
+            anchor nodes and M is the number of positive labels per anchor. The
+            negative labels tensor is an optional 2D tensor [N, K] of negative
+            label node IDs (None if no negative labels are available). The EdgeType
+            is the supervision (message-passing) edge type
+            (e.g. ("user", "to", "item")).
+        anchor_node_type: The node type of the anchor nodes (e.g. "user").
+            Should be set for heterogeneous graphs. When None, the graph is treated as
+            labeled homogeneous and DEFAULT_HOMOGENEOUS_NODE_TYPE is used internally.
+
+    Example:
+        For a user->item link prediction task with 3 anchor users::
+
+            ABLPInputNodes(
+                anchor_nodes=tensor([0, 1, 2]),
+                labels={
+                    ("user", "to", "item"): (
+                        tensor([[10, 11], [12, 13], [14, 15]]),
+                        tensor([[20], [21], [22]]),
+                    )
+                },
+                anchor_node_type="user",
+            )
+
+        For a labeled homogeneous graph (no negative labels)::
+
+            ABLPInputNodes(
+                anchor_nodes=tensor([0, 1, 2]),
+                labels={
+                    ("__n__", "to", "__n__"): (
+                        tensor([[10, 11], [12, 13], [14, 15]]),
+                        None,
+                    )
+                },
+            )
+    """
+
+    anchor_nodes: torch.Tensor
+
+    labels: dict[EdgeType, tuple[torch.Tensor, Optional[torch.Tensor]]]
+
+    anchor_node_type: Optional[NodeType] = None

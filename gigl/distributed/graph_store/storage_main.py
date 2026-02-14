@@ -167,7 +167,7 @@ def storage_node_process(
             for server_process in server_processes:
                 server_process.start()
             for server_process in server_processes:
-                server_process.join()
+                server_process.join(timeout_seconds)
             logger.info(
                 f"All server processes for inference node type {inference_node_type} joined"
             )
