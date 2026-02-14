@@ -76,5 +76,7 @@ sharedConfig:
   shouldSkipInference: false
   # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines. This will soon be added for in-mem SGS GiGL pipelines.
   shouldSkipModelEvaluation: true
+postProcessorConfig:
+  postProcessorClsPath: gigl.src.post_process.impl.record_count_validating_post_processor.RecordCountValidatingPostProcessor
 featureFlags:
   should_run_glt_backend: 'True'

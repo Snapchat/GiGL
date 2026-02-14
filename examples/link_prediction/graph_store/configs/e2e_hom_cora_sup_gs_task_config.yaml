@@ -44,6 +44,8 @@ taskMetadata:
     - dstNodeType: paper
       relation: cites
       srcNodeType: paper
+postProcessorConfig:
+  postProcessorClsPath: gigl.src.post_process.impl.record_count_validating_post_processor.RecordCountValidatingPostProcessor
 featureFlags:
   should_run_glt_backend: 'True'
   data_preprocessor_num_shards: '2'
