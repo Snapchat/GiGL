@@ -1,7 +1,7 @@
 """
 GiGL implementation of GLT DistServer.
 
-Main change here is that we add create_dist_sampling_ablp_producer for use with GiGL ABLP tasks.
+Main change here is that we use gigl DistAblpSamplingProducer instead of GLT DistMpSamplingProducer.
 
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
 """
@@ -15,15 +15,14 @@ from typing import Literal, Optional, Union
 
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
-from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
+from graphlearn_torch.channel import QueueTimeoutError, ShmChannel
 from graphlearn_torch.distributed import (
+    DistMpSamplingProducer,
     RemoteDistSamplingWorkerOptions,
     barrier,
     init_rpc,
     shutdown_rpc,
 )
-from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
-from graphlearn_torch.distributed.dist_server import DistServer as GltDistServer
 from graphlearn_torch.partition import PartitionBook
 from graphlearn_torch.sampler import (
     EdgeSamplerInput,
@@ -51,7 +50,7 @@ r""" Interval (in seconds) to check exit status of server.
 
 
 # TODO(kmonte): Migrate graph_store/storage_utils to this class.
-class DistServer(GltDistServer):
+class DistServer(object):
     r"""A server that supports launching remote sampling workers for
     training clients.
 
@@ -473,7 +472,7 @@ class DistServer(GltDistServer):
 
     def fetch_one_sampled_message(
         self, producer_id: int
-    ) -> tuple[Optional[SampleMessage], bool]:
+    ) -> tuple[Optional[bytes], bool]:
         r"""Fetch a sampled message from the buffer of a specific sampling
         producer with its producer id.
         """
