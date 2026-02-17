@@ -394,7 +394,7 @@ class DistNeighborLoader(DistLoader):
 
         # Determine input_type based on edge_feature_info
         if isinstance(edge_types, list):
-            if edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+            if DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
                 input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
             else:
                 input_type = fallback_input_type
