@@ -238,7 +238,6 @@ class DistABLPLoader(DistLoader):
                 self._supervision_edge_types = [supervision_edge_type]
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
-
         del supervision_edge_type
         self.data: Optional[Union[DistDataset, RemoteDistDataset]] = None
         if isinstance(dataset, DistDataset):
@@ -826,13 +825,10 @@ class DistABLPLoader(DistLoader):
         # Extract supervision edge types and derive label edge types from the
         # ABLPInputNodes.labels dict (keyed by supervision edge type).
         self._supervision_edge_types = list(first_input.labels.keys())
-        has_negatives = any(
-            neg is not None for _, neg in first_input.labels.values()
-        )
+        has_negatives = any(neg is not None for _, neg in first_input.labels.values())
 
         self._positive_label_edge_types = [
-            message_passing_to_positive_label(et)
-            for et in self._supervision_edge_types
+            message_passing_to_positive_label(et) for et in self._supervision_edge_types
         ]
         self._negative_label_edge_types = (
             [
@@ -863,10 +859,17 @@ class DistABLPLoader(DistLoader):
             if server_rank in input_nodes:
                 ablp_input_nodes = input_nodes[server_rank]
                 anchors = ablp_input_nodes.anchor_nodes
-                for supervision_edge_type, (positive_labels, negative_labels) in ablp_input_nodes.labels.items():
-                    positive_label_by_edge_type[message_passing_to_positive_label(supervision_edge_type)] = positive_labels
+                for supervision_edge_type, (
+                    positive_labels,
+                    negative_labels,
+                ) in ablp_input_nodes.labels.items():
+                    positive_label_by_edge_type[
+                        message_passing_to_positive_label(supervision_edge_type)
+                    ] = positive_labels
                     if negative_labels is not None:
-                        negative_label_by_edge_type[message_passing_to_negative_label(supervision_edge_type)] = negative_labels
+                        negative_label_by_edge_type[
+                            message_passing_to_negative_label(supervision_edge_type)
+                        ] = negative_labels
             else:
                 # Empty input for servers with no data for this rank
                 anchors = torch.empty(0, dtype=torch.long)

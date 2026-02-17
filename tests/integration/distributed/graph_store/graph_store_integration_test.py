@@ -108,7 +108,10 @@ def _assert_ablp_input(
                 assert isinstance(
                     ablp_input.labels, dict
                 ), f"Labels should be a dict, got {type(ablp_input.labels)}"
-                for edge_type, (positive_labels, negative_labels) in ablp_input.labels.items():
+                for edge_type, (
+                    positive_labels,
+                    negative_labels,
+                ) in ablp_input.labels.items():
                     assert isinstance(
                         positive_labels, torch.Tensor
                     ), f"Positive labels should be a tensor, got {type(positive_labels)}"
@@ -131,7 +134,9 @@ def _assert_ablp_input(
                             anchors
                         ), f"Negative labels first dim should match anchors length"
 
-                _has_negatives = any(neg is not None for _, neg in ablp_input.labels.values())
+                _has_negatives = any(
+                    neg is not None for _, neg in ablp_input.labels.values()
+                )
                 logger.info(
                     f"Server rank {server_rank}: anchor_node_type={ablp_input.anchor_node_type}, "
                     f"anchors shape={anchors.shape}, "
@@ -239,24 +244,24 @@ def _run_compute_train_tests(
     )
 
     # Test that two loaders can both be initialized and sampled from simultaneously.
-    # random_negative_loader = DistNeighborLoader(
-    #     dataset=remote_dist_dataset,
-    #     num_neighbors=[2, 2],
-    #     input_nodes=random_negative_input,
-    #     pin_memory_device=torch.device("cpu"),
-    #     num_workers=2,
-    #     worker_concurrency=2,
-    # )
+    random_negative_loader = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        input_nodes=random_negative_input,
+        pin_memory_device=torch.device("cpu"),
+        num_workers=2,
+        worker_concurrency=2,
+    )
     count = 0
-    for i, (batch) in enumerate(
-        zip(ablp_loader)
+    for i, (ablp_batch, random_negative_batch) in enumerate(
+        zip(ablp_loader, random_negative_loader)
     ):
         # Verify batch structure
-        # assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
-        # # y_positive should be dict mapping local anchor idx -> local label indices
-        # assert isinstance(
-        #     ablp_batch.y_positive, dict
-        # ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
+        # y_positive should be dict mapping local anchor idx -> local label indices
+        assert isinstance(
+            ablp_batch.y_positive, dict
+        ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
         count += 1
 
     torch.distributed.barrier()

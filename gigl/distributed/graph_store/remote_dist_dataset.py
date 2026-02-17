@@ -389,7 +389,9 @@ class RemoteDistDataset:
         # anchor_node_type is None for labeled homogeneous graphs,
         # and set to the actual node type for heterogeneous graphs.
         resolved_anchor_node_type: Optional[NodeType] = (
-            None if anchor_node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE else anchor_node_type
+            None
+            if anchor_node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
+            else anchor_node_type
         )
 
         def _wrap_ablp_input(
@@ -401,9 +403,7 @@ class RemoteDistDataset:
             return ABLPInputNodes(
                 anchor_node_type=resolved_anchor_node_type,
                 anchor_nodes=anchors,
-                labels={
-                    supervision_edge_type: (positive_labels, negative_labels)
-                },
+                labels={supervision_edge_type: (positive_labels, negative_labels)},
             )
 
         if self._mp_sharing_dict is not None:
