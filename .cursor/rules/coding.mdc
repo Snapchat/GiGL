@@ -10,6 +10,7 @@ alwaysApply: true
 Never abbreviate variable names unless the abbreviation is universally understood in the domain
 (e.g. `i` for a loop index, `e` in a catch block, `url`, `id`, `config`).
 Shortened names reduce readability and make code harder to search and refactor.
+It is ok to shorten or abbreviate names to avoid shadowing other variables.
 
 ```python
 # BAD - unclear abbreviation
@@ -20,10 +21,6 @@ for nt in node_types:
 for node_type in node_types:
     edge_type = edge_type_map[node_type]
 ```
-
-Only shorten a name when:
-- The abbreviation is a widely recognized term in the project domain or in Python at large.
-- There is a concrete variable-shadowing concern with the full name in the same scope.
 
 When in doubt, spell it out.
 
