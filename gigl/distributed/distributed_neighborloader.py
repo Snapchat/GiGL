@@ -80,7 +80,7 @@ class DistNeighborLoader(DistLoader):
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
-        prefetch_size: int = 4,
+        prefetch_size: Optional[int] = None,
         process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
@@ -130,10 +130,11 @@ class DistNeighborLoader(DistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
-            prefetch_size (int): Max number of sampled messages to prefetch on the
+            prefetch_size (Optional[int]): Max number of sampled messages to prefetch on the
                 client side, per server. Only applies to Graph Store mode (remote workers).
                 Lower values reduce server-side RPC thread contention when multiple loaders
-                are active concurrently. (default: ``4``).
+                are active concurrently. (default: ``None``).
+                If supplied and not it Graph Store mode, an error will be raised.
             process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
                 it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
                 attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
@@ -225,6 +226,10 @@ class DistNeighborLoader(DistLoader):
             self._sampling_cluster_setup = SamplingClusterSetup.GRAPH_STORE
         else:
             self._sampling_cluster_setup = SamplingClusterSetup.COLOCATED
+            if prefetch_size is not None:
+                raise ValueError(
+                    f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
         device = (
             pin_memory_device
@@ -257,6 +262,8 @@ class DistNeighborLoader(DistLoader):
             assert isinstance(
                 dataset, RemoteDistDataset
             ), "When using Graph Store mode, dataset must be a RemoteDistDataset."
+            if prefetch_size is None:
+                prefetch_size = 4
             input_data, worker_options, dataset_metadata = self._setup_for_graph_store(
                 input_nodes=input_nodes,
                 dataset=dataset,
@@ -337,7 +344,7 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
-        prefetch_size: Optional[int],
+        prefetch_size: int,
         channel_size: str,
     ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
