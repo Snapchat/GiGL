@@ -388,9 +388,12 @@ class RemoteDistDataset:
             )
         if anchor_node_type is None:
             evaluated_anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        else:
+            evaluated_anchor_node_type = anchor_node_type
         if supervision_edge_type is None:
             evaluated_supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-
+        else:
+            evaluated_supervision_edge_type = supervision_edge_type
         del anchor_node_type, supervision_edge_type
 
         def anchors_key(server_rank: int) -> str:
@@ -404,12 +407,13 @@ class RemoteDistDataset:
 
         def wrap_ablp_input(
             anchors: torch.Tensor,
+            anchor_node_type: NodeType,
             positive_labels: torch.Tensor,
             negative_labels: Optional[torch.Tensor],
         ) -> ABLPInputNodes:
             """Convert raw tensors into an ABLPInputNodes dataclass."""
             return ABLPInputNodes(
-                anchor_node_type=evaluated_anchor_node_type,
+                anchor_node_type=anchor_node_type,
                 anchor_nodes=anchors,
                 labels={
                     evaluated_supervision_edge_type: (positive_labels, negative_labels)
@@ -463,7 +467,10 @@ class RemoteDistDataset:
                     else None
                 )
                 returned_ablp_inputs[server_rank] = wrap_ablp_input(
-                    anchors, positive_labels, negative_labels
+                    anchors=anchors,
+                    anchor_node_type=evaluated_anchor_node_type,
+                    positive_labels=positive_labels,
+                    negative_labels=negative_labels,
                 )
             return returned_ablp_inputs
         else:
@@ -475,7 +482,12 @@ class RemoteDistDataset:
                 supervision_edge_type=evaluated_supervision_edge_type,
             )
             return {
-                server_rank: wrap_ablp_input(anchors, positive_labels, negative_labels)
+                server_rank: wrap_ablp_input(
+                    anchor_node_type=evaluated_anchor_node_type,
+                    anchors=anchors,
+                    positive_labels=positive_labels,
+                    negative_labels=negative_labels,
+                )
                 for server_rank, (
                     anchors,
                     positive_labels,
