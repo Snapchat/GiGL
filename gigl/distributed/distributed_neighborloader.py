@@ -134,6 +134,7 @@ class DistNeighborLoader(DistLoader):
                 client side, per server. Only applies to Graph Store mode (remote workers).
                 Lower values reduce server-side RPC thread contention when multiple loaders
                 are active concurrently. (default: ``None``).
+                Only applicable in Graph Store mode.
                 If supplied and not it Graph Store mode, an error will be raised.
             process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
                 it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
