@@ -383,12 +383,8 @@ class DistNeighborLoader(DistLoader):
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             buffer_size=channel_size,
             master_port=sampling_port,
-<<<<<<< kmonte/gs-prefetch-dist-loader
-            worker_key=f"compute_rank_{node_rank}",
             prefetch_size=prefetch_size,
-=======
             worker_key=f"compute_loader_rank_{node_rank}",
->>>>>>> main
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
