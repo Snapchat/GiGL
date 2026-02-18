@@ -80,7 +80,7 @@ class DistNeighborLoader(DistLoader):
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
-        prefetch_size: Optional[int] = 2,
+        prefetch_size: int = 4,
         process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
@@ -130,11 +130,10 @@ class DistNeighborLoader(DistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
-            prefetch_size (int, optional): Max number of sampled messages to prefetch on the
+            prefetch_size (int): Max number of sampled messages to prefetch on the
                 client side, per server. Only applies to Graph Store mode (remote workers).
                 Lower values reduce server-side RPC thread contention when multiple loaders
-                are active concurrently. If ``None``, defaults to GLT's built-in default (4).
-                (default: ``None``).
+                are active concurrently. (default: ``4``).
             process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
                 it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
                 attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
