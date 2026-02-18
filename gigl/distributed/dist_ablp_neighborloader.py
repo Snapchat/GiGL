@@ -78,7 +78,7 @@ class DistABLPLoader(DistLoader):
         batch_size: int = 1,
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
-        prefetch_size: Optional[int] = None,
+        prefetch_size: int = 4,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
@@ -175,11 +175,10 @@ class DistABLPLoader(DistLoader):
                 worker. Load testing has showed that setting worker_concurrency to 4 yields the best performance
                 for sampling. Although, you may whish to explore higher/lower settings when performance tuning.
                 (default: `4`).
-            prefetch_size (int, optional): Max number of sampled messages to prefetch on the
+            prefetch_size (int): Max number of sampled messages to prefetch on the
                 client side, per server. Only applies to Graph Store mode (remote workers).
                 Lower values reduce server-side RPC thread contention when multiple loaders
-                are active concurrently. If ``None``, defaults to GLT's built-in default (4).
-                (default: ``None``).
+                are active concurrently. (default: ``4``).
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
@@ -774,15 +773,12 @@ class DistABLPLoader(DistLoader):
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
-        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.Expand commentComment on line R823Resolved
+        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.
         # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
         # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
         worker_key = f"compute_ablp_loader_rank_{node_rank}"
         logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
-        prefetch_kwargs = {}
-        if prefetch_size is not None:
-            prefetch_kwargs["prefetch_size"] = prefetch_size
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -791,7 +787,7 @@ class DistABLPLoader(DistLoader):
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             master_port=sampling_port,
             worker_key=worker_key,
-            **prefetch_kwargs,
+            prefetch_size=prefetch_size,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: "
@@ -814,13 +810,10 @@ class DistABLPLoader(DistLoader):
         # Extract node type and label edge types from the ABLPInputNodes dataclass.
         # All entries should have the same anchor_node_type and edge type keys.
         first_input = next(iter(input_nodes.values()))
-        # anchor_node_type is None for labeled homogeneous, set for heterogeneous
-        if first_input.anchor_node_type is not None:
-            input_type: Optional[NodeType] = first_input.anchor_node_type
-            is_homogeneous_with_labeled_edge_type = True
-        else:
-            input_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            is_homogeneous_with_labeled_edge_type = False
+        input_type = first_input.anchor_node_type
+        is_homogeneous_with_labeled_edge_type = (
+            input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
+        )
 
         # Extract supervision edge types and derive label edge types from the
         # ABLPInputNodes.labels dict (keyed by supervision edge type).

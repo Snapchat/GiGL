@@ -368,7 +368,7 @@ class RemoteDistDataset:
                 )
             }
 
-            For labeled homogeneous graphs, anchor_node_type will be None.
+            For labeled homogeneous graphs, anchor_node_type will be DEFAULT_HOMOGENEOUS_NODE_TYPE.
 
         Note:
             The GLT sampling engine expects all processes on a given compute machine to have
@@ -386,22 +386,14 @@ class RemoteDistDataset:
         def negative_labels_key(server_rank: int) -> str:
             return f"ablp_server_{server_rank}_negative_labels"
 
-        # anchor_node_type is None for labeled homogeneous graphs,
-        # and set to the actual node type for heterogeneous graphs.
-        resolved_anchor_node_type: Optional[NodeType] = (
-            None
-            if anchor_node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
-            else anchor_node_type
-        )
-
-        def _wrap_ablp_input(
+        def wrap_ablp_input(
             anchors: torch.Tensor,
             positive_labels: torch.Tensor,
             negative_labels: Optional[torch.Tensor],
         ) -> ABLPInputNodes:
             """Convert raw tensors into an ABLPInputNodes dataclass."""
             return ABLPInputNodes(
-                anchor_node_type=resolved_anchor_node_type,
+                anchor_node_type=anchor_node_type,
                 anchor_nodes=anchors,
                 labels={supervision_edge_type: (positive_labels, negative_labels)},
             )
@@ -448,7 +440,7 @@ class RemoteDistDataset:
                     if neg_key in self._mp_sharing_dict
                     else None
                 )
-                returned_ablp_inputs[server_rank] = _wrap_ablp_input(
+                returned_ablp_inputs[server_rank] = wrap_ablp_input(
                     anchors, positive_labels, negative_labels
                 )
             return returned_ablp_inputs
@@ -457,7 +449,7 @@ class RemoteDistDataset:
                 split, rank, world_size, anchor_node_type, supervision_edge_type
             )
             return {
-                server_rank: _wrap_ablp_input(anchors, positive_labels, negative_labels)
+                server_rank: wrap_ablp_input(anchors, positive_labels, negative_labels)
                 for server_rank, (
                     anchors,
                     positive_labels,
