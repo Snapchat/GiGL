@@ -263,6 +263,7 @@ class DistNeighborLoader(DistLoader):
                 dataset, RemoteDistDataset
             ), "When using Graph Store mode, dataset must be a RemoteDistDataset."
             if prefetch_size is None:
+                logger.info(f"prefetch_size is not provided, using default of 4")
                 prefetch_size = 4
             input_data, worker_options, dataset_metadata = self._setup_for_graph_store(
                 input_nodes=input_nodes,
