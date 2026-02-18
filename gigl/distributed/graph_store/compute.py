@@ -1,13 +1,18 @@
 import os
-from typing import Optional
+from typing import Any, Callable, Optional, TypeVar
 
 import graphlearn_torch as glt
 import torch
+from graphlearn_torch.distributed.dist_context import DistRole
+from graphlearn_torch.distributed.rpc import rpc_global_request_async
 
 from gigl.common.logger import Logger
+from gigl.distributed.graph_store.dist_server import _call_func_on_server
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
+
+R = TypeVar("R")
 
 
 def init_compute_process(
@@ -76,3 +81,31 @@ def shutdown_compute_proccess() -> None:
     """
     glt.distributed.shutdown_client()
     torch.distributed.destroy_process_group()
+
+
+def async_request_server(
+    server_rank: int,
+    func: Callable[..., R],
+    *args: Any,
+    **kwargs: Any,
+) -> torch.futures.Future[R]:
+    """Perform an asynchronous request on a remote server, calling on the client side."""
+    call_args = [func] + list(args)
+    return rpc_global_request_async(
+        target_role=DistRole.SERVER,
+        role_rank=server_rank,
+        func=_call_func_on_server,
+        args=call_args,
+        kwargs=kwargs,
+    )
+
+
+def request_server(
+    server_rank: int,
+    func: Callable[..., R],
+    *args: Any,
+    **kwargs: Any,
+) -> R:
+    """Perform a synchronous request on a remote server, calling on the client side."""
+    future = async_request_server(server_rank, func, *args, **kwargs)
+    return future.wait()

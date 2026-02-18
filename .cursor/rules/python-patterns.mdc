@@ -51,7 +51,6 @@ class TestArgs:
   Example with >>> for doctests, Args, Returns, and Raises if applicable. Docstrings should be clear, consistent,
   testable, and Sphinx-compatible.
 
-Example:
 
 ```python
 from typing import Final, Optional
@@ -80,6 +79,21 @@ def add_to_magic_number(
         int: The sum of MAGIC_NUMBER, number_1, and the numbers in the list.
     """
     return MAGIC_NUMBER + number_1 + sum(numbers)
+```
+
+#### Empty-Initialized Containers Must Be Typed
+
+Always annotate empty containers at the point of initialization. Without an annotation the type checker (and the reader)
+cannot infer the element type.
+
+```python
+# BAD - type is ambiguous
+names = []
+counts = {}
+
+# GOOD - element type is explicit
+names: list[str] = []
+counts: dict[str, int] = {}
 ```
 
 ### Error Handling & Logging

@@ -1,13 +1,13 @@
 import time
 from collections.abc import MutableMapping
 from multiprocessing.managers import DictProxy
-from typing import Any, Callable, Literal, Optional, TypeVar, Union
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, cast
 
 import torch
-from graphlearn_torch.distributed import rpc_global_request_async
-from graphlearn_torch.distributed.dist_context import DistRole
 
 from gigl.common.logger import Logger
+from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.benchmark import benchmark_methods
 from gigl.distributed.graph_store.dist_server import DistServer, get_server
 from gigl.distributed.utils.networking import get_free_ports
@@ -108,7 +108,7 @@ class RemoteDistDataset:
             - A dict mapping NodeType to FeatureInfo for heterogeneous graphs
             - None if no node features are available
         """
-        return self.request_server(
+        return request_server(
             0,
             DistServer.get_node_feature_info,
         )
@@ -124,7 +124,7 @@ class RemoteDistDataset:
             - A dict mapping EdgeType to FeatureInfo for heterogeneous graphs
             - None if no edge features are available
         """
-        return self.request_server(
+        return request_server(
             0,
             DistServer.get_edge_feature_info,
         )
@@ -135,7 +135,7 @@ class RemoteDistDataset:
         Returns:
             The edge direction.
         """
-        return self.request_server(
+        return request_server(
             0,
             DistServer.get_edge_dir,
         )
@@ -155,7 +155,7 @@ class RemoteDistDataset:
 
         for server_rank in range(self.cluster_info.num_storage_nodes):
             futures.append(
-                self.async_request_server(
+                async_request_server(
                     server_rank,
                     DistServer.get_node_ids,
                     rank=rank,
@@ -293,7 +293,7 @@ class RemoteDistDataset:
             + self._local_rank
         )
         if compute_cluster_rank == 0:
-            ports = self.request_server(
+            ports: Union[list[int], list[None]] = request_server(
                 0,
                 get_free_ports,
                 num_ports=num_ports,
@@ -305,7 +305,7 @@ class RemoteDistDataset:
             ports = [None] * num_ports  # type: ignore[list-item]
         torch.distributed.broadcast_object_list(ports, src=0)
         logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
-        return ports
+        return cast(list[int], ports)
 
     def _get_ablp_input(
         self,
@@ -328,7 +328,7 @@ class RemoteDistDataset:
 
         for server_rank in range(self.cluster_info.num_storage_nodes):
             futures.append(
-                self.async_request_server(
+                async_request_server(
                     server_rank,
                     DistServer.get_ablp_input,
                     split=split,
@@ -504,35 +504,7 @@ class RemoteDistDataset:
         Returns:
             The edge types in the dataset, None if the dataset is homogeneous.
         """
-        return self.request_server(
+        return request_server(
             0,
             DistServer.get_edge_types,
         )
-
-    def async_request_server(
-        self,
-        server_rank: int,
-        func: Callable[..., _R],
-        *args: Any,
-        **kwargs: Any,
-    ) -> torch.futures.Future[_R]:
-        """Async request a function on the server."""
-        rpc_args = [func] + list(args)
-        return rpc_global_request_async(
-            target_role=DistRole.SERVER,
-            role_rank=server_rank,
-            func=_call_func_on_server,
-            args=rpc_args,
-            kwargs=kwargs,
-        )
-
-    def request_server(
-        self,
-        server_rank: int,
-        func: Callable[..., _R],
-        *args: Any,
-        **kwargs: Any,
-    ) -> _R:
-        """Request a function on the server."""
-        fut = self.async_request_server(server_rank, func, *args, **kwargs)
-        return fut.wait()

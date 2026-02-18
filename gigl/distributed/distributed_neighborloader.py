@@ -11,7 +11,6 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
-from graphlearn_torch.distributed.dist_client import request_server
 from graphlearn_torch.distributed.dist_context import get_context
 from graphlearn_torch.sampler import (
     NodeSamplerInput,
@@ -28,6 +27,7 @@ from gigl.distributed.benchmark import benchmark_methods
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
@@ -755,7 +755,7 @@ class DistNeighborLoader(DistLoader):
                 for server_rank, inp_data in zip(
                     self._server_rank_list, self._input_data_list
                 ):
-                    fut = dataset.async_request_server(
+                    fut = async_request_server(
                         server_rank,
                         GiglDistServer.create_sampling_producer,
                         inp_data,
