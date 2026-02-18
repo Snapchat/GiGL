@@ -2,7 +2,7 @@ import sys
 import time
 from collections import Counter, abc
 from typing import Optional, Tuple, Union
-
+from itertools import count
 import torch
 from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage
 from graphlearn_torch.distributed import (
@@ -57,6 +57,10 @@ def flush():
 
 
 class DistNeighborLoader(DistLoader):
+    # Counts instantiations of this class, per process.
+    # This is needed so we can generate unique worker key for each instance, for graph store mode.
+    _counter = count(0)
+
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -357,6 +361,8 @@ class DistNeighborLoader(DistLoader):
         )
         sampling_port = sampling_ports[node_rank]
 
+        worker_key = f"compute_rank_{node_rank}_worker_{self._counter}"
+        logger.info(f"Rank {torch.distributed.get_rank()} worker key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -364,7 +370,7 @@ class DistNeighborLoader(DistLoader):
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             buffer_size=channel_size,
             master_port=sampling_port,
-            worker_key=f"compute_rank_{node_rank}",
+            worker_key=worker_key,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
