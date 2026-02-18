@@ -8,12 +8,15 @@ We keep this around so we can use the utils in tests/integration/distributed/gra
 import argparse
 import multiprocessing.context as py_mp_context
 import os
+import pickle
+from pathlib import Path
 from typing import Literal, Optional, Union
 
 import torch
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.distributed.benchmark import BenchmarkTimer
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -70,6 +73,7 @@ def _run_storage_process(
         f"Waiting for storage node {storage_rank} / {cluster_info.num_storage_nodes} to exit"
     )
     wait_and_shutdown_server()
+    BenchmarkTimer.instance().print_stats(f"Storage Node (Rank {storage_rank})")
     logger.info(f"Storage node {storage_rank} exited")
 
 
@@ -124,13 +128,23 @@ def storage_node_process(
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
     # TODO(kmonte): Add support for TFDatasetOptions.
-    dataset = build_dataset(
-        serialized_graph_metadata=serialized_graph_metadata,
-        sample_edge_direction=sample_edge_direction,
-        partitioner_class=DistRangePartitioner,
-        splitter=splitter,
-        _ssl_positive_label_percentage=ssl_positive_label_percentage,
+    dataset_cache_path = (
+        Path("/tmp") / "gigl" / "dataset" / f"dataset_{storage_rank}.pkl"
     )
+    if dataset_cache_path.exists():
+        with open(dataset_cache_path, "rb") as f:
+            dataset = DistDataset.from_ipc_handle(pickle.load(f))
+    else:
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction=sample_edge_direction,
+            partitioner_class=DistRangePartitioner,
+            splitter=splitter,
+            _ssl_positive_label_percentage=ssl_positive_label_percentage,
+        )
+        dataset_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(dataset_cache_path, "wb") as f:
+            pickle.dump(dataset.share_ipc(), f)
     task_config = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
     )

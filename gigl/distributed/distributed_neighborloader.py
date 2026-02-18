@@ -1,6 +1,7 @@
 import sys
 import time
 from collections import Counter, abc
+from itertools import count
 from typing import Optional, Tuple, Union
 
 import torch
@@ -10,10 +11,7 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
-from graphlearn_torch.distributed.dist_client import (
-    async_request_server,
-    request_server,
-)
+from graphlearn_torch.distributed.dist_client import request_server
 from graphlearn_torch.distributed.dist_context import get_context
 from graphlearn_torch.sampler import (
     NodeSamplerInput,
@@ -26,6 +24,7 @@ from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
+from gigl.distributed.benchmark import benchmark_methods
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
@@ -59,7 +58,16 @@ def flush():
     sys.stderr.flush()
 
 
+@benchmark_methods(
+    "__init__",
+    "_setup_for_graph_store",
+    "_setup_for_colocated",
+    "_init_graph_store_connections",
+    "_collate_fn",
+)
 class DistNeighborLoader(DistLoader):
+    _instance_counter: count = count(0)
+
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -363,6 +371,8 @@ class DistNeighborLoader(DistLoader):
         # e.g. if we have two different DistNeighborLoaders, then they will have conflicting worker keys.
         # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
+        worker_key = f"compute_loader_rank_{node_rank}_{next(self._instance_counter)}"
+        logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -370,7 +380,7 @@ class DistNeighborLoader(DistLoader):
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             buffer_size=channel_size,
             master_port=sampling_port,
-            worker_key=f"compute_loader_rank_{node_rank}",
+            worker_key=worker_key,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
@@ -745,7 +755,7 @@ class DistNeighborLoader(DistLoader):
                 for server_rank, inp_data in zip(
                     self._server_rank_list, self._input_data_list
                 ):
-                    fut = async_request_server(
+                    fut = dataset.async_request_server(
                         server_rank,
                         GiglDistServer.create_sampling_producer,
                         inp_data,

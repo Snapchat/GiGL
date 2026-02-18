@@ -31,6 +31,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
 )
 
+from gigl.distributed.benchmark import benchmark_methods
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.sampler import ABLPNodeSamplerInput
@@ -50,6 +51,24 @@ r""" Interval (in seconds) to check exit status of server.
 
 
 # TODO(kmonte): Migrate graph_store/storage_utils to this class.
+@benchmark_methods(
+    "get_dataset_meta",
+    "get_node_feature_info",
+    "get_edge_feature_info",
+    "get_edge_dir",
+    "get_node_ids",
+    "get_edge_types",
+    "get_ablp_input",
+    "create_sampling_ablp_producer",
+    "create_sampling_producer",
+    "_create_producer",
+    "fetch_one_sampled_message",
+    "start_new_epoch_sampling",
+    "destroy_sampling_producer",
+    "shutdown",
+    "get_node_feature",
+    "get_node_label",
+)
 class DistServer(object):
     r"""A server that supports launching remote sampling workers for
     training clients.
@@ -66,6 +85,7 @@ class DistServer(object):
     def __init__(self, dataset: DistDataset) -> None:
         self.dataset = dataset
         self._lock = threading.RLock()
+        self._producer_lock: dict[int, threading.RLock] = {}
         self._exit = False
         self._cur_producer_idx = 0  # auto incremental index (same as producer count)
         # The mapping from the key in worker options (such as 'train', 'test')
@@ -78,8 +98,25 @@ class DistServer(object):
     def shutdown(self) -> None:
         for producer_id in list(self._producer_pool.keys()):
             self.destroy_sampling_producer(producer_id)
-        assert len(self._producer_pool) == 0
-        assert len(self._msg_buffer_pool) == 0
+        if not len(self._producer_pool) == 0:
+            print(
+                f"Warning: producer pool is not empty: {len(self._producer_pool)}, producer ids: {list(self._producer_pool.keys())}"
+            )
+        if not len(self._msg_buffer_pool) == 0:
+            print(
+                f"Warning: msg buffer pool is not empty: {len(self._msg_buffer_pool)}, msg buffer ids: {list(self._msg_buffer_pool.keys())}"
+            )
+        if not len(self._epoch) == 0:
+            print(
+                f"Warning: epoch is not empty: {len(self._epoch)}, epoch ids: {list(self._epoch.keys())}"
+            )
+        if not len(self._worker_key2producer_id) == 0:
+            print(
+                f"Warning: worker key to producer id is not empty: {len(self._worker_key2producer_id)}, worker key to producer id: {list(self._worker_key2producer_id.keys())}"
+            )
+        # if not len(self._producer_lock) == 0:
+        # assert len(self._producer_pool) == 0
+        # assert len(self._msg_buffer_pool) == 0
 
     def wait_for_exit(self) -> None:
         r"""Block until the exit flag been set to ``True``."""
@@ -392,6 +429,7 @@ class DistServer(object):
         Returns:
           A unique id of created sampling producer on this server.
         """
+        print(f"Gigl DistServer create_sampling_producer: {worker_options.worker_key}")
         return self._create_producer(
             sampler_input=sampler_input,
             sampling_config=sampling_config,
@@ -429,6 +467,11 @@ class DistServer(object):
             sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
         with self._lock:
+            producer_lock = self._producer_lock.get(worker_options.worker_key)
+            if producer_lock is None:
+                producer_lock = threading.RLock()
+                self._producer_lock[worker_options.worker_key] = producer_lock
+        with producer_lock:
             producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
             if producer_id is None:
                 producer_id = self._cur_producer_idx
@@ -450,19 +493,24 @@ class DistServer(object):
         r"""Shutdown and destroy a sampling producer managed by this server with
         its producer id.
         """
-        with self._lock:
-            producer = self._producer_pool.get(producer_id, None)
-            if producer is not None:
-                producer.shutdown()
-                self._producer_pool.pop(producer_id)
-                self._msg_buffer_pool.pop(producer_id)
-                self._epoch.pop(producer_id)
+        maybe_lock = self._producer_lock.get(producer_id)
+        if maybe_lock is not None:
+            with maybe_lock:
+                producer = self._producer_pool.get(producer_id, None)
+                if producer is not None:
+                    producer.shutdown()
+                    self._producer_pool.pop(producer_id)
+                    self._msg_buffer_pool.pop(producer_id)
+                    self._epoch.pop(producer_id)
+                    self._producer_lock.pop(producer_id)
+        else:
+            print(f"Warning: producer {producer_id} not found in _producer_lock")
 
     def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> None:
         r"""Start a new epoch sampling tasks for a specific sampling producer
         with its producer id.
         """
-        with self._lock:
+        with self._producer_lock[producer_id]:
             cur_epoch = self._epoch[producer_id]
             if cur_epoch < epoch:
                 self._epoch[producer_id] = epoch

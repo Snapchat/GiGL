@@ -90,7 +90,7 @@ class TestRemoteDistDataset(TestCase):
             dist.destroy_process_group()
 
     @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        "gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset.request_server",
         side_effect=_mock_request_server,
     )
     def test_graph_metadata_getters_homogeneous(self, mock_request):
@@ -126,7 +126,7 @@ class TestRemoteDistDataset(TestCase):
         self.assertEqual(remote_dataset.cluster_info.num_compute_nodes, 2)
 
     @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        "gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
     def test_get_node_ids(self, mock_async_request):
@@ -169,7 +169,7 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
             dist.destroy_process_group()
 
     @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        "gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset.request_server",
         side_effect=_mock_request_server,
     )
     def test_graph_metadata_getters_heterogeneous(self, mock_request):
@@ -190,7 +190,7 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
         )
 
     @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        "gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
     def test_get_node_ids_with_node_type(self, mock_async_request):
@@ -255,7 +255,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         _test_server = DistServer(dataset)
 
     @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        "gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
     def test_get_node_ids_with_splits(self, mock_async_request):
@@ -300,7 +300,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         )
 
     @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        "gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
     def test_get_ablp_input(self, mock_async_request):
@@ -368,7 +368,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
         )
 
     @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        "gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
     def test_get_ablp_input_with_sharding(self, mock_async_request):

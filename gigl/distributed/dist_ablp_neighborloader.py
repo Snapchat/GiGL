@@ -2,6 +2,7 @@ import ast
 import concurrent.futures
 import time
 from collections import Counter, abc, defaultdict
+from itertools import count
 from typing import Optional, Union
 
 import torch
@@ -20,6 +21,7 @@ from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
+from gigl.distributed.benchmark import benchmark_methods
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
@@ -60,7 +62,18 @@ from gigl.utils.sampling import ABLPInputNodes
 logger = Logger()
 
 
+@benchmark_methods(
+    "__init__",
+    "_setup_for_graph_store",
+    "_setup_for_colocated",
+    "_init_remote_worker",
+    "_collate_fn",
+    "_get_labels",
+    "_set_labels",
+)
 class DistABLPLoader(DistLoader):
+    _instance_counter: count = count(0)
+
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -778,7 +791,9 @@ class DistABLPLoader(DistLoader):
         # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
         # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
-        worker_key = f"compute_ablp_loader_rank_{node_rank}"
+        worker_key = (
+            f"compute_ablp_loader_rank_{node_rank}_{next(self._instance_counter)}"
+        )
         logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
         prefetch_kwargs = {}
         if prefetch_size is not None:

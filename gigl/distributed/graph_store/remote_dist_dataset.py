@@ -1,13 +1,15 @@
 import time
 from collections.abc import MutableMapping
 from multiprocessing.managers import DictProxy
-from typing import Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, TypeVar, Union
 
 import torch
-from graphlearn_torch.distributed import async_request_server, request_server
+from graphlearn_torch.distributed import rpc_global_request_async
+from graphlearn_torch.distributed.dist_context import DistRole
 
 from gigl.common.logger import Logger
-from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.benchmark import benchmark_methods
+from gigl.distributed.graph_store.dist_server import DistServer, get_server
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -20,7 +22,38 @@ from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
 
+_R = TypeVar("_R")
 
+
+def _call_func_on_server(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
+    r"""A callee entry for remote requests on the server side."""
+    if not callable(func):
+        logger.warning(
+            f"'_call_func_on_server': receive a non-callable " f"function target {func}"
+        )
+        return None
+
+    server = get_server()
+    if hasattr(server, func.__name__):
+        server_func = getattr(server, func.__name__)
+        return server_func(*args, **kwargs)
+
+    return func(*args, **kwargs)
+
+
+@benchmark_methods(
+    "get_node_feature_info",
+    "get_edge_feature_info",
+    "get_edge_dir",
+    "_get_node_ids",
+    "get_node_ids",
+    "_get_ablp_input",
+    "get_ablp_input",
+    "get_free_ports_on_storage_cluster",
+    "get_edge_types",
+)
 class RemoteDistDataset:
     def __init__(
         self,
@@ -75,7 +108,7 @@ class RemoteDistDataset:
             - A dict mapping NodeType to FeatureInfo for heterogeneous graphs
             - None if no node features are available
         """
-        return request_server(
+        return self.request_server(
             0,
             DistServer.get_node_feature_info,
         )
@@ -91,7 +124,7 @@ class RemoteDistDataset:
             - A dict mapping EdgeType to FeatureInfo for heterogeneous graphs
             - None if no edge features are available
         """
-        return request_server(
+        return self.request_server(
             0,
             DistServer.get_edge_feature_info,
         )
@@ -102,7 +135,7 @@ class RemoteDistDataset:
         Returns:
             The edge direction.
         """
-        return request_server(
+        return self.request_server(
             0,
             DistServer.get_edge_dir,
         )
@@ -122,7 +155,7 @@ class RemoteDistDataset:
 
         for server_rank in range(self.cluster_info.num_storage_nodes):
             futures.append(
-                async_request_server(
+                self.async_request_server(
                     server_rank,
                     DistServer.get_node_ids,
                     rank=rank,
@@ -260,7 +293,7 @@ class RemoteDistDataset:
             + self._local_rank
         )
         if compute_cluster_rank == 0:
-            ports = request_server(
+            ports = self.request_server(
                 0,
                 get_free_ports,
                 num_ports=num_ports,
@@ -269,7 +302,7 @@ class RemoteDistDataset:
                 f"Compute rank {compute_cluster_rank} found free ports: {ports}"
             )
         else:
-            ports = [None] * num_ports
+            ports = [None] * num_ports  # type: ignore[list-item]
         torch.distributed.broadcast_object_list(ports, src=0)
         logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
         return ports
@@ -295,7 +328,7 @@ class RemoteDistDataset:
 
         for server_rank in range(self.cluster_info.num_storage_nodes):
             futures.append(
-                async_request_server(
+                self.async_request_server(
                     server_rank,
                     DistServer.get_ablp_input,
                     split=split,
@@ -471,7 +504,35 @@ class RemoteDistDataset:
         Returns:
             The edge types in the dataset, None if the dataset is homogeneous.
         """
-        return request_server(
+        return self.request_server(
             0,
             DistServer.get_edge_types,
         )
+
+    def async_request_server(
+        self,
+        server_rank: int,
+        func: Callable[..., _R],
+        *args: Any,
+        **kwargs: Any,
+    ) -> torch.futures.Future[_R]:
+        """Async request a function on the server."""
+        rpc_args = [func] + list(args)
+        return rpc_global_request_async(
+            target_role=DistRole.SERVER,
+            role_rank=server_rank,
+            func=_call_func_on_server,
+            args=rpc_args,
+            kwargs=kwargs,
+        )
+
+    def request_server(
+        self,
+        server_rank: int,
+        func: Callable[..., _R],
+        *args: Any,
+        **kwargs: Any,
+    ) -> _R:
+        """Request a function on the server."""
+        fut = self.async_request_server(server_rank, func, *args, **kwargs)
+        return fut.wait()
