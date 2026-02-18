@@ -372,7 +372,10 @@ class DistNeighborLoader(DistLoader):
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
-
+        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.Expand commentComment on line R823Resolved
+        # e.g. if we have two different DistNeighborLoaders, then they will have conflicting worker keys.
+        # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
+        # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -380,8 +383,12 @@ class DistNeighborLoader(DistLoader):
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             buffer_size=channel_size,
             master_port=sampling_port,
+<<<<<<< kmonte/gs-prefetch-dist-loader
             worker_key=f"compute_rank_{node_rank}",
             prefetch_size=prefetch_size,
+=======
+            worker_key=f"compute_loader_rank_{node_rank}",
+>>>>>>> main
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
@@ -405,7 +412,7 @@ class DistNeighborLoader(DistLoader):
 
         # Determine input_type based on edge_feature_info
         if isinstance(edge_types, list):
-            if edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+            if DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
                 input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
             else:
                 input_type = fallback_input_type
