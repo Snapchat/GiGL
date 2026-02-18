@@ -6,7 +6,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
 
-from gigl.distributed.graph_store.dist_server import DistServer
+import gigl.distributed.graph_store.dist_server as dist_server_module
+from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.env.distributed import GraphStoreInfo
 from gigl.types.graph import FeatureInfo
@@ -33,18 +34,14 @@ _test_server: Optional[DistServer] = None
 
 
 def _mock_request_server(server_rank, func, *args, **kwargs):
-    """Mock request_server that calls the method on the test DistServer instance."""
-    if _test_server is None:
-        raise RuntimeError("Test server not initialized")
-    return func(_test_server, *args, **kwargs)
+    """Mock request_server that routes through _call_func_on_server."""
+    return _call_func_on_server(func, *args, **kwargs)
 
 
 def _mock_async_request_server(server_rank, func, *args, **kwargs):
-    """Mock async_request_server that returns a completed future with the method result."""
-    if _test_server is None:
-        raise RuntimeError("Test server not initialized")
+    """Mock async_request_server that routes through _call_func_on_server and returns a future."""
     future: torch.futures.Future = torch.futures.Future()
-    future.set_result(func(_test_server, *args, **kwargs))
+    future.set_result(_call_func_on_server(func, *args, **kwargs))
     return future
 
 
@@ -81,10 +78,12 @@ class TestRemoteDistDataset(TestCase):
             node_features=node_features,
         )
         _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     def tearDown(self) -> None:
         global _test_server
         _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -160,10 +159,12 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
             node_features=node_features,
         )
         _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     def tearDown(self) -> None:
         global _test_server
         _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -220,6 +221,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
     def tearDown(self) -> None:
         global _test_server
         _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -252,6 +254,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
         _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
@@ -434,10 +437,12 @@ class TestGetFreePortsOnStorageCluster(TestCase):
         global _test_server
         dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
         _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     def tearDown(self) -> None:
         global _test_server
         _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -461,6 +466,50 @@ class TestGetFreePortsOnStorageCluster(TestCase):
 
         with self.assertRaises(ValueError):
             remote_dataset.get_free_ports_on_storage_cluster(num_ports=1)
+
+
+class TestCallFuncOnServer(TestCase):
+    """Tests for the _call_func_on_server dispatch logic."""
+
+    def setUp(self) -> None:
+        global _test_server
+        node_features = torch.zeros(10, 3)
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+            node_features=node_features,
+        )
+        _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
+
+    def tearDown(self) -> None:
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
+
+    def test_dispatches_server_method(self):
+        """Test that _call_func_on_server correctly dispatches an unbound DistServer method."""
+        result = _call_func_on_server(DistServer.get_edge_dir)
+        self.assertEqual(result, "out")
+
+    def test_non_callable_returns_none(self):
+        """Test that _call_func_on_server returns None for non-callable input."""
+        result: None = _call_func_on_server("not_a_function")  # type: ignore[arg-type]
+        self.assertIsNone(result)
+
+    def test_falls_back_for_non_server_function(self):
+        """Test that _call_func_on_server falls back to calling func directly for functions not on the server."""
+
+        def standalone_function(x: int, y: int) -> int:
+            return x + y
+
+        result = _call_func_on_server(standalone_function, 3, 7)
+        self.assertEqual(result, 10)
+
+    def test_raises_when_server_not_initialized(self):
+        """Test that _call_func_on_server raises when _dist_server is None."""
+        dist_server_module._dist_server = None
+        with self.assertRaises(RuntimeError):
+            _call_func_on_server(DistServer.get_edge_dir)
 
 
 if __name__ == "__main__":
