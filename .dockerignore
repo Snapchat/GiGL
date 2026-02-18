@@ -65,8 +65,8 @@ do_not_open_source
 
 # We ignore this folder as it is used to test our orchestration api.
 # It simulates how a customer would use GiGL—not as part of a developer workflow.
-# See: testing/api_test/README.md for more details.
-testing/api_test
+# See: tests/api_test/README.md for more details.
+tests/api_test
 
 # https://github.com/google-github-actions/auth/issues/497
 gha-creds-*.json
