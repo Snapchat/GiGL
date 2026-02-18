@@ -1,8 +1,9 @@
 import sys
 import time
 from collections import Counter, abc
-from typing import Optional, Tuple, Union
 from itertools import count
+from typing import Optional, Tuple, Union
+
 import torch
 from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage
 from graphlearn_torch.distributed import (
@@ -222,6 +223,8 @@ class DistNeighborLoader(DistLoader):
         else:
             self._sampling_cluster_setup = SamplingClusterSetup.COLOCATED
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
+
+        self._instance_count = next(self._counter)
         device = (
             pin_memory_device
             if pin_memory_device
@@ -361,7 +364,7 @@ class DistNeighborLoader(DistLoader):
         )
         sampling_port = sampling_ports[node_rank]
 
-        worker_key = f"compute_rank_{node_rank}_worker_{self._counter}"
+        worker_key = f"compute_rank_{node_rank}_worker_{self._instance_count}"
         logger.info(f"Rank {torch.distributed.get_rank()} worker key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
@@ -394,7 +397,7 @@ class DistNeighborLoader(DistLoader):
 
         # Determine input_type based on edge_feature_info
         if isinstance(edge_types, list):
-            if edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
+            if DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
                 input_type: Optional[NodeType] = DEFAULT_HOMOGENEOUS_NODE_TYPE
             else:
                 input_type = fallback_input_type
