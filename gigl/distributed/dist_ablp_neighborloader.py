@@ -1,5 +1,4 @@
 import ast
-import concurrent.futures
 import time
 from collections import Counter, abc, defaultdict
 from itertools import count
@@ -12,7 +11,6 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
     get_context,
-    request_server,
 )
 from graphlearn_torch.sampler import SamplingConfig, SamplingType
 from graphlearn_torch.utils import reverse_edge_type
@@ -27,6 +25,7 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
+from gigl.distributed.graph_store.compute import async_request_server
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler import (
@@ -1004,24 +1003,21 @@ class DistABLPLoader(DistLoader):
             input_data.to(torch.device("cpu"))
 
         self._producer_id_list = []
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    request_server,
+        rpc_futures = []
+        for server_rank, input_data in zip(
+            self._server_rank_list, self._input_data_list
+        ):
+            rpc_futures.append(
+                async_request_server(
                     server_rank,
                     DistServer.create_sampling_ablp_producer,
                     input_data,
                     self.sampling_config,
                     self.worker_options,
                 )
-                for server_rank, input_data in zip(
-                    self._server_rank_list, self._input_data_list
-                )
-            ]
-
-        for future in futures:
-            producer_id = future.result()
-            self._producer_id_list.append(producer_id)
+            )
+        producer_ids = torch.futures.wait_all(rpc_futures)
+        self._producer_id_list = list(producer_ids)
         logger.info(
             f"DistABLPLoader rank {torch.distributed.get_rank()} producers: ({[producer_id for producer_id in self._producer_id_list]})"
         )

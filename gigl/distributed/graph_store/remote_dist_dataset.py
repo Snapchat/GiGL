@@ -6,9 +6,8 @@ from typing import Any, Callable, Literal, Optional, TypeVar, Union, cast
 import torch
 
 from gigl.common.logger import Logger
-from gigl.distributed.graph_store.dist_server import DistServer
-from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.benchmark import benchmark_methods
+from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer, get_server
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
@@ -25,9 +24,7 @@ logger = Logger()
 _R = TypeVar("_R")
 
 
-def _call_func_on_server(
-    func: Callable[..., Any], *args: Any, **kwargs: Any
-) -> Any:
+def _call_func_on_server(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
         logger.warning(
