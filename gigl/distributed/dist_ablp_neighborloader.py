@@ -359,6 +359,7 @@ class DistABLPLoader(DistLoader):
                     f"received {type(input_nodes)}"
                 )
             if prefetch_size is None:
+                logger.info(f"prefetch_size is not provided, using default of 4")
                 prefetch_size = 4
             (
                 sampler_input,
