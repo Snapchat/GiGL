@@ -78,7 +78,7 @@ class DistABLPLoader(DistLoader):
         batch_size: int = 1,
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
-        prefetch_size: int = 4,
+        prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
@@ -175,10 +175,11 @@ class DistABLPLoader(DistLoader):
                 worker. Load testing has showed that setting worker_concurrency to 4 yields the best performance
                 for sampling. Although, you may whish to explore higher/lower settings when performance tuning.
                 (default: `4`).
-            prefetch_size (int): Max number of sampled messages to prefetch on the
+            prefetch_size (Optional[int]): Max number of sampled messages to prefetch on the
                 client side, per server. Only applies to Graph Store mode (remote workers).
                 Lower values reduce server-side RPC thread contention when multiple loaders
-                are active concurrently. (default: ``4``).
+                are active concurrently. (default: ``None``).
+                If supplied and not it Graph Store mode, an error will be raised.
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
@@ -235,6 +236,10 @@ class DistABLPLoader(DistLoader):
                 self._supervision_edge_types = supervision_edge_type
             else:
                 self._supervision_edge_types = [supervision_edge_type]
+            if prefetch_size is not None:
+                raise ValueError(
+                    f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
@@ -353,6 +358,8 @@ class DistABLPLoader(DistLoader):
                     f"dict[int, ABLPInputNodes], "
                     f"received {type(input_nodes)}"
                 )
+            if prefetch_size is None:
+                prefetch_size = 4
             (
                 sampler_input,
                 worker_options,
@@ -743,7 +750,7 @@ class DistABLPLoader(DistLoader):
         dataset: RemoteDistDataset,
         num_workers: int,
         worker_concurrency: int = 4,
-        prefetch_size: Optional[int] = None,
+        prefetch_size: int = 4,
     ) -> tuple[
         list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema
     ]:
@@ -758,7 +765,7 @@ class DistABLPLoader(DistLoader):
             num_workers: Number of sampling workers.
             worker_concurrency: Max sampling concurrency per worker. (default: ``4``).
             prefetch_size: Max prefetched sampled messages per server on client side.
-                If ``None``, defaults to GLT's built-in default (4). (default: ``None``).
+                (default: ``4``).
 
         Returns:
             Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema).

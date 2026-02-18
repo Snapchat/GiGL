@@ -317,8 +317,8 @@ class RemoteDistDataset:
         split: Literal["train", "val", "test"],
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
-        anchor_node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
-        supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        anchor_node_type: Optional[NodeType] = None,
+        supervision_edge_type: Optional[EdgeType] = None,
     ) -> dict[int, ABLPInputNodes]:
         """
         Fetches ABLP (Anchor Based Link Prediction) input from the storage nodes.
@@ -338,10 +338,14 @@ class RemoteDistDataset:
                 Must be provided if world_size is provided.
             world_size (Optional[int]): The total number of processes in the distributed setup.
                 Must be provided if rank is provided.
-            anchor_node_type (NodeType): The type of the anchor nodes to retrieve.
-                Defaults to DEFAULT_HOMOGENEOUS_NODE_TYPE.
-            supervision_edge_type (EdgeType): The edge type for supervision.
-                Defaults to DEFAULT_HOMOGENEOUS_EDGE_TYPE.
+            anchor_node_type (Optional[NodeType]): The type of the anchor nodes to retrieve.
+                Must be provided for heterogeneous graphs.
+                Must be None for labeled homogeneous graphs.
+                Defaults to None.
+            supervision_edge_type (Optional[EdgeType]): The edge type for supervision.
+                Must be provided for heterogeneous graphs.
+                Must be None for labeled homogeneous graphs.
+                Defaults to None.
 
         Returns:
             dict[int, ABLPInputNodes]:
@@ -377,6 +381,18 @@ class RemoteDistDataset:
             `mp_sharing_dict` to the `RemoteDistDataset` constructor.
         """
 
+        if (anchor_node_type is None) != (supervision_edge_type is None):
+            raise ValueError(
+                f"anchor_node_type and supervision_edge_type must both be provided or both be None, received: "
+                f"anchor_node_type: {anchor_node_type}, supervision_edge_type: {supervision_edge_type}"
+            )
+        if anchor_node_type is None:
+            evaluated_anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        if supervision_edge_type is None:
+            evaluated_supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+
+        del anchor_node_type, supervision_edge_type
+
         def anchors_key(server_rank: int) -> str:
             return f"ablp_server_{server_rank}_anchors"
 
@@ -393,9 +409,11 @@ class RemoteDistDataset:
         ) -> ABLPInputNodes:
             """Convert raw tensors into an ABLPInputNodes dataclass."""
             return ABLPInputNodes(
-                anchor_node_type=anchor_node_type,
+                anchor_node_type=evaluated_anchor_node_type,
                 anchor_nodes=anchors,
-                labels={supervision_edge_type: (positive_labels, negative_labels)},
+                labels={
+                    evaluated_supervision_edge_type: (positive_labels, negative_labels)
+                },
             )
 
         if self._mp_sharing_dict is not None:
@@ -405,7 +423,11 @@ class RemoteDistDataset:
                     f"Compute rank {torch.distributed.get_rank()} is getting ABLP input from storage nodes"
                 )
                 raw_ablp_inputs = self._get_ablp_input(
-                    split, rank, world_size, anchor_node_type, supervision_edge_type
+                    split=split,
+                    rank=rank,
+                    world_size=world_size,
+                    node_type=evaluated_anchor_node_type,
+                    supervision_edge_type=evaluated_supervision_edge_type,
                 )
                 for server_rank, (
                     anchors,
@@ -446,7 +468,11 @@ class RemoteDistDataset:
             return returned_ablp_inputs
         else:
             raw_inputs = self._get_ablp_input(
-                split, rank, world_size, anchor_node_type, supervision_edge_type
+                split=split,
+                rank=rank,
+                world_size=world_size,
+                node_type=evaluated_anchor_node_type,
+                supervision_edge_type=evaluated_supervision_edge_type,
             )
             return {
                 server_rank: wrap_ablp_input(anchors, positive_labels, negative_labels)
