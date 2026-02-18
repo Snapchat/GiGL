@@ -106,8 +106,8 @@ class ABLPInputNodes:
             is the supervision (message-passing) edge type
             (e.g. ("user", "to", "item")).
         anchor_node_type: The node type of the anchor nodes (e.g. "user").
-            Should be set for heterogeneous graphs. When None, the graph is treated as
-            labeled homogeneous and DEFAULT_HOMOGENEOUS_NODE_TYPE is used internally.
+            Should be set for heterogeneous graphs.
+            Should be set to DEFAULT_HOMOGENEOUS_NODE_TYPE for labeled homogeneous graphs.
 
     Example:
         For a user->item link prediction task with 3 anchor users::
@@ -137,7 +137,6 @@ class ABLPInputNodes:
     """
 
     anchor_nodes: torch.Tensor
+    anchor_node_type: NodeType
 
     labels: dict[EdgeType, tuple[torch.Tensor, Optional[torch.Tensor]]]
-
-    anchor_node_type: Optional[NodeType] = None

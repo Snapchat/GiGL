@@ -4,6 +4,13 @@ from typing import Callable, Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
+import concurrent.futures
+import time
+from collections import Counter, abc, defaultdict
+from typing import Optional, Union
+
+import torch
+from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
@@ -167,11 +174,11 @@ class DistABLPLoader(BaseDistLoader):
                 worker. Load testing has showed that setting worker_concurrency to 4 yields the best performance
                 for sampling. Although, you may whish to explore higher/lower settings when performance tuning.
                 (default: `4`).
-            prefetch_size (int, optional): Max number of sampled messages to prefetch on the
+            prefetch_size (Optional[int]): Max number of sampled messages to prefetch on the
                 client side, per server. Only applies to Graph Store mode (remote workers).
                 Lower values reduce server-side RPC thread contention when multiple loaders
-                are active concurrently. If ``None``, defaults to GLT's built-in default (4).
-                (default: ``None``).
+                are active concurrently. (default: ``None``).
+                If supplied and not it Graph Store mode, an error will be raised.
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
@@ -232,6 +239,7 @@ class DistABLPLoader(BaseDistLoader):
                 local_process_rank=runtime.local_rank
             )
         )
+        self.to_device = device
 
         # Mode-specific setup
         sampler_input: Union[ABLPNodeSamplerInput, list[ABLPNodeSamplerInput]]
@@ -277,6 +285,9 @@ class DistABLPLoader(BaseDistLoader):
                     f"dict[int, ABLPInputNodes], "
                     f"received {type(input_nodes)}"
                 )
+            if prefetch_size is None:
+                logger.info(f"prefetch_size is not provided, using default of 4")
+                prefetch_size = 4
             (
                 sampler_input,
                 worker_options,
@@ -572,7 +583,7 @@ class DistABLPLoader(BaseDistLoader):
         dataset: RemoteDistDataset,
         num_workers: int,
         worker_concurrency: int = 4,
-        prefetch_size: Optional[int] = None,
+        prefetch_size: int = 4,
     ) -> tuple[
         list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema
     ]:
