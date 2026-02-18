@@ -1,12 +1,12 @@
 import time
 from collections.abc import MutableMapping
 from multiprocessing.managers import DictProxy
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, cast
 
 import torch
-from graphlearn_torch.distributed import async_request_server, request_server
 
 from gigl.common.logger import Logger
+from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
@@ -260,7 +260,7 @@ class RemoteDistDataset:
             + self._local_rank
         )
         if compute_cluster_rank == 0:
-            ports = request_server(
+            ports: Union[list[int], list[None]] = request_server(
                 0,
                 get_free_ports,
                 num_ports=num_ports,
@@ -272,7 +272,7 @@ class RemoteDistDataset:
             ports = [None] * num_ports
         torch.distributed.broadcast_object_list(ports, src=0)
         logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
-        return ports
+        return cast(list[int], ports)
 
     def _get_ablp_input(
         self,

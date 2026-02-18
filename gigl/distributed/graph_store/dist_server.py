@@ -11,7 +11,7 @@ import threading
 import time
 import warnings
 from collections import abc
-from typing import Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, TypeVar, Union
 
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
@@ -48,9 +48,10 @@ SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
 r""" Interval (in seconds) to check exit status of server.
 """
 
+R = TypeVar("R")
 
-# TODO(kmonte): Migrate graph_store/storage_utils to this class.
-class DistServer(object):
+
+class DistServer:
     r"""A server that supports launching remote sampling workers for
     training clients.
 
@@ -71,7 +72,7 @@ class DistServer(object):
         # The mapping from the key in worker options (such as 'train', 'test')
         # to producer id
         self._worker_key2producer_id: dict[str, int] = {}
-        self._producer_pool: dict[int, DistABLPSamplingProducer] = {}
+        self._producer_pool: dict[int, DistMpSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
 
@@ -588,7 +589,7 @@ def wait_and_shutdown_server() -> None:
     shutdown_rpc()
 
 
-def _call_func_on_server(func, *args, **kwargs):
+def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R:
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
         logging.warning(
@@ -598,6 +599,9 @@ def _call_func_on_server(func, *args, **kwargs):
 
     server = get_server()
     if hasattr(server, func.__name__):
+        # NOTE: method does not respect inheritance.
+        # `func` is the full name of the function, e.g. gigl.distributed.graph_store.dist_server.DistServer.get_edge_dir
+        # And so if something subclasses DistServer, the *base* class method will be called, not the subclass method.
         return func(server, *args, **kwargs)
 
     return func(*args, **kwargs)
