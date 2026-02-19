@@ -7,13 +7,6 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
-from graphlearn_torch.distributed.dist_context import get_context
-from graphlearn_torch.sampler import (
-    NodeSamplerInput,
-    RemoteSamplerInput,
-    SamplingConfig,
-    SamplingType,
-)
 from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
 from graphlearn_torch.sampler import NodeSamplerInput
 from torch_geometric.data import Data, HeteroData
@@ -24,7 +17,6 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
@@ -160,28 +152,28 @@ class DistNeighborLoader(BaseDistLoader):
                 dataset, DistDataset
             ), "When using colocated mode, dataset must be a DistDataset."
             input_data, worker_options, dataset_metadata = self._setup_for_colocated(
-                input_nodes,
-                dataset,
-                runtime.local_rank,
-                runtime.local_world_size,
-                device,
-                runtime.master_ip_address,
-                runtime.node_rank,
-                runtime.node_world_size,
-                num_workers,
-                worker_concurrency,
-                channel_size,
-                num_cpu_threads,
+                input_nodes=input_nodes,
+                dataset=dataset,
+                local_rank=runtime.local_rank,
+                local_world_size=runtime.local_world_size,
+                device=device,
+                master_ip_address=runtime.master_ip_address,
+                node_rank=runtime.node_rank,
+                node_world_size=runtime.node_world_size,
+                num_workers=num_workers,
+                worker_concurrency=worker_concurrency,
+                channel_size=channel_size,
+                num_cpu_threads=num_cpu_threads,
             )
         else:
             assert isinstance(
                 dataset, RemoteDistDataset
             ), "When using Graph Store mode, dataset must be a RemoteDistDataset."
             input_data, worker_options, dataset_metadata = self._setup_for_graph_store(
-                input_nodes,
-                dataset,
-                num_workers,
-                channel_size,
+                input_nodes=input_nodes,
+                dataset=dataset,
+                num_workers=num_workers,
+                channel_size=channel_size,
             )
 
         # Cleanup temporary process group if needed
@@ -211,7 +203,11 @@ class DistNeighborLoader(BaseDistLoader):
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
             sampler = DistMpSamplingProducer(
-                dataset, input_data, sampling_config, worker_options, channel,
+                dataset,
+                input_data,
+                sampling_config,
+                worker_options,
+                channel,
             )
         else:
             sampler = GiglDistServer.create_sampling_producer

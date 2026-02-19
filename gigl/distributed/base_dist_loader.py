@@ -12,7 +12,7 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
@@ -22,16 +22,24 @@ from graphlearn_torch.distributed import (
     RemoteDistSamplingWorkerOptions,
 )
 from graphlearn_torch.distributed.dist_client import async_request_server
-from graphlearn_torch.distributed.dist_context import get_context
 from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
-from graphlearn_torch.sampler import RemoteSamplerInput, SamplingConfig, SamplingType
+from graphlearn_torch.distributed.rpc import rpc_is_initialized
+from graphlearn_torch.sampler import (
+    NodeSamplerInput,
+    RemoteSamplerInput,
+    SamplingConfig,
+    SamplingType,
+)
 from torch_geometric.typing import EdgeType
+from typing_extensions import Self
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.graph_store.compute import request_server
+from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
@@ -154,9 +162,7 @@ class BaseDistLoader(DistLoader):
             world_size = torch.distributed.get_world_size()
             rank = torch.distributed.get_rank()
 
-            rank_ip_addresses = (
-                gigl.distributed.utils.get_internal_ip_from_all_ranks()
-            )
+            rank_ip_addresses = gigl.distributed.utils.get_internal_ip_from_all_ranks()
             master_ip_address = rank_ip_addresses[0]
 
             count_ranks_per_ip_address = Counter(rank_ip_addresses)
@@ -188,7 +194,7 @@ class BaseDistLoader(DistLoader):
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
-        sampler_input: Any,
+        sampler_input: Union[NodeSamplerInput, list[NodeSamplerInput]],
         dataset_metadata: DatasetSchema,
         worker_options: Union[
             MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
@@ -214,6 +220,7 @@ class BaseDistLoader(DistLoader):
         if isinstance(sampler, DistMpSamplingProducer):
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
+            assert isinstance(sampler_input, NodeSamplerInput)
             self._init_colocated_connections(
                 dataset=dataset,
                 sampler_input=sampler_input,
@@ -308,7 +315,7 @@ class BaseDistLoader(DistLoader):
     def _init_colocated_connections(
         self,
         dataset: DistDataset,
-        sampler_input: Any,
+        sampler_input: NodeSamplerInput,
         sampling_config: SamplingConfig,
         device: torch.device,
         worker_options: MpDistSamplingWorkerOptions,
@@ -355,9 +362,7 @@ class BaseDistLoader(DistLoader):
 
         self.num_data_partitions = dataset.num_partitions
         self.data_partition_idx = dataset.partition_idx
-        self._set_ntypes_and_etypes(
-            dataset.get_node_types(), dataset.get_edge_types()
-        )
+        self._set_ntypes_and_etypes(dataset.get_node_types(), dataset.get_edge_types())
 
         self._num_recv = 0
         self._epoch = 0
@@ -385,7 +390,7 @@ class BaseDistLoader(DistLoader):
     def _init_graph_store_connections(
         self,
         dataset: RemoteDistDataset,
-        sampler_input: list,
+        sampler_input: list[NodeSamplerInput],
         sampling_config: SamplingConfig,
         device: torch.device,
         worker_options: RemoteDistSamplingWorkerOptions,
@@ -545,3 +550,41 @@ class BaseDistLoader(DistLoader):
             f"initialized the dist loader"
         )
         _flush()
+
+    # Overwrite DistLoader.shutdown to so we can use our own shutdown and rpc calls
+    def shutdown(self) -> None:
+        if self._shutdowned:
+            return
+        if self._is_collocated_worker:
+            self._collocated_producer.shutdown()
+        elif self._is_mp_worker:
+            self._mp_producer.shutdown()
+        elif rpc_is_initialized() is True:
+            for server_rank, producer_id in zip(
+                self._server_rank_list, self._producer_id_list
+            ):
+                request_server(
+                    server_rank, DistServer.destroy_sampling_producer, producer_id
+                )
+        self._shutdowned = True
+
+    # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
+    def __iter__(self) -> Self:
+        self._num_recv = 0
+        if self._is_collocated_worker:
+            self._collocated_producer.reset()
+        elif self._is_mp_worker:
+            self._mp_producer.produce_all()
+        else:
+            for server_rank, producer_id in zip(
+                self._server_rank_list, self._producer_id_list
+            ):
+                request_server(
+                    server_rank,
+                    DistServer.start_new_epoch_sampling,
+                    producer_id,
+                    self._epoch,
+                )
+            self._channel.reset()
+        self._epoch += 1
+        return self

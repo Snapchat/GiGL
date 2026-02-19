@@ -4,13 +4,6 @@ from typing import Callable, Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-import concurrent.futures
-import time
-from collections import Counter, abc, defaultdict
-from typing import Optional, Union
-
-import torch
-from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
@@ -243,7 +236,9 @@ class DistABLPLoader(BaseDistLoader):
 
         # Mode-specific setup
         sampler_input: Union[ABLPNodeSamplerInput, list[ABLPNodeSamplerInput]]
-        worker_options: Union[MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions]
+        worker_options: Union[
+            MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
+        ]
         dataset_metadata: DatasetSchema
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(
@@ -321,13 +316,18 @@ class DistABLPLoader(BaseDistLoader):
 
         # Build the sampler: a pre-constructed producer for colocated mode,
         # or an RPC callable for graph store mode.
-        sampler: Union[DistABLPSamplingProducer, Callable[..., int]]
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
-            sampler = DistABLPSamplingProducer(
-                dataset, sampler_input, sampling_config, worker_options, channel,
+            sampler: Union[
+                DistABLPSamplingProducer, Callable[..., int]
+            ] = DistABLPSamplingProducer(
+                dataset,
+                sampler_input,
+                sampling_config,
+                worker_options,
+                channel,
             )
         else:
             sampler = DistServer.create_sampling_ablp_producer
@@ -619,9 +619,6 @@ class DistABLPLoader(BaseDistLoader):
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
         worker_key = f"compute_ablp_loader_rank_{node_rank}"
         logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
-        prefetch_kwargs = {}
-        if prefetch_size is not None:
-            prefetch_kwargs["prefetch_size"] = prefetch_size
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -630,7 +627,7 @@ class DistABLPLoader(BaseDistLoader):
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             master_port=sampling_port,
             worker_key=worker_key,
-            **prefetch_kwargs,
+            prefetch_size=prefetch_size,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: "
@@ -653,13 +650,10 @@ class DistABLPLoader(BaseDistLoader):
         # Extract node type and label edge types from the ABLPInputNodes dataclass.
         # All entries should have the same anchor_node_type and edge type keys.
         first_input = next(iter(input_nodes.values()))
-        # anchor_node_type is None for labeled homogeneous, set for heterogeneous
-        if first_input.anchor_node_type is not None:
-            input_type: Optional[NodeType] = first_input.anchor_node_type
-            is_homogeneous_with_labeled_edge_type = True
-        else:
-            input_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-            is_homogeneous_with_labeled_edge_type = False
+        input_type: Optional[NodeType] = first_input.anchor_node_type
+        is_homogeneous_with_labeled_edge_type = (
+            input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
+        )
 
         # Extract supervision edge types and derive label edge types from the
         # ABLPInputNodes.labels dict (keyed by supervision edge type).
