@@ -1,6 +1,7 @@
 import sys
 import time
 from collections import Counter, abc
+from itertools import count
 from typing import Optional, Tuple, Union
 
 import torch
@@ -57,6 +58,11 @@ def flush():
 
 
 class DistNeighborLoader(DistLoader):
+    # Counts instantiations of this class, per process.
+    # This is needed so we can generate unique worker key for each instance, for graph store mode.
+    # NOTE: This is per-class, not per-instance.
+    _counter = count(0)
+
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -229,6 +235,8 @@ class DistNeighborLoader(DistLoader):
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
                 )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
+
+        self._instance_count = next(self._counter)
         device = (
             pin_memory_device
             if pin_memory_device
@@ -372,10 +380,9 @@ class DistNeighborLoader(DistLoader):
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
-        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.Expand commentComment on line R823Resolved
-        # e.g. if we have two different DistNeighborLoaders, then they will have conflicting worker keys.
-        # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
-        # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
+
+        worker_key = f"compute_rank_{node_rank}_worker_{self._instance_count}"
+        logger.info(f"Rank {torch.distributed.get_rank()} worker key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -383,8 +390,8 @@ class DistNeighborLoader(DistLoader):
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             buffer_size=channel_size,
             master_port=sampling_port,
+            worker_key=worker_key,
             prefetch_size=prefetch_size,
-            worker_key=f"compute_loader_rank_{node_rank}",
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
