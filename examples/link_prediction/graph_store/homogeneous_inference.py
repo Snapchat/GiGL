@@ -84,7 +84,6 @@ You can run this example in a full pipeline with `make run_hom_cora_sup_gs_test`
 import argparse
 import gc
 import os
-import sys
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
@@ -92,13 +91,13 @@ from typing import Union
 
 import torch
 import torch.multiprocessing as mp
+from examples.link_prediction.graph_store.structured_logging import get_logger
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
 from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
-from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed.graph_store.compute import init_compute_process
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -113,7 +112,7 @@ from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
 
-logger = Logger()
+logger = get_logger(__name__)
 
 # Default number of inference processes per machine incase one isnt provided in inference args
 # i.e. `local_world_size` is not provided, and we can't infer automatically.
@@ -230,9 +229,6 @@ def _inference_process(
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
     )
-    # We don't see logs for graph store mode for whatever reason.
-    # TOOD(#442): Revert this once the GCP issues are resolved.
-    sys.stdout.flush()
 
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
@@ -288,9 +284,6 @@ def _inference_process(
     # to only flushing when flush_embeddings() is called explicitly or after exiting via a context manager.
     exporter = EmbeddingExporter(export_dir=gcs_base_uri)
 
-    # We don't see logs for graph store mode for whatever reason.
-    # TOOD(#442): Revert this once the GCP issues are resolved.
-    sys.stdout.flush()
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
     torch.distributed.barrier()
@@ -335,9 +328,6 @@ def _inference_process(
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds "
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
-            # We don't see logs for graph store mode for whatever reason.
-            # TOOD(#442): Revert this once the GCP issues are resolved.
-            sys.stdout.flush()
             t = time.time()
             cumulative_data_loading_time = 0
             cumulative_inference_time = 0
@@ -356,9 +346,6 @@ def _inference_process(
     logger.info(
         f"--- Rank {rank} wrote embeddings to GCS at {gcs_base_uri} over batches"
     )
-    # We don't see logs for graph store mode for whatever reason.
-    # TOOD(#442): Revert this once the GCP issues are resolved.
-    sys.stdout.flush()
     # We first call barrier to ensure that all machines and processes have finished inference.
     # Only once all machines have finished inference is it safe to shutdown the data loader.
     # Otherwise, processes which are still sampling *will* fail as the loaders they are trying to communicatate with will be shutdown.
@@ -391,10 +378,6 @@ def _inference_process(
             dataset_id=bq_dataset_id,
             table_id=bq_table_name,
         )
-
-    # We don't see logs for graph store mode for whatever reason.
-    # TOOD(#442): Revert this once the GCP issues are resolved.
-    sys.stdout.flush()
 
 
 def _run_example_inference(
@@ -494,9 +477,6 @@ def _run_example_inference(
             gcs_utils.delete_files_in_bucket_dir(embedding_output_gcs_folder)
 
     inference_start_time = time.time()
-    # We don't see logs for graph store mode for whatever reason.
-    # TOOD(#442): Revert this once the GCP issues are resolved.
-    sys.stdout.flush()
 
     # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified
     # as a string of a list of integers, such as "[10, 10]".
