@@ -83,7 +83,6 @@ You can run this example in a full pipeline with `make run_het_dblp_sup_gs_e2e_t
 import argparse
 import gc
 import os
-import sys
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
@@ -92,13 +91,13 @@ from typing import Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
+from examples.link_prediction.graph_store.structured_logging import get_logger
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
 from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
-from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
@@ -116,16 +115,7 @@ from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
 
-logger = Logger()
-
-
-# We don't see logs for graph store mode for whatever reason.
-# TOOD(#442): Revert this once the GCP issues are resolved.
-def flush():
-    sys.stdout.write("\n")
-    sys.stdout.flush()
-    sys.stderr.write("\n")
-    sys.stderr.flush()
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -223,7 +213,6 @@ def _inference_process(
     logger.info(
         f"Initializing compute process for rank {local_rank} in machine {args.machine_rank} with cluster info {args.cluster_info} for inference node type {args.inference_node_type}"
     )
-    flush()
     init_compute_process(local_rank, args.cluster_info)
     dataset = RemoteDistDataset(
         args.cluster_info, local_rank, mp_sharing_dict=args.mp_sharing_dict
@@ -237,7 +226,6 @@ def _inference_process(
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
     )
-    flush()
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=args.num_neighbors,
@@ -252,7 +240,6 @@ def _inference_process(
         # don't compete for memory during initialization, causing OOM
         process_start_gap_seconds=0,
     )
-    flush()
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
@@ -294,7 +281,6 @@ def _inference_process(
 
     # We add a barrier here so that all machines and processes have initialized their dataloader at the start of the inference loop. Otherwise, on-the-fly subgraph
     # sampling may fail.
-    flush()
     torch.distributed.barrier()
 
     t = time.time()
@@ -302,7 +288,6 @@ def _inference_process(
     inference_start_time = time.time()
     cumulative_data_loading_time = 0.0
     cumulative_inference_time = 0.0
-    flush()
 
     # Begin inference loop
 
@@ -345,7 +330,6 @@ def _inference_process(
             t = time.time()
             cumulative_data_loading_time = 0
             cumulative_inference_time = 0
-            flush()
 
         data_loading_start_time = time.time()
 
@@ -375,8 +359,6 @@ def _inference_process(
     logger.info(
         f"--- All machines local rank {local_rank} finished inference for node type {args.inference_node_type}. Deleted data loader and shutdown compute process"
     )
-
-    flush()
 
 
 def _run_example_inference(
@@ -415,7 +397,6 @@ def _run_example_inference(
     logger.info(
         f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
     )
-    flush()
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
@@ -471,10 +452,8 @@ def _run_example_inference(
         raise ValueError(
             f"Number of inference processes per machine ({num_inference_processes_per_machine}) must not be more than the number of GPUs: ({torch.cuda.device_count()})"
         )
-    flush()
 
     ## Inference Start
-    flush()
     inference_start_time = time.time()
 
     for process_num, inference_node_type in enumerate(inference_node_types):
@@ -550,7 +529,6 @@ def _run_example_inference(
         logger.info(
             f"Rank {cluster_info.compute_node_rank} started inference process for node type {inference_node_type} with {num_inference_processes_per_machine} processes\nargs: {inference_args}"
         )
-        flush()
 
         mp.spawn(
             fn=_inference_process,
@@ -562,7 +540,6 @@ def _run_example_inference(
         logger.info(
             f"--- Inference finished on rank {cluster_info.compute_node_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
         )
-        flush()
 
         # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
         if cluster_info.compute_node_rank == 0:
@@ -583,15 +560,12 @@ def _run_example_inference(
                 table_id=bq_table_name,
                 should_run_async=should_run_async,
             )
-            flush()
     logger.info(
         f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
     )
 
 
 if __name__ == "__main__":
-    # TODO(#442): Revert this once the GCP issues are resolved.
-    # Per the GCP folks this try/except may help - though in practice it seems to not.
     try:
         parser = argparse.ArgumentParser(
             description="Arguments for distributed model inference on VertexAI"
@@ -606,7 +580,6 @@ if __name__ == "__main__":
         # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for distributed inference
         args, unused_args = parser.parse_known_args()
         logger.info(f"Args: {args}, Unused arguments: {unused_args}")
-        flush()
 
         # We only need `job_name` and `task_config_uri` for running inference
         _run_example_inference(
@@ -614,14 +587,7 @@ if __name__ == "__main__":
             task_config_uri=args.task_config_uri,
         )
     except Exception as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.stderr.flush()
+        logger.exception(f"Error: {e}")
         raise e
     finally:
-        # Note that `print` logs more reliably due to a Vertex AI bug.
-        # TODO(#442): Revert this once the GCP issues are resolved.
-        print("Finally block")
-        print("flush stdout")
-        sys.stdout.flush()
-        print("flush stderr")
-        sys.stderr.flush()
+        logger.info("Inference process complete")

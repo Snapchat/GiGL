@@ -72,9 +72,9 @@ from distutils.util import strtobool
 from typing import Literal, Optional, Union
 
 import torch
+from examples.link_prediction.graph_store.structured_logging import get_logger
 
 from gigl.common import Uri, UriFactory
-from gigl.common.logger import Logger
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -91,7 +91,7 @@ from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
-logger = Logger()
+logger = get_logger(__name__)
 
 
 def _run_storage_process(
