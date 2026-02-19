@@ -197,12 +197,13 @@ class DistNeighborLoader(BaseDistLoader):
 
         # Build the sampler: a pre-constructed producer for colocated mode,
         # or an RPC callable for graph store mode.
-        sampler: Union[DistMpSamplingProducer, Callable[..., int]]
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
-            sampler = DistMpSamplingProducer(
+            sampler: Union[
+                DistMpSamplingProducer, Callable[..., int]
+            ] = DistMpSamplingProducer(
                 dataset,
                 input_data,
                 sampling_config,

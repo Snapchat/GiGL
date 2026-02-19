@@ -235,11 +235,6 @@ class DistABLPLoader(BaseDistLoader):
         self.to_device = device
 
         # Mode-specific setup
-        sampler_input: Union[ABLPNodeSamplerInput, list[ABLPNodeSamplerInput]]
-        worker_options: Union[
-            MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
-        ]
-        dataset_metadata: DatasetSchema
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(
                 dataset, DistDataset
@@ -251,11 +246,7 @@ class DistABLPLoader(BaseDistLoader):
                     f"(torch.Tensor | tuple[NodeType, torch.Tensor] | None), "
                     f"received Graph Store format: dict[int, ABLPInputNodes]"
                 )
-            (
-                sampler_input,
-                worker_options,
-                dataset_metadata,
-            ) = self._setup_for_colocated(
+            setup_info = self._setup_for_colocated(
                 input_nodes=input_nodes,
                 dataset=dataset,
                 local_rank=runtime.local_rank,
@@ -269,6 +260,13 @@ class DistABLPLoader(BaseDistLoader):
                 channel_size=channel_size,
                 num_cpu_threads=num_cpu_threads,
             )
+            sampler_input: Union[
+                ABLPNodeSamplerInput, list[ABLPNodeSamplerInput]
+            ] = setup_info[0]
+            worker_options: Union[
+                MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
+            ] = setup_info[1]
+            dataset_metadata: DatasetSchema = setup_info[2]
         else:  # Graph Store mode
             assert isinstance(
                 dataset, RemoteDistDataset
@@ -650,7 +648,7 @@ class DistABLPLoader(BaseDistLoader):
         # Extract node type and label edge types from the ABLPInputNodes dataclass.
         # All entries should have the same anchor_node_type and edge type keys.
         first_input = next(iter(input_nodes.values()))
-        input_type: Optional[NodeType] = first_input.anchor_node_type
+        input_type = first_input.anchor_node_type
         is_homogeneous_with_labeled_edge_type = (
             input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
         )
