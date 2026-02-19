@@ -1,5 +1,6 @@
 import ast
 from collections import abc, defaultdict
+from itertools import count
 from typing import Callable, Optional, Union
 
 import torch
@@ -53,6 +54,10 @@ logger = Logger()
 
 
 class DistABLPLoader(BaseDistLoader):
+    # Counts instantiations of this class, per process.
+    # This is needed so we can generate unique worker key for each instance, for graph store mode.
+    _counter = count(0)
+
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -215,9 +220,16 @@ class DistABLPLoader(BaseDistLoader):
                 self._supervision_edge_types = supervision_edge_type
             else:
                 self._supervision_edge_types = [supervision_edge_type]
+            if prefetch_size is not None:
+                raise ValueError(
+                    f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
+        self._instance_count = next(self._counter)
+        if isinstance(dataset, DistDataset):
+            self.data = dataset
 
         # Resolve distributed context
         runtime = BaseDistLoader.resolve_runtime(
@@ -596,7 +608,7 @@ class DistABLPLoader(BaseDistLoader):
             num_workers: Number of sampling workers.
             worker_concurrency: Max sampling concurrency per worker. (default: ``4``).
             prefetch_size: Max prefetched sampled messages per server on client side.
-                If ``None``, defaults to GLT's built-in default (4). (default: ``None``).
+                (default: ``4``).
 
         Returns:
             Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema).
@@ -615,7 +627,9 @@ class DistABLPLoader(BaseDistLoader):
         # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
         # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
-        worker_key = f"compute_ablp_loader_rank_{node_rank}"
+        worker_key = (
+            f"compute_ablp_loader_rank_{node_rank}_worker_{self._instance_count}"
+        )
         logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),

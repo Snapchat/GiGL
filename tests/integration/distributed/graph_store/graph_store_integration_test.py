@@ -886,7 +886,7 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def _test_graph_store_homogeneous(self):
+    def test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
