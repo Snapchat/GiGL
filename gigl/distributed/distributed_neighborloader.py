@@ -60,6 +60,7 @@ def flush():
 class DistNeighborLoader(DistLoader):
     # Counts instantiations of this class, per process.
     # This is needed so we can generate unique worker key for each instance, for graph store mode.
+    # NOTE: This is per-class, not per-instance.
     _counter = count(0)
 
     def __init__(
@@ -82,6 +83,7 @@ class DistNeighborLoader(DistLoader):
         pin_memory_device: Optional[torch.device] = None,
         worker_concurrency: int = 4,
         channel_size: str = "4GB",
+        prefetch_size: Optional[int] = None,
         process_start_gap_seconds: float = 60.0,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
@@ -131,6 +133,12 @@ class DistNeighborLoader(DistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
+            prefetch_size (Optional[int]): Max number of sampled messages to prefetch on the
+                client side, per server. Only applies to Graph Store mode (remote workers).
+                Lower values reduce server-side RPC thread contention when multiple loaders
+                are active concurrently. (default: ``None``).
+                Only applicable in Graph Store mode.
+                If supplied and not it Graph Store mode, an error will be raised.
             process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
                 it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
                 attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
@@ -222,6 +230,10 @@ class DistNeighborLoader(DistLoader):
             self._sampling_cluster_setup = SamplingClusterSetup.GRAPH_STORE
         else:
             self._sampling_cluster_setup = SamplingClusterSetup.COLOCATED
+            if prefetch_size is not None:
+                raise ValueError(
+                    f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         self._instance_count = next(self._counter)
@@ -239,28 +251,32 @@ class DistNeighborLoader(DistLoader):
                 dataset, DistDataset
             ), "When using colocated mode, dataset must be a DistDataset."
             input_data, worker_options, dataset_metadata = self._setup_for_colocated(
-                input_nodes,
-                dataset,
-                local_rank,
-                local_world_size,
-                device,
-                master_ip_address,
-                node_rank,
-                node_world_size,
-                num_workers,
-                worker_concurrency,
-                channel_size,
-                num_cpu_threads,
+                input_nodes=input_nodes,
+                dataset=dataset,
+                local_rank=local_rank,
+                local_world_size=local_world_size,
+                device=device,
+                master_ip_address=master_ip_address,
+                node_rank=node_rank,
+                node_world_size=node_world_size,
+                num_workers=num_workers,
+                worker_concurrency=worker_concurrency,
+                channel_size=channel_size,
+                num_cpu_threads=num_cpu_threads,
             )
         else:  # Graph Store mode
             assert isinstance(
                 dataset, RemoteDistDataset
             ), "When using Graph Store mode, dataset must be a RemoteDistDataset."
+            if prefetch_size is None:
+                logger.info(f"prefetch_size is not provided, using default of 4")
+                prefetch_size = 4
             input_data, worker_options, dataset_metadata = self._setup_for_graph_store(
-                input_nodes,
-                dataset,
-                num_workers,
-                channel_size,
+                input_nodes=input_nodes,
+                dataset=dataset,
+                num_workers=num_workers,
+                prefetch_size=prefetch_size,
+                channel_size=channel_size,
             )
 
         self._is_homogeneous_with_labeled_edge_type = (
@@ -335,6 +351,7 @@ class DistNeighborLoader(DistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
+        prefetch_size: int,
         channel_size: str,
     ) -> tuple[NodeSamplerInput, RemoteDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
@@ -374,6 +391,7 @@ class DistNeighborLoader(DistLoader):
             buffer_size=channel_size,
             master_port=sampling_port,
             worker_key=worker_key,
+            prefetch_size=prefetch_size,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"

@@ -64,6 +64,7 @@ logger = Logger()
 class DistABLPLoader(DistLoader):
     # Counts instantiations of this class, per process.
     # This is needed so we can generate unique worker key for each instance, for graph store mode.
+    # NOTE: This is per-class, not per-instance.
     _counter = count(0)
 
     def __init__(
