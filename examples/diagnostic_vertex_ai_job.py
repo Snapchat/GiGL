@@ -30,7 +30,10 @@ Usage:
 """
 
 import argparse
+import logging
 import uuid
+
+from pythonjsonlogger import jsonlogger
 
 from gigl.common import Uri
 from gigl.src.common.constants.components import GiGLComponents
@@ -46,20 +49,55 @@ from snapchat.research.gbml.gigl_resource_config_pb2 import (
 )
 
 # ---------------------------------------------------------------------------
+# Vertex AI structured logging setup.
+# See: https://docs.cloud.google.com/vertex-ai/docs/training/code-requirements#python-logging-library
+# ---------------------------------------------------------------------------
+
+
+class VertexAiJsonFormatter(jsonlogger.JsonFormatter):
+    """Formats log records as JSON with fields expected by Cloud Logging."""
+
+    def process_log_record(self, log_record):
+        log_record["severity"] = log_record["levelname"]
+        log_record["timestampSeconds"] = int(log_record["created"])
+        log_record["timestampNanos"] = int(
+            (log_record["created"] % 1) * 1_000_000_000
+        )
+        return log_record
+
+
+def _configure_structured_logging() -> None:
+    formatter = VertexAiJsonFormatter(
+        "%(name)s|%(levelname)s|%(message)s|%(created)f|%(lineno)d|%(pathname)s",
+        "%Y-%m-%dT%H:%M:%S",
+    )
+    root_logger = logging.getLogger()
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
 # Diagnostic code that will run on every worker in both pools.
 # Written as semicolon-separated statements for readability.
+# Uses structured JSON logging so Vertex AI parses log entries correctly.
 # ---------------------------------------------------------------------------
 DIAGNOSTIC_CODE = (
-    "import sys;"
-    "import os;"
-    "import time;"
+    "import json,os,sys,time;"
     "os.environ['PYTHONUNBUFFERED']='1';"
-    "print('DIAGNOSTIC L1: Print started',flush=True);"
-    "sys.stderr.write('DIAGNOSTIC L2: Stderr started\\n');"
-    "sys.stderr.flush();"
-    "print(f'DIAGNOSTIC L3: PID: {os.getpid()}',flush=True);"
+    "log=lambda msg,sev='INFO':print(json.dumps("
+    "{'message':msg,'severity':sev,"
+    "'timestampSeconds':int(time.time()),"
+    "'timestampNanos':int((time.time()%1)*1_000_000_000)}),flush=True);"
+    "log('DIAGNOSTIC L1: Print started');"
+    "log('DIAGNOSTIC L2: Stderr started','WARNING');"
+    "log(f'DIAGNOSTIC L3: PID: {os.getpid()}');"
     "time.sleep(5);"
-    "print('DIAGNOSTIC L4: Script ending normally',flush=True);"
+    "log('DIAGNOSTIC L4: Script ending normally');"
     "sys.exit(0)"
 )
 
@@ -82,6 +120,8 @@ def _build_process_command(code: str) -> str:
 
 
 def main() -> None:
+    _configure_structured_logging()
+
     parser = argparse.ArgumentParser(
         description="Launch a diagnostic Vertex AI graph-store-enabled job "
         "via launch_graph_store_enabled_job."
@@ -236,16 +276,23 @@ def main() -> None:
     # signature but are not consumed by the diagnostic script.
     dummy_uri = Uri("gs://unused/placeholder")
 
-    print(f"Launching diagnostic graph-store job: {job_name}")
-    print(f"  Region:               {args.region}")
-    print(f"  Compute pool:         {args.compute_machine_type}, "
-          f"GPU: {args.compute_gpu_type or '(none)'} x{args.compute_gpu_count}, "
-          f"replicas: {args.compute_num_replicas}")
-    print(f"  Storage pool:         {args.storage_machine_type}, "
-          f"GPU: {args.storage_gpu_type or '(none)'} x{args.storage_gpu_count}, "
-          f"replicas: {args.storage_num_replicas}")
-    print(f"  Local world size:     {args.compute_cluster_local_world_size or '(auto)'}")
-    print(f"  Docker:               {args.docker_uri or '(default GiGL images)'}")
+    logger.info(
+        "Launching diagnostic graph-store job",
+        extra={
+            "job_name": job_name,
+            "region": args.region,
+            "compute_machine_type": args.compute_machine_type,
+            "compute_gpu_type": args.compute_gpu_type or "(none)",
+            "compute_gpu_count": args.compute_gpu_count,
+            "compute_num_replicas": args.compute_num_replicas,
+            "storage_machine_type": args.storage_machine_type,
+            "storage_gpu_type": args.storage_gpu_type or "(none)",
+            "storage_gpu_count": args.storage_gpu_count,
+            "storage_num_replicas": args.storage_num_replicas,
+            "local_world_size": args.compute_cluster_local_world_size or "(auto)",
+            "docker_uri": args.docker_uri or "(default GiGL images)",
+        },
+    )
 
     launch_graph_store_enabled_job(
         vertex_ai_graph_store_config=graph_store_config,
@@ -262,7 +309,7 @@ def main() -> None:
         component=component,
     )
 
-    print(f"Job {job_name} completed.")
+    logger.info("Job completed.", extra={"job_name": job_name})
 
 
 if __name__ == "__main__":
