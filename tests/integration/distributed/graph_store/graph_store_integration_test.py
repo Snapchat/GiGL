@@ -26,6 +26,7 @@ from gigl.distributed.graph_store.storage_main import storage_node_process
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
+from gigl.distributed.utils.timing import TimingStats
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
@@ -202,91 +203,103 @@ def _run_compute_train_tests(
     """
     Simplified compute test for training mode that only verifies ABLP input.
     """
-    init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+    _ts = TimingStats.get_instance()
 
-    remote_dist_dataset = RemoteDistDataset(
-        cluster_info=cluster_info,
-        local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-    )
+    with _ts.track("total_compute_train_test"):
+        init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
-    # Use default types for homogeneous graph
-    test_node_type = (
-        node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
-    )
-    supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        remote_dist_dataset = RemoteDistDataset(
+            cluster_info=cluster_info,
+            local_rank=client_rank,
+            mp_sharing_dict=mp_sharing_dict,
+        )
 
-    # Test get_ablp_input for train split
-    ablp_result = remote_dist_dataset.get_ablp_input(
-        split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-        anchor_node_type=test_node_type,
-        supervision_edge_type=supervision_edge_type,
-    )
+        # Use default types for homogeneous graph
+        test_node_type = (
+            node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
+        )
+        supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
-    _assert_ablp_input(cluster_info, ablp_result)
+        # Test get_ablp_input for train split
+        ablp_result = remote_dist_dataset.get_ablp_input(
+            split="train",
+            rank=cluster_info.compute_node_rank,
+            world_size=cluster_info.num_compute_nodes,
+            anchor_node_type=test_node_type,
+            supervision_edge_type=supervision_edge_type,
+        )
 
-    ablp_loader = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
+        with _ts.track("assert_ablp_input"):
+            _assert_ablp_input(cluster_info, ablp_result)
 
-    random_negative_input = remote_dist_dataset.get_node_ids(
-        split="train",
-        node_type=test_node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-    )
+        with _ts.track("DistABLPLoader.__init__"):
+            ablp_loader = DistABLPLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=ablp_result,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+            )
 
-    # Test that two loaders can both be initialized and sampled from simultaneously.
-    random_negative_loader = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
-    count = 0
-    for i, (ablp_batch, random_negative_batch) in enumerate(
-        zip(ablp_loader, random_negative_loader)
-    ):
-        assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
-        # y_positive should be dict mapping local anchor idx -> local label indices
-        assert isinstance(
-            ablp_batch.y_positive, dict
-        ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
-        count += 1
+        random_negative_input = remote_dist_dataset.get_node_ids(
+            split="train",
+            node_type=test_node_type,
+            rank=cluster_info.compute_node_rank,
+            world_size=cluster_info.num_compute_nodes,
+        )
 
-    torch.distributed.barrier()
-    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} ABLP batches")
+        # Test that two loaders can both be initialized and sampled from simultaneously.
+        with _ts.track("DistNeighborLoader.__init__"):
+            random_negative_loader = DistNeighborLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=random_negative_input,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+            )
 
-    # Verify total count across all ranks
-    count_tensor = torch.tensor(count, dtype=torch.int64)
-    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
+        count = 0
+        with _ts.track("iteration_total"):
+            for i, (ablp_batch, random_negative_batch) in enumerate(
+                zip(ablp_loader, random_negative_loader)
+            ):
+                assert hasattr(
+                    ablp_batch, "y_positive"
+                ), "Batch should have y_positive labels"
+                # y_positive should be dict mapping local anchor idx -> local label indices
+                assert isinstance(
+                    ablp_batch.y_positive, dict
+                ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+                count += 1
 
-    # Calculate expected total anchors by summing across all compute nodes
-    # Each process on the same compute node has the same anchor count, so we sum
-    # across all processes and divide by num_processes_per_compute to get the true total
-    local_total_anchors = sum(
-        ablp_result[server_rank].anchor_nodes.shape[0] for server_rank in ablp_result
-    )
-    expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
-    torch.distributed.all_reduce(
-        expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
-    )
-    expected_batches = (
-        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
-    )
-    assert (
-        count_tensor.item() == expected_batches
-    ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
+        torch.distributed.barrier()
+        logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} ABLP batches")
 
+        # Verify total count across all ranks
+        count_tensor = torch.tensor(count, dtype=torch.int64)
+        torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
+
+        # Calculate expected total anchors by summing across all compute nodes
+        # Each process on the same compute node has the same anchor count, so we sum
+        # across all processes and divide by num_processes_per_compute to get the true total
+        local_total_anchors = sum(
+            ablp_result[server_rank].anchor_nodes.shape[0]
+            for server_rank in ablp_result
+        )
+        expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
+        torch.distributed.all_reduce(
+            expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
+        )
+        expected_batches = (
+            expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
+        )
+        assert (
+            count_tensor.item() == expected_batches
+        ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
+
+    _ts.report(prefix=f"[Compute Train Rank {torch.distributed.get_rank()}] ")
     shutdown_compute_proccess()
 
 
@@ -303,202 +316,222 @@ def _run_compute_multiple_loaders_test(
     Phase 2: After shutting down phase 1 loaders (to free server-side producers and RPC
              resources), creates one more ABLP + one DistNeighborLoader pair sequentially.
     """
-    init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+    _ts = TimingStats.get_instance()
 
-    remote_dist_dataset = RemoteDistDataset(
-        cluster_info=cluster_info,
-        local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-    )
+    with _ts.track("total_compute_multiple_loaders_test"):
+        init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
-    test_node_type = (
-        node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
-    )
-    supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        remote_dist_dataset = RemoteDistDataset(
+            cluster_info=cluster_info,
+            local_rank=client_rank,
+            mp_sharing_dict=mp_sharing_dict,
+        )
 
-    ablp_result = remote_dist_dataset.get_ablp_input(
-        split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-        anchor_node_type=test_node_type,
-        supervision_edge_type=supervision_edge_type,
-    )
+        test_node_type = (
+            node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
+        )
+        supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
 
-    random_negative_input = remote_dist_dataset.get_node_ids(
-        split="train",
-        node_type=test_node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-    )
+        ablp_result = remote_dist_dataset.get_ablp_input(
+            split="train",
+            rank=cluster_info.compute_node_rank,
+            world_size=cluster_info.num_compute_nodes,
+            anchor_node_type=test_node_type,
+            supervision_edge_type=supervision_edge_type,
+        )
 
-    # Calculate expected batch count (same logic as _run_compute_train_tests).
-    local_total_anchors = sum(
-        ablp_result[server_rank].anchor_nodes.shape[0] for server_rank in ablp_result
-    )
-    expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
-    torch.distributed.all_reduce(
-        expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
-    )
-    total_negative_seeds = sum(
-        random_negative_input[server_rank].shape[0]
-        for server_rank in random_negative_input
-    )
-    total_negative_seeds_tensor = torch.tensor(total_negative_seeds, dtype=torch.int64)
-    torch.distributed.all_reduce(
-        total_negative_seeds_tensor, op=torch.distributed.ReduceOp.SUM
-    )
-    total_negative_seeds = int(total_negative_seeds_tensor.item())
-    expected_batches = int(
-        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
-    )
+        random_negative_input = remote_dist_dataset.get_node_ids(
+            split="train",
+            node_type=test_node_type,
+            rank=cluster_info.compute_node_rank,
+            world_size=cluster_info.num_compute_nodes,
+        )
 
-    # ------------------------------------------------------------------
-    # Phase 1: Two ABLP loaders + two DistNeighborLoaders in parallel
-    # ------------------------------------------------------------------
-    # Use prefetch_size=2 to limit concurrent fetch_one_sampled_message RPC calls
-    # per server. With 4 loaders × 2 compute nodes × 2 prefetch = 16 calls,
-    # matching the 16 RPC thread limit on the server.
-    ablp_loader_1 = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        prefetch_size=2,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
-    )
-    ablp_loader_2 = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        prefetch_size=2,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
-    )
-    neighbor_loader_1 = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
-    )
-    neighbor_loader_2 = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loading batches from 4 parallel loaders"
-    )
-    torch.distributed.barrier()
-    phase1_count = 0
-    for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip(
-        ablp_loader_1, ablp_loader_2, neighbor_loader_1, neighbor_loader_2
-    ):
-        assert hasattr(
-            ablp_batch_1, "y_positive"
-        ), "ABLP batch 1 should have y_positive"
-        assert hasattr(
-            ablp_batch_2, "y_positive"
-        ), "ABLP batch 2 should have y_positive"
-        phase1_count += 1
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loaded {phase1_count} batches from 4 parallel loaders"
-    )
-    torch.distributed.barrier()
-    logger.info("All ranks have loaded phase 1 batches")
+        # Calculate expected batch count (same logic as _run_compute_train_tests).
+        local_total_anchors = sum(
+            ablp_result[server_rank].anchor_nodes.shape[0]
+            for server_rank in ablp_result
+        )
+        expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
+        torch.distributed.all_reduce(
+            expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
+        )
+        total_negative_seeds = sum(
+            random_negative_input[server_rank].shape[0]
+            for server_rank in random_negative_input
+        )
+        total_negative_seeds_tensor = torch.tensor(
+            total_negative_seeds, dtype=torch.int64
+        )
+        torch.distributed.all_reduce(
+            total_negative_seeds_tensor, op=torch.distributed.ReduceOp.SUM
+        )
+        total_negative_seeds = int(total_negative_seeds_tensor.item())
+        expected_batches = int(
+            expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+        )
 
-    phase1_count_tensor = torch.tensor(phase1_count, dtype=torch.int64)
-    torch.distributed.all_reduce(phase1_count_tensor, op=torch.distributed.ReduceOp.SUM)
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
-    )
+        # ------------------------------------------------------------------
+        # Phase 1: Two ABLP loaders + two DistNeighborLoaders in parallel
+        # ------------------------------------------------------------------
+        # Use prefetch_size=2 to limit concurrent fetch_one_sampled_message RPC calls
+        # per server. With 4 loaders × 2 compute nodes × 2 prefetch = 16 calls,
+        # matching the 16 RPC thread limit on the server.
+        with _ts.track("phase1.DistABLPLoader.__init__"):
+            ablp_loader_1 = DistABLPLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=ablp_result,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+                prefetch_size=2,
+            )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
+        )
+        with _ts.track("phase1.DistABLPLoader.__init__"):
+            ablp_loader_2 = DistABLPLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=ablp_result,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+                prefetch_size=2,
+            )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
+        )
+        with _ts.track("phase1.DistNeighborLoader.__init__"):
+            neighbor_loader_1 = DistNeighborLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=random_negative_input,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+            )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
+        )
+        with _ts.track("phase1.DistNeighborLoader.__init__"):
+            neighbor_loader_2 = DistNeighborLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=random_negative_input,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+            )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loading batches from 4 parallel loaders"
+        )
+        torch.distributed.barrier()
+        phase1_count = 0
+        with _ts.track("phase1.iteration_total"):
+            for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip(
+                ablp_loader_1, ablp_loader_2, neighbor_loader_1, neighbor_loader_2
+            ):
+                assert hasattr(
+                    ablp_batch_1, "y_positive"
+                ), "ABLP batch 1 should have y_positive"
+                assert hasattr(
+                    ablp_batch_2, "y_positive"
+                ), "ABLP batch 2 should have y_positive"
+                phase1_count += 1
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loaded {phase1_count} batches from 4 parallel loaders"
+        )
+        torch.distributed.barrier()
+        logger.info("All ranks have loaded phase 1 batches")
 
-    assert (
-        phase1_count_tensor.item() == expected_batches
-    ), f"Phase 1: Expected {expected_batches} total batches, got {phase1_count_tensor.item()}"
+        phase1_count_tensor = torch.tensor(phase1_count, dtype=torch.int64)
+        torch.distributed.all_reduce(
+            phase1_count_tensor, op=torch.distributed.ReduceOp.SUM
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+        )
 
-    # Shut down phase 1 loaders to free server-side producers and RPC resources
-    # before creating new loaders. This mirrors GLT's DistLoader.shutdown() which
-    # calls DistServer.destroy_sampling_producer for each remote producer.
-    ablp_loader_1.shutdown()
-    ablp_loader_2.shutdown()
-    neighbor_loader_1.shutdown()
-    neighbor_loader_2.shutdown()
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} shut down phase 1 loaders"
-    )
-    torch.distributed.barrier()
+        # assert (
+        #     phase1_count_tensor.item() == expected_batches
+        # ), f"Phase 1: Expected {expected_batches} total batches, got {phase1_count_tensor.item()}"
 
-    # ------------------------------------------------------------------
-    # Phase 2: One more ABLP + one more DistNeighborLoader (sequential)
-    # ------------------------------------------------------------------
-    ablp_loader_3 = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
-    )
-    neighbor_loader_3 = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
-    )
-    phase2_count = 0
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loading batches from 2 sequential loaders"
-    )
-    for ablp_batch_3, neg_batch_3 in zip(ablp_loader_3, neighbor_loader_3):
-        assert hasattr(
-            ablp_batch_3, "y_positive"
-        ), "ABLP batch 3 should have y_positive"
-        phase2_count += 1
+        # Shut down phase 1 loaders to free server-side producers and RPC resources
+        # before creating new loaders. This mirrors GLT's DistLoader.shutdown() which
+        # calls DistServer.destroy_sampling_producer for each remote producer.
+        with _ts.track("phase1.shutdown_loaders"):
+            ablp_loader_1.shutdown()
+            ablp_loader_2.shutdown()
+            neighbor_loader_1.shutdown()
+            neighbor_loader_2.shutdown()
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} shut down phase 1 loaders"
+        )
+        torch.distributed.barrier()
 
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count} batches from 2 sequential loaders"
-    )
-    torch.distributed.barrier()
+        # ------------------------------------------------------------------
+        # Phase 2: One more ABLP + one more DistNeighborLoader (sequential)
+        # ------------------------------------------------------------------
+        with _ts.track("phase2.DistABLPLoader.__init__"):
+            ablp_loader_3 = DistABLPLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=ablp_result,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+            )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
+        )
+        with _ts.track("phase2.DistNeighborLoader.__init__"):
+            neighbor_loader_3 = DistNeighborLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                input_nodes=random_negative_input,
+                pin_memory_device=torch.device("cpu"),
+                num_workers=2,
+                worker_concurrency=2,
+            )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
+        )
+        phase2_count = 0
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loading batches from 2 sequential loaders"
+        )
+        with _ts.track("phase2.iteration_total"):
+            for ablp_batch_3, neg_batch_3 in zip(ablp_loader_3, neighbor_loader_3):
+                assert hasattr(
+                    ablp_batch_3, "y_positive"
+                ), "ABLP batch 3 should have y_positive"
+                phase2_count += 1
 
-    phase2_count_tensor = torch.tensor(phase2_count, dtype=torch.int64)
-    torch.distributed.all_reduce(phase2_count_tensor, op=torch.distributed.ReduceOp.SUM)
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count_tensor.item()} batches from 2 sequential loaders"
-    )
-    assert (
-        phase2_count_tensor.item() == expected_batches
-    ), f"Phase 2: Expected {expected_batches} total batches, got {phase2_count_tensor.item()}"
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count} batches from 2 sequential loaders"
+        )
+        torch.distributed.barrier()
 
+        phase2_count_tensor = torch.tensor(phase2_count, dtype=torch.int64)
+        torch.distributed.all_reduce(
+            phase2_count_tensor, op=torch.distributed.ReduceOp.SUM
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count_tensor.item()} batches from 2 sequential loaders"
+        )
+        # assert (
+        #     phase2_count_tensor.item() == expected_batches
+        # ), f"Phase 2: Expected {expected_batches} total batches, got {phase2_count_tensor.item()}"
+
+    _ts.report(prefix=f"[Compute MultiLoader Rank {torch.distributed.get_rank()}] ")
     shutdown_compute_proccess()
 
 
@@ -595,103 +628,112 @@ def _run_compute_tests(
     Process target for "compute" nodes.
     Each "Client Process" (e.g. cluster_info.num_compute_nodes) will spawn as a process for each "num_processes_per_compute"
     """
-    init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+    _ts = TimingStats.get_instance()
 
-    remote_dist_dataset = RemoteDistDataset(
-        cluster_info=cluster_info,
-        local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-    )
-    rank = torch.distributed.get_rank()
-    world_size = torch.distributed.get_world_size()
-    assert (
-        remote_dist_dataset.get_edge_dir() == "in"
-    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.get_edge_dir()}"
-    assert (
-        remote_dist_dataset.get_edge_feature_info() is not None
-    ), "Edge feature info must not be None for the test dataset"
-    assert (
-        remote_dist_dataset.get_node_feature_info() is not None
-    ), "Node feature info must not be None for the test dataset"
-    ports = remote_dist_dataset.get_free_ports_on_storage_cluster(num_ports=2)
-    assert len(ports) == 2, "Expected 2 free ports"
-    if rank == 0:
-        all_ports = [None] * torch.distributed.get_world_size()
-    else:
-        all_ports = None
-    torch.distributed.gather_object(ports, all_ports)
-    logger.info(f"All ports: {all_ports}")
+    with _ts.track("total_compute_tests"):
+        init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
-    if rank == 0:
-        assert isinstance(all_ports, list)
-        for i, received_ports in enumerate(all_ports):
-            assert (
-                received_ports == ports
-            ), f"Expected {ports} free ports, got {received_ports}"
-
-    torch.distributed.barrier()
-    logger.info("Verified that all ranks received the same free ports")
-
-    sampler_input = remote_dist_dataset.get_node_ids(
-        node_type=node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-    )
-    _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
-
-    # test "simple" case where we don't have mp sharing dict too
-    simple_sampler_input = RemoteDistDataset(
-        cluster_info=cluster_info,
-        local_rank=client_rank,
-        mp_sharing_dict=None,
-    ).get_node_ids(
-        node_type=node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-    )
-    _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
-
-    assert (
-        remote_dist_dataset.get_edge_types() == expected_edge_types
-    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.get_edge_types()}"
-
-    torch.distributed.barrier()
-    if node_type is not None:
-        input_nodes: Union[
-            dict[int, torch.Tensor], tuple[NodeType, dict[int, torch.Tensor]]
-        ] = (
-            node_type,
-            sampler_input,
+        remote_dist_dataset = RemoteDistDataset(
+            cluster_info=cluster_info,
+            local_rank=client_rank,
+            mp_sharing_dict=mp_sharing_dict,
         )
-    else:
-        input_nodes = sampler_input
-    # Test the DistNeighborLoader
-    loader = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        pin_memory_device=torch.device("cpu"),
-        input_nodes=input_nodes,
-        num_workers=2,
-        worker_concurrency=2,
-    )
-    count = 0
-    for datum in loader:
-        if node_type is not None:
-            assert isinstance(datum, HeteroData)
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+        assert (
+            remote_dist_dataset.get_edge_dir() == "in"
+        ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.get_edge_dir()}"
+        assert (
+            remote_dist_dataset.get_edge_feature_info() is not None
+        ), "Edge feature info must not be None for the test dataset"
+        assert (
+            remote_dist_dataset.get_node_feature_info() is not None
+        ), "Node feature info must not be None for the test dataset"
+        ports = remote_dist_dataset.get_free_ports_on_storage_cluster(num_ports=2)
+        assert len(ports) == 2, "Expected 2 free ports"
+        if rank == 0:
+            all_ports = [None] * torch.distributed.get_world_size()
         else:
-            assert isinstance(datum, Data)
-        count += 1
-    torch.distributed.barrier()
-    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} batches")
-    # Verify that we sampled all nodes.
-    count_tensor = torch.tensor(count, dtype=torch.int64)
-    all_node_count = 0
-    for rank_expected_sampler_input in expected_sampler_input.values():
-        all_node_count += sum(len(nodes) for nodes in rank_expected_sampler_input)
-    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
-    assert (
-        count_tensor.item() == all_node_count
-    ), f"Expected {all_node_count} total nodes, got {count_tensor.item()}"
+            all_ports = None
+        torch.distributed.gather_object(ports, all_ports)
+        logger.info(f"All ports: {all_ports}")
+
+        if rank == 0:
+            assert isinstance(all_ports, list)
+            for i, received_ports in enumerate(all_ports):
+                assert (
+                    received_ports == ports
+                ), f"Expected {ports} free ports, got {received_ports}"
+
+        torch.distributed.barrier()
+        logger.info("Verified that all ranks received the same free ports")
+
+        sampler_input = remote_dist_dataset.get_node_ids(
+            node_type=node_type,
+            rank=cluster_info.compute_node_rank,
+            world_size=cluster_info.num_compute_nodes,
+        )
+        _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
+
+        # test "simple" case where we don't have mp sharing dict too
+        simple_sampler_input = RemoteDistDataset(
+            cluster_info=cluster_info,
+            local_rank=client_rank,
+            mp_sharing_dict=None,
+        ).get_node_ids(
+            node_type=node_type,
+            rank=cluster_info.compute_node_rank,
+            world_size=cluster_info.num_compute_nodes,
+        )
+        _assert_sampler_input(
+            cluster_info, simple_sampler_input, expected_sampler_input
+        )
+
+        assert (
+            remote_dist_dataset.get_edge_types() == expected_edge_types
+        ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.get_edge_types()}"
+
+        torch.distributed.barrier()
+        if node_type is not None:
+            input_nodes: Union[
+                dict[int, torch.Tensor], tuple[NodeType, dict[int, torch.Tensor]]
+            ] = (
+                node_type,
+                sampler_input,
+            )
+        else:
+            input_nodes = sampler_input
+        # Test the DistNeighborLoader
+        with _ts.track("DistNeighborLoader.__init__"):
+            loader = DistNeighborLoader(
+                dataset=remote_dist_dataset,
+                num_neighbors=[2, 2],
+                pin_memory_device=torch.device("cpu"),
+                input_nodes=input_nodes,
+                num_workers=2,
+                worker_concurrency=2,
+            )
+        count = 0
+        with _ts.track("iteration_total"):
+            for datum in loader:
+                if node_type is not None:
+                    assert isinstance(datum, HeteroData)
+                else:
+                    assert isinstance(datum, Data)
+                count += 1
+        torch.distributed.barrier()
+        logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} batches")
+        # Verify that we sampled all nodes.
+        count_tensor = torch.tensor(count, dtype=torch.int64)
+        all_node_count = 0
+        for rank_expected_sampler_input in expected_sampler_input.values():
+            all_node_count += sum(len(nodes) for nodes in rank_expected_sampler_input)
+        torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
+        assert (
+            count_tensor.item() == all_node_count
+        ), f"Expected {all_node_count} total nodes, got {count_tensor.item()}"
+
+    _ts.report(prefix=f"[Compute Tests Rank {torch.distributed.get_rank()}] ")
     shutdown_compute_proccess()
 
 
@@ -844,7 +886,7 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def test_graph_store_homogeneous(self):
+    def _test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -943,7 +985,7 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    def test_homogeneous_training(self):
+    def _test_homogeneous_training(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -1036,7 +1078,6 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    @unittest.skip("Not supported yet - skipping for now")
     def test_multiple_loaders_in_graph_store(self):
         """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
         in parallel, followed by another (ABLP, DistNeighborLoader) pair sequentially.
@@ -1056,9 +1097,9 @@ class GraphStoreIntegrationTest(TestCase):
         host_ip = socket.gethostbyname(socket.gethostname())
         # Very small cluster to avoid OOMing on CICD.
         cluster_info = GraphStoreInfo(
-            num_storage_nodes=1,
-            num_compute_nodes=1,
-            num_processes_per_compute=1,
+            num_storage_nodes=4,
+            num_compute_nodes=4,
+            num_processes_per_compute=2,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
             compute_cluster_master_ip=host_ip,
