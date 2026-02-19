@@ -45,6 +45,7 @@ from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     patch_fanout_for_sampling,
 )
+from gigl.distributed.utils.timing import TimingStats
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
@@ -470,6 +471,7 @@ class BaseDistLoader(DistLoader):
         )
         _flush()
 
+        _ts = TimingStats.get_instance()
         for target_node_rank in range(num_compute_nodes):
             start_time = time.time()
             if node_rank == target_node_rank:
@@ -484,17 +486,18 @@ class BaseDistLoader(DistLoader):
                 _flush()
                 t_dispatch = time.time()
                 rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
-                for server_rank, inp_data in zip(
-                    self._server_rank_list, self._input_data_list
-                ):
-                    fut = async_request_server(
-                        server_rank,
-                        create_producer_fn,
-                        inp_data,
-                        self.sampling_config,
-                        self.worker_options,
-                    )
-                    rpc_futures.append((server_rank, fut))
+                with _ts.track("BaseDistLoader.rpc_dispatch"):
+                    for server_rank, inp_data in zip(
+                        self._server_rank_list, self._input_data_list
+                    ):
+                        fut = async_request_server(
+                            server_rank,
+                            create_producer_fn,
+                            inp_data,
+                            self.sampling_config,
+                            self.worker_options,
+                        )
+                        rpc_futures.append((server_rank, fut))
                 logger.info(
                     f"node_rank={node_rank} all {len(rpc_futures)} RPCs dispatched in "
                     f"{time.time() - t_dispatch:.3f}s, waiting for responses"
@@ -503,16 +506,17 @@ class BaseDistLoader(DistLoader):
 
                 # Wait for all results
                 self._producer_id_list: list[int] = []
-                for server_rank, fut in rpc_futures:
-                    t_wait = time.time()
-                    producer_id: int = fut.wait()
-                    logger.info(
-                        f"node_rank={node_rank} create_sampling_producer"
-                        f"(server_rank={server_rank}) returned "
-                        f"producer_id={producer_id} in {time.time() - t_wait:.2f}s"
-                    )
-                    _flush()
-                    self._producer_id_list.append(producer_id)
+                with _ts.track("BaseDistLoader.rpc_wait_for_producers"):
+                    for server_rank, fut in rpc_futures:
+                        t_wait = time.time()
+                        producer_id: int = fut.wait()
+                        logger.info(
+                            f"node_rank={node_rank} create_sampling_producer"
+                            f"(server_rank={server_rank}) returned "
+                            f"producer_id={producer_id} in {time.time() - t_wait:.2f}s"
+                        )
+                        _flush()
+                        self._producer_id_list.append(producer_id)
                 logger.info(
                     f"node_rank={node_rank} all {len(self._producer_id_list)} producers "
                     f"created in {time.time() - t_dispatch:.2f}s total"
@@ -520,12 +524,17 @@ class BaseDistLoader(DistLoader):
                 _flush()
 
                 # Create remote receiving channel for cross-machine message passing
-                self._channel = RemoteReceivingChannel(
-                    self._server_rank_list,
-                    self._producer_id_list,
-                    self.worker_options.prefetch_size,
-                )
+                with _ts.track("BaseDistLoader.create_remote_channel"):
+                    self._channel = RemoteReceivingChannel(
+                        self._server_rank_list,
+                        self._producer_id_list,
+                        self.worker_options.prefetch_size,
+                    )
 
+                _ts.record(
+                    "BaseDistLoader.init_graph_store_connections",
+                    time.time() - start_time,
+                )
                 logger.info(
                     f"node_rank {node_rank} initialized the dist loader in "
                     f"{time.time() - start_time:.2f}s"
@@ -537,14 +546,16 @@ class BaseDistLoader(DistLoader):
                     f"for rank {target_node_rank}"
                 )
                 _flush()
-            torch.distributed.barrier()
+            # with _ts.track("BaseDistLoader.barrier"):
+            #     torch.distributed.barrier()
             logger.info(
                 f"node_rank {node_rank} barrier for rank "
                 f"{target_node_rank} in {time.time() - start_time:.2f}s"
             )
             _flush()
 
-        torch.distributed.barrier()
+        # with _ts.track("BaseDistLoader.barrier"):
+        #     torch.distributed.barrier()
         logger.info(
             f"node_rank {node_rank}: all {num_compute_nodes} node ranks "
             f"initialized the dist loader"
@@ -553,38 +564,44 @@ class BaseDistLoader(DistLoader):
 
     # Overwrite DistLoader.shutdown to so we can use our own shutdown and rpc calls
     def shutdown(self) -> None:
-        if self._shutdowned:
-            return
-        if self._is_collocated_worker:
-            self._collocated_producer.shutdown()
-        elif self._is_mp_worker:
-            self._mp_producer.shutdown()
-        elif rpc_is_initialized() is True:
-            for server_rank, producer_id in zip(
-                self._server_rank_list, self._producer_id_list
-            ):
-                request_server(
-                    server_rank, DistServer.destroy_sampling_producer, producer_id
-                )
-        self._shutdowned = True
+        with TimingStats.get_instance().track("BaseDistLoader.shutdown"):
+            if self._shutdowned:
+                return
+            if self._is_collocated_worker:
+                self._collocated_producer.shutdown()
+            elif self._is_mp_worker:
+                self._mp_producer.shutdown()
+            elif rpc_is_initialized() is True:
+                for server_rank, producer_id in zip(
+                    self._server_rank_list, self._producer_id_list
+                ):
+                    request_server(
+                        server_rank, DistServer.destroy_sampling_producer, producer_id
+                    )
+            self._shutdowned = True
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
-        self._num_recv = 0
-        if self._is_collocated_worker:
-            self._collocated_producer.reset()
-        elif self._is_mp_worker:
-            self._mp_producer.produce_all()
-        else:
-            for server_rank, producer_id in zip(
-                self._server_rank_list, self._producer_id_list
-            ):
-                request_server(
-                    server_rank,
-                    DistServer.start_new_epoch_sampling,
-                    producer_id,
-                    self._epoch,
-                )
-            self._channel.reset()
-        self._epoch += 1
+        with TimingStats.get_instance().track("BaseDistLoader.__iter__"):
+            self._num_recv = 0
+            if self._is_collocated_worker:
+                self._collocated_producer.reset()
+            elif self._is_mp_worker:
+                self._mp_producer.produce_all()
+            else:
+                for server_rank, producer_id in zip(
+                    self._server_rank_list, self._producer_id_list
+                ):
+                    request_server(
+                        server_rank,
+                        DistServer.start_new_epoch_sampling,
+                        producer_id,
+                        self._epoch,
+                    )
+                self._channel.reset()
+            self._epoch += 1
         return self
+
+    def __next__(self, *args, **kwargs):  # type: ignore[override]
+        with TimingStats.get_instance().track("BaseDistLoader.__next__"):
+            return super().__next__(*args, **kwargs)

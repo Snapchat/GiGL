@@ -26,6 +26,7 @@ from gigl.distributed.utils.networking import get_free_ports_from_master_node
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
+from gigl.distributed.utils.timing import TimingStats
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
@@ -40,40 +41,45 @@ def _run_storage_process(
     torch_process_port: int,
     storage_world_backend: Optional[str],
 ) -> None:
+    _ts = TimingStats.get_instance()
     cluster_master_ip = cluster_info.storage_cluster_master_ip
     logger.info(
         f"Initializing GLT server for storage node process group {storage_rank} / {cluster_info.num_storage_nodes} on {cluster_master_ip}:{cluster_info.rpc_master_port}"
     )
     # Initialize the GLT server before starting the Torch Distributed process group.
     # Otherwise, we saw intermittent hangs when initializing the server.
-    init_server(
-        num_servers=cluster_info.num_storage_nodes,
-        server_rank=storage_rank,
-        dataset=dataset,
-        master_addr=cluster_master_ip,
-        master_port=cluster_info.rpc_master_port,
-        num_clients=cluster_info.compute_cluster_world_size,
-    )
+    with _ts.track("storage.init_server"):
+        init_server(
+            num_servers=cluster_info.num_storage_nodes,
+            server_rank=storage_rank,
+            dataset=dataset,
+            master_addr=cluster_master_ip,
+            master_port=cluster_info.rpc_master_port,
+            num_clients=cluster_info.compute_cluster_world_size,
+        )
 
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{torch_process_port}"
     logger.info(
         f"Initializing storage node process group {storage_rank} / {cluster_info.num_storage_nodes} with backend {storage_world_backend} on {init_method}"
     )
-    torch.distributed.init_process_group(
-        backend=storage_world_backend,
-        world_size=cluster_info.num_storage_nodes,
-        rank=storage_rank,
-        init_method=init_method,
-    )
+    with _ts.track("storage.init_torch_process_group"):
+        torch.distributed.init_process_group(
+            backend=storage_world_backend,
+            world_size=cluster_info.num_storage_nodes,
+            rank=storage_rank,
+            init_method=init_method,
+        )
 
     logger.info(
         f"Waiting for storage node {storage_rank} / {cluster_info.num_storage_nodes} to exit"
     )
-    wait_and_shutdown_server()
+    with _ts.track("storage.wait_and_shutdown_server"):
+        wait_and_shutdown_server()
+    _ts.report(prefix=f"[Storage Rank {storage_rank}] ")
     logger.info(f"Storage node {storage_rank} exited")
 
 
-def storage_node_process(
+def storage_node_process(  # noqa: C901
     storage_rank: int,
     cluster_info: GraphStoreInfo,
     task_config_uri: Uri,
@@ -101,36 +107,42 @@ def storage_node_process(
         storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
         timeout_seconds (Optional[float]): The timeout seconds for the storage node process.
     """
+    _ts = TimingStats.get_instance()
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
         f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']} init method: {init_method}"
     )
-    torch.distributed.init_process_group(
-        backend="gloo",
-        world_size=cluster_info.num_storage_nodes,
-        rank=storage_rank,
-        init_method=init_method,
-        group_name="gigl_server_comms",
-    )
+    with _ts.track("storage.init_process_group"):
+        torch.distributed.init_process_group(
+            backend="gloo",
+            world_size=cluster_info.num_storage_nodes,
+            rank=storage_rank,
+            init_method=init_method,
+            group_name="gigl_server_comms",
+        )
     logger.info(
         f"Storage node {storage_rank} / {cluster_info.num_storage_nodes} process group initialized"
     )
-    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-        gbml_config_uri=task_config_uri
-    )
-    serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-        preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-        graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-        tfrecord_uri_pattern=tf_record_uri_pattern,
-    )
+    with _ts.track("storage.load_config"):
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=task_config_uri
+            )
+        )
+        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            tfrecord_uri_pattern=tf_record_uri_pattern,
+        )
     # TODO(kmonte): Add support for TFDatasetOptions.
-    dataset = build_dataset(
-        serialized_graph_metadata=serialized_graph_metadata,
-        sample_edge_direction=sample_edge_direction,
-        partitioner_class=DistRangePartitioner,
-        splitter=splitter,
-        _ssl_positive_label_percentage=ssl_positive_label_percentage,
-    )
+    with _ts.track("storage.build_dataset"):
+        dataset = build_dataset(
+            serialized_graph_metadata=serialized_graph_metadata,
+            sample_edge_direction=sample_edge_direction,
+            partitioner_class=DistRangePartitioner,
+            splitter=splitter,
+            _ssl_positive_label_percentage=ssl_positive_label_percentage,
+        )
     task_config = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
     )

@@ -8,6 +8,7 @@ from graphlearn_torch.distributed.rpc import rpc_global_request_async
 
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.dist_server import _call_func_on_server
+from gigl.distributed.utils.timing import TimingStats
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
@@ -33,41 +34,45 @@ def init_compute_process(
     Raises:
         ValueError: If the process group is already initialized.
     """
-    if torch.distributed.is_initialized():
-        raise ValueError(
-            "Process group already initialized! When using the Graph Store, you should not call `torch.distributed.init_process_group` directly."
+    _ts = TimingStats.get_instance()
+    with _ts.track("init_compute_process"):
+        if torch.distributed.is_initialized():
+            raise ValueError(
+                "Process group already initialized! When using the Graph Store, you should not call `torch.distributed.init_process_group` directly."
+            )
+        compute_cluster_rank = (
+            cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
+            + local_rank
         )
-    compute_cluster_rank = (
-        cluster_info.compute_node_rank * cluster_info.num_processes_per_compute
-        + local_rank
-    )
-    cluster_master_ip = cluster_info.storage_cluster_master_ip
-    logger.info(
-        f"Initializing RPC client for compute node {compute_cluster_rank} / {cluster_info.compute_cluster_world_size} on {cluster_master_ip}:{cluster_info.rpc_master_port}."
-        f" OS rank: {os.environ['RANK']}, local compute rank: {local_rank}"
-        f" num_servers: {cluster_info.num_storage_nodes}, num_clients: {cluster_info.compute_cluster_world_size}"
-    )
-    # Initialize the GLT client before starting the Torch Distributed process group.
-    # Otherwise, we saw intermittent hangs when initializing the client.
-    glt.distributed.init_client(
-        num_servers=cluster_info.num_storage_nodes,
-        num_clients=cluster_info.compute_cluster_world_size,
-        client_rank=compute_cluster_rank,
-        master_addr=cluster_master_ip,
-        master_port=cluster_info.rpc_master_port,
-        client_group_name="gigl_client_rpc",
-    )
+        cluster_master_ip = cluster_info.storage_cluster_master_ip
+        logger.info(
+            f"Initializing RPC client for compute node {compute_cluster_rank} / {cluster_info.compute_cluster_world_size} on {cluster_master_ip}:{cluster_info.rpc_master_port}."
+            f" OS rank: {os.environ['RANK']}, local compute rank: {local_rank}"
+            f" num_servers: {cluster_info.num_storage_nodes}, num_clients: {cluster_info.compute_cluster_world_size}"
+        )
+        # Initialize the GLT client before starting the Torch Distributed process group.
+        # Otherwise, we saw intermittent hangs when initializing the client.
+        with _ts.track("init_compute_process.init_client_rpc"):
+            glt.distributed.init_client(
+                num_servers=cluster_info.num_storage_nodes,
+                num_clients=cluster_info.compute_cluster_world_size,
+                client_rank=compute_cluster_rank,
+                master_addr=cluster_master_ip,
+                master_port=cluster_info.rpc_master_port,
+                client_group_name="gigl_client_rpc",
+            )
 
-    logger.info(
-        f"Initializing compute process group {compute_cluster_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port} with backend {compute_world_backend}."
-        f" OS rank: {os.environ['RANK']}, local client rank: {local_rank}"
-    )
-    torch.distributed.init_process_group(
-        backend=compute_world_backend,
-        world_size=cluster_info.compute_cluster_world_size,
-        rank=compute_cluster_rank,
-        init_method=f"tcp://{cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}",
-    )
+        logger.info(
+            f"Initializing compute process group {compute_cluster_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port} with backend {compute_world_backend}."
+            f" OS rank: {os.environ['RANK']}, local client rank: {local_rank}"
+        )
+        with _ts.track("init_compute_process.init_process_group"):
+            torch.distributed.init_process_group(
+                backend=compute_world_backend,
+                world_size=cluster_info.compute_cluster_world_size,
+                rank=compute_cluster_rank,
+                init_method=f"tcp://{cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}",
+            )
 
 
 def shutdown_compute_proccess() -> None:
@@ -79,8 +84,9 @@ def shutdown_compute_proccess() -> None:
     Args:
         None
     """
-    glt.distributed.shutdown_client()
-    torch.distributed.destroy_process_group()
+    with TimingStats.get_instance().track("shutdown_compute_proccess"):
+        glt.distributed.shutdown_client()
+        torch.distributed.destroy_process_group()
 
 
 def async_request_server(

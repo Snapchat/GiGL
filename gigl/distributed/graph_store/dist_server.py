@@ -36,6 +36,7 @@ from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
+from gigl.distributed.utils.timing import TimingStats
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -89,6 +90,7 @@ class DistServer:
         self._producer_lock: dict[int, threading.RLock] = {}
 
     def shutdown(self) -> None:
+        TimingStats.get_instance().report(prefix="[DistServer] ")
         for producer_id in list(self._producer_pool.keys()):
             self.destroy_sampling_producer(producer_id)
         assert len(self._producer_pool) == 0
@@ -265,37 +267,38 @@ class DistServer:
             split (train, val, or test) may be returned. This is useful when you need
             to sample neighbors during inference, as neighbor nodes may belong to any split.
         """
-        if (rank is None) ^ (world_size is None):
-            raise ValueError(
-                f"rank and world_size must be provided together. Received rank: {rank}, world_size: {world_size}"
-            )
-        if split == "train":
-            nodes = self.dataset.train_node_ids
-        elif split == "val":
-            nodes = self.dataset.val_node_ids
-        elif split == "test":
-            nodes = self.dataset.test_node_ids
-        elif split is None:
-            nodes = self.dataset.node_ids
-        else:
-            raise ValueError(
-                f"Invalid split: {split}. Must be one of 'train', 'val', 'test', or None."
-            )
-
-        if node_type is not None:
-            if not isinstance(nodes, abc.Mapping):
+        with TimingStats.get_instance().track("DistServer.get_node_ids"):
+            if (rank is None) ^ (world_size is None):
                 raise ValueError(
-                    f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] (e.g. a heterogeneous dataset), got {type(nodes)}"
+                    f"rank and world_size must be provided together. Received rank: {rank}, world_size: {world_size}"
                 )
-            nodes = nodes[node_type]
-        elif not isinstance(nodes, torch.Tensor):
-            raise ValueError(
-                f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
-            )
+            if split == "train":
+                nodes = self.dataset.train_node_ids
+            elif split == "val":
+                nodes = self.dataset.val_node_ids
+            elif split == "test":
+                nodes = self.dataset.test_node_ids
+            elif split is None:
+                nodes = self.dataset.node_ids
+            else:
+                raise ValueError(
+                    f"Invalid split: {split}. Must be one of 'train', 'val', 'test', or None."
+                )
 
-        if rank is not None and world_size is not None:
-            return shard_nodes_by_process(nodes, rank, world_size)
-        return nodes
+            if node_type is not None:
+                if not isinstance(nodes, abc.Mapping):
+                    raise ValueError(
+                        f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] (e.g. a heterogeneous dataset), got {type(nodes)}"
+                    )
+                nodes = nodes[node_type]
+            elif not isinstance(nodes, torch.Tensor):
+                raise ValueError(
+                    f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
+                )
+
+            if rank is not None and world_size is not None:
+                return shard_nodes_by_process(nodes, rank, world_size)
+            return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
         """Get the edge types from the dataset.
@@ -339,16 +342,23 @@ class DistServer:
         Raises:
             ValueError: If the split is invalid.
         """
-        anchors = self.get_node_ids(
-            split=split, rank=rank, world_size=world_size, node_type=node_type
-        )
-        positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
-            supervision_edge_type, self.dataset.get_edge_types()
-        )
-        positive_labels, negative_labels = get_labels_for_anchor_nodes(
-            self.dataset, anchors, positive_label_edge_type, negative_label_edge_type
-        )
-        return anchors, positive_labels, negative_labels
+        with TimingStats.get_instance().track("DistServer.get_ablp_input"):
+            anchors = self.get_node_ids(
+                split=split, rank=rank, world_size=world_size, node_type=node_type
+            )
+            (
+                positive_label_edge_type,
+                negative_label_edge_type,
+            ) = select_label_edge_types(
+                supervision_edge_type, self.dataset.get_edge_types()
+            )
+            positive_labels, negative_labels = get_labels_for_anchor_nodes(
+                self.dataset,
+                anchors,
+                positive_label_edge_type,
+                negative_label_edge_type,
+            )
+            return anchors, positive_labels, negative_labels
 
     def create_sampling_ablp_producer(
         self,
@@ -438,56 +448,69 @@ class DistServer:
         Returns:
           int: A unique id of created sampling producer on this server.
         """
-        if isinstance(sampler_input, RemoteSamplerInput):
-            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
+        with TimingStats.get_instance().track("DistServer._create_producer"):
+            if isinstance(sampler_input, RemoteSamplerInput):
+                sampler_input = sampler_input.to_local_sampler_input(
+                    dataset=self.dataset
+                )
 
-        with self._lock:
-            producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
-            if producer_id is None:
-                producer_id = self._cur_producer_idx
-                self._cur_producer_idx += 1
-            producer_lock = self._producer_lock.get(producer_id, None)
-            if producer_lock is None:
-                producer_lock = threading.RLock()
-                self._producer_lock[producer_id] = producer_lock
-                self._worker_key2producer_id[worker_options.worker_key] = producer_id
-        with producer_lock:
-            if producer_id not in self._producer_pool:
-                buffer = ShmChannel(
-                    worker_options.buffer_capacity, worker_options.buffer_size
+            with self._lock:
+                producer_id = self._worker_key2producer_id.get(
+                    worker_options.worker_key
                 )
-                producer = producer_cls(
-                    self.dataset, sampler_input, sampling_config, worker_options, buffer
-                )
-                producer.init()
-                self._producer_pool[producer_id] = producer
-                self._msg_buffer_pool[producer_id] = buffer
-                self._epoch[producer_id] = -1
-        return producer_id
+                if producer_id is None:
+                    producer_id = self._cur_producer_idx
+                    self._cur_producer_idx += 1
+                producer_lock = self._producer_lock.get(producer_id, None)
+                if producer_lock is None:
+                    producer_lock = threading.RLock()
+                    self._producer_lock[producer_id] = producer_lock
+                    self._worker_key2producer_id[
+                        worker_options.worker_key
+                    ] = producer_id
+            with producer_lock:
+                if producer_id not in self._producer_pool:
+                    buffer = ShmChannel(
+                        worker_options.buffer_capacity, worker_options.buffer_size
+                    )
+                    producer = producer_cls(
+                        self.dataset,
+                        sampler_input,
+                        sampling_config,
+                        worker_options,
+                        buffer,
+                    )
+                    producer.init()
+                    self._producer_pool[producer_id] = producer
+                    self._msg_buffer_pool[producer_id] = buffer
+                    self._epoch[producer_id] = -1
+            return producer_id
 
     def destroy_sampling_producer(self, producer_id: int) -> None:
         r"""Shutdown and destroy a sampling producer managed by this server with
         its producer id.
         """
-        with self._producer_lock[producer_id]:
-            producer = self._producer_pool.get(producer_id, None)
-            if producer is not None:
-                producer.shutdown()
-                self._producer_pool.pop(producer_id)
-                self._msg_buffer_pool.pop(producer_id)
-                self._epoch.pop(producer_id)
+        with TimingStats.get_instance().track("DistServer.destroy_sampling_producer"):
+            with self._producer_lock[producer_id]:
+                producer = self._producer_pool.get(producer_id, None)
+                if producer is not None:
+                    producer.shutdown()
+                    self._producer_pool.pop(producer_id)
+                    self._msg_buffer_pool.pop(producer_id)
+                    self._epoch.pop(producer_id)
 
     def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> None:
         r"""Start a new epoch sampling tasks for a specific sampling producer
         with its producer id.
         """
-        with self._producer_lock[producer_id]:
-            cur_epoch = self._epoch[producer_id]
-            if cur_epoch < epoch:
-                self._epoch[producer_id] = epoch
-                producer = self._producer_pool.get(producer_id, None)
-                if producer is not None:
-                    producer.produce_all()
+        with TimingStats.get_instance().track("DistServer.start_new_epoch_sampling"):
+            with self._producer_lock[producer_id]:
+                cur_epoch = self._epoch[producer_id]
+                if cur_epoch < epoch:
+                    self._epoch[producer_id] = epoch
+                    producer = self._producer_pool.get(producer_id, None)
+                    if producer is not None:
+                        producer.produce_all()
 
     def fetch_one_sampled_message(
         self, producer_id: int
@@ -495,20 +518,21 @@ class DistServer:
         r"""Fetch a sampled message from the buffer of a specific sampling
         producer with its producer id.
         """
-        producer = self._producer_pool.get(producer_id, None)
-        if producer is None:
-            warnings.warn("invalid producer_id {producer_id}")
-            return None, False
-        if producer.is_all_sampling_completed_and_consumed():
-            return None, True
-        buffer = self._msg_buffer_pool.get(producer_id, None)
-        while True:
-            try:
-                msg = buffer.recv(timeout_ms=500)
-                return msg, False
-            except QueueTimeoutError as e:
-                if producer.is_all_sampling_completed():
-                    return None, True
+        with TimingStats.get_instance().track("DistServer.fetch_one_sampled_message"):
+            producer = self._producer_pool.get(producer_id, None)
+            if producer is None:
+                warnings.warn("invalid producer_id {producer_id}")
+                return None, False
+            if producer.is_all_sampling_completed_and_consumed():
+                return None, True
+            buffer = self._msg_buffer_pool.get(producer_id, None)
+            while True:
+                try:
+                    msg = buffer.recv(timeout_ms=500)
+                    return msg, False
+                except QueueTimeoutError as e:
+                    if producer.is_all_sampling_completed():
+                        return None, True
 
 
 _dist_server: Optional[DistServer] = None

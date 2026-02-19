@@ -9,6 +9,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.utils.networking import get_free_ports
+from gigl.distributed.utils.timing import TimingStats
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -75,10 +76,13 @@ class RemoteDistDataset:
             - A dict mapping NodeType to FeatureInfo for heterogeneous graphs
             - None if no node features are available
         """
-        return request_server(
-            0,
-            DistServer.get_node_feature_info,
-        )
+        with TimingStats.get_instance().track(
+            "RemoteDistDataset.get_node_feature_info"
+        ):
+            return request_server(
+                0,
+                DistServer.get_node_feature_info,
+            )
 
     def get_edge_feature_info(
         self,
@@ -91,10 +95,13 @@ class RemoteDistDataset:
             - A dict mapping EdgeType to FeatureInfo for heterogeneous graphs
             - None if no edge features are available
         """
-        return request_server(
-            0,
-            DistServer.get_edge_feature_info,
-        )
+        with TimingStats.get_instance().track(
+            "RemoteDistDataset.get_edge_feature_info"
+        ):
+            return request_server(
+                0,
+                DistServer.get_edge_feature_info,
+            )
 
     def get_edge_dir(self) -> Union[str, Literal["in", "out"]]:
         """Get the edge direction from the registered dataset.
@@ -102,10 +109,11 @@ class RemoteDistDataset:
         Returns:
             The edge direction.
         """
-        return request_server(
-            0,
-            DistServer.get_edge_dir,
-        )
+        with TimingStats.get_instance().track("RemoteDistDataset.get_edge_dir"):
+            return request_server(
+                0,
+                DistServer.get_edge_dir,
+            )
 
     def _get_node_ids(
         self,
@@ -115,24 +123,27 @@ class RemoteDistDataset:
         split: Optional[Literal["train", "val", "test"]] = None,
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
-        futures: list[torch.futures.Future[torch.Tensor]] = []
-        logger.info(
-            f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
-        )
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            futures.append(
-                async_request_server(
-                    server_rank,
-                    DistServer.get_node_ids,
-                    rank=rank,
-                    world_size=world_size,
-                    split=split,
-                    node_type=node_type,
-                )
+        with TimingStats.get_instance().track("RemoteDistDataset._get_node_ids"):
+            futures: list[torch.futures.Future[torch.Tensor]] = []
+            logger.info(
+                f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
             )
-            node_ids = torch.futures.wait_all(futures)
-        return {server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)}
+
+            for server_rank in range(self.cluster_info.num_storage_nodes):
+                futures.append(
+                    async_request_server(
+                        server_rank,
+                        DistServer.get_node_ids,
+                        rank=rank,
+                        world_size=world_size,
+                        split=split,
+                        node_type=node_type,
+                    )
+                )
+                node_ids = torch.futures.wait_all(futures)
+            return {
+                server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)
+            }
 
     def get_node_ids(
         self,
@@ -211,30 +222,33 @@ class RemoteDistDataset:
             `mp_sharing_dict` to the `RemoteDistDataset` constructor.
         """
 
+        _ts = TimingStats.get_instance()
+
         def server_key(server_rank: int) -> str:
             return f"node_ids_from_server_{server_rank}"
 
-        if self._mp_sharing_dict is not None:
-            if self._local_rank == 0:
-                start_time = time.time()
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
-                )
-                node_ids = self._get_node_ids(rank, world_size, node_type, split)
-                for server_rank, node_id in node_ids.items():
-                    node_id.share_memory_()
-                    self._mp_sharing_dict[server_key(server_rank)] = node_id
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
-                )
-            torch.distributed.barrier()
-            node_ids = {
-                server_rank: self._mp_sharing_dict[server_key(server_rank)]
-                for server_rank in range(self.cluster_info.num_storage_nodes)
-            }
-            return node_ids
-        else:
-            return self._get_node_ids(rank, world_size, node_type, split)
+        with _ts.track("RemoteDistDataset.get_node_ids"):
+            if self._mp_sharing_dict is not None:
+                if self._local_rank == 0:
+                    start_time = time.time()
+                    logger.info(
+                        f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
+                    )
+                    node_ids = self._get_node_ids(rank, world_size, node_type, split)
+                    for server_rank, node_id in node_ids.items():
+                        node_id.share_memory_()
+                        self._mp_sharing_dict[server_key(server_rank)] = node_id
+                    logger.info(
+                        f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
+                    )
+                torch.distributed.barrier()
+                node_ids = {
+                    server_rank: self._mp_sharing_dict[server_key(server_rank)]
+                    for server_rank in range(self.cluster_info.num_storage_nodes)
+                }
+                return node_ids
+            else:
+                return self._get_node_ids(rank, world_size, node_type, split)
 
     def get_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
@@ -250,29 +264,34 @@ class RemoteDistDataset:
         Returns:
             list[int]: A list of free port numbers on the storage master node.
         """
-        if not torch.distributed.is_initialized():
-            raise ValueError(
-                "torch.distributed process group must be initialized for the entire training cluster"
+        with TimingStats.get_instance().track(
+            "RemoteDistDataset.get_free_ports_on_storage_cluster"
+        ):
+            if not torch.distributed.is_initialized():
+                raise ValueError(
+                    "torch.distributed process group must be initialized for the entire training cluster"
+                )
+            compute_cluster_rank = (
+                self.cluster_info.compute_node_rank
+                * self.cluster_info.num_processes_per_compute
+                + self._local_rank
             )
-        compute_cluster_rank = (
-            self.cluster_info.compute_node_rank
-            * self.cluster_info.num_processes_per_compute
-            + self._local_rank
-        )
-        if compute_cluster_rank == 0:
-            ports: Union[list[int], list[None]] = request_server(
-                0,
-                get_free_ports,
-                num_ports=num_ports,
-            )
+            if compute_cluster_rank == 0:
+                ports: Union[list[int], list[None]] = request_server(
+                    0,
+                    get_free_ports,
+                    num_ports=num_ports,
+                )
+                logger.info(
+                    f"Compute rank {compute_cluster_rank} found free ports: {ports}"
+                )
+            else:
+                ports = [None] * num_ports
+            torch.distributed.broadcast_object_list(ports, src=0)
             logger.info(
-                f"Compute rank {compute_cluster_rank} found free ports: {ports}"
+                f"Compute rank {compute_cluster_rank} received free ports: {ports}"
             )
-        else:
-            ports = [None] * num_ports
-        torch.distributed.broadcast_object_list(ports, src=0)
-        logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
-        return cast(list[int], ports)
+            return cast(list[int], ports)
 
     def _get_ablp_input(
         self,
@@ -283,33 +302,34 @@ class RemoteDistDataset:
         supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
         """Fetches ABLP input from the storage nodes for the current compute node (machine)."""
-        futures: list[
-            torch.futures.Future[
-                tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-            ]
-        ] = []
-        logger.info(
-            f"Getting ABLP input for rank {rank} / {world_size} with node type {node_type}, "
-            f"split {split}, and supervision edge type {supervision_edge_type}"
-        )
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            futures.append(
-                async_request_server(
-                    server_rank,
-                    DistServer.get_ablp_input,
-                    split=split,
-                    rank=rank,
-                    world_size=world_size,
-                    node_type=node_type,
-                    supervision_edge_type=supervision_edge_type,
-                )
+        with TimingStats.get_instance().track("RemoteDistDataset._get_ablp_input"):
+            futures: list[
+                torch.futures.Future[
+                    tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
+                ]
+            ] = []
+            logger.info(
+                f"Getting ABLP input for rank {rank} / {world_size} with node type {node_type}, "
+                f"split {split}, and supervision edge type {supervision_edge_type}"
             )
-            ablp_inputs = torch.futures.wait_all(futures)
-        return {
-            server_rank: ablp_input
-            for server_rank, ablp_input in enumerate(ablp_inputs)
-        }
+
+            for server_rank in range(self.cluster_info.num_storage_nodes):
+                futures.append(
+                    async_request_server(
+                        server_rank,
+                        DistServer.get_ablp_input,
+                        split=split,
+                        rank=rank,
+                        world_size=world_size,
+                        node_type=node_type,
+                        supervision_edge_type=supervision_edge_type,
+                    )
+                )
+                ablp_inputs = torch.futures.wait_all(futures)
+            return {
+                server_rank: ablp_input
+                for server_rank, ablp_input in enumerate(ablp_inputs)
+            }
 
     # TODO(#488) - support multiple supervision edge types
     def get_ablp_input(
@@ -420,80 +440,82 @@ class RemoteDistDataset:
                 },
             )
 
-        if self._mp_sharing_dict is not None:
-            if self._local_rank == 0:
-                start_time = time.time()
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} is getting ABLP input from storage nodes"
-                )
-                raw_ablp_inputs = self._get_ablp_input(
+        _ts = TimingStats.get_instance()
+        with _ts.track("RemoteDistDataset.get_ablp_input"):
+            if self._mp_sharing_dict is not None:
+                if self._local_rank == 0:
+                    start_time = time.time()
+                    logger.info(
+                        f"Compute rank {torch.distributed.get_rank()} is getting ABLP input from storage nodes"
+                    )
+                    raw_ablp_inputs = self._get_ablp_input(
+                        split=split,
+                        rank=rank,
+                        world_size=world_size,
+                        node_type=evaluated_anchor_node_type,
+                        supervision_edge_type=evaluated_supervision_edge_type,
+                    )
+                    for server_rank, (
+                        anchors,
+                        positive_labels,
+                        negative_labels,
+                    ) in raw_ablp_inputs.items():
+                        anchors.share_memory_()
+                        positive_labels.share_memory_()
+                        self._mp_sharing_dict[anchors_key(server_rank)] = anchors
+                        self._mp_sharing_dict[
+                            positive_labels_key(server_rank)
+                        ] = positive_labels
+                        if negative_labels is not None:
+                            negative_labels.share_memory_()
+                            self._mp_sharing_dict[
+                                negative_labels_key(server_rank)
+                            ] = negative_labels
+                    logger.info(
+                        f"Compute rank {torch.distributed.get_rank()} got ABLP input from storage nodes "
+                        f"in {time.time() - start_time:.2f} seconds"
+                    )
+                torch.distributed.barrier()
+                returned_ablp_inputs: dict[int, ABLPInputNodes] = {}
+                for server_rank in range(self.cluster_info.num_storage_nodes):
+                    anchors = self._mp_sharing_dict[anchors_key(server_rank)]
+                    positive_labels = self._mp_sharing_dict[
+                        positive_labels_key(server_rank)
+                    ]
+                    neg_key = negative_labels_key(server_rank)
+                    negative_labels = (
+                        self._mp_sharing_dict[neg_key]
+                        if neg_key in self._mp_sharing_dict
+                        else None
+                    )
+                    returned_ablp_inputs[server_rank] = wrap_ablp_input(
+                        anchors=anchors,
+                        anchor_node_type=evaluated_anchor_node_type,
+                        positive_labels=positive_labels,
+                        negative_labels=negative_labels,
+                    )
+                return returned_ablp_inputs
+            else:
+                raw_inputs = self._get_ablp_input(
                     split=split,
                     rank=rank,
                     world_size=world_size,
                     node_type=evaluated_anchor_node_type,
                     supervision_edge_type=evaluated_supervision_edge_type,
                 )
-                for server_rank, (
-                    anchors,
-                    positive_labels,
-                    negative_labels,
-                ) in raw_ablp_inputs.items():
-                    anchors.share_memory_()
-                    positive_labels.share_memory_()
-                    self._mp_sharing_dict[anchors_key(server_rank)] = anchors
-                    self._mp_sharing_dict[
-                        positive_labels_key(server_rank)
-                    ] = positive_labels
-                    if negative_labels is not None:
-                        negative_labels.share_memory_()
-                        self._mp_sharing_dict[
-                            negative_labels_key(server_rank)
-                        ] = negative_labels
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} got ABLP input from storage nodes "
-                    f"in {time.time() - start_time:.2f} seconds"
-                )
-            torch.distributed.barrier()
-            returned_ablp_inputs: dict[int, ABLPInputNodes] = {}
-            for server_rank in range(self.cluster_info.num_storage_nodes):
-                anchors = self._mp_sharing_dict[anchors_key(server_rank)]
-                positive_labels = self._mp_sharing_dict[
-                    positive_labels_key(server_rank)
-                ]
-                neg_key = negative_labels_key(server_rank)
-                negative_labels = (
-                    self._mp_sharing_dict[neg_key]
-                    if neg_key in self._mp_sharing_dict
-                    else None
-                )
-                returned_ablp_inputs[server_rank] = wrap_ablp_input(
-                    anchors=anchors,
-                    anchor_node_type=evaluated_anchor_node_type,
-                    positive_labels=positive_labels,
-                    negative_labels=negative_labels,
-                )
-            return returned_ablp_inputs
-        else:
-            raw_inputs = self._get_ablp_input(
-                split=split,
-                rank=rank,
-                world_size=world_size,
-                node_type=evaluated_anchor_node_type,
-                supervision_edge_type=evaluated_supervision_edge_type,
-            )
-            return {
-                server_rank: wrap_ablp_input(
-                    anchor_node_type=evaluated_anchor_node_type,
-                    anchors=anchors,
-                    positive_labels=positive_labels,
-                    negative_labels=negative_labels,
-                )
-                for server_rank, (
-                    anchors,
-                    positive_labels,
-                    negative_labels,
-                ) in raw_inputs.items()
-            }
+                return {
+                    server_rank: wrap_ablp_input(
+                        anchor_node_type=evaluated_anchor_node_type,
+                        anchors=anchors,
+                        positive_labels=positive_labels,
+                        negative_labels=negative_labels,
+                    )
+                    for server_rank, (
+                        anchors,
+                        positive_labels,
+                        negative_labels,
+                    ) in raw_inputs.items()
+                }
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
         """Get the edge types from the registered dataset.
@@ -501,7 +523,8 @@ class RemoteDistDataset:
         Returns:
             The edge types in the dataset, None if the dataset is homogeneous.
         """
-        return request_server(
-            0,
-            DistServer.get_edge_types,
-        )
+        with TimingStats.get_instance().track("RemoteDistDataset.get_edge_types"):
+            return request_server(
+                0,
+                DistServer.get_edge_types,
+            )
