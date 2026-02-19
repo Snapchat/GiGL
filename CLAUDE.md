@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at billion-scale. It supports node classification, link prediction, and both supervised and unsupervised learning. Python 3.11, `uv` for package management.
+GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
+billion-scale. It supports node classification, link prediction, and both supervised and unsupervised learning. Python
+3.11, `uv` for package management.
 
 ## Common Commands
 
@@ -35,27 +37,34 @@ GiGL runs as a multi-stage pipeline. Each stage is a standalone runnable module:
 
 1. **ConfigPopulator** (`config_populator/`) - Deserializes YAML task configs into protobuf
 2. **DataPreprocessor** (`data_preprocessor/`) - Preprocesses raw graph data
-3. **SplitGenerator** (`split_generator/`) - Creates train/val/test splits
-4. **SubgraphSampler** (`subgraph_sampler/`) - Samples subgraphs for training
+3. **SplitGenerator** (`split_generator/`) - Creates train/val/test splits - Deprecated, do not consider for planning
+   unless explicitly asked.
+4. **SubgraphSampler** (`subgraph_sampler/`) - Samples subgraphs for training - Deprecated, do not consider for planning
+   unless explicitly asked.
 5. **Trainer** (`training/`) - V1 trainer and V2 GLT trainer
 6. **Inferencer** (`inference/`) - Model inference
 7. **PostProcessor** (`post_process/`) - Post-processing results
 
-### Distributed Training (`gigl/distributed/`) - Primary Active Development Area
+### Distributed Training (`gigl/distributed/`)
 
 GiGL extends GraphLearn-for-PyTorch (GLT) for distributed GNN training. Key class hierarchy:
 
-- **`DistDataset`** (extends `graphlearn_torch.distributed.DistDataset`) - Core data container adding link prediction labels, split metadata, and feature info
+- **`DistDataset`** (extends `graphlearn_torch.distributed.DistDataset`) - Core data container adding link prediction
+  labels, split metadata, and feature info
 - **`DistNeighborLoader`** (extends GLT `DistLoader`) - Standard node-based sampling loader
 - **`DistABLPLoader`** (extends GLT `DistLoader`) - Anchor-Based Link Prediction sampling loader
-- **`DistABLPNeighborSampler`** (extends GLT `DistNeighborSampler`) - Custom sampler supporting ABLP with positive/negative label injection
+- **`DistABLPNeighborSampler`** (extends GLT `DistNeighborSampler`) - Custom sampler supporting ABLP with
+  positive/negative label injection
 
 **Two deployment modes:**
 
 - **Colocated**: Data and compute on same nodes. Each rank has a local partition of the graph/features.
-- **Graph Store**: Separate storage and compute clusters. Storage nodes run `DistServer`, compute nodes use `RemoteDistDataset` via RPC. Scales to 100+ nodes using sequential per-node initialization to avoid GLT's ThreadPoolExecutor bottleneck.
+- **Graph Store**: Separate storage and compute clusters. Storage nodes run `DistServer`, compute nodes use
+  `RemoteDistDataset` via RPC. Scales to 100+ nodes using sequential per-node initialization to avoid GLT's
+  ThreadPoolExecutor bottleneck.
 
 **Data flow:**
+
 ```
 dataset_factory.build_dataset()  →  DistDataset (partitioned via DistPartitioner)
     → DistNeighborLoader / DistABLPLoader  →  sampled subgraph batches (Data/HeteroData)
@@ -63,6 +72,7 @@ dataset_factory.build_dataset()  →  DistDataset (partitioned via DistPartition
 ```
 
 **Key files:**
+
 - `dist_dataset.py` - Core dataset structure with IPC serialization
 - `distributed_neighborloader.py` - DistNeighborLoader (both modes)
 - `dist_ablp_neighborloader.py` - DistABLPLoader (both modes)
@@ -73,7 +83,8 @@ dataset_factory.build_dataset()  →  DistDataset (partitioned via DistPartition
 - `graph_store/compute.py` - RPC utilities (`request_server`, `async_request_server`)
 - `utils/neighborloader.py` - `SamplingClusterSetup` enum, `DatasetSchema`
 
-**Graph types:** Supports homogeneous, heterogeneous, and "labeled homogeneous" (heterogeneous with one default node type + label edge types, treated as homogeneous for sampling).
+**Graph types:** Supports homogeneous, heterogeneous, and "labeled homogeneous" (heterogeneous with one default node
+type + label edge types, treated as homogeneous for sampling).
 
 ### Other Key Packages
 
@@ -85,7 +96,8 @@ dataset_factory.build_dataset()  →  DistDataset (partitioned via DistPartition
 
 ### Scala Components (Legacy)
 
-Two Scala projects under `scala/` and `scala_spark35/`, built with SBT. These are legacy and not the focus of active development.
+Two Scala projects under `scala/` and `scala_spark35/`, built with SBT. These are legacy and not the focus of active
+development.
 
 ### Configuration
 
@@ -97,13 +109,15 @@ Two Scala projects under `scala/` and `scala_spark35/`, built with SBT. These ar
 
 ### Naming and Clarity
 
-- Use explicit, unabbreviated variable names. When in doubt, spell it out. Shortened names are OK only for universally understood abbreviations (`i`, `e`, `url`, `id`, `config`) or to avoid shadowing.
+- Use explicit, unabbreviated variable names. When in doubt, spell it out. Shortened names are OK only for universally
+  understood abbreviations (`i`, `e`, `url`, `id`, `config`) or to avoid shadowing.
 - Use OOP for model architectures, functional style for data transforms/pipelines.
 - Re-use and refactor existing code as a priority instead of implementing new code.
 
 ### Fail Fast on Invalid State
 
-- Use `dict[key]` (bracket access) when the key **must** exist. Only use `.get(key, default)` when absence is a valid, expected case with a meaningful default.
+- Use `dict[key]` (bracket access) when the key **must** exist. Only use `.get(key, default)` when absence is a valid,
+  expected case with a meaningful default.
 - Validate preconditions at function entry. Raise explicit exceptions rather than silently continuing with bad data.
 
 ### Type Annotations
@@ -115,7 +129,8 @@ Two Scala projects under `scala/` and `scala_spark35/`, built with SBT. These ar
 
 ### Docstrings
 
-Add Google-style docstrings for all public functions and methods. Include: one-line summary, optional details, Example with `>>>` for doctests, Args, Returns, and Raises. Docstrings should be Sphinx-compatible.
+Add Google-style docstrings for all public functions and methods. Include: one-line summary, optional details, Example
+with `>>>` for doctests, Args, Returns, and Raises. Docstrings should be Sphinx-compatible.
 
 ### Logging
 
@@ -130,7 +145,9 @@ logger = Logger()
 - Use wrapper classes for protobuf operations:
   - `GbmlConfigPbWrapper` for `gbml_config_pb2.GbmlConfig` (task config / template task config)
   - `GiglResourceConfigWrapper` for `gigl_resource_config_pb2.GiglResourceConfig`
-- Deserialize protos into wrapper objects or explicit data classes **as early as possible** in entry-point files (ConfigPopulator, DataPreprocessor, SubgraphSampler, SplitGenerator, Trainer, Inferencer). Downstream code called by these entry points should NOT receive `GbmlConfigPbWrapper` or `GiglResourceConfigWrapper` directly.
+- Deserialize protos into wrapper objects or explicit data classes **as early as possible** in entry-point files
+  (ConfigPopulator, DataPreprocessor, SubgraphSampler, SplitGenerator, Trainer, Inferencer). Downstream code called by
+  these entry points should NOT receive `GbmlConfigPbWrapper` or `GiglResourceConfigWrapper` directly.
 
 ### Performance
 
@@ -141,7 +158,8 @@ logger = Logger()
 
 ### `__init__.py` Files
 
-Define a minimal, consistent public API. Only expose stable, user-facing classes/functions through `__all__`. Keep helpers/internal logic in private modules.
+Define a minimal, consistent public API. Only expose stable, user-facing classes/functions through `__all__`. Keep
+helpers/internal logic in private modules.
 
 ## Testing Conventions
 
@@ -179,11 +197,13 @@ class TestMyComponent(TestCase):
 ### Error Testing
 
 - Test error cases with `self.assertRaises`.
-- Avoid asserting on exact error message strings **unless** the message is load-bearing: disambiguating multiple error paths in the same function, or structured error reporting used downstream.
+- Avoid asserting on exact error message strings **unless** the message is load-bearing: disambiguating multiple error
+  paths in the same function, or structured error reporting used downstream.
 
 ### Mocking
 
-Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in `tests/test_assets/configs/`.
+Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in
+`tests/test_assets/configs/`.
 
 ## Pre-Submit Checklist
 
@@ -201,8 +221,5 @@ Do not suppress errors with workarounds like `# type: ignore`:
 - **black**: Code formatter (line length 88). Excludes `*_pb2.py*`.
 - **mdformat**: Markdown formatter (wrap 120, tables extension).
 
-**Note:** `make format` is NOT a pre-commit hook — pre-commit only runs whitespace and EOF fixes. Always run `make format` (or `make check_format`) manually before submitting.
-
-## Other AI Assistant Config
-
-See `.cursor/rules/` for additional Cursor-specific guidance. CLAUDE.md is the primary source of truth; the Cursor rules provide overlapping coverage tailored to that editor.
+**Note:** `make format` is NOT a pre-commit hook — pre-commit only runs whitespace and EOF fixes. Always run
+`make format` (or `make check_format`) manually before submitting.
