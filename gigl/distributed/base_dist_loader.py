@@ -550,35 +550,35 @@ class BaseDistLoader(DistLoader):
                 f"{target_node_rank} in {time.time() - start_time:.2f}s"
             )
             _flush()
-            # Wait for all results
-            self._producer_id_list: list[int] = []
-            for server_rank, fut in rpc_futures:
-                t_wait = time.time()
-                producer_id: int = fut.wait()
-                logger.info(
-                    f"node_rank={node_rank} create_sampling_producer"
-                    f"(server_rank={server_rank}) returned "
-                    f"producer_id={producer_id} in {time.time() - t_wait:.2f}s"
-                )
-                _flush()
-                self._producer_id_list.append(producer_id)
+        # Wait for all results
+        self._producer_id_list: list[int] = []
+        for server_rank, fut in rpc_futures:
+            t_wait = time.time()
+            producer_id: int = fut.wait()
             logger.info(
-                f"node_rank={node_rank} all {len(self._producer_id_list)} producers "
-                f"created in {time.time() - t_dispatch:.2f}s total"
+                f"node_rank={node_rank} create_sampling_producer"
+                f"(server_rank={server_rank}) returned "
+                f"producer_id={producer_id} in {time.time() - t_wait:.2f}s"
             )
             _flush()
-            # Create remote receiving channel for cross-machine message passing
-            self._channel = RemoteReceivingChannel(
-                self._server_rank_list,
-                self._producer_id_list,
-                self.worker_options.prefetch_size,
-            )
+            self._producer_id_list.append(producer_id)
+        logger.info(
+            f"node_rank={node_rank} all {len(self._producer_id_list)} producers "
+            f"created in {time.time() - t_dispatch:.2f}s total"
+        )
+        _flush()
+        # Create remote receiving channel for cross-machine message passing
+        self._channel = RemoteReceivingChannel(
+            self._server_rank_list,
+            self._producer_id_list,
+            self.worker_options.prefetch_size,
+        )
 
-            logger.info(
-                f"node_rank {node_rank} initialized the dist loader in "
-                f"{time.time() - start_time:.2f}s"
-            )
-            _flush()
+        logger.info(
+            f"node_rank {node_rank} initialized the dist loader in "
+            f"{time.time() - start_time:.2f}s"
+        )
+        _flush()
 
         torch.distributed.barrier()
         logger.info(
