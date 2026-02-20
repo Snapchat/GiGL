@@ -36,10 +36,6 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
-)
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.utils import assert_tensor_equality
@@ -210,19 +206,11 @@ def _run_compute_train_tests(
         mp_sharing_dict=mp_sharing_dict,
     )
 
-    # Use default types for homogeneous graph
-    test_node_type = (
-        node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
-    )
-    supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-
     # Test get_ablp_input for train split
     ablp_result = remote_dist_dataset.get_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        anchor_node_type=test_node_type,
-        supervision_edge_type=supervision_edge_type,
     )
 
     _assert_ablp_input(cluster_info, ablp_result)
@@ -238,7 +226,6 @@ def _run_compute_train_tests(
 
     random_negative_input = remote_dist_dataset.get_node_ids(
         split="train",
-        node_type=test_node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
@@ -311,22 +298,14 @@ def _run_compute_multiple_loaders_test(
         mp_sharing_dict=mp_sharing_dict,
     )
 
-    test_node_type = (
-        node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
-    )
-    supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-
     ablp_result = remote_dist_dataset.get_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        anchor_node_type=test_node_type,
-        supervision_edge_type=supervision_edge_type,
     )
 
     random_negative_input = remote_dist_dataset.get_node_ids(
         split="train",
-        node_type=test_node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )

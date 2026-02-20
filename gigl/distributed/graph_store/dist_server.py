@@ -308,6 +308,17 @@ class DistServer:
         else:
             return None
 
+    def get_node_types(self) -> Optional[list[NodeType]]:
+        """Get the node types from the dataset.
+
+        Returns:
+            The node types in the dataset, None if the dataset is homogeneous.
+        """
+        if isinstance(self.dataset.graph, dict):
+            return list(self.dataset.get_node_types())
+        else:
+            return None
+
     def get_ablp_input(
         self,
         split: Union[Literal["train", "val", "test"], str],
