@@ -289,9 +289,15 @@ class DistServer:
                 )
             nodes = nodes[node_type]
         elif not isinstance(nodes, torch.Tensor):
-            raise ValueError(
-                f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
-            )
+            if nodes is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in nodes:
+                logger.info(
+                    f"Received None node type but assuming it's a homogeneous dataset (node types: {nodes.keys()}) and returning the default node type."
+                )
+                nodes = nodes[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+            else:
+                raise ValueError(
+                    f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
+                )
 
         if rank is not None and world_size is not None:
             return shard_nodes_by_process(nodes, rank, world_size)
