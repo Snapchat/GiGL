@@ -8,7 +8,6 @@ from gigl.distributed.utils.partition_book import (
     get_ids_on_rank,
     get_total_ids,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import TestCase
 
 
@@ -46,7 +45,7 @@ class TestGetIdsOnRank(TestCase):
         ]
     )
     def test_get_ids_on_rank(self, _, partition_book, rank, expected):
-        assert_tensor_equality(get_ids_on_rank(partition_book, rank), expected)
+        self.assert_tensor_equality(get_ids_on_rank(partition_book, rank), expected)
 
     def test_invalid_tensor_partition_book(self):
         invalid_pb = torch.tensor([[0, 1], [0, 1]])  # 2D tensor
@@ -101,7 +100,7 @@ class TestBuildPartitionBook(TestCase):
         pb = build_partition_book(
             num_entities=num_entities, rank=0, world_size=world_size
         )
-        assert_tensor_equality(pb.partition_bounds, expected_bounds)
+        self.assert_tensor_equality(pb.partition_bounds, expected_bounds)
 
 
 if __name__ == "__main__":

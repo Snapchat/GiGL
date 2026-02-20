@@ -1,20 +1,13 @@
 import time
 from collections.abc import MutableMapping
 from multiprocessing.managers import DictProxy
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, cast
 
 import torch
-from graphlearn_torch.distributed import async_request_server, request_server
 
 from gigl.common.logger import Logger
-from gigl.distributed.graph_store.storage_utils import (
-    get_ablp_input,
-    get_edge_dir,
-    get_edge_feature_info,
-    get_edge_types,
-    get_node_feature_info,
-    get_node_ids,
-)
+from gigl.distributed.graph_store.compute import async_request_server, request_server
+from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -23,6 +16,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
 )
+from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
 
@@ -83,7 +77,7 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_node_feature_info,
+            DistServer.get_node_feature_info,
         )
 
     def get_edge_feature_info(
@@ -99,7 +93,7 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_edge_feature_info,
+            DistServer.get_edge_feature_info,
         )
 
     def get_edge_dir(self) -> Union[str, Literal["in", "out"]]:
@@ -110,7 +104,7 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_edge_dir,
+            DistServer.get_edge_dir,
         )
 
     def _get_node_ids(
@@ -130,7 +124,7 @@ class RemoteDistDataset:
             futures.append(
                 async_request_server(
                     server_rank,
-                    get_node_ids,
+                    DistServer.get_node_ids,
                     rank=rank,
                     world_size=world_size,
                     split=split,
@@ -266,7 +260,7 @@ class RemoteDistDataset:
             + self._local_rank
         )
         if compute_cluster_rank == 0:
-            ports = request_server(
+            ports: Union[list[int], list[None]] = request_server(
                 0,
                 get_free_ports,
                 num_ports=num_ports,
@@ -278,7 +272,7 @@ class RemoteDistDataset:
             ports = [None] * num_ports
         torch.distributed.broadcast_object_list(ports, src=0)
         logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
-        return ports
+        return cast(list[int], ports)
 
     def _get_ablp_input(
         self,
@@ -303,7 +297,7 @@ class RemoteDistDataset:
             futures.append(
                 async_request_server(
                     server_rank,
-                    get_ablp_input,
+                    DistServer.get_ablp_input,
                     split=split,
                     rank=rank,
                     world_size=world_size,
@@ -317,20 +311,26 @@ class RemoteDistDataset:
             for server_rank, ablp_input in enumerate(ablp_inputs)
         }
 
+    # TODO(#488) - support multiple supervision edge types
     def get_ablp_input(
         self,
         split: Literal["train", "val", "test"],
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
-        node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
-        supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
+        anchor_node_type: Optional[NodeType] = None,
+        supervision_edge_type: Optional[EdgeType] = None,
+    ) -> dict[int, ABLPInputNodes]:
         """
         Fetches ABLP (Anchor Based Link Prediction) input from the storage nodes.
 
-        The returned dict maps storage rank to a tuple of (anchor_nodes, positive_labels, negative_labels)
-        for that storage node. If (rank, world_size) is provided, the input will be sharded across the compute nodes.
-        If no (rank, world_size) is provided, the input will be returned for all storage nodes.
+        The returned dict maps storage rank to an :class:`ABLPInputNodes` dataclass
+        for that storage node. If (rank, world_size) is provided, the input will be
+        sharded across the compute nodes. If no (rank, world_size) is provided, the
+        input will be returned for all storage nodes.
+
+        The ``ABLPInputNodes`` dataclass carries explicit node type information and
+        keys the label tensors by their label ``EdgeType``, making it unambiguous which
+        node types the positive/negative labels correspond to.
 
         Args:
             split (Literal["train", "val", "test"]): The split to get the input for.
@@ -338,45 +338,41 @@ class RemoteDistDataset:
                 Must be provided if world_size is provided.
             world_size (Optional[int]): The total number of processes in the distributed setup.
                 Must be provided if rank is provided.
-            node_type (NodeType): The type of nodes to retrieve.
-                Defaults to DEFAULT_HOMOGENEOUS_NODE_TYPE.
-            supervision_edge_type (EdgeType): The edge type for supervision.
-                Defaults to DEFAULT_HOMOGENEOUS_EDGE_TYPE.
+            anchor_node_type (Optional[NodeType]): The type of the anchor nodes to retrieve.
+                Must be provided for heterogeneous graphs.
+                Must be None for labeled homogeneous graphs.
+                Defaults to None.
+            supervision_edge_type (Optional[EdgeType]): The edge type for supervision.
+                Must be provided for heterogeneous graphs.
+                Must be None for labeled homogeneous graphs.
+                Defaults to None.
 
         Returns:
-            dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
-                A dict mapping storage rank to a tuple of:
-                - anchor_nodes: The anchor node ids for the split
-                - positive_labels: Positive label node ids of shape [N, M] where N is the number
-                  of anchor nodes and M is the number of positive labels per anchor
-                - negative_labels: Negative label node ids of shape [N, M], or None if unavailable
+            dict[int, ABLPInputNodes]:
+                A dict mapping storage rank to an ABLPInputNodes containing:
+                - anchor_node_type: The node type of the anchor nodes, or None for labeled homogeneous.
+                - anchor_nodes: 1D tensor of anchor node IDs for the split.
+                - positive_labels: Dict mapping positive label EdgeType to a 2D tensor [N, M].
+                - negative_labels: Optional dict mapping negative label EdgeType to a 2D tensor [N, M].
 
         Examples:
             Suppose we have 1 storage node with users [0, 1, 2, 3, 4] where:
                 train=[0, 1, 2], val=[3], test=[4]
             And positive/negative labels defined for link prediction.
 
-            Get training ABLP input:
+            Get training ABLP input (heterogeneous):
 
-            >>> dataset.get_ablp_input(split="train", node_type=USER)
+            >>> dataset.get_ablp_input(split="train", node_type=USER, supervision_edge_type=USER_TO_ITEM)
             {
-                0: (
-                    tensor([0, 1, 2]),           # anchor nodes
-                    tensor([[0, 1], [1, 2], [2, 3]]),  # positive labels
-                    tensor([[2], [3], [4]])     # negative labels
+                0: ABLPInputNodes(
+                    anchor_nodes=tensor([0, 1, 2]),
+                    positive_labels={("user", "to_positive", "item"): tensor([[0, 1], [1, 2], [2, 3]])},
+                    anchor_node_type="user",
+                    negative_labels={("user", "to_negative", "item"): tensor([[2], [3], [4]])},
                 )
             }
 
-            With sharding across 2 compute nodes (rank 0 gets first portion):
-
-            >>> dataset.get_ablp_input(split="train", rank=0, world_size=2, node_type=USER)
-            {
-                0: (
-                    tensor([0]),                # first anchor node
-                    tensor([[0, 1]]),           # its positive labels
-                    tensor([[2]])               # its negative labels
-                )
-            }
+            For labeled homogeneous graphs, anchor_node_type will be DEFAULT_HOMOGENEOUS_NODE_TYPE.
 
         Note:
             The GLT sampling engine expects all processes on a given compute machine to have
@@ -384,6 +380,21 @@ class RemoteDistDataset:
             across all processes on a given compute machine. To save on CPU memory, pass
             `mp_sharing_dict` to the `RemoteDistDataset` constructor.
         """
+
+        if (anchor_node_type is None) != (supervision_edge_type is None):
+            raise ValueError(
+                f"anchor_node_type and supervision_edge_type must both be provided or both be None, received: "
+                f"anchor_node_type: {anchor_node_type}, supervision_edge_type: {supervision_edge_type}"
+            )
+        if anchor_node_type is None:
+            evaluated_anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+        else:
+            evaluated_anchor_node_type = anchor_node_type
+        if supervision_edge_type is None:
+            evaluated_supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        else:
+            evaluated_supervision_edge_type = supervision_edge_type
+        del anchor_node_type, supervision_edge_type
 
         def anchors_key(server_rank: int) -> str:
             return f"ablp_server_{server_rank}_anchors"
@@ -394,20 +405,39 @@ class RemoteDistDataset:
         def negative_labels_key(server_rank: int) -> str:
             return f"ablp_server_{server_rank}_negative_labels"
 
+        def wrap_ablp_input(
+            anchors: torch.Tensor,
+            anchor_node_type: NodeType,
+            positive_labels: torch.Tensor,
+            negative_labels: Optional[torch.Tensor],
+        ) -> ABLPInputNodes:
+            """Convert raw tensors into an ABLPInputNodes dataclass."""
+            return ABLPInputNodes(
+                anchor_node_type=anchor_node_type,
+                anchor_nodes=anchors,
+                labels={
+                    evaluated_supervision_edge_type: (positive_labels, negative_labels)
+                },
+            )
+
         if self._mp_sharing_dict is not None:
             if self._local_rank == 0:
                 start_time = time.time()
                 logger.info(
                     f"Compute rank {torch.distributed.get_rank()} is getting ABLP input from storage nodes"
                 )
-                ablp_inputs = self._get_ablp_input(
-                    split, rank, world_size, node_type, supervision_edge_type
+                raw_ablp_inputs = self._get_ablp_input(
+                    split=split,
+                    rank=rank,
+                    world_size=world_size,
+                    node_type=evaluated_anchor_node_type,
+                    supervision_edge_type=evaluated_supervision_edge_type,
                 )
                 for server_rank, (
                     anchors,
                     positive_labels,
                     negative_labels,
-                ) in ablp_inputs.items():
+                ) in raw_ablp_inputs.items():
                     anchors.share_memory_()
                     positive_labels.share_memory_()
                     self._mp_sharing_dict[anchors_key(server_rank)] = anchors
@@ -424,9 +454,7 @@ class RemoteDistDataset:
                     f"in {time.time() - start_time:.2f} seconds"
                 )
             torch.distributed.barrier()
-            returned_ablp_inputs: dict[
-                int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-            ] = {}
+            returned_ablp_inputs: dict[int, ABLPInputNodes] = {}
             for server_rank in range(self.cluster_info.num_storage_nodes):
                 anchors = self._mp_sharing_dict[anchors_key(server_rank)]
                 positive_labels = self._mp_sharing_dict[
@@ -438,16 +466,34 @@ class RemoteDistDataset:
                     if neg_key in self._mp_sharing_dict
                     else None
                 )
-                returned_ablp_inputs[server_rank] = (
-                    anchors,
-                    positive_labels,
-                    negative_labels,
+                returned_ablp_inputs[server_rank] = wrap_ablp_input(
+                    anchors=anchors,
+                    anchor_node_type=evaluated_anchor_node_type,
+                    positive_labels=positive_labels,
+                    negative_labels=negative_labels,
                 )
             return returned_ablp_inputs
         else:
-            return self._get_ablp_input(
-                split, rank, world_size, node_type, supervision_edge_type
+            raw_inputs = self._get_ablp_input(
+                split=split,
+                rank=rank,
+                world_size=world_size,
+                node_type=evaluated_anchor_node_type,
+                supervision_edge_type=evaluated_supervision_edge_type,
             )
+            return {
+                server_rank: wrap_ablp_input(
+                    anchor_node_type=evaluated_anchor_node_type,
+                    anchors=anchors,
+                    positive_labels=positive_labels,
+                    negative_labels=negative_labels,
+                )
+                for server_rank, (
+                    anchors,
+                    positive_labels,
+                    negative_labels,
+                ) in raw_inputs.items()
+            }
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
         """Get the edge types from the registered dataset.
@@ -457,5 +503,5 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            get_edge_types,
+            DistServer.get_edge_types,
         )

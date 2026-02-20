@@ -34,7 +34,6 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
     InputDataStrategy,
     run_distributed_partitioner,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import TestCase
 
 
@@ -210,7 +209,7 @@ class DistRandomPartitionerTestCase(TestCase):
             # If it is a range-based partition book, we should check that the node ids on the current machine are as expected and in the
             # correct order, specified by setting `dim=None`
             if isinstance(node_partition_book, PartitionBook):
-                assert_tensor_equality(
+                self.assert_tensor_equality(
                     node_ids,
                     get_ids_on_rank(partition_book=node_partition_book, rank=rank),
                     dim=None,
@@ -225,7 +224,7 @@ class DistRandomPartitionerTestCase(TestCase):
             expected_node_pidx = (
                 torch.ones(num_nodes_on_rank, dtype=expected_pb_dtype) * rank
             )
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=node_partition_book[node_ids],
                 tensor_b=expected_node_pidx,
             )
@@ -257,7 +256,7 @@ class DistRandomPartitionerTestCase(TestCase):
                     )
                     * rank
                 )
-                assert_tensor_equality(
+                self.assert_tensor_equality(
                     tensor_a=edge_partition_book[edge_ids],
                     tensor_b=expected_edge_pidx,
                 )
@@ -358,7 +357,9 @@ class DistRandomPartitionerTestCase(TestCase):
             else:
                 assert node_data.ids is not None
                 node_data_ids = node_data.ids
-                assert_tensor_equality(tensor_a=node_ids, tensor_b=node_data.ids, dim=0)
+                self.assert_tensor_equality(
+                    tensor_a=node_ids, tensor_b=node_data.ids, dim=0
+                )
 
             # Validate dimensions and values based on whether this is labels or features
             if entity_name == "labels":
@@ -369,7 +370,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 )
                 # We expect the value of each node label to be equal to its corresponding node id on the currently mocked input
                 for idx, n_id in enumerate(node_data_ids):
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=node_data.feats[idx],
                         tensor_b=torch.tensor([n_id], dtype=torch.int64),
                     )
@@ -381,7 +382,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 )
                 # We expect the value of each node feature to be equal to its corresponding node id / 10 on the currently mocked input
                 for idx, n_id in enumerate(node_data_ids):
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=node_data.feats[idx],
                         tensor_b=torch.ones(
                             NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
@@ -490,7 +491,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 else:
                     assert edge_feat.ids is not None
                     edge_feat_ids = edge_feat.ids
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=graph.edge_ids, tensor_b=edge_feat.ids, dim=0
                     )
 
@@ -502,7 +503,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
                 # We expect the value of each edge feature to be equal to its corresponding edge id / 10 on the currently mocked input
                 for idx, e_id in enumerate(edge_feat_ids):
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=edge_feat.feats[idx],
                         tensor_b=torch.ones(
                             EDGE_TYPE_TO_FEATURE_DIMENSION_MAP[edge_type],
@@ -585,7 +586,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 * rank
             )
 
-            assert_tensor_equality(node_partition_book[target_nodes], expect_edge_pidx)
+            self.assert_tensor_equality(
+                node_partition_book[target_nodes], expect_edge_pidx
+            )
 
     @parameterized.expand(
         [
@@ -921,7 +924,7 @@ class DistRandomPartitionerTestCase(TestCase):
             output_edge_index = torch.cat(unified_output_edge_index[edge_type], dim=1)
 
             # Finally, we check that the expected tensor and output tensor have the same columns, which is achieved by setting the shuffle dimension to 1
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_edge_index, tensor_b=output_edge_index, dim=1
             )
 
@@ -936,7 +939,7 @@ class DistRandomPartitionerTestCase(TestCase):
             partitioned_node_feat = torch.cat(partitioned_node_feat_list, dim=0)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 0
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_node_feat, tensor_b=partitioned_node_feat, dim=0
             )
 
@@ -951,7 +954,7 @@ class DistRandomPartitionerTestCase(TestCase):
             partitioned_node_labels = torch.cat(partitioned_node_labels_list, dim=0)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 0
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_node_labels,
                 tensor_b=partitioned_node_labels,
                 dim=0,
@@ -968,7 +971,7 @@ class DistRandomPartitionerTestCase(TestCase):
             partitioned_edge_feat = torch.cat(partitioned_edge_feat_list, dim=0)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 0
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_edge_feat, tensor_b=partitioned_edge_feat, dim=0
             )
 
@@ -980,7 +983,7 @@ class DistRandomPartitionerTestCase(TestCase):
             output_pos_label = torch.cat(unified_output_pos_label[edge_type], dim=1)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 1
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_positive_labels, tensor_b=output_pos_label, dim=1
             )
 
@@ -992,7 +995,7 @@ class DistRandomPartitionerTestCase(TestCase):
             output_neg_label = torch.cat(unified_output_neg_label[edge_type], dim=1)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 1
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_negative_labels, tensor_b=output_neg_label, dim=1
             )
 

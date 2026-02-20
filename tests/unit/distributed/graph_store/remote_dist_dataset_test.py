@@ -1,3 +1,4 @@
+from typing import Optional
 from unittest.mock import patch
 
 import torch
@@ -5,10 +6,12 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
 
-from gigl.distributed.graph_store import storage_utils
+import gigl.distributed.graph_store.dist_server as dist_server_module
+from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.env.distributed import GraphStoreInfo
 from gigl.types.graph import FeatureInfo
+from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -22,22 +25,24 @@ from tests.test_assets.distributed.test_dataset import (
 )
 from tests.test_assets.distributed.utils import (
     MockGraphStoreInfo,
-    assert_tensor_equality,
     create_test_process_group,
     get_process_group_init_method,
 )
 from tests.test_assets.test_case import TestCase
 
+# Module-level test server instance used by mock functions
+_test_server: Optional[DistServer] = None
+
 
 def _mock_request_server(server_rank, func, *args, **kwargs):
-    """Mock request_server that directly calls the function."""
-    return func(*args, **kwargs)
+    """Mock request_server that routes through _call_func_on_server."""
+    return _call_func_on_server(func, *args, **kwargs)
 
 
 def _mock_async_request_server(server_rank, func, *args, **kwargs):
-    """Mock async_request_server that returns a completed future with the function result."""
+    """Mock async_request_server that routes through _call_func_on_server and returns a future."""
     future: torch.futures.Future = torch.futures.Future()
-    future.set_result(func(*args, **kwargs))
+    future.set_result(_call_func_on_server(func, *args, **kwargs))
     return future
 
 
@@ -66,18 +71,20 @@ def _create_mock_graph_store_info(
 
 class TestRemoteDistDataset(TestCase):
     def setUp(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
         # 10 nodes in DEFAULT_HOMOGENEOUS_EDGE_INDEX ring graph
         node_features = torch.zeros(10, 3)
-        storage_utils.register_dataset(
-            create_homogeneous_dataset(
-                edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
-                node_features=node_features,
-            )
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+            node_features=node_features,
         )
+        _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -129,34 +136,36 @@ class TestRemoteDistDataset(TestCase):
         # Basic: all nodes
         result = remote_dataset.get_node_ids()
         self.assertIn(0, result)
-        assert_tensor_equality(result[0], torch.arange(10))
+        self.assert_tensor_equality(result[0], torch.arange(10))
 
         # With sharding: first half (rank 0 of 2)
         result = remote_dataset.get_node_ids(rank=0, world_size=2)
-        assert_tensor_equality(result[0], torch.arange(5))
+        self.assert_tensor_equality(result[0], torch.arange(5))
 
         # With sharding: second half (rank 1 of 2)
         result = remote_dataset.get_node_ids(rank=1, world_size=2)
-        assert_tensor_equality(result[0], torch.arange(5, 10))
+        self.assert_tensor_equality(result[0], torch.arange(5, 10))
 
 
 class TestRemoteDistDatasetHeterogeneous(TestCase):
     def setUp(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
         # 5 users, 5 stories in DEFAULT_HETEROGENEOUS_EDGE_INDICES
         node_features = {
             USER: torch.zeros(5, 2),
             STORY: torch.zeros(5, 2),
         }
-        storage_utils.register_dataset(
-            create_heterogeneous_dataset(
-                edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
-                node_features=node_features,
-            )
+        dataset = create_heterogeneous_dataset(
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+            node_features=node_features,
         )
+        _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -192,34 +201,34 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
 
         # Get user nodes
         result = remote_dataset.get_node_ids(node_type=USER)
-        assert_tensor_equality(result[0], torch.arange(5))
+        self.assert_tensor_equality(result[0], torch.arange(5))
 
         # Get story nodes
         result = remote_dataset.get_node_ids(node_type=STORY)
-        assert_tensor_equality(result[0], torch.arange(5))
+        self.assert_tensor_equality(result[0], torch.arange(5))
 
         # With sharding: first half of user nodes (rank 0 of 2)
         result = remote_dataset.get_node_ids(rank=0, world_size=2, node_type=USER)
-        assert_tensor_equality(result[0], torch.arange(2))
+        self.assert_tensor_equality(result[0], torch.arange(2))
 
         # With sharding: second half of user nodes (rank 1 of 2)
         result = remote_dataset.get_node_ids(rank=1, world_size=2, node_type=USER)
-        assert_tensor_equality(result[0], torch.arange(2, 5))
+        self.assert_tensor_equality(result[0], torch.arange(2, 5))
 
 
 class TestRemoteDistDatasetWithSplits(TestCase):
     """Tests for get_node_ids with train/val/test splits."""
 
-    def setUp(self) -> None:
-        storage_utils._dataset = None
-
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
-    def _create_and_register_dataset_with_splits(self) -> None:
-        """Create and register a dataset with train/val/test splits."""
+    def _create_server_with_splits(self) -> None:
+        """Create a DistServer with a dataset that has train/val/test splits."""
+        global _test_server
         create_test_process_group()
 
         positive_labels = {
@@ -245,7 +254,8 @@ class TestRemoteDistDatasetWithSplits(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
@@ -253,39 +263,39 @@ class TestRemoteDistDatasetWithSplits(TestCase):
     )
     def test_get_node_ids_with_splits(self, mock_async_request):
         """Test get_node_ids with train/val/test splits and optional sharding."""
-        self._create_and_register_dataset_with_splits()
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
         # Test each split returns correct nodes
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split="train")[0],
             torch.tensor([0, 1, 2]),
         )
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split="val")[0],
             torch.tensor([3]),
         )
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split="test")[0],
             torch.tensor([4]),
         )
 
         # No split returns all nodes
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(node_type=USER, split=None)[0],
             torch.arange(5),
         )
 
         # With sharding: train split [0, 1, 2] across 2 ranks
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(
                 rank=0, world_size=2, node_type=USER, split="train"
             )[0],
             torch.tensor([0]),
         )
-        assert_tensor_equality(
+        self.assert_tensor_equality(
             remote_dataset.get_node_ids(
                 rank=1, world_size=2, node_type=USER, split="train"
             )[0],
@@ -298,43 +308,67 @@ class TestRemoteDistDatasetWithSplits(TestCase):
     )
     def test_get_ablp_input(self, mock_async_request):
         """Test get_ablp_input with train/val/test splits."""
-        self._create_and_register_dataset_with_splits()
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
         # Train split: nodes [0, 1, 2]
         result = remote_dataset.get_ablp_input(
-            split="train", node_type=USER, supervision_edge_type=USER_TO_STORY
+            split="train", anchor_node_type=USER, supervision_edge_type=USER_TO_STORY
         )
         self.assertIn(0, result)
-        anchors, positive_labels, negative_labels = result[0]
-        assert_tensor_equality(anchors, torch.tensor([0, 1, 2]))
-        assert_tensor_equality(positive_labels, torch.tensor([[0, 1], [1, 2], [2, 3]]))
-        assert negative_labels is not None
-        assert_tensor_equality(negative_labels, torch.tensor([[2], [3], [4]]))
+        ablp_input = result[0]
+        self.assertIsInstance(ablp_input, ABLPInputNodes)
+        self.assertEqual(ablp_input.anchor_node_type, USER)
+        self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([0, 1, 2]))
+        self.assertIn(USER_TO_STORY, ablp_input.labels)
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
+        self.assert_tensor_equality(
+            pos_labels,
+            torch.tensor([[0, 1], [1, 2], [2, 3]]),
+        )
+        assert neg_labels is not None
+        self.assert_tensor_equality(
+            neg_labels,
+            torch.tensor([[2], [3], [4]]),
+        )
 
         # Val split: node [3]
         result = remote_dataset.get_ablp_input(
-            split="val", node_type=USER, supervision_edge_type=USER_TO_STORY
+            split="val", anchor_node_type=USER, supervision_edge_type=USER_TO_STORY
         )
-        anchors, positive_labels, negative_labels = result[0]
-        assert_tensor_equality(anchors, torch.tensor([3]))
-        assert_tensor_equality(positive_labels, torch.tensor([[3, 4]]))
-        assert negative_labels is not None
-        assert_tensor_equality(negative_labels, torch.tensor([[0]]))
+        ablp_input = result[0]
+        self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([3]))
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
+        self.assert_tensor_equality(
+            pos_labels,
+            torch.tensor([[3, 4]]),
+        )
+        assert neg_labels is not None
+        self.assert_tensor_equality(
+            neg_labels,
+            torch.tensor([[0]]),
+        )
 
         # Test split: node [4]
         # Note: Labels are stored in CSR format which sorts by destination indices,
         # so [4, 0] from the input becomes [0, 4] in the stored format.
         result = remote_dataset.get_ablp_input(
-            split="test", node_type=USER, supervision_edge_type=USER_TO_STORY
+            split="test", anchor_node_type=USER, supervision_edge_type=USER_TO_STORY
         )
-        anchors, positive_labels, negative_labels = result[0]
-        assert_tensor_equality(anchors, torch.tensor([4]))
-        assert_tensor_equality(positive_labels, torch.tensor([[0, 4]]))
-        assert negative_labels is not None
-        assert_tensor_equality(negative_labels, torch.tensor([[1]]))
+        ablp_input = result[0]
+        self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([4]))
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
+        self.assert_tensor_equality(
+            pos_labels,
+            torch.tensor([[0, 4]]),
+        )
+        assert neg_labels is not None
+        self.assert_tensor_equality(
+            neg_labels,
+            torch.tensor([[1]]),
+        )
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
@@ -342,7 +376,7 @@ class TestRemoteDistDatasetWithSplits(TestCase):
     )
     def test_get_ablp_input_with_sharding(self, mock_async_request):
         """Test get_ablp_input with sharding across compute nodes."""
-        self._create_and_register_dataset_with_splits()
+        self._create_server_with_splits()
 
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
@@ -352,31 +386,48 @@ class TestRemoteDistDatasetWithSplits(TestCase):
             split="train",
             rank=0,
             world_size=2,
-            node_type=USER,
+            anchor_node_type=USER,
             supervision_edge_type=USER_TO_STORY,
         )
-        anchors_0, positive_labels_0, negative_labels_0 = result_rank0[0]
+        ablp_0 = result_rank0[0]
+        self.assertIsInstance(ablp_0, ABLPInputNodes)
+        self.assertEqual(ablp_0.anchor_node_type, USER)
 
         # Rank 0 should get node 0
-        assert_tensor_equality(anchors_0, torch.tensor([0]))
-        assert_tensor_equality(positive_labels_0, torch.tensor([[0, 1]]))
-        assert negative_labels_0 is not None
-        assert_tensor_equality(negative_labels_0, torch.tensor([[2]]))
+        self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0]))
+        pos_labels_0, neg_labels_0 = ablp_0.labels[USER_TO_STORY]
+        self.assert_tensor_equality(
+            pos_labels_0,
+            torch.tensor([[0, 1]]),
+        )
+        assert neg_labels_0 is not None
+        self.assert_tensor_equality(
+            neg_labels_0,
+            torch.tensor([[2]]),
+        )
 
         result_rank1 = remote_dataset.get_ablp_input(
             split="train",
             rank=1,
             world_size=2,
-            node_type=USER,
+            anchor_node_type=USER,
             supervision_edge_type=USER_TO_STORY,
         )
-        anchors_1, positive_labels_1, negative_labels_1 = result_rank1[0]
+        ablp_1 = result_rank1[0]
+        self.assertIsInstance(ablp_1, ABLPInputNodes)
 
         # Rank 1 should get nodes 1, 2
-        assert_tensor_equality(anchors_1, torch.tensor([1, 2]))
-        assert_tensor_equality(positive_labels_1, torch.tensor([[1, 2], [2, 3]]))
-        assert negative_labels_1 is not None
-        assert_tensor_equality(negative_labels_1, torch.tensor([[3], [4]]))
+        self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([1, 2]))
+        pos_labels_1, neg_labels_1 = ablp_1.labels[USER_TO_STORY]
+        self.assert_tensor_equality(
+            pos_labels_1,
+            torch.tensor([[1, 2], [2, 3]]),
+        )
+        assert neg_labels_1 is not None
+        self.assert_tensor_equality(
+            neg_labels_1,
+            torch.tensor([[3], [4]]),
+        )
 
 
 def _test_get_free_ports_on_storage_cluster(
@@ -423,13 +474,15 @@ def _test_get_free_ports_on_storage_cluster(
 
 class TestGetFreePortsOnStorageCluster(TestCase):
     def setUp(self) -> None:
-        storage_utils._dataset = None
-        storage_utils.register_dataset(
-            create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
-        )
+        global _test_server
+        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+        _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
 
     def tearDown(self) -> None:
-        storage_utils._dataset = None
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -453,6 +506,50 @@ class TestGetFreePortsOnStorageCluster(TestCase):
 
         with self.assertRaises(ValueError):
             remote_dataset.get_free_ports_on_storage_cluster(num_ports=1)
+
+
+class TestCallFuncOnServer(TestCase):
+    """Tests for the _call_func_on_server dispatch logic."""
+
+    def setUp(self) -> None:
+        global _test_server
+        node_features = torch.zeros(10, 3)
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+            node_features=node_features,
+        )
+        _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
+
+    def tearDown(self) -> None:
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
+
+    def test_dispatches_server_method(self):
+        """Test that _call_func_on_server correctly dispatches an unbound DistServer method."""
+        result = _call_func_on_server(DistServer.get_edge_dir)
+        self.assertEqual(result, "out")
+
+    def test_non_callable_returns_none(self):
+        """Test that _call_func_on_server returns None for non-callable input."""
+        result: None = _call_func_on_server("not_a_function")  # type: ignore[arg-type]
+        self.assertIsNone(result)
+
+    def test_falls_back_for_non_server_function(self):
+        """Test that _call_func_on_server falls back to calling func directly for functions not on the server."""
+
+        def standalone_function(x: int, y: int) -> int:
+            return x + y
+
+        result = _call_func_on_server(standalone_function, 3, 7)
+        self.assertEqual(result, 10)
+
+    def test_raises_when_server_not_initialized(self):
+        """Test that _call_func_on_server raises when _dist_server is None."""
+        dist_server_module._dist_server = None
+        with self.assertRaises(RuntimeError):
+            _call_func_on_server(DistServer.get_edge_dir)
 
 
 if __name__ == "__main__":

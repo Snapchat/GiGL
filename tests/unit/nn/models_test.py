@@ -14,10 +14,7 @@ from torchrec.distributed.model_parallel import (
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
-from tests.test_assets.distributed.utils import (
-    assert_tensor_equality,
-    get_process_group_init_method,
-)
+from tests.test_assets.distributed.utils import get_process_group_init_method
 from tests.test_assets.test_case import TestCase
 
 # Embedding table name for default homogeneous node type
@@ -76,7 +73,7 @@ class TestLinkPredictionGNN(TestCase):
         data = Data()
         result = model.forward(data, self.device)
         assert isinstance(result, torch.Tensor)
-        assert_tensor_equality(result, torch.tensor([1.0, 2.0]))
+        self.assert_tensor_equality(result, torch.tensor([1.0, 2.0]))
 
     def test_forward_heterogeneous_with_node_types(self):
         encoder = DummyEncoder()
@@ -88,7 +85,7 @@ class TestLinkPredictionGNN(TestCase):
         assert isinstance(result, dict)
         self.assertEqual(set(result.keys()), set(output_node_types))
         for node_type in output_node_types:
-            assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))
+            self.assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))
 
     def test_forward_heterogeneous_missing_node_types(self):
         encoder = DummyEncoder()
@@ -105,7 +102,7 @@ class TestLinkPredictionGNN(TestCase):
         q = torch.tensor([1.0, 2.0])
         c = torch.tensor([3.0, 4.0])
         result = model.decode(q, c)
-        assert_tensor_equality(result, torch.tensor([4.0, 6.0]))
+        self.assert_tensor_equality(result, torch.tensor([4.0, 6.0]))
 
     def test_encoder_property(self):
         encoder = DummyEncoder()
@@ -270,7 +267,7 @@ class TestLightGCN(TestCase):
             pyg_output = pyg_model.get_embedding(
                 self.edge_index.to(self.device)
             )  # <<< edge_index on device
-        assert_tensor_equality(our_output, pyg_output)
+        self.assert_tensor_equality(our_output, pyg_output)
 
     def test_compare_with_math(self):
         """Test that our implementation matches the mathematical formulation of LightGCN."""
