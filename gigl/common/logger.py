@@ -75,15 +75,6 @@ class _GcpJsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def _is_gcp_environment() -> bool:
-    """Return ``True`` when running on a GCP-managed platform (GKE, GAE, etc.).
-
-    Checks the environment variables that GCP injects into container workloads.
-    Extracted as a standalone helper so tests can patch a single symbol.
-    """
-    return bool(os.getenv("GAE_APPLICATION") or os.getenv("KUBERNETES_SERVICE_HOST"))
-
-
 class Logger(logging.LoggerAdapter):
     """GiGL's custom logger class used for local and cloud logging (VertexAI, Dataflow, etc.).
 
@@ -112,7 +103,8 @@ class Logger(logging.LoggerAdapter):
     ) -> None:
         handler: logging.Handler
         if not logger.handlers:
-            if _is_gcp_environment():
+            # Check if running on GCP.
+            if os.getenv("GAE_APPLICATION") or os.getenv("KUBERNETES_SERVICE_HOST"):
                 handler = logging.StreamHandler(stream=sys.stderr)
                 handler.setFormatter(_GcpJsonFormatter())
                 logger.addHandler(handler)
