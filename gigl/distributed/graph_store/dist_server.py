@@ -31,6 +31,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
 )
 
+from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.sampler import ABLPNodeSamplerInput
@@ -47,6 +48,8 @@ from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
 r""" Interval (in seconds) to check exit status of server.
 """
+
+logger = Logger()
 
 R = TypeVar("R")
 
@@ -66,6 +69,11 @@ class DistServer:
 
     def __init__(self, dataset: DistDataset) -> None:
         self.dataset = dataset
+        # Top-level lock used to safely allocate producer IDs and create per-producer
+        # locks. We need this because _producer_lock entries don't exist until a
+        # producer is first requested, so concurrent calls for the same worker_key
+        # could race on creating the entry. Once a per-producer lock exists, callers
+        # use it directly without holding _lock.
         self._lock = threading.RLock()
         self._exit = False
         self._cur_producer_idx = 0  # auto incremental index (same as producer count)
@@ -75,6 +83,10 @@ class DistServer:
         self._producer_pool: dict[int, DistMpSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
+        # Per-producer locks that guard the lifecycle of individual producers
+        # (creation, epoch transitions, destruction). This avoids holding the
+        # top-level _lock during expensive operations like producer init.
+        self._producer_lock: dict[int, threading.RLock] = {}
 
     def shutdown(self) -> None:
         for producer_id in list(self._producer_pool.keys()):
@@ -433,8 +445,14 @@ class DistServer:
             producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
             if producer_id is None:
                 producer_id = self._cur_producer_idx
-                self._worker_key2producer_id[worker_options.worker_key] = producer_id
                 self._cur_producer_idx += 1
+            producer_lock = self._producer_lock.get(producer_id, None)
+            if producer_lock is None:
+                producer_lock = threading.RLock()
+                self._producer_lock[producer_id] = producer_lock
+                self._worker_key2producer_id[worker_options.worker_key] = producer_id
+        with producer_lock:
+            if producer_id not in self._producer_pool:
                 buffer = ShmChannel(
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
@@ -451,7 +469,7 @@ class DistServer:
         r"""Shutdown and destroy a sampling producer managed by this server with
         its producer id.
         """
-        with self._lock:
+        with self._producer_lock[producer_id]:
             producer = self._producer_pool.get(producer_id, None)
             if producer is not None:
                 producer.shutdown()
@@ -463,7 +481,7 @@ class DistServer:
         r"""Start a new epoch sampling tasks for a specific sampling producer
         with its producer id.
         """
-        with self._lock:
+        with self._producer_lock[producer_id]:
             cur_epoch = self._epoch[producer_id]
             if cur_epoch < epoch:
                 self._epoch[producer_id] = epoch
