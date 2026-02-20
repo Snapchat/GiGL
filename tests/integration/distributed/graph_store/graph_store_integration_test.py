@@ -428,9 +428,6 @@ def _run_compute_multiple_loaders_test(
         assert hasattr(
             ablp_batch_2, "y_positive"
         ), "ABLP batch 2 should have y_positive"
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loaded {phase1_count} batches from 4 parallel loaders"
-    )
     torch.distributed.barrier()
     logger.info("All ranks have loaded phase 1 batches")
 
