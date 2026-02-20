@@ -21,6 +21,9 @@ make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one a
 
 # Formatting & Linting
 make format              # Auto-fix Python, Scala, Markdown
+make format_py           # Auto-fix Python only
+make format_scala        # Auto-fix Scala only
+make format_md           # Auto-fix Markdown only
 make check_format        # Check without fixing
 make type_check          # mypy static type checking
 
@@ -208,3 +211,7 @@ Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Cre
 ## Pre-Submit Checklist & Formatting
 
 See [.claude/formatting.md](.claude/formatting.md) for pre-submit checklist and formatting details.
+
+## Development Workflow
+
+See [.claude/development.md](.claude/development.md) for git branching conventions, targeted formatting, and testing guidance.
