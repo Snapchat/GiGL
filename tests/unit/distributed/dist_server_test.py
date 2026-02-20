@@ -1,7 +1,7 @@
 import torch
 from absl.testing import absltest
 
-from gigl.distributed.graph_store import storage_utils
+from gigl.distributed.graph_store import dist_server
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
@@ -20,130 +20,70 @@ from tests.test_assets.test_case import TestCase
 class TestRemoteDataset(TestCase):
     def setUp(self) -> None:
         """Reset the global dataset before each test."""
-        storage_utils._dataset = None
+        dist_server._dist_server = None
 
     def tearDown(self) -> None:
         """Clean up after each test."""
-        storage_utils._dataset = None
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
 
-    def test_register_dataset(self) -> None:
-        """Test that register_dataset correctly sets the global dataset."""
-        dataset = create_heterogeneous_dataset(
-            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
-        )
-        storage_utils.register_dataset(dataset)
-
-        # Verify the dataset was registered
-        self.assertIsNotNone(storage_utils._dataset)
-        self.assertEqual(storage_utils._dataset, dataset)
-
-    def test_reregister_dataset_raises_error(self) -> None:
-        """Test that reregistering a dataset raises an error."""
-        dataset = create_heterogeneous_dataset(
-            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
-        )
-        storage_utils.register_dataset(dataset)
-        with self.assertRaises(ValueError) as context:
-            storage_utils.register_dataset(dataset)
-        self.assertIn("Dataset already registered!", str(context.exception))
-
     def test_get_node_feature_info_with_heterogeneous_dataset(self) -> None:
-        """Test get_node_feature_info with a registered heterogeneous dataset."""
+        """Test get_node_feature_info with a heterogeneous dataset."""
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        node_feature_info = storage_utils.get_node_feature_info()
+        node_feature_info = server.get_node_feature_info()
 
         # Verify it returns the correct feature info
         self.assertIsNone(node_feature_info)
 
     def test_get_node_feature_info_with_homogeneous_dataset(self) -> None:
-        """Test get_node_feature_info with a registered homogeneous dataset."""
+        """Test get_node_feature_info with a homogeneous dataset."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        node_feature_info = storage_utils.get_node_feature_info()
+        node_feature_info = server.get_node_feature_info()
 
         # Verify it returns the correct feature info
         self.assertIsNone(node_feature_info)
 
-    def test_get_node_feature_info_without_registered_dataset(self) -> None:
-        """Test get_node_feature_info raises ValueError when no dataset is registered."""
-        with self.assertRaises(ValueError) as context:
-            storage_utils.get_node_feature_info()
-
-        self.assertIn("Dataset not registered", str(context.exception))
-        self.assertIn("register_dataset", str(context.exception))
-
     def test_get_edge_feature_info_with_heterogeneous_dataset(self) -> None:
-        """Test get_edge_feature_info with a registered heterogeneous dataset."""
+        """Test get_edge_feature_info with a heterogeneous dataset."""
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        edge_feature_info = storage_utils.get_edge_feature_info()
+        edge_feature_info = server.get_edge_feature_info()
 
         # For this test dataset, edge features are None
         self.assertIsNone(edge_feature_info)
 
     def test_get_edge_feature_info_with_homogeneous_dataset(self) -> None:
-        """Test get_edge_feature_info with a registered homogeneous dataset."""
+        """Test get_edge_feature_info with a homogeneous dataset."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        edge_feature_info = storage_utils.get_edge_feature_info()
+        edge_feature_info = server.get_edge_feature_info()
 
         # For this test dataset, edge features are None
         self.assertIsNone(edge_feature_info)
-
-    def test_get_edge_feature_info_without_registered_dataset(self) -> None:
-        """Test get_edge_feature_info raises ValueError when no dataset is registered."""
-        with self.assertRaises(ValueError) as context:
-            storage_utils.get_edge_feature_info()
-
-        self.assertIn("Dataset not registered", str(context.exception))
-        self.assertIn("register_dataset", str(context.exception))
-
-    def get_node_ids(self) -> None:
-        """Test get_node_ids with a registered dataset."""
-        dataset = create_homogeneous_dataset(
-            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
-        )
-        storage_utils.register_dataset(dataset)
-        node_ids = storage_utils.get_node_ids()
-        self.assertIsInstance(node_ids, torch.Tensor)
-        self.assertEqual(node_ids.shape[0], 10)
-        self.assert_tensor_equality(node_ids, torch.arange(10))
-
-    def get_node_ids_heterogeneous(self) -> None:
-        """Test get_node_ids with a registered heterogeneous dataset."""
-        dataset = create_heterogeneous_dataset(
-            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
-        )
-        storage_utils.register_dataset(dataset)
-        node_ids = storage_utils.get_node_ids(node_type=USER)
-        self.assertIsInstance(node_ids, torch.Tensor)
-        self.assertEqual(node_ids.shape[0], 5)
-        self.assert_tensor_equality(node_ids, torch.arange(5))
 
     def test_get_node_ids_with_homogeneous_dataset(self) -> None:
         """Test get_node_ids with a homogeneous dataset."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Test with world_size=1, rank=0 (should get all nodes)
-        node_ids = storage_utils.get_node_ids(rank=0, world_size=1, node_type=None)
+        node_ids = server.get_node_ids(rank=0, world_size=1, node_type=None)
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
         self.assert_tensor_equality(node_ids, torch.arange(10))
@@ -153,18 +93,16 @@ class TestRemoteDataset(TestCase):
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Test with USER node type
-        user_node_ids = storage_utils.get_node_ids(rank=0, world_size=1, node_type=USER)
+        user_node_ids = server.get_node_ids(rank=0, world_size=1, node_type=USER)
         self.assertIsInstance(user_node_ids, torch.Tensor)
         self.assertEqual(user_node_ids.shape[0], 5)
         self.assert_tensor_equality(user_node_ids, torch.arange(5))
 
         # Test with STORY node type
-        story_node_ids = storage_utils.get_node_ids(
-            rank=0, world_size=1, node_type=STORY
-        )
+        story_node_ids = server.get_node_ids(rank=0, world_size=1, node_type=STORY)
         self.assertIsInstance(story_node_ids, torch.Tensor)
         self.assertEqual(story_node_ids.shape[0], 5)
         self.assert_tensor_equality(story_node_ids, torch.arange(5))
@@ -174,52 +112,57 @@ class TestRemoteDataset(TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Test with world_size=2
-        rank_0_nodes = storage_utils.get_node_ids(rank=0, world_size=2, node_type=None)
-        rank_1_nodes = storage_utils.get_node_ids(rank=1, world_size=2, node_type=None)
+        rank_0_nodes = server.get_node_ids(rank=0, world_size=2, node_type=None)
+        rank_1_nodes = server.get_node_ids(rank=1, world_size=2, node_type=None)
 
         # Verify each rank gets different nodes
         self.assert_tensor_equality(rank_0_nodes, torch.arange(5))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
         # Test with world_size=3 (uneven split)
-        rank_0_nodes = storage_utils.get_node_ids(rank=0, world_size=3, node_type=None)
-        rank_1_nodes = storage_utils.get_node_ids(rank=1, world_size=3, node_type=None)
-        rank_2_nodes = storage_utils.get_node_ids(rank=2, world_size=3, node_type=None)
+        rank_0_nodes = server.get_node_ids(rank=0, world_size=3, node_type=None)
+        rank_1_nodes = server.get_node_ids(rank=1, world_size=3, node_type=None)
+        rank_2_nodes = server.get_node_ids(rank=2, world_size=3, node_type=None)
 
         self.assert_tensor_equality(rank_0_nodes, torch.arange(3))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
         self.assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
 
-    def test_get_node_ids_without_registered_dataset(self) -> None:
-        """Test get_node_ids raises ValueError when no dataset is registered."""
-        with self.assertRaises(ValueError) as context:
-            storage_utils.get_node_ids(rank=0, world_size=1)
-
-        self.assertIn("Dataset not registered", str(context.exception))
-        self.assertIn("register_dataset", str(context.exception))
-
-    def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
-        """Test get_node_ids with a homogeneous dataset and a node type."""
+    def test_get_node_ids_rank_world_size_must_be_provided_together(self) -> None:
+        """Test get_node_ids raises ValueError when rank/world_size not provided together."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
+
         with self.assertRaises(ValueError):
-            storage_utils.get_node_ids(rank=0, world_size=1, node_type=USER)
+            server.get_node_ids(rank=0, world_size=None)
+
+        with self.assertRaises(ValueError):
+            server.get_node_ids(rank=None, world_size=1)
+
+    def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
+        """Test get_node_ids with a homogeneous dataset and a node type raises error."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+        with self.assertRaises(ValueError):
+            server.get_node_ids(rank=0, world_size=1, node_type=USER)
 
     def test_get_node_ids_with_heterogeneous_dataset_and_no_node_type(
         self,
     ) -> None:
-        """Test get_node_ids with a heterogeneous dataset and no node type."""
+        """Test get_node_ids with a heterogeneous dataset and no node type raises error."""
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            storage_utils.get_node_ids(rank=0, world_size=1, node_type=None)
+            server.get_node_ids(rank=0, world_size=1, node_type=None)
 
     def test_get_node_ids_with_train_split(self) -> None:
         """Test get_node_ids returns only training nodes when split='train'."""
@@ -233,9 +176,9 @@ class TestRemoteDataset(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        train_nodes = storage_utils.get_node_ids(node_type=USER, split="train")
+        train_nodes = server.get_node_ids(node_type=USER, split="train")
         self.assert_tensor_equality(train_nodes, torch.tensor([0, 1, 2]))
 
     def test_get_node_ids_with_val_split(self) -> None:
@@ -250,9 +193,9 @@ class TestRemoteDataset(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        val_nodes = storage_utils.get_node_ids(node_type=USER, split="val")
+        val_nodes = server.get_node_ids(node_type=USER, split="val")
         self.assert_tensor_equality(val_nodes, torch.tensor([3]))
 
     def test_get_node_ids_with_test_split(self) -> None:
@@ -267,9 +210,9 @@ class TestRemoteDataset(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        test_nodes = storage_utils.get_node_ids(node_type=USER, split="test")
+        test_nodes = server.get_node_ids(node_type=USER, split="test")
         self.assert_tensor_equality(test_nodes, torch.tensor([4]))
 
     def test_get_node_ids_with_split_and_sharding(self) -> None:
@@ -284,44 +227,54 @@ class TestRemoteDataset(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Train split has [0, 1, 2], shard across 2 ranks
-        rank_0_nodes = storage_utils.get_node_ids(
+        rank_0_nodes = server.get_node_ids(
             rank=0, world_size=2, node_type=USER, split="train"
         )
-        rank_1_nodes = storage_utils.get_node_ids(
+        rank_1_nodes = server.get_node_ids(
             rank=1, world_size=2, node_type=USER, split="train"
         )
 
         self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
         self.assert_tensor_equality(rank_1_nodes, torch.tensor([1, 2]))
 
-    def test_get_edge_dir(self) -> None:
-        """Test get_edge_dir with a registered dataset."""
+    def test_get_node_ids_invalid_split(self) -> None:
+        """Test get_node_ids raises ValueError with invalid split."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
-        edge_dir = storage_utils.get_edge_dir()
+        server = dist_server.DistServer(dataset)
+
+        with self.assertRaises(ValueError):
+            server.get_node_ids(split="invalid")
+
+    def test_get_edge_dir(self) -> None:
+        """Test get_edge_dir with a dataset."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+        edge_dir = server.get_edge_dir()
         self.assertEqual(edge_dir, dataset.edge_dir)
 
     def test_get_node_feature_info(self) -> None:
-        """Test get_node_feature_info with a registered dataset."""
+        """Test get_node_feature_info with a dataset."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
-        node_feature_info = storage_utils.get_node_feature_info()
+        server = dist_server.DistServer(dataset)
+        node_feature_info = server.get_node_feature_info()
         self.assertEqual(node_feature_info, dataset.node_feature_info)
 
     def test_get_edge_feature_info(self) -> None:
-        """Test get_edge_feature_info with a registered dataset."""
+        """Test get_edge_feature_info with a dataset."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
-        edge_feature_info = storage_utils.get_edge_feature_info()
+        server = dist_server.DistServer(dataset)
+        edge_feature_info = server.get_edge_feature_info()
         self.assertEqual(edge_feature_info, dataset.edge_feature_info)
 
     def test_get_edge_types_homogeneous(self) -> None:
@@ -329,8 +282,8 @@ class TestRemoteDataset(TestCase):
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
-        storage_utils.register_dataset(dataset)
-        edge_types = storage_utils.get_edge_types()
+        server = dist_server.DistServer(dataset)
+        edge_types = server.get_edge_types()
         self.assertIsNone(edge_types)
 
     def test_get_edge_types_heterogeneous(self) -> None:
@@ -338,8 +291,8 @@ class TestRemoteDataset(TestCase):
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
-        edge_types = storage_utils.get_edge_types()
+        server = dist_server.DistServer(dataset)
+        edge_types = server.get_edge_types()
         self.assertEqual(
             edge_types,
             [(USER, Relation("to"), STORY), (STORY, Relation("to"), USER)],
@@ -379,11 +332,11 @@ class TestRemoteDataset(TestCase):
             test_node_ids=split_to_user_ids["test"],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
-                anchor_nodes, pos_labels, neg_labels = storage_utils.get_ablp_input(
+                anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
                     split=split,
                     rank=0,
                     world_size=1,
@@ -434,13 +387,13 @@ class TestRemoteDataset(TestCase):
             test_node_ids=[],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
         # Get training input for rank 0 of 2
 
         # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
         # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
-        anchor_nodes_0, pos_labels_0, neg_labels_0 = storage_utils.get_ablp_input(
+        anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
             split="train",
             rank=0,
             world_size=2,
@@ -449,7 +402,7 @@ class TestRemoteDataset(TestCase):
         )
 
         # Get training input for rank 1 of 2
-        anchor_nodes_1, pos_labels_1, neg_labels_1 = storage_utils.get_ablp_input(
+        anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
             split="train",
             rank=1,
             world_size=2,
@@ -481,19 +434,8 @@ class TestRemoteDataset(TestCase):
         self.assert_tensor_equality(neg_labels_0, torch.tensor(expected_negative_0))
         self.assert_tensor_equality(neg_labels_1, torch.tensor(expected_negative_1))
 
-    def test_get_training_input_without_registered_dataset(self) -> None:
-        """Test get_training_input raises ValueError when no dataset is registered."""
-        with self.assertRaises(ValueError):
-            storage_utils.get_ablp_input(
-                split="train",
-                rank=0,
-                world_size=1,
-                node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
-            )
-
     def test_get_ablp_input_invalid_split(self) -> None:
-        """Test get_training_input raises ValueError with invalid split."""
+        """Test get_ablp_input raises ValueError with invalid split."""
         create_test_process_group()
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
         negative_labels = {0: [1], 1: [2], 2: [3], 3: [4], 4: [0]}
@@ -506,10 +448,10 @@ class TestRemoteDataset(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
         with self.assertRaises(ValueError):
-            storage_utils.get_ablp_input(
+            server.get_ablp_input(
                 split="invalid",
                 rank=0,
                 world_size=1,
@@ -517,8 +459,8 @@ class TestRemoteDataset(TestCase):
                 supervision_edge_type=USER_TO_STORY,
             )
 
-    def test_get_training_input_without_negative_labels(self) -> None:
-        """Test get_training_input when no negative labels exist in the dataset."""
+    def test_get_ablp_input_without_negative_labels(self) -> None:
+        """Test get_ablp_input when no negative labels exist in the dataset."""
         create_test_process_group()
         # Define only positive labels, no negative labels
         positive_labels = {
@@ -538,9 +480,9 @@ class TestRemoteDataset(TestCase):
             test_node_ids=[4],
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         )
-        storage_utils.register_dataset(dataset)
+        server = dist_server.DistServer(dataset)
 
-        anchor_nodes, pos_labels, neg_labels = storage_utils.get_ablp_input(
+        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
             split="train",
             rank=0,
             world_size=1,
