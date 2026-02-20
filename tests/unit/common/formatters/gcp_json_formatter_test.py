@@ -1,13 +1,13 @@
 import json
 import logging
 
-from gigl.common.formatters.gcp_json_formatter import GCP_LABELS_RECORD_ATTR, GcpJsonFormatter
+from gigl.common.logger import _GCP_LABELS_RECORD_ATTR, _GcpJsonFormatter
 from tests.test_assets.test_case import TestCase
 
 
 class GcpJsonFormatterTest(TestCase):
     def setUp(self) -> None:
-        self.formatter = GcpJsonFormatter()
+        self.formatter = _GcpJsonFormatter()
 
     def _make_record(
         self,
@@ -67,7 +67,7 @@ class GcpJsonFormatterTest(TestCase):
 
     def test_extra_fields_appear_under_labels(self) -> None:
         record = self._make_record()
-        setattr(record, GCP_LABELS_RECORD_ATTR, {"custom_key": "custom_value"})
+        setattr(record, _GCP_LABELS_RECORD_ATTR, {"custom_key": "custom_value"})
         parsed = json.loads(self.formatter.format(record))
 
         labels = parsed["logging.googleapis.com/labels"]
