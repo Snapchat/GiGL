@@ -8,6 +8,7 @@ from absl.testing import absltest
 from gigl.common import LocalUri
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.post_process.impl.record_count_validating_post_processor import (
     RecordCountValidatingPostProcessor,
@@ -148,7 +149,9 @@ class RecordCountValidatingPostProcessorTest(TestCase):
 
     def _run_validator(self, gbml_config_pb: gbml_config_pb2.GbmlConfig) -> None:
         """Run the RecordCountValidatingPostProcessor via its public run() API."""
-        validator = RecordCountValidatingPostProcessor()
+        validator = RecordCountValidatingPostProcessor(
+            applied_task_identifier=AppliedTaskIdentifier("foo")
+        )
         validator.run_post_process(
             gbml_config_pb=gbml_config_pb,
         )
