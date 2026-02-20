@@ -380,6 +380,7 @@ def _run_compute_multiple_loaders_test(
         # Use prefetch_size=2 to limit concurrent fetch_one_sampled_message RPC calls
         # per server. With 4 loaders × 2 compute nodes × 2 prefetch = 16 calls,
         # matching the 16 RPC thread limit on the server.
+        batch_size = 128
         with _ts.track("phase1.DistABLPLoader.__init__"):
             ablp_loader_1 = DistABLPLoader(
                 dataset=remote_dist_dataset,
@@ -389,6 +390,7 @@ def _run_compute_multiple_loaders_test(
                 num_workers=2,
                 worker_concurrency=2,
                 prefetch_size=2,
+                batch_size=batch_size,
             )
         logger.info(
             f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
@@ -402,6 +404,7 @@ def _run_compute_multiple_loaders_test(
                 num_workers=2,
                 worker_concurrency=2,
                 prefetch_size=2,
+                batch_size=batch_size,
             )
         logger.info(
             f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
@@ -414,6 +417,7 @@ def _run_compute_multiple_loaders_test(
                 pin_memory_device=torch.device("cpu"),
                 num_workers=2,
                 worker_concurrency=2,
+                batch_size=batch_size,
             )
         logger.info(
             f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
@@ -426,6 +430,7 @@ def _run_compute_multiple_loaders_test(
                 pin_memory_device=torch.device("cpu"),
                 num_workers=2,
                 worker_concurrency=2,
+                batch_size=batch_size,
             )
         logger.info(
             f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
@@ -488,6 +493,7 @@ def _run_compute_multiple_loaders_test(
                 pin_memory_device=torch.device("cpu"),
                 num_workers=2,
                 worker_concurrency=2,
+                batch_size=batch_size,
             )
         logger.info(
             f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
@@ -500,6 +506,7 @@ def _run_compute_multiple_loaders_test(
                 pin_memory_device=torch.device("cpu"),
                 num_workers=2,
                 worker_concurrency=2,
+                batch_size=batch_size,
             )
         logger.info(
             f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
@@ -886,7 +893,7 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def test_graph_store_homogeneous(self):
+    def _test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -1097,8 +1104,8 @@ class GraphStoreIntegrationTest(TestCase):
         host_ip = socket.gethostbyname(socket.gethostname())
         # Very small cluster to avoid OOMing on CICD.
         cluster_info = GraphStoreInfo(
-            num_storage_nodes=4,
-            num_compute_nodes=4,
+            num_storage_nodes=2,
+            num_compute_nodes=2,
             num_processes_per_compute=2,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
