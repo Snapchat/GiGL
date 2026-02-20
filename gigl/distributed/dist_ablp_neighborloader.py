@@ -1,6 +1,11 @@
 import ast
 from collections import abc, defaultdict
 from typing import Callable, Optional, Union
+import concurrent.futures
+import time
+from collections import Counter, abc, defaultdict
+from itertools import count
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -53,6 +58,11 @@ logger = Logger()
 
 
 class DistABLPLoader(BaseDistLoader):
+    # Counts instantiations of this class, per process.
+    # This is needed so we can generate unique worker key for each instance, for graph store mode.
+    # NOTE: This is per-class, not per-instance.
+    _counter = count(0)
+
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -218,6 +228,7 @@ class DistABLPLoader(BaseDistLoader):
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
+        self._instance_count = next(self._counter)
 
         # Resolve distributed context
         runtime = BaseDistLoader.resolve_runtime(
@@ -615,7 +626,9 @@ class DistABLPLoader(BaseDistLoader):
         # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
         # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
         # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
-        worker_key = f"compute_ablp_loader_rank_{node_rank}"
+        worker_key = (
+            f"compute_ablp_loader_rank_{node_rank}_worker_{self._instance_count}"
+        )
         logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
