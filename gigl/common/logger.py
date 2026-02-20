@@ -137,7 +137,7 @@ class Logger(logging.LoggerAdapter):
             logger.setLevel(logging.INFO)
 
     def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> Any:
-        merged: dict[str, Any] = dict(self.extra)
+        merged: dict[str, Any] = dict(self.extra if self.extra else {})
         if "extra" in kwargs:
             merged.update(kwargs["extra"])
         kwargs["extra"] = {**merged, _GCP_LABELS_RECORD_ATTR: merged}
