@@ -239,9 +239,7 @@ def storage_node_process(
         num_sessions = num_server_sessions
         logger.info(f"num_server_sessions explicitly set to {num_sessions}")
 
-    torch_process_ports = get_free_ports_from_master_node(
-        num_ports=num_sessions
-    )
+    torch_process_ports = get_free_ports_from_master_node(num_ports=num_sessions)
     torch.distributed.destroy_process_group()
     for session_idx in range(num_sessions):
         logger.info(

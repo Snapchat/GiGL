@@ -278,7 +278,7 @@ def _run_compute_train_tests(
     # Each process on the same compute node has the same anchor count, so we sum
     # across all processes and divide by num_processes_per_compute to get the true total
     local_total_anchors = sum(
-        ablp_result[server_rank][0].shape[0] for server_rank in ablp_result
+        ablp_result[server_rank].anchor_nodes.shape[0] for server_rank in ablp_result
     )
     expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
     torch.distributed.all_reduce(

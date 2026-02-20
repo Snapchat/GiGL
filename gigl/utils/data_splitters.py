@@ -189,7 +189,7 @@ class DistNodeAnchorLinkSplitter:
         num_val: float = 0.1,
         num_test: float = 0.1,
         hash_function: Callable[[torch.Tensor], torch.Tensor] = _fast_hash,
-        supervision_edge_types: Optional[list[EdgeType]] = None,
+        supervision_edge_types: Optional[list[Union[EdgeType, PyGEdgeType]]] = None,
         should_convert_labels_to_edges: bool = True,
     ):
         """Initializes the DistNodeAnchorLinkSplitter.
@@ -199,7 +199,7 @@ class DistNodeAnchorLinkSplitter:
             num_val (float): The percentage of nodes to use for training. Defaults to 0.1 (10%).
             num_test (float): The percentage of nodes to use for validation. Defaults to 0.1 (10%).
             hash_function (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): The hash function to use. Defaults to `_fast_hash`.
-            supervision_edge_types (Optional[list[EdgeType]]): The supervision edge types we should use for splitting.
+            supervision_edge_types (Optional[list[Union[EdgeType, PyGEdgeType]]]): The supervision edge types we should use for splitting.
                 Must be provided if we are splitting a heterogeneous graph. If None, uses the default message passing edge type in the graph.
             should_convert_labels_to_edges (bool): Whether label should be converted into an edge type in the graph. If provided, will make
                 `gigl.distributed.build_dataset` convert all labels into edges, and will infer positive and negative edge types based on
@@ -232,7 +232,10 @@ class DistNodeAnchorLinkSplitter:
         # also be ("user", "positive", "story"), meaning that all edges in the loaded edge index tensor with this edge type will be treated as a labeled
         # edge and will be used for splitting.
 
-        self._supervision_edge_types: Sequence[EdgeType] = supervision_edge_types
+        self._supervision_edge_types: Sequence[EdgeType] = [
+            EdgeType(*supervision_edge_type)
+            for supervision_edge_type in supervision_edge_types
+        ]
         self._labeled_edge_types: Sequence[EdgeType]
         if should_convert_labels_to_edges:
             labeled_edge_types = [

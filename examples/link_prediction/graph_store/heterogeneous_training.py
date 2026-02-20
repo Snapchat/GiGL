@@ -75,8 +75,6 @@ import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from torch_geometric.data import HeteroData
 
-import gigl.distributed
-import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
@@ -169,14 +167,14 @@ def _setup_dataloaders(
         split=split,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        node_type=query_node_type,
+        anchor_node_type=query_node_type,
         supervision_edge_type=supervision_edge_type,
     )
 
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(query_node_type, ablp_input),
+        input_nodes=ablp_input,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
         pin_memory_device=device,
@@ -213,7 +211,9 @@ def _setup_dataloaders(
         shuffle=shuffle,
     )
 
-    logger.info(f"---Rank {rank} finished setting up random negative loader for split={split}")
+    logger.info(
+        f"---Rank {rank} finished setting up random negative loader for split={split}"
+    )
     flush()
 
     # Wait for all processes to finish initializing the random_loader
@@ -915,9 +915,7 @@ def _run_example_training(
         nprocs=local_world_size,
         join=True,
     )
-    logger.info(
-        f"--- Training finished, took {time.time() - start_time} seconds"
-    )
+    logger.info(f"--- Training finished, took {time.time() - start_time} seconds")
     logger.info(
         f"--- Program finished, which took {time.time() - program_start_time:.2f} seconds"
     )

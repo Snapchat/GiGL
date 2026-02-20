@@ -63,7 +63,7 @@ import sys
 import time
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
-from typing import Literal, Optional, Union
+from typing import Literal, Optional
 
 import torch
 import torch.distributed
@@ -71,8 +71,6 @@ import torch.multiprocessing as mp
 from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from torch_geometric.data import Data
 
-import gigl.distributed
-import gigl.distributed.utils
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
@@ -200,7 +198,9 @@ def _setup_dataloaders(
         shuffle=shuffle,
     )
 
-    logger.info(f"---Rank {rank} finished setting up random negative loader for split={split}")
+    logger.info(
+        f"---Rank {rank} finished setting up random negative loader for split={split}"
+    )
     flush()
 
     # Wait for all processes to finish initializing the random_loader
@@ -838,9 +838,7 @@ def _run_example_training(
         nprocs=local_world_size,
         join=True,
     )
-    logger.info(
-        f"--- Training finished, took {time.time() - start_time} seconds"
-    )
+    logger.info(f"--- Training finished, took {time.time() - start_time} seconds")
     logger.info(
         f"--- Program finished, which took {time.time() - program_start_time:.2f} seconds"
     )
