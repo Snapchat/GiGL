@@ -1,5 +1,6 @@
 import ast
 import concurrent.futures
+import sys
 import time
 from collections import Counter, abc, defaultdict
 from itertools import count
@@ -60,6 +61,9 @@ from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
 
+def flush():
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 class DistABLPLoader(DistLoader):
     # Counts instantiations of this class, per process.
@@ -827,10 +831,15 @@ class DistABLPLoader(DistLoader):
         # Extract node type and label edge types from the ABLPInputNodes dataclass.
         # All entries should have the same anchor_node_type and edge type keys.
         first_input = next(iter(input_nodes.values()))
+
         input_type = first_input.anchor_node_type
         is_homogeneous_with_labeled_edge_type = (
             input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
         )
+        print(f"Input type: {input_type}")
+        print(f"Is homogeneous with labeled edge type: {is_homogeneous_with_labeled_edge_type}")
+        print(f"First input: {first_input}")
+        flush()
 
         # Extract supervision edge types and derive label edge types from the
         # ABLPInputNodes.labels dict (keyed by supervision edge type).

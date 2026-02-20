@@ -227,6 +227,10 @@ def _compute_loss(
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
+    print(f"Computing loss for main data: {main_data}")
+    print(f"Computing loss for random negative data: {random_negative_data}")
+    print(f"Using model: {model}")
+    flush()
     # Forward pass through encoder
     main_embeddings = model(data=main_data, device=device)
     random_negative_embeddings = model(data=random_negative_data, device=device)
