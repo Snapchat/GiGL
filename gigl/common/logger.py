@@ -1,22 +1,32 @@
 import logging
 import os
 import pathlib
+import sys
 from datetime import datetime
 from typing import Any, MutableMapping, Optional
 
-from google.cloud import logging as google_cloud_logging
+from gigl.common.formatters import GcpJsonFormatter
 
 _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
 
 
-class Logger(logging.LoggerAdapter):
+def _is_gcp_environment() -> bool:
+    """Return ``True`` when running on a GCP-managed platform (GKE, GAE, etc.).
+
+    Checks the environment variables that GCP injects into container workloads.
+    Extracted as a standalone helper so tests can patch a single symbol.
     """
-    GiGL's custom logger class used for local and cloud logging (VertexAI, Dataflow, etc.)
+    return bool(os.getenv("GAE_APPLICATION") or os.getenv("KUBERNETES_SERVICE_HOST"))
+
+
+class Logger(logging.LoggerAdapter):
+    """GiGL's custom logger class used for local and cloud logging (VertexAI, Dataflow, etc.).
+
     Args:
-        logger (Optional[logging.Logger]): A custom logger to use. If not provided, the default logger will be created.
-        name (Optional[str]): The name to be used for the logger. By default uses "root".
-        log_to_file (bool): If True, logs will be written to a file. If False, logs will be written to the console.
-        extra (Optional[dict[str, Any]]): Extra information to be added to the log message.
+        logger: A custom logger to use. If not provided, the default logger will be created.
+        name: The name to be used for the logger. By default uses "root".
+        log_to_file: If True, logs will be written to a file. If False, logs will be written to the console.
+        extra: Extra information to be added to the log message.
     """
 
     def __init__(
@@ -37,12 +47,10 @@ class Logger(logging.LoggerAdapter):
     ) -> None:
         handler: logging.Handler
         if not logger.handlers:
-            if os.getenv("GAE_APPLICATION") or os.environ.get(
-                "KUBERNETES_SERVICE_HOST"
-            ):
-                # Google Cloud Logging
-                client = google_cloud_logging.Client()
-                client.setup_logging(log_level=logging.INFO)
+            if _is_gcp_environment():
+                handler = logging.StreamHandler(stream=sys.stderr)
+                handler.setFormatter(GcpJsonFormatter())
+                logger.addHandler(handler)
             else:
                 # Logging locally. Set up logging to console or file
                 if log_to_file:
