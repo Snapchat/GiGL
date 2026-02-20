@@ -1,10 +1,7 @@
-from collections import abc
-from typing import Callable, Optional, Tuple, Union
 import sys
-import time
-from collections import Counter, abc
+from collections import abc
 from itertools import count
-from typing import Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -46,6 +43,8 @@ logger = Logger()
 DEFAULT_NUM_CPU_THREADS = 2
 
 
+# We don't see logs for graph store mode for whatever reason.
+# TOOD(#442): Revert this once the GCP issues are resolved.
 def flush():
     sys.stdout.flush()
     sys.stderr.flush()
@@ -84,6 +83,12 @@ class DistNeighborLoader(BaseDistLoader):
         drop_last: bool = False,
     ):
         """
+        Distributed Neighbor Loader.
+        Takes in some input nodes and samples neighbors from the dataset.
+        This loader should be used if you do not have any specially sampling needs,
+        e.g. you need to generate *training* examples for Anchor Based Link Prediction (ABLP) tasks.
+        Though this loader is useful for generating random negative examples for ABLP training.
+
         Note: We try to adhere to pyg dataloader api as much as possible.
         See the following for reference:
         https://pytorch-geometric.readthedocs.io/en/2.5.2/_modules/torch_geometric/loader/node_loader.html#NodeLoader
@@ -178,7 +183,7 @@ class DistNeighborLoader(BaseDistLoader):
             assert isinstance(
                 dataset, DistDataset
             ), "When using colocated mode, dataset must be a DistDataset."
-            input_data, worker_options, dataset_metadata = self._setup_for_colocated(
+            input_data, worker_options, dataset_schema = self._setup_for_colocated(
                 input_nodes=input_nodes,
                 dataset=dataset,
                 local_rank=runtime.local_rank,
@@ -199,7 +204,7 @@ class DistNeighborLoader(BaseDistLoader):
             if prefetch_size is None:
                 logger.info(f"prefetch_size is not provided, using default of 4")
                 prefetch_size = 4
-            input_data, worker_options, dataset_metadata = self._setup_for_graph_store(
+            input_data, worker_options, dataset_schema = self._setup_for_graph_store(
                 input_nodes=input_nodes,
                 dataset=dataset,
                 num_workers=num_workers,
@@ -220,7 +225,7 @@ class DistNeighborLoader(BaseDistLoader):
         # Create SamplingConfig (with patched fanout)
         sampling_config = BaseDistLoader.create_sampling_config(
             num_neighbors=num_neighbors,
-            dataset_metadata=dataset_metadata,
+            dataset_schema=dataset_schema,
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
@@ -249,7 +254,7 @@ class DistNeighborLoader(BaseDistLoader):
         super().__init__(
             dataset=dataset,
             sampler_input=input_data,
-            dataset_metadata=dataset_metadata,
+            dataset_schema=dataset_schema,
             worker_options=worker_options,
             sampling_config=sampling_config,
             device=device,

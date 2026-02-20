@@ -20,6 +20,7 @@ from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
+    get_context,
 )
 from graphlearn_torch.distributed.dist_client import async_request_server
 from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
@@ -50,6 +51,8 @@ from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 logger = Logger()
 
 
+# We don't see logs for graph store mode for whatever reason.
+# TOOD(#442): Revert this once the GCP issues are resolved.
 def _flush() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
@@ -90,7 +93,7 @@ class BaseDistLoader(DistLoader):
         dataset: ``DistDataset`` (colocated) or ``RemoteDistDataset`` (graph store).
         sampler_input: Prepared by the subclass. Single input for colocated mode,
             list (one per server) for graph store mode.
-        dataset_metadata: Contains edge types, feature info, edge dir, etc.
+        dataset_schema: Contains edge types, feature info, edge dir, etc.
         worker_options: ``MpDistSamplingWorkerOptions`` (colocated) or
             ``RemoteDistSamplingWorkerOptions`` (graph store).
         sampling_config: Configuration for the sampler (created via ``create_sampling_config``).
@@ -195,7 +198,7 @@ class BaseDistLoader(DistLoader):
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
         sampler_input: Union[NodeSamplerInput, list[NodeSamplerInput]],
-        dataset_metadata: DatasetSchema,
+        dataset_schema: DatasetSchema,
         worker_options: Union[
             MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
         ],
@@ -211,10 +214,10 @@ class BaseDistLoader(DistLoader):
 
         # Store dataset metadata for subclass _collate_fn usage
         self._is_homogeneous_with_labeled_edge_type = (
-            dataset_metadata.is_homogeneous_with_labeled_edge_type
+            dataset_schema.is_homogeneous_with_labeled_edge_type
         )
-        self._node_feature_info = dataset_metadata.node_feature_info
-        self._edge_feature_info = dataset_metadata.edge_feature_info
+        self._node_feature_info = dataset_schema.node_feature_info
+        self._edge_feature_info = dataset_schema.edge_feature_info
 
         # Dispatch to mode-specific connection initialization
         if isinstance(sampler, DistMpSamplingProducer):
@@ -242,14 +245,14 @@ class BaseDistLoader(DistLoader):
                 sampling_config=sampling_config,
                 device=device,
                 worker_options=worker_options,
-                dataset_metadata=dataset_metadata,
+                dataset_schema=dataset_schema,
                 create_producer_fn=sampler,
             )
 
     @staticmethod
     def create_sampling_config(
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
-        dataset_metadata: DatasetSchema,
+        dataset_schema: DatasetSchema,
         batch_size: int = 1,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -261,7 +264,7 @@ class BaseDistLoader(DistLoader):
 
         Args:
             num_neighbors: Fanout per hop.
-            dataset_metadata: Contains edge types and edge dir.
+            dataset_schema: Contains edge types and edge dir.
             batch_size: How many samples per batch.
             shuffle: Whether to shuffle input nodes.
             drop_last: Whether to drop the last incomplete batch.
@@ -270,7 +273,7 @@ class BaseDistLoader(DistLoader):
             A fully configured SamplingConfig.
         """
         num_neighbors = patch_fanout_for_sampling(
-            edge_types=dataset_metadata.edge_types,
+            edge_types=dataset_schema.edge_types,
             num_neighbors=num_neighbors,
         )
         return SamplingConfig(
@@ -283,7 +286,7 @@ class BaseDistLoader(DistLoader):
             collect_features=True,
             with_neg=False,
             with_weight=False,
-            edge_dir=dataset_metadata.edge_dir,
+            edge_dir=dataset_schema.edge_dir,
             seed=None,
         )
 
@@ -293,17 +296,13 @@ class BaseDistLoader(DistLoader):
     ) -> ShmChannel:
         """Creates a ShmChannel for colocated mode.
 
-        Validates that the current distributed context is a worker process,
-        then creates and optionally pin-memories the shared-memory channel.
+        Creates and optionally pin-memories the shared-memory channel.
 
         Args:
             worker_options: The colocated worker options (must already be fully configured).
 
         Returns:
             A ShmChannel ready to be passed to a DistMpSamplingProducer.
-
-        Raises:
-            RuntimeError: If the distributed context is not a worker process.
         """
         channel = ShmChannel(
             worker_options.channel_capacity, worker_options.channel_size
@@ -374,6 +373,8 @@ class BaseDistLoader(DistLoader):
             self._num_expected += 1
 
         # Store the pre-constructed producer and its channel
+        current_ctx = get_context()
+        self.worker_options._set_worker_ranks(current_ctx)
         self._with_channel = True
         self._channel = producer.output_channel
         self._mp_producer = producer
@@ -394,7 +395,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         device: torch.device,
         worker_options: RemoteDistSamplingWorkerOptions,
-        dataset_metadata: DatasetSchema,
+        dataset_schema: DatasetSchema,
         create_producer_fn: Callable[..., int],
     ) -> None:
         """Initialize Graph Store mode connections.
@@ -405,6 +406,42 @@ class BaseDistLoader(DistLoader):
 
         Uses ``async_request_server`` instead of ``ThreadPoolExecutor`` to avoid
         TensorPipe rendezvous deadlock with many servers.
+
+        For Graph Store mode it's important to distinguish "compute node" (e.g. physical compute machine) from "compute process" (e.g. process running on the compute node).
+        Since in practice we have multiple compute processes per compute node, and each compute process needs to initialize the connection to the storage nodes.
+        E.g. if there are 4 gpus per compute node, then there will be 4 connections from each compute node to each storage node.
+
+        See below for a connection setup.
+        ╔═══════════════════════════════════════════════════════════════════════════════════════╗
+        ║                         COMPUTE TO STORAGE NODE CONNECTIONS                            ║
+        ╚═══════════════════════════════════════════════════════════════════════════════════════╝
+
+             COMPUTE NODES                                              STORAGE NODES
+             ═════════════                                              ═════════════
+
+          ┌──────────────────────┐          (1)                      ┌───────────────┐
+          │    COMPUTE NODE 0    │                                   │               │
+          │  ┌────┬────┬────┬────┤ ══════════════════════════════════│   STORAGE 0   │
+          │  │GPU │GPU │GPU │GPU │                                 ╱ │               │
+          │  │ 0  │ 1  │ 2  │ 3  │ ════════════════════╲         ╱   └───────────────┘
+          │  └────┴────┴────┴────┤          (2)          ╲     ╱
+          └──────────────────────┘                         ╲ ╱
+                                                            ╳
+                                                  (3)     ╱   ╲     (4)
+          ┌──────────────────────┐                      ╱       ╲    ┌───────────────┐
+          │    COMPUTE NODE 1    │                    ╱           ╲  │               │
+          │  ┌────┬────┬────┬────┤ ═════════════════╱               ═│   STORAGE 1   │
+          │  │GPU │GPU │GPU │GPU │                                   │               │
+          │  │ 0  │ 1  │ 2  │ 3  │ ══════════════════════════════════│               │
+          │  └────┴────┴────┴────┤                                   └───────────────┘
+          └──────────────────────┘
+
+          ┌─────────────────────────────────────────────────────────────────────────────┐
+          │  (1) Compute Node 0  →  Storage 0   (4 connections, one per GPU)            │
+          │  (2) Compute Node 0  →  Storage 1   (4 connections, one per GPU)            │
+          │  (3) Compute Node 1  →  Storage 0   (4 connections, one per GPU)            │
+          │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
+          └─────────────────────────────────────────────────────────────────────────────┘
         """
         # Set DistLoader attributes (mirrors GLT DistLoader.__init__ for remote workers)
         self.data = None  # type: ignore[assignment]  # No local data in Graph Store mode
@@ -444,7 +481,7 @@ class BaseDistLoader(DistLoader):
         # Derive partition info + types from metadata and cluster_info (no RPC needed)
         self.num_data_partitions = dataset.cluster_info.num_storage_nodes
         self.data_partition_idx = dataset.cluster_info.compute_node_rank
-        edge_types = dataset_metadata.edge_types or []
+        edge_types = dataset_schema.edge_types or []
         if edge_types:
             node_types = list(
                 set([et[0] for et in edge_types] + [et[2] for et in edge_types])
@@ -501,36 +538,6 @@ class BaseDistLoader(DistLoader):
                 )
                 _flush()
 
-                # Wait for all results
-                self._producer_id_list: list[int] = []
-                for server_rank, fut in rpc_futures:
-                    t_wait = time.time()
-                    producer_id: int = fut.wait()
-                    logger.info(
-                        f"node_rank={node_rank} create_sampling_producer"
-                        f"(server_rank={server_rank}) returned "
-                        f"producer_id={producer_id} in {time.time() - t_wait:.2f}s"
-                    )
-                    _flush()
-                    self._producer_id_list.append(producer_id)
-                logger.info(
-                    f"node_rank={node_rank} all {len(self._producer_id_list)} producers "
-                    f"created in {time.time() - t_dispatch:.2f}s total"
-                )
-                _flush()
-
-                # Create remote receiving channel for cross-machine message passing
-                self._channel = RemoteReceivingChannel(
-                    self._server_rank_list,
-                    self._producer_id_list,
-                    self.worker_options.prefetch_size,
-                )
-
-                logger.info(
-                    f"node_rank {node_rank} initialized the dist loader in "
-                    f"{time.time() - start_time:.2f}s"
-                )
-                _flush()
             else:
                 logger.info(
                     f"node_rank {node_rank} waiting for barrier "
@@ -541,6 +548,35 @@ class BaseDistLoader(DistLoader):
             logger.info(
                 f"node_rank {node_rank} barrier for rank "
                 f"{target_node_rank} in {time.time() - start_time:.2f}s"
+            )
+            _flush()
+            # Wait for all results
+            self._producer_id_list: list[int] = []
+            for server_rank, fut in rpc_futures:
+                t_wait = time.time()
+                producer_id: int = fut.wait()
+                logger.info(
+                    f"node_rank={node_rank} create_sampling_producer"
+                    f"(server_rank={server_rank}) returned "
+                    f"producer_id={producer_id} in {time.time() - t_wait:.2f}s"
+                )
+                _flush()
+                self._producer_id_list.append(producer_id)
+            logger.info(
+                f"node_rank={node_rank} all {len(self._producer_id_list)} producers "
+                f"created in {time.time() - t_dispatch:.2f}s total"
+            )
+            _flush()
+            # Create remote receiving channel for cross-machine message passing
+            self._channel = RemoteReceivingChannel(
+                self._server_rank_list,
+                self._producer_id_list,
+                self.worker_options.prefetch_size,
+            )
+
+            logger.info(
+                f"node_rank {node_rank} initialized the dist loader in "
+                f"{time.time() - start_time:.2f}s"
             )
             _flush()
 

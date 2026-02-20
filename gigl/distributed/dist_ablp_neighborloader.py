@@ -1,11 +1,7 @@
 import ast
 from collections import abc, defaultdict
-from typing import Callable, Optional, Union
-import concurrent.futures
-import time
-from collections import Counter, abc, defaultdict
 from itertools import count
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -277,7 +273,7 @@ class DistABLPLoader(BaseDistLoader):
             worker_options: Union[
                 MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
             ] = setup_info[1]
-            dataset_metadata: DatasetSchema = setup_info[2]
+            dataset_schema: DatasetSchema = setup_info[2]
         else:  # Graph Store mode
             assert isinstance(
                 dataset, RemoteDistDataset
@@ -295,7 +291,7 @@ class DistABLPLoader(BaseDistLoader):
             (
                 sampler_input,
                 worker_options,
-                dataset_metadata,
+                dataset_schema,
             ) = self._setup_for_graph_store(
                 input_nodes=input_nodes,
                 dataset=dataset,
@@ -317,7 +313,7 @@ class DistABLPLoader(BaseDistLoader):
         # Create SamplingConfig (with patched fanout)
         sampling_config = BaseDistLoader.create_sampling_config(
             num_neighbors=num_neighbors,
-            dataset_metadata=dataset_metadata,
+            dataset_schema=dataset_schema,
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
@@ -346,7 +342,7 @@ class DistABLPLoader(BaseDistLoader):
         super().__init__(
             dataset=dataset,
             sampler_input=sampler_input,
-            dataset_metadata=dataset_metadata,
+            dataset_schema=dataset_schema,
             worker_options=worker_options,
             sampling_config=sampling_config,
             device=device,
