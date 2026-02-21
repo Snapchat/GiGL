@@ -210,7 +210,6 @@ Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Cre
 
 ## Additional instructions
 
-See [.claude/formatting.md](.claude/formatting.md) for pre-submit checklist and formatting details.
+- For a pre-submit checklist and formatting see [.claude/formatting.md](.claude/formatting.md)
 
-See [.claude/development.md](.claude/development.md) for git branching conventions, targeted formatting, and testing
-guidance.
+- For general development and branch naming conventions see [.claude/development.md](.claude/development.md)
