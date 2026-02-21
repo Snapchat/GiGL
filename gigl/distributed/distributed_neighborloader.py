@@ -307,6 +307,7 @@ class DistNeighborLoader(BaseDistLoader):
             master_port=sampling_port,
             prefetch_size=prefetch_size,
             worker_key=worker_key,
+            num_rpc_threads=16,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"

@@ -133,6 +133,7 @@ def _run_storage_process(
         master_addr=cluster_master_ip,
         master_port=cluster_info.rpc_master_port,
         num_clients=cluster_info.compute_cluster_world_size,
+        num_rpc_threads=24,
     )
 
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{torch_process_port}"

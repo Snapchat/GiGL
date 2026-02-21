@@ -245,6 +245,7 @@ class BaseDistLoader(DistLoader):
                 worker_options=worker_options,
                 dataset_metadata=dataset_metadata,
                 create_producer_fn=sampler,
+                process_start_gap_seconds=process_start_gap_seconds,
             )
 
     @staticmethod
@@ -397,6 +398,7 @@ class BaseDistLoader(DistLoader):
         worker_options: RemoteDistSamplingWorkerOptions,
         dataset_metadata: DatasetSchema,
         create_producer_fn: Callable[..., int],
+        process_start_gap_seconds: float,
     ) -> None:
         """Initialize Graph Store mode connections.
 
@@ -470,7 +472,15 @@ class BaseDistLoader(DistLoader):
             f"{num_compute_nodes} compute nodes"
         )
         _flush()
-
+        sleep_time = process_start_gap_seconds * node_rank
+        logger.info(
+            f"node_rank {node_rank} sleeping for {sleep_time} seconds before starting barrier loop"
+        )
+        time.sleep(sleep_time)
+        logger.info(
+            f"node_rank {node_rank} woke up from sleep"
+        )
+        _flush()
         _ts = TimingStats.get_instance()
         for target_node_rank in range(num_compute_nodes):
             start_time = time.time()
