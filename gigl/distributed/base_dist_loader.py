@@ -219,17 +219,51 @@ class BaseDistLoader(DistLoader):
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
 
-        # Dispatch to mode-specific connection initialization
+        # --- Attributes shared by both modes (mirrors GLT DistLoader.__init__) ---
+        self.input_data = sampler_input
+        self.sampling_type = sampling_config.sampling_type
+        self.num_neighbors = sampling_config.num_neighbors
+        self.batch_size = sampling_config.batch_size
+        self.shuffle = sampling_config.shuffle
+        self.drop_last = sampling_config.drop_last
+        self.with_edge = sampling_config.with_edge
+        self.with_weight = sampling_config.with_weight
+        self.collect_features = sampling_config.collect_features
+        self.edge_dir = sampling_config.edge_dir
+        self.sampling_config = sampling_config
+        self.to_device = device
+        self.worker_options = worker_options
+
+        self._is_collocated_worker = False
+        self._with_channel = True
+        self._num_recv = 0
+        self._epoch = 0
+
+        # --- Mode-specific attributes and connection initialization ---
         if isinstance(sampler, DistMpSamplingProducer):
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             assert isinstance(sampler_input, NodeSamplerInput)
+
+            self.data: Optional[DistDataset] = dataset
+            self._is_mp_worker = True
+            self._is_remote_worker = False
+
+            self.num_data_partitions = dataset.num_partitions
+            self.data_partition_idx = dataset.partition_idx
+            self._set_ntypes_and_etypes(
+                dataset.get_node_types(), dataset.get_edge_types()
+            )
+
+            self._input_len = len(sampler_input)
+            self._input_type = sampler_input.input_type
+            self._num_expected = self._input_len // self.batch_size
+            if not self.drop_last and self._input_len % self.batch_size != 0:
+                self._num_expected += 1
+
+            self._shutdowned = False
             self._init_colocated_connections(
                 dataset=dataset,
-                sampler_input=sampler_input,
-                sampling_config=sampling_config,
-                device=device,
-                worker_options=worker_options,
                 producer=sampler,
                 runtime=runtime,
                 process_start_gap_seconds=process_start_gap_seconds,
@@ -239,13 +273,34 @@ class BaseDistLoader(DistLoader):
             assert isinstance(worker_options, RemoteDistSamplingWorkerOptions)
             assert isinstance(sampler_input, list)
             assert callable(sampler)
+
+            self.data = None
+            self._is_mp_worker = False
+            self._is_remote_worker = True
+            self._num_expected = float("inf")
+
+            self._server_rank_list: list[int] = (
+                worker_options.server_rank
+                if isinstance(worker_options.server_rank, list)
+                else [worker_options.server_rank]
+            )
+            self._input_data_list = sampler_input
+            self._input_type = self._input_data_list[0].input_type
+
+            self.num_data_partitions = dataset.cluster_info.num_storage_nodes
+            self.data_partition_idx = dataset.cluster_info.compute_node_rank
+            edge_types = dataset_schema.edge_types or []
+            if edge_types:
+                node_types = list(
+                    set([et[0] for et in edge_types] + [et[2] for et in edge_types])
+                )
+            else:
+                node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
+            self._set_ntypes_and_etypes(node_types, edge_types)
+
+            self._shutdowned = False
             self._init_graph_store_connections(
                 dataset=dataset,
-                sampler_input=sampler_input,
-                sampling_config=sampling_config,
-                device=device,
-                worker_options=worker_options,
-                dataset_schema=dataset_schema,
                 create_producer_fn=sampler,
             )
 
@@ -314,64 +369,23 @@ class BaseDistLoader(DistLoader):
     def _init_colocated_connections(
         self,
         dataset: DistDataset,
-        sampler_input: NodeSamplerInput,
-        sampling_config: SamplingConfig,
-        device: torch.device,
-        worker_options: MpDistSamplingWorkerOptions,
         producer: DistMpSamplingProducer,
         runtime: DistributedRuntimeInfo,
         process_start_gap_seconds: float,
     ) -> None:
         """Initialize colocated mode connections.
 
-        Sets all DistLoader attributes (mirroring GLT's DistLoader.__init__),
-        stores the pre-constructed producer, and performs staggered initialization
-        to avoid memory OOM.
+        Validates the GLT distributed context, stores the pre-constructed producer,
+        and performs staggered initialization to avoid memory OOM.
+
+        All DistLoader attributes are already set by ``__init__`` before this is called.
 
         Args:
             dataset: The local DistDataset.
-            sampler_input: The prepared sampler input.
-            sampling_config: The SamplingConfig.
-            device: Target device for sampled results.
-            worker_options: Colocated worker options.
             producer: A pre-constructed DistMpSamplingProducer (or subclass).
             runtime: Resolved distributed runtime info (used for staggered sleep).
             process_start_gap_seconds: Delay multiplier for staggered init.
         """
-        # Set DistLoader attributes (mirrors GLT DistLoader.__init__ for mp workers)
-        self.data = dataset
-        self.input_data = sampler_input
-        self.sampling_type = sampling_config.sampling_type
-        self.num_neighbors = sampling_config.num_neighbors
-        self.batch_size = sampling_config.batch_size
-        self.shuffle = sampling_config.shuffle
-        self.drop_last = sampling_config.drop_last
-        self.with_edge = sampling_config.with_edge
-        self.with_weight = sampling_config.with_weight
-        self.collect_features = sampling_config.collect_features
-        self.edge_dir = sampling_config.edge_dir
-        self.sampling_config = sampling_config
-        self.to_device = device
-        self.worker_options = worker_options
-        self._shutdowned = False
-
-        self._is_mp_worker = True
-        self._is_collocated_worker = False
-        self._is_remote_worker = False
-
-        self.num_data_partitions = dataset.num_partitions
-        self.data_partition_idx = dataset.partition_idx
-        self._set_ntypes_and_etypes(dataset.get_node_types(), dataset.get_edge_types())
-
-        self._num_recv = 0
-        self._epoch = 0
-
-        self._input_len = len(self.input_data)
-        self._input_type = self.input_data.input_type
-        self._num_expected = self._input_len // self.batch_size
-        if not self.drop_last and self._input_len % self.batch_size != 0:
-            self._num_expected += 1
-
         # Validate context and store the pre-constructed producer and its channel
         current_ctx = get_context()
         if not current_ctx.is_worker():
@@ -387,7 +401,6 @@ class BaseDistLoader(DistLoader):
                 f"when launching multiprocessing sampling workers."
             )
         self.worker_options._set_worker_ranks(current_ctx)
-        self._with_channel = True
         self._channel = producer.output_channel
         self._mp_producer = producer
 
@@ -403,18 +416,15 @@ class BaseDistLoader(DistLoader):
     def _init_graph_store_connections(
         self,
         dataset: RemoteDistDataset,
-        sampler_input: list[NodeSamplerInput],
-        sampling_config: SamplingConfig,
-        device: torch.device,
-        worker_options: RemoteDistSamplingWorkerOptions,
-        dataset_schema: DatasetSchema,
         create_producer_fn: Callable[..., int],
     ) -> None:
         """Initialize Graph Store mode connections.
 
-        Sets all DistLoader attributes, performs a sequential barrier loop across
-        compute nodes, dispatches async RPCs to create sampling producers on storage
-        nodes, and creates a RemoteReceivingChannel.
+        Validates the GLT distributed context, performs a sequential barrier loop
+        across compute nodes, dispatches async RPCs to create sampling producers on
+        storage nodes, and creates a RemoteReceivingChannel.
+
+        All DistLoader attributes are already set by ``__init__`` before this is called.
 
         Uses ``async_request_server`` instead of ``ThreadPoolExecutor`` to avoid
         TensorPipe rendezvous deadlock with many servers.
@@ -467,53 +477,6 @@ class BaseDistLoader(DistLoader):
                 f"'{self.__class__.__name__}': must be used on a client "
                 f"worker process."
             )
-
-        # Set DistLoader attributes (mirrors GLT DistLoader.__init__ for remote workers)
-        self.data = None  # type: ignore[assignment]  # No local data in Graph Store mode
-        self.input_data = sampler_input
-        self.sampling_type = sampling_config.sampling_type
-        self.num_neighbors = sampling_config.num_neighbors
-        self.batch_size = sampling_config.batch_size
-        self.shuffle = sampling_config.shuffle
-        self.drop_last = sampling_config.drop_last
-        self.with_edge = sampling_config.with_edge
-        self.with_weight = sampling_config.with_weight
-        self.collect_features = sampling_config.collect_features
-        self.edge_dir = sampling_config.edge_dir
-        self.sampling_config = sampling_config
-        self.to_device = device
-        self.worker_options = worker_options
-        self._shutdowned = False
-
-        self._is_mp_worker = False
-        self._is_collocated_worker = False
-        self._is_remote_worker = True
-        self._num_expected = float("inf")
-        self._with_channel = True
-
-        self._num_recv = 0
-        self._epoch = 0
-
-        # Server rank list + input data list
-        self._server_rank_list: list[int] = (
-            worker_options.server_rank
-            if isinstance(worker_options.server_rank, list)
-            else [worker_options.server_rank]
-        )
-        self._input_data_list = sampler_input
-        self._input_type = self._input_data_list[0].input_type
-
-        # Derive partition info + types from metadata and cluster_info (no RPC needed)
-        self.num_data_partitions = dataset.cluster_info.num_storage_nodes
-        self.data_partition_idx = dataset.cluster_info.compute_node_rank
-        edge_types = dataset_schema.edge_types or []
-        if edge_types:
-            node_types = list(
-                set([et[0] for et in edge_types] + [et[2] for et in edge_types])
-            )
-        else:
-            node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
-        self._set_ntypes_and_etypes(node_types, edge_types)
 
         # Move input to CPU before sending to server
         for inp in self._input_data_list:
