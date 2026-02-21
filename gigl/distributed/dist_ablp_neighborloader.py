@@ -61,9 +61,11 @@ from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
 
+
 def flush():
     sys.stdout.flush()
     sys.stderr.flush()
+
 
 class DistABLPLoader(DistLoader):
     # Counts instantiations of this class, per process.
@@ -588,7 +590,6 @@ class DistABLPLoader(DistLoader):
                 raise ValueError(
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
-            is_homogeneous_with_labeled_edge_type = True
             anchor_node_type, anchor_node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
@@ -609,6 +610,7 @@ class DistABLPLoader(DistLoader):
                 )
             anchor_node_ids = input_nodes
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            is_homogeneous_with_labeled_edge_type = True
         elif input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -624,6 +626,7 @@ class DistABLPLoader(DistLoader):
                 )
             anchor_node_ids = dataset.node_ids
             anchor_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+            is_homogeneous_with_labeled_edge_type = True
         else:
             raise ValueError(f"Unexpected input_nodes type: {type(input_nodes)}")
 
@@ -837,7 +840,9 @@ class DistABLPLoader(DistLoader):
             input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
         )
         print(f"Input type: {input_type}")
-        print(f"Is homogeneous with labeled edge type: {is_homogeneous_with_labeled_edge_type}")
+        print(
+            f"Is homogeneous with labeled edge type: {is_homogeneous_with_labeled_edge_type}"
+        )
         print(f"First input: {first_input}")
         flush()
 
@@ -1199,7 +1204,7 @@ class DistABLPLoader(DistLoader):
         )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
-        if not self.is_homogeneous_with_labeled_edge_type:
+        if self.is_homogeneous_with_labeled_edge_type:
             if len(self._supervision_edge_types) != 1:
                 raise ValueError(
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"

@@ -157,6 +157,11 @@ def _setup_dataloaders(
     query_node_type = supervision_edge_type.src_node_type
     labeled_node_type = supervision_edge_type.dst_node_type
 
+    if dataset.get_edge_dir() == "in":
+        anchor_node_type = labeled_node_type
+    else:
+        anchor_node_type = query_node_type
+
     shuffle = split == "train"
 
     # In graph store mode, we fetch ABLP input (anchors + positive/negative labels) from the storage cluster.
@@ -167,7 +172,7 @@ def _setup_dataloaders(
         split=split,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        anchor_node_type=query_node_type,
+        anchor_node_type=anchor_node_type,
         supervision_edge_type=supervision_edge_type,
     )
 
@@ -195,13 +200,13 @@ def _setup_dataloaders(
     all_node_ids = dataset.get_node_ids(
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        node_type=labeled_node_type,
+        node_type=anchor_node_type,
     )
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(labeled_node_type, all_node_ids),
+        input_nodes=(anchor_node_type, all_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=device,

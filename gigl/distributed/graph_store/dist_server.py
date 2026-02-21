@@ -281,12 +281,12 @@ class DistServer:
             raise ValueError(
                 f"Invalid split: {split}. Must be one of 'train', 'val', 'test', or None."
             )
-
         if node_type is not None:
             if not isinstance(nodes, abc.Mapping):
                 raise ValueError(
                     f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] (e.g. a heterogeneous dataset), got {type(nodes)}"
                 )
+            print(f"node types: {nodes.keys()}")
             nodes = nodes[node_type]
         elif not isinstance(nodes, torch.Tensor):
             if nodes is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in nodes:
