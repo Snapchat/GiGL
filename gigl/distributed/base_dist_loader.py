@@ -372,8 +372,20 @@ class BaseDistLoader(DistLoader):
         if not self.drop_last and self._input_len % self.batch_size != 0:
             self._num_expected += 1
 
-        # Store the pre-constructed producer and its channel
+        # Validate context and store the pre-constructed producer and its channel
         current_ctx = get_context()
+        if not current_ctx.is_worker():
+            raise RuntimeError(
+                f"'{self.__class__.__name__}': only supports "
+                f"launching multiprocessing sampling workers with "
+                f"a non-server distribution mode, current role of "
+                f"distributed context is {current_ctx.role}."
+            )
+        if dataset is None:
+            raise ValueError(
+                f"'{self.__class__.__name__}': missing input dataset "
+                f"when launching multiprocessing sampling workers."
+            )
         self.worker_options._set_worker_ranks(current_ctx)
         self._with_channel = True
         self._channel = producer.output_channel
@@ -443,6 +455,19 @@ class BaseDistLoader(DistLoader):
           │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
           └─────────────────────────────────────────────────────────────────────────────┘
         """
+        # Validate distributed context
+        ctx = get_context()
+        if ctx is None:
+            raise RuntimeError(
+                f"'{self.__class__.__name__}': the distributed context "
+                f"has not been initialized."
+            )
+        if not ctx.is_client():
+            raise RuntimeError(
+                f"'{self.__class__.__name__}': must be used on a client "
+                f"worker process."
+            )
+
         # Set DistLoader attributes (mirrors GLT DistLoader.__init__ for remote workers)
         self.data = None  # type: ignore[assignment]  # No local data in Graph Store mode
         self.input_data = sampler_input

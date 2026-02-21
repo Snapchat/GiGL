@@ -221,6 +221,10 @@ class DistABLPLoader(BaseDistLoader):
                 self._supervision_edge_types = supervision_edge_type
             else:
                 self._supervision_edge_types = [supervision_edge_type]
+            if prefetch_size is not None:
+                raise ValueError(
+                    f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
