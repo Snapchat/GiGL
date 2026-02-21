@@ -17,5 +17,5 @@ Branch names should be of the form: `{USER}/snake-case-feature`. Use the followi
 We have several formatting tools, see `./formatting.md` for more details. Only use the formatter(s) for the files you
 edited. For instance, if you only edited python files, only use `make format_py`.
 
-Similarly, if you only edited `foo.py`, only run tests for `foo_test.py` with
+Similarly, if you only edited `foo.py`, only run tests for `tests/unit/common/foo_test.py` with
 `make unit_test_py PY_TEST_FILES="foo_test.py"`
