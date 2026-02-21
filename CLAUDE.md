@@ -208,10 +208,9 @@ class TestMyComponent(TestCase):
 Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in
 `tests/test_assets/configs/`.
 
-## Pre-Submit Checklist & Formatting
+## Additional instructions
 
 See [.claude/formatting.md](.claude/formatting.md) for pre-submit checklist and formatting details.
 
-## Development Workflow
-
-See [.claude/development.md](.claude/development.md) for git branching conventions, targeted formatting, and testing guidance.
+See [.claude/development.md](.claude/development.md) for git branching conventions, targeted formatting, and testing
+guidance.
