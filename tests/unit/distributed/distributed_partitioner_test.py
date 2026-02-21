@@ -3,7 +3,6 @@
 from collections import abc, defaultdict
 from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union
 
-import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
@@ -14,6 +13,7 @@ from torch.multiprocessing import Manager
 
 from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
+from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
@@ -685,7 +685,7 @@ class DistRandomPartitionerTestCase(TestCase):
             expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
                 Otherwise, it will be a torch.uint8.
         """
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         manager = Manager()
         output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
@@ -1000,7 +1000,7 @@ class DistRandomPartitionerTestCase(TestCase):
             )
 
     def test_partitioning_failure(self) -> None:
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
         rank = 0
 
         input_graph = RANK_TO_MOCKED_GRAPH[rank]
@@ -1156,7 +1156,7 @@ class DistRandomPartitionerTestCase(TestCase):
     ) -> None:
         # We expect node IDs across all machines to be contiguous starting from 0 to total_num_nodes - 1.
         # This test checks that the partitioner raises an error when this assumption is not met.
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1188,7 +1188,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_node_ids_re_registration(self) -> None:
         """Test that re-registering node IDs raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1211,7 +1211,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_edge_index_re_registration(self) -> None:
         """Test that re-registering edge indices raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1237,7 +1237,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_node_features_re_registration(self) -> None:
         """Test that re-registering node features raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1260,7 +1260,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_node_labels_re_registration(self) -> None:
         """Test that re-registering node labels raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1283,7 +1283,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_edge_features_re_registration(self) -> None:
         """Test that re-registering edge features raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1309,7 +1309,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_positive_labels_re_registration(self) -> None:
         """Test that re-registering labels raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1336,7 +1336,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_negative_labels_re_registration(self) -> None:
         """Test that re-registering labels raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1362,7 +1362,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
     def test_heterogeneous_re_registration(self) -> None:
         """Test re-registration prevention for heterogeneous data."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
