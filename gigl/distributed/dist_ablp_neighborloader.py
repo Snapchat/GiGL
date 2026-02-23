@@ -255,7 +255,7 @@ class DistABLPLoader(BaseDistLoader):
                 raise ValueError(
                     f"When using Colocated mode, input_nodes must be of type "
                     f"(torch.Tensor | tuple[NodeType, torch.Tensor] | None), "
-                    f"received Graph Store format: dict[int, ABLPInputNodes]"
+                    f"received {type(input_nodes)}"
                 )
             setup_info = self._setup_for_colocated(
                 input_nodes=input_nodes,
@@ -607,7 +607,7 @@ class DistABLPLoader(BaseDistLoader):
             num_workers: Number of sampling workers.
             worker_concurrency: Max sampling concurrency per worker. (default: ``4``).
             prefetch_size: Max prefetched sampled messages per server on client side.
-                If ``None``, defaults to GLT's built-in default (4). (default: ``None``).
+                (default: ``4``).
 
         Returns:
             Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema).
@@ -622,10 +622,6 @@ class DistABLPLoader(BaseDistLoader):
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
-        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.
-        # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
-        # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
-        # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
         worker_key = (
             f"compute_ablp_loader_rank_{node_rank}_worker_{self._instance_count}"
         )

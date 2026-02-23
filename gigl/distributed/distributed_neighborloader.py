@@ -354,7 +354,7 @@ class DistNeighborLoader(BaseDistLoader):
         servers = nodes.keys()
         if max(servers) >= dataset.cluster_info.num_storage_nodes or min(servers) < 0:
             raise ValueError(
-                f"When using Graph Store mode, the server ranks must be less than the number of storage nodes and greater than 0, received inputs for servers: {list(nodes.keys())}"
+                f"When using Graph Store mode, the server ranks must be in range [0, num_servers ({dataset.cluster_info.num_storage_nodes})), received inputs for servers: {list(nodes.keys())}"
             )
         input_data: list[NodeSamplerInput] = []
         for server_rank in range(dataset.cluster_info.num_storage_nodes):

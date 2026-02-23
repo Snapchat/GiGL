@@ -39,7 +39,6 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.graph_store.compute import request_server
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
@@ -483,61 +482,38 @@ class BaseDistLoader(DistLoader):
             if not isinstance(inp, RemoteSamplerInput):
                 inp.to(torch.device("cpu"))
 
-        # Sequential barrier loop — one compute node at a time.
-        # This avoids a race condition when initializing samplers on storage nodes:
-        # the lock is per-server, so concurrent init from multiple compute nodes deadlocks.
         node_rank = dataset.cluster_info.compute_node_rank
-        num_compute_nodes = dataset.cluster_info.num_compute_nodes
 
+        _flush()
+        start_time = time.time()
+        rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
+        # Dispatch ALL create_producer RPCs async.
+        # async_request_server queues the RPC in TensorPipe and returns
+        # immediately, allowing all storage nodes to start their worker
+        # rendezvous simultaneously.
         logger.info(
-            f"node_rank {node_rank} starting barrier loop with "
-            f"{num_compute_nodes} compute nodes"
+            f"node_rank={node_rank} dispatching create_sampling_producer to "
+            f"{len(self._server_rank_list)} servers"
+        )
+        _flush()
+        t_dispatch = time.time()
+        for server_rank, inp_data in zip[tuple[int, NodeSamplerInput]](
+            self._server_rank_list, self._input_data_list
+        ):
+            fut = async_request_server(
+                server_rank,
+                create_producer_fn,
+                inp_data,
+                self.sampling_config,
+                self.worker_options,
+            )
+            rpc_futures.append((server_rank, fut))
+        logger.info(
+            f"node_rank={node_rank} all {len(rpc_futures)} RPCs dispatched in "
+            f"{time.time() - t_dispatch:.3f}s, waiting for responses"
         )
         _flush()
 
-        for target_node_rank in range(num_compute_nodes):
-            start_time = time.time()
-            if node_rank == target_node_rank:
-                # Dispatch ALL create_producer RPCs async.
-                # async_request_server queues the RPC in TensorPipe and returns
-                # immediately, allowing all storage nodes to start their worker
-                # rendezvous simultaneously.
-                logger.info(
-                    f"node_rank={node_rank} dispatching create_sampling_producer to "
-                    f"{len(self._server_rank_list)} servers"
-                )
-                _flush()
-                t_dispatch = time.time()
-                rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
-                for server_rank, inp_data in zip(
-                    self._server_rank_list, self._input_data_list
-                ):
-                    fut = async_request_server(
-                        server_rank,
-                        create_producer_fn,
-                        inp_data,
-                        self.sampling_config,
-                        self.worker_options,
-                    )
-                    rpc_futures.append((server_rank, fut))
-                logger.info(
-                    f"node_rank={node_rank} all {len(rpc_futures)} RPCs dispatched in "
-                    f"{time.time() - t_dispatch:.3f}s, waiting for responses"
-                )
-                _flush()
-
-            else:
-                logger.info(
-                    f"node_rank {node_rank} waiting for barrier "
-                    f"for rank {target_node_rank}"
-                )
-                _flush()
-            torch.distributed.barrier()
-            logger.info(
-                f"node_rank {node_rank} barrier for rank "
-                f"{target_node_rank} in {time.time() - start_time:.2f}s"
-            )
-            _flush()
         # Wait for all results
         self._producer_id_list: list[int] = []
         for server_rank, fut in rpc_futures:
@@ -568,13 +544,6 @@ class BaseDistLoader(DistLoader):
         )
         _flush()
 
-        torch.distributed.barrier()
-        logger.info(
-            f"node_rank {node_rank}: all {num_compute_nodes} node ranks "
-            f"initialized the dist loader"
-        )
-        _flush()
-
     # Overwrite DistLoader.shutdown to so we can use our own shutdown and rpc calls
     def shutdown(self) -> None:
         if self._shutdowned:
@@ -584,12 +553,15 @@ class BaseDistLoader(DistLoader):
         elif self._is_mp_worker:
             self._mp_producer.shutdown()
         elif rpc_is_initialized() is True:
+            rpc_futures: list[torch.futures.Future[None]] = []
             for server_rank, producer_id in zip(
                 self._server_rank_list, self._producer_id_list
             ):
-                request_server(
+                fut = async_request_server(
                     server_rank, DistServer.destroy_sampling_producer, producer_id
                 )
+                rpc_futures.append(fut)
+            torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
@@ -600,15 +572,18 @@ class BaseDistLoader(DistLoader):
         elif self._is_mp_worker:
             self._mp_producer.produce_all()
         else:
+            rpc_futures: list[torch.futures.Future[None]] = []
             for server_rank, producer_id in zip(
                 self._server_rank_list, self._producer_id_list
             ):
-                request_server(
+                fut = async_request_server(
                     server_rank,
                     DistServer.start_new_epoch_sampling,
                     producer_id,
                     self._epoch,
                 )
+                rpc_futures.append(fut)
+            torch.futures.wait_all(rpc_futures)
             self._channel.reset()
         self._epoch += 1
         return self
