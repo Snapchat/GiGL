@@ -39,17 +39,6 @@ jobs:
         pr_number: ${{ github.event.issue.number }}
         message: ${{ steps.parse_commands.outputs.help_message }}
 
-  all-tests:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-    - name: Run All Tests
-      uses: snapchat/gigl/.github/actions/comment-on-pr@main
-      with:
-        pr_number: ${{ github.event.issue.number }}
-        message: "🚀 `/all_test` triggered — all test workflows have been launched in parallel."
-
   unit-test-python:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
