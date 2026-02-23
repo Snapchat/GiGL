@@ -10,7 +10,11 @@ import gigl.distributed.graph_store.dist_server as dist_server_module
 from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.env.distributed import GraphStoreInfo
-from gigl.types.graph import FeatureInfo
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureInfo,
+)
 from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
@@ -93,7 +97,7 @@ class TestRemoteDistDataset(TestCase):
         side_effect=_mock_request_server,
     )
     def test_graph_metadata_getters_homogeneous(self, mock_request):
-        """Test get_node_feature_info, get_edge_feature_info, get_edge_dir, get_edge_types for homogeneous graphs."""
+        """Test get_node_feature_info, get_edge_feature_info, get_edge_dir, get_edge_types, get_node_types for homogeneous graphs."""
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
@@ -104,6 +108,7 @@ class TestRemoteDistDataset(TestCase):
         self.assertIsNone(remote_dataset.get_edge_feature_info())
         self.assertEqual(remote_dataset.get_edge_dir(), "out")
         self.assertIsNone(remote_dataset.get_edge_types())
+        self.assertIsNone(remote_dataset.get_node_types())
 
     def test_init_rejects_non_dict_proxy_for_mp_sharing_dict(self):
         cluster_info = _create_mock_graph_store_info()
@@ -128,7 +133,11 @@ class TestRemoteDistDataset(TestCase):
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_get_node_ids(self, mock_async_request):
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_ids(self, mock_request, mock_async_request):
         """Test get_node_ids returns node ids, with optional sharding via rank/world_size."""
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
@@ -174,7 +183,7 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
         side_effect=_mock_request_server,
     )
     def test_graph_metadata_getters_heterogeneous(self, mock_request):
-        """Test get_node_feature_info, get_edge_dir, get_edge_types for heterogeneous graphs."""
+        """Test get_node_feature_info, get_edge_dir, get_edge_types, get_node_types for heterogeneous graphs."""
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
 
@@ -189,6 +198,10 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
         self.assertEqual(
             remote_dataset.get_edge_types(), [USER_TO_STORY, STORY_TO_USER]
         )
+        node_types = remote_dataset.get_node_types()
+        self.assertIsNotNone(node_types)
+        assert node_types is not None  # for type narrowing
+        self.assertEqual(set(node_types), {USER, STORY})
 
     @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
@@ -428,6 +441,153 @@ class TestRemoteDistDatasetWithSplits(TestCase):
             neg_labels_1,
             torch.tensor([[3], [4]]),
         )
+
+
+class TestRemoteDistDatasetLabeledHomogeneous(TestCase):
+    """Tests for datasets using DEFAULT_HOMOGENEOUS_NODE_TYPE / DEFAULT_HOMOGENEOUS_EDGE_TYPE.
+
+    A 'labeled homogeneous' dataset is stored internally as heterogeneous
+    (keyed by DEFAULT_HOMOGENEOUS_NODE_TYPE) but treated as homogeneous for
+    sampling.  RemoteDistDataset should auto-infer the node/edge types so
+    callers do not need to supply them explicitly.
+    """
+
+    def tearDown(self) -> None:
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+    def _create_server_with_labeled_homogeneous_splits(self) -> None:
+        global _test_server
+        create_test_process_group()
+
+        positive_labels = {
+            0: [0, 1],
+            1: [1, 2],
+            2: [2, 3],
+            3: [3, 4],
+            4: [4, 0],
+        }
+        negative_labels = {
+            0: [2],
+            1: [3],
+            2: [4],
+            3: [0],
+            4: [1],
+        }
+        edge_indices = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]
+            )
+        }
+
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_node_ids=[0, 1, 2],
+            val_node_ids=[3],
+            test_node_ids=[4],
+            edge_indices=edge_indices,
+            src_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            dst_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+        _test_server = DistServer(dataset)
+        dist_server_module._dist_server = _test_server
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_types_labeled_homogeneous(self, mock_request):
+        """Test get_node_types returns DEFAULT_HOMOGENEOUS_NODE_TYPE for labeled homogeneous datasets."""
+        self._create_server_with_labeled_homogeneous_splits()
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        node_types = remote_dataset.get_node_types()
+        self.assertIsNotNone(node_types)
+        self.assertIn(DEFAULT_HOMOGENEOUS_NODE_TYPE, node_types)
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_ids_auto_detects_default_node_type(
+        self, mock_request, mock_async_request
+    ):
+        """Test get_node_ids without node_type auto-detects DEFAULT_HOMOGENEOUS_NODE_TYPE."""
+        self._create_server_with_labeled_homogeneous_splits()
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # No node_type provided: _get_node_ids should auto-detect DEFAULT_HOMOGENEOUS_NODE_TYPE
+        self.assert_tensor_equality(
+            remote_dataset.get_node_ids(split="train")[0],
+            torch.tensor([0, 1, 2]),
+        )
+        self.assert_tensor_equality(
+            remote_dataset.get_node_ids(split="val")[0],
+            torch.tensor([3]),
+        )
+        self.assert_tensor_equality(
+            remote_dataset.get_node_ids(split="test")[0],
+            torch.tensor([4]),
+        )
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
+    def test_get_ablp_input_defaults_to_homogeneous_types(self, mock_async_request):
+        """Test get_ablp_input without anchor_node_type/supervision_edge_type uses homogeneous defaults."""
+        self._create_server_with_labeled_homogeneous_splits()
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # Train split: nodes [0, 1, 2] — no type params provided
+        result = remote_dataset.get_ablp_input(split="train")
+        self.assertIn(0, result)
+        ablp_input = result[0]
+        self.assertIsInstance(ablp_input, ABLPInputNodes)
+        self.assertEqual(ablp_input.anchor_node_type, DEFAULT_HOMOGENEOUS_NODE_TYPE)
+        self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([0, 1, 2]))
+        self.assertIn(DEFAULT_HOMOGENEOUS_EDGE_TYPE, ablp_input.labels)
+        pos_labels, neg_labels = ablp_input.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+        self.assert_tensor_equality(
+            pos_labels,
+            torch.tensor([[0, 1], [1, 2], [2, 3]]),
+        )
+        assert neg_labels is not None
+        self.assert_tensor_equality(
+            neg_labels,
+            torch.tensor([[2], [3], [4]]),
+        )
+
+    def test_get_ablp_input_mismatched_params_raises(self):
+        """Test get_ablp_input raises ValueError when exactly one type param is None."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.get_ablp_input(
+                split="train",
+                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                supervision_edge_type=None,
+            )
+
+        with self.assertRaises(ValueError):
+            remote_dataset.get_ablp_input(
+                split="train",
+                anchor_node_type=None,
+                supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            )
 
 
 def _test_get_free_ports_on_storage_cluster(
