@@ -369,7 +369,6 @@ class DistNeighborLoader(DistLoader):
                 f"When using Graph Store mode, input nodes must be of type (dict[int, torch.Tensor] | (NodeType, dict[int, torch.Tensor])), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
             )
 
-        is_homogeneous_with_labeled_edge_type = False
         node_feature_info = dataset.get_node_feature_info()
         edge_feature_info = dataset.get_edge_feature_info()
         edge_types = dataset.get_edge_types()
@@ -425,6 +424,10 @@ class DistNeighborLoader(DistLoader):
             )
         else:
             input_type = None
+
+        is_homogeneous_with_labeled_edge_type = (
+            input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
+        )
 
         # Convert from dict to list which is what the GLT DistNeighborLoader expects.
         servers = nodes.keys()
