@@ -21,6 +21,9 @@ make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one a
 
 # Formatting & Linting
 make format              # Auto-fix Python, Scala, Markdown
+make format_py           # Auto-fix Python only
+make format_scala        # Auto-fix Scala only
+make format_md           # Auto-fix Markdown only
 make check_format        # Check without fixing
 make type_check          # mypy static type checking
 
@@ -205,6 +208,10 @@ class TestMyComponent(TestCase):
 Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in
 `tests/test_assets/configs/`.
 
-## Pre-Submit Checklist & Formatting
+## Additional instructions
 
-See [.claude/formatting.md](.claude/formatting.md) for pre-submit checklist and formatting details.
+- For a pre-submit checklist and formatting see .claude/formatting.md
+
+- For general development and branch naming conventions see .claude/development.md
+
+- When migrating code, make sure to migrate any doc comments or diagrams over to the new code.
