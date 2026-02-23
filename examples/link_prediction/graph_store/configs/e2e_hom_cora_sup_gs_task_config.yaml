@@ -34,6 +34,7 @@ inferencerConfig:
     command: python -m examples.link_prediction.graph_store.storage_main
     storageArgs:
       sample_edge_direction: "in"
+      num_server_sessions: 1 # We do inference for 1 node type, paper
 sharedConfig:
   shouldSkipInference: false
   # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines. This will soon be added for in-mem SGS GiGL pipelines.
