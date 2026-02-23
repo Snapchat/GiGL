@@ -39,8 +39,19 @@ jobs:
         pr_number: ${{ github.event.issue.number }}
         message: ${{ steps.parse_commands.outputs.help_message }}
 
+  all-tests:
+    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/all_tests') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Run All Tests
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      with:
+        pr_number: ${{ github.event.issue.number }}
+        message: "🚀 `/all_tests` triggered — all test workflows have been launched in parallel."
+
   unit-test-python:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test')) }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_tests')) }}
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
@@ -65,7 +76,7 @@ jobs:
           make unit_test_py
 
   unit-test-scala:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test')) }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_tests')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -85,7 +96,7 @@ jobs:
           make unit_test_scala
 
   integration-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/integration_test') }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_tests')) }}
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
@@ -106,7 +117,7 @@ jobs:
             make integration_test
 
   integration-e2e-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/e2e_test') }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_tests')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
@@ -147,7 +158,7 @@ jobs:
 
 
   lint-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/lint_test') }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/lint_test') || contains(github.event.comment.body, '/all_tests')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20 # If our linting takes longer than 20 minutes something has gone very wrong...
     steps:
