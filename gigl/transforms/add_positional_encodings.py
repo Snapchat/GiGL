@@ -42,7 +42,7 @@ def add_node_attr(
 
         if attr_name is None:
             # Concatenate to existing x or create new x
-            x = data[node_type].x
+            x = getattr(data[node_type], "x", None)
             if x is not None:
                 x = x.view(-1, 1) if x.dim() == 1 else x
                 data[node_type].x = torch.cat(
