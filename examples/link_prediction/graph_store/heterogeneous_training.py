@@ -257,7 +257,10 @@ def _compute_loss(
         inference_node_types = [query_node_type, labeled_node_type]
 
     # Forward pass through encoder
-
+    print(f"Computing loss for main data: {main_data}")
+    print(f"Computing loss for random negative data: {random_negative_data}")
+    print(f"Using model: {model}")
+    flush()
     main_embeddings = model(
         data=main_data, output_node_types=inference_node_types, device=device
     )
