@@ -358,6 +358,7 @@ def _run_compute_multiple_loaders_test(
     # Batch size is very critial to perf here
     # If set to 1 (the default) we make one rpc call for each batch
     # And the test takes upward of 30 minutes.
+    # With batch_size 128, the test takes < 10 minutes
     batch_size = 128
     # ------------------------------------------------------------------
     # Phase 1: Two ABLP loaders + two DistNeighborLoaders in parallel
