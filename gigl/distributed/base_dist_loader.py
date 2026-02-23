@@ -497,9 +497,7 @@ class BaseDistLoader(DistLoader):
         )
         _flush()
         t_dispatch = time.time()
-        for server_rank, inp_data in zip[tuple[int, NodeSamplerInput]](
-            self._server_rank_list, self._input_data_list
-        ):
+        for server_rank, inp_data in zip(self._server_rank_list, self._input_data_list):
             fut = async_request_server(
                 server_rank,
                 create_producer_fn,
