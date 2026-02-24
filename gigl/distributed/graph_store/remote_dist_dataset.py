@@ -122,7 +122,7 @@ class RemoteDistDataset:
             The partition book for the requested node type, or ``None`` if
             no partition book is available.
         """
-        node_type = self._infer_node_type_for_homogeneous_with_label_edges(node_type)
+        node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
         return request_server(
             0,
             DistServer.get_node_partition_book,
@@ -143,14 +143,14 @@ class RemoteDistDataset:
             The partition book for the requested edge type, or ``None`` if
             no partition book is available.
         """
-        edge_type = self._maybe_infer_edge_type(edge_type)
+        edge_type = self._infer_edge_type_if_homogeneous_with_label_edges(edge_type)
         return request_server(
             0,
             DistServer.get_edge_partition_book,
             edge_type=edge_type,
         )
 
-    def _infer_node_type_for_homogeneous_with_label_edges(
+    def _infer_node_type_if_homogeneous_with_label_edges(
         self, node_type: Optional[NodeType]
     ) -> Optional[NodeType]:
         """
@@ -166,7 +166,7 @@ class RemoteDistDataset:
                 )
         return node_type
 
-    def _maybe_infer_edge_type(
+    def _infer_edge_type_if_homogeneous_with_label_edges(
         self, edge_type: Optional[EdgeType]
     ) -> Optional[EdgeType]:
         """
@@ -191,7 +191,7 @@ class RemoteDistDataset:
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         futures: list[torch.futures.Future[torch.Tensor]] = []
-        node_type = self._infer_node_type_for_homogeneous_with_label_edges(node_type)
+        node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
 
         logger.info(
             f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
