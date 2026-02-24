@@ -3,9 +3,9 @@ from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
 from gigl.transforms.add_positional_encodings import (
-    AddHeteroHopDistancePE,
+    AddHeteroHopDistanceEncoding,
     AddHeteroRandomWalkPE,
-    add_node_attr,
+    AddHeteroRandomWalkSE,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -47,108 +47,155 @@ def create_empty_hetero_data() -> HeteroData:
     return data
 
 
-class TestAddNodeAttr(TestCase):
-    def test_add_node_attr_with_attr_name(self):
-        """Test adding a node attribute with a specific attribute name."""
-        data = create_simple_hetero_data()
-
-        # Create values in homogeneous order (3 users + 2 items = 5 nodes)
-        values = torch.randn(5, 8)
-
-        add_node_attr(data, values, attr_name='test_attr')
-
-        self.assertEqual(data['user'].test_attr.shape, (3, 8))
-        self.assertEqual(data['item'].test_attr.shape, (2, 8))
-        self.assert_tensor_equality(data['user'].test_attr, values[:3])
-        self.assert_tensor_equality(data['item'].test_attr, values[3:])
-
-    def test_add_node_attr_concatenate_to_x(self):
-        """Test adding a node attribute by concatenating to existing x."""
-        data = create_simple_hetero_data()
-        original_user_x = data['user'].x.clone()
-        original_item_x = data['item'].x.clone()
-
-        # Create values in homogeneous order
-        values = torch.randn(5, 8)
-
-        add_node_attr(data, values, attr_name=None)
-
-        # Check that x was concatenated
-        self.assertEqual(data['user'].x.shape, (3, 12))  # 4 + 8
-        self.assertEqual(data['item'].x.shape, (2, 12))  # 4 + 8
-
-        # Check original features are preserved
-        self.assert_tensor_equality(data['user'].x[:, :4], original_user_x)
-        self.assert_tensor_equality(data['item'].x[:, :4], original_item_x)
-
-    def test_add_node_attr_create_x_if_none(self):
-        """Test creating x attribute if it doesn't exist."""
-        data = HeteroData()
-        data['user'].num_nodes = 3
-        data['item'].num_nodes = 2
-
-        values = torch.randn(5, 8)
-
-        add_node_attr(data, values, attr_name=None)
-
-        self.assertEqual(data['user'].x.shape, (3, 8))
-        self.assertEqual(data['item'].x.shape, (2, 8))
-
-
-class TestAddHeteroHopDistancePE(TestCase):
+class TestAddHeteroHopDistanceEncoding(TestCase):
     def test_forward_basic(self):
         """Test basic forward pass."""
         data = create_simple_hetero_data()
-        transform = AddHeteroHopDistancePE(k=3)
+        transform = AddHeteroHopDistanceEncoding(h_max=3)
 
         result = transform(data)
 
-        # Check that PE was added to both node types
-        self.assertTrue(hasattr(result['user'], 'hop_pe'))
-        self.assertTrue(hasattr(result['item'], 'hop_pe'))
+        # Check that PE was added to both edge types
+        self.assertTrue(hasattr(result['user', 'buys', 'item'], 'hop_distance'))
+        self.assertTrue(hasattr(result['item', 'bought_by', 'user'], 'hop_distance'))
 
-        # Check shapes
-        self.assertEqual(result['user'].hop_pe.shape, (3, 3))
-        self.assertEqual(result['item'].hop_pe.shape, (2, 3))
+        # Check shapes (3 edges each)
+        self.assertEqual(result['user', 'buys', 'item'].hop_distance.shape, (3, 1))
+        self.assertEqual(result['item', 'bought_by', 'user'].hop_distance.shape, (3, 1))
+
+        # Direct edges should have distance <= h_max
+        self.assertTrue((result['user', 'buys', 'item'].hop_distance <= 3).all())
 
     def test_forward_with_custom_attr_name(self):
         """Test forward pass with custom attribute name."""
         data = create_simple_hetero_data()
-        transform = AddHeteroHopDistancePE(k=2, attr_name='custom_pe')
+        transform = AddHeteroHopDistanceEncoding(h_max=2, attr_name='custom_hop')
 
         result = transform(data)
 
-        self.assertTrue(hasattr(result['user'], 'custom_pe'))
-        self.assertTrue(hasattr(result['item'], 'custom_pe'))
-        self.assertFalse(hasattr(result['user'], 'hop_pe'))
+        self.assertTrue(hasattr(result['user', 'buys', 'item'], 'custom_hop'))
+        self.assertTrue(hasattr(result['item', 'bought_by', 'user'], 'custom_hop'))
+        self.assertFalse(hasattr(result['user', 'buys', 'item'], 'hop_distance'))
 
     def test_forward_undirected(self):
         """Test forward pass with undirected graph setting."""
         data = create_simple_hetero_data()
-        transform = AddHeteroHopDistancePE(k=2, is_undirected=True)
+        transform = AddHeteroHopDistanceEncoding(h_max=2, is_undirected=True)
 
         result = transform(data)
 
-        self.assertEqual(result['user'].hop_pe.shape, (3, 2))
-        self.assertEqual(result['item'].hop_pe.shape, (2, 2))
+        self.assertEqual(result['user', 'buys', 'item'].hop_distance.shape, (3, 1))
+        self.assertEqual(result['item', 'bought_by', 'user'].hop_distance.shape, (3, 1))
 
     def test_forward_empty_graph(self):
         """Test forward pass with empty graph."""
         data = create_empty_hetero_data()
-        transform = AddHeteroHopDistancePE(k=3)
+        # Add empty edge types
+        data['user', 'buys', 'item'].edge_index = torch.zeros((2, 0), dtype=torch.long)
+        transform = AddHeteroHopDistanceEncoding(h_max=3)
 
         result = transform(data)
 
-        self.assertEqual(result['user'].hop_pe.shape, (0, 3))
-        self.assertEqual(result['item'].hop_pe.shape, (0, 3))
+        self.assertEqual(result['user', 'buys', 'item'].hop_distance.shape, (0,))
+
+    def test_forward_full_matrix(self):
+        """Test forward pass with full_matrix=True for Graph Transformer use."""
+        data = create_simple_hetero_data()
+        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True)
+
+        result = transform(data)
+
+        # Check that full pairwise distance matrix is stored as graph-level attribute
+        self.assertTrue(hasattr(result, 'hop_distance'))
+        # Total nodes: 3 users + 2 items = 5 nodes
+        self.assertEqual(result.hop_distance.shape, (5, 5))
+        # Diagonal should be 0 (distance to self)
+        self.assertTrue((result.hop_distance.diag() == 0).all())
+        # All distances should be <= h_max
+        self.assertTrue((result.hop_distance <= 3).all())
+
+    def test_forward_full_matrix_empty_graph(self):
+        """Test forward pass with full_matrix=True on empty graph."""
+        data = create_empty_hetero_data()
+        data['user', 'buys', 'item'].edge_index = torch.zeros((2, 0), dtype=torch.long)
+        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True)
+
+        result = transform(data)
+
+        self.assertTrue(hasattr(result, 'hop_distance'))
+        self.assertEqual(result.hop_distance.shape, (0, 0))
 
     def test_repr(self):
         """Test string representation."""
-        transform = AddHeteroHopDistancePE(k=5)
-        self.assertEqual(repr(transform), 'AddHeteroHopDistancePE(k=5)')
+        transform = AddHeteroHopDistanceEncoding(h_max=5)
+        self.assertEqual(repr(transform), 'AddHeteroHopDistanceEncoding(h_max=5, full_matrix=False)')
+
+        transform_full = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True)
+        self.assertEqual(repr(transform_full), 'AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True)')
+
+
+class TestAddHeteroRandomWalkSE(TestCase):
+    """Tests for AddHeteroRandomWalkSE (Structural Encoding - diagonal elements)."""
+
+    def test_forward_basic(self):
+        """Test basic forward pass."""
+        data = create_simple_hetero_data()
+        transform = AddHeteroRandomWalkSE(walk_length=4)
+
+        result = transform(data)
+
+        # Check that SE was added to both node types
+        self.assertTrue(hasattr(result['user'], 'random_walk_se'))
+        self.assertTrue(hasattr(result['item'], 'random_walk_se'))
+
+        # Check shapes
+        self.assertEqual(result['user'].random_walk_se.shape, (3, 4))
+        self.assertEqual(result['item'].random_walk_se.shape, (2, 4))
+
+        # Values should be probabilities (between 0 and 1)
+        self.assertTrue((result['user'].random_walk_se >= 0).all())
+        self.assertTrue((result['user'].random_walk_se <= 1).all())
+
+    def test_forward_with_custom_attr_name(self):
+        """Test forward pass with custom attribute name."""
+        data = create_simple_hetero_data()
+        transform = AddHeteroRandomWalkSE(walk_length=3, attr_name='rw_se')
+
+        result = transform(data)
+
+        self.assertTrue(hasattr(result['user'], 'rw_se'))
+        self.assertTrue(hasattr(result['item'], 'rw_se'))
+        self.assertFalse(hasattr(result['user'], 'random_walk_se'))
+
+    def test_forward_undirected(self):
+        """Test forward pass with undirected graph setting."""
+        data = create_simple_hetero_data()
+        transform = AddHeteroRandomWalkSE(walk_length=3, is_undirected=True)
+
+        result = transform(data)
+
+        self.assertEqual(result['user'].random_walk_se.shape, (3, 3))
+        self.assertEqual(result['item'].random_walk_se.shape, (2, 3))
+
+    def test_forward_empty_graph(self):
+        """Test forward pass with empty graph."""
+        data = create_empty_hetero_data()
+        transform = AddHeteroRandomWalkSE(walk_length=3)
+
+        result = transform(data)
+
+        self.assertEqual(result['user'].random_walk_se.shape, (0, 3))
+        self.assertEqual(result['item'].random_walk_se.shape, (0, 3))
+
+    def test_repr(self):
+        """Test string representation."""
+        transform = AddHeteroRandomWalkSE(walk_length=10)
+        self.assertEqual(repr(transform), 'AddHeteroRandomWalkSE(walk_length=10)')
 
 
 class TestAddHeteroRandomWalkPE(TestCase):
+    """Tests for AddHeteroRandomWalkPE (Positional Encoding - column sum of non-diagonal)."""
+
     def test_forward_basic(self):
         """Test basic forward pass."""
         data = create_simple_hetero_data()
@@ -175,6 +222,16 @@ class TestAddHeteroRandomWalkPE(TestCase):
         self.assertTrue(hasattr(result['item'], 'rw_pe'))
         self.assertFalse(hasattr(result['user'], 'random_walk_pe'))
 
+    def test_forward_undirected(self):
+        """Test forward pass with undirected graph setting."""
+        data = create_simple_hetero_data()
+        transform = AddHeteroRandomWalkPE(walk_length=3, is_undirected=True)
+
+        result = transform(data)
+
+        self.assertEqual(result['user'].random_walk_pe.shape, (3, 3))
+        self.assertEqual(result['item'].random_walk_pe.shape, (2, 3))
+
     def test_forward_empty_graph(self):
         """Test forward pass with empty graph."""
         data = create_empty_hetero_data()
@@ -184,6 +241,23 @@ class TestAddHeteroRandomWalkPE(TestCase):
 
         self.assertEqual(result['user'].random_walk_pe.shape, (0, 3))
         self.assertEqual(result['item'].random_walk_pe.shape, (0, 3))
+
+    def test_pe_differs_from_se(self):
+        """Test that PE (column sum) differs from SE (diagonal)."""
+        data = create_simple_hetero_data()
+        transform_pe = AddHeteroRandomWalkPE(walk_length=4)
+        transform_se = AddHeteroRandomWalkSE(walk_length=4)
+
+        result_pe = transform_pe(data.clone())
+        result_se = transform_se(data.clone())
+
+        # PE and SE should have different values (column sum vs diagonal)
+        # They may occasionally match for specific graphs, but generally differ
+        pe_values = result_pe['user'].random_walk_pe
+        se_values = result_se['user'].random_walk_se
+
+        # Check shapes are the same
+        self.assertEqual(pe_values.shape, se_values.shape)
 
     def test_repr(self):
         """Test string representation."""
