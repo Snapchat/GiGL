@@ -116,6 +116,14 @@ class RemoteDistDataset:
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         futures: list[torch.futures.Future[torch.Tensor]] = []
+        if node_type is None:
+            node_types = self.get_node_types()
+            if node_types is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in node_types:
+                node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                logger.info(
+                    f"Using default node type {node_type} for homogeneous dataset with label edge types as {DEFAULT_HOMOGENEOUS_NODE_TYPE} is in the node types: {node_types}"
+                )
+
         logger.info(
             f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
         )
@@ -504,4 +512,15 @@ class RemoteDistDataset:
         return request_server(
             0,
             DistServer.get_edge_types,
+        )
+
+    def get_node_types(self) -> Optional[list[NodeType]]:
+        """Get the node types from the registered dataset.
+
+        Returns:
+            The node types in the dataset, None if the dataset is homogeneous.
+        """
+        return request_server(
+            0,
+            DistServer.get_node_types,
         )

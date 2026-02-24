@@ -281,23 +281,17 @@ class DistServer:
             raise ValueError(
                 f"Invalid split: {split}. Must be one of 'train', 'val', 'test', or None."
             )
+
         if node_type is not None:
             if not isinstance(nodes, abc.Mapping):
                 raise ValueError(
                     f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] (e.g. a heterogeneous dataset), got {type(nodes)}"
                 )
-            print(f"node types: {nodes.keys()}")
             nodes = nodes[node_type]
         elif not isinstance(nodes, torch.Tensor):
-            if nodes is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in nodes:
-                logger.info(
-                    f"Received None node type but assuming it's a homogeneous dataset (node types: {nodes.keys()}) and returning the default node type."
-                )
-                nodes = nodes[DEFAULT_HOMOGENEOUS_NODE_TYPE]
-            else:
-                raise ValueError(
-                    f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
-                )
+            raise ValueError(
+                f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
+            )
 
         if rank is not None and world_size is not None:
             return shard_nodes_by_process(nodes, rank, world_size)
@@ -311,6 +305,17 @@ class DistServer:
         """
         if isinstance(self.dataset.graph, dict):
             return list(self.dataset.graph.keys())
+        else:
+            return None
+
+    def get_node_types(self) -> Optional[list[NodeType]]:
+        """Get the node types from the dataset.
+
+        Returns:
+            The node types in the dataset, None if the dataset is homogeneous.
+        """
+        if isinstance(self.dataset.graph, dict):
+            return list(self.dataset.get_node_types())
         else:
             return None
 
