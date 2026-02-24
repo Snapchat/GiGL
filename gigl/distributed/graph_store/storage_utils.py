@@ -96,8 +96,6 @@ def _run_storage_server_session(
     storage_rank: int,
     cluster_info: GraphStoreInfo,
     dataset: DistDataset,
-    torch_process_port: int,
-    storage_world_backend: Optional[str] = None,
 ) -> None:
     """Run a single storage-server session and block until shutdown.
 
@@ -109,10 +107,7 @@ def _run_storage_server_session(
        :func:`gigl.distributed.graph_store.compute.init_compute_process`;
        after this call Torch RPC connections exist between storage and
        compute nodes.
-    2. **Initialises a ``torch.distributed`` process group** for the
-       storage cluster (needed for
-       :meth:`RemoteDistDataset.get_free_ports_on_storage_cluster`).
-    3. **Waits for the server to exit.** The server blocks until clients
+    2. **Waits for the server to exit.** The server blocks until clients
        call
        :func:`gigl.distributed.graph_store.compute.shutdown_compute_proccess`.
 
@@ -124,11 +119,6 @@ def _run_storage_server_session(
         storage_rank: Rank of this storage node in the storage cluster.
         cluster_info: Cluster topology information.
         dataset: The :class:`DistDataset` to serve.
-        torch_process_port: TCP port for the storage-cluster
-            ``torch.distributed`` process group.
-        storage_world_backend: Backend for the storage ``torch.distributed``
-            process group (e.g. ``"gloo"``).  ``None`` uses the PyTorch
-            default.
     """
     cluster_master_ip = cluster_info.storage_cluster_master_ip
     logger.info(
@@ -148,25 +138,6 @@ def _run_storage_server_session(
         num_clients=cluster_info.compute_cluster_world_size,
     )
 
-    init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{torch_process_port}"
-    logger.info(
-        f"Initializing storage node process group "
-        f"{storage_rank} / {cluster_info.num_storage_nodes} "
-        f"with backend {storage_world_backend} on {init_method}"
-    )
-
-    # Torch Distributed process group is needed so that the storage
-    # cluster can talk to each other.  This is needed for
-    # `RemoteDistDataset.get_free_ports_on_storage_cluster` to work.
-    # Note: this is called on the *compute* cluster, but requires the
-    # storage cluster to have a process group initialized.
-    # torch.distributed.init_process_group(
-    #     backend=storage_world_backend,
-    #     world_size=cluster_info.num_storage_nodes,
-    #     rank=storage_rank,
-    #     init_method=init_method,
-    # )
-
     logger.info(
         f"Waiting for storage node "
         f"{storage_rank} / {cluster_info.num_storage_nodes} to exit"
@@ -182,8 +153,6 @@ def run_storage_server(
     cluster_info: GraphStoreInfo,
     dataset: DistDataset,
     num_server_sessions: int,
-    torch_process_ports: list[int],
-    storage_world_backend: Optional[str] = None,
     timeout_seconds: Optional[float] = None,
 ) -> None:
     """Spawn sequential storage-server sessions as subprocesses.
@@ -200,20 +169,10 @@ def run_storage_server(
         dataset: The :class:`DistDataset` to serve.
         num_server_sessions: Number of sequential server sessions to run
             (typically one per inference node type).
-        torch_process_ports: One TCP port per session, used for the
-            per-session ``torch.distributed`` process group.  Must have
-            length ``>= num_server_sessions``.
-        storage_world_backend: Backend for the per-session storage
-            ``torch.distributed`` process group (e.g. ``"gloo"``).
-            ``None`` uses the PyTorch default.
         timeout_seconds: Timeout for joining each server subprocess.
             ``None`` waits indefinitely.
     """
     mp_context = torch.multiprocessing.get_context("spawn")
-    if num_server_sessions > len(torch_process_ports):
-        raise ValueError(
-            f"num_server_sessions ({num_server_sessions}) must be greater than or equal to the number of torch_process_ports ({len(torch_process_ports)})"
-        )
     for i in range(num_server_sessions):
         logger.info(
             f"Starting storage node rank {storage_rank} / "
@@ -227,11 +186,9 @@ def run_storage_server(
             server_process = mp_context.Process(
                 target=_run_storage_server_session,
                 args=(
-                    storage_rank + j,
-                    cluster_info,
-                    dataset,
-                    torch_process_ports[i],
-                    storage_world_backend,
+                    storage_rank + j,  # storage_rank
+                    cluster_info,  # cluster_info
+                    dataset,  # dataset
                 ),
             )
             server_processes.append(server_process)

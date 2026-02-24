@@ -84,8 +84,7 @@ from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
-from gigl.distributed.utils import get_free_ports_from_master_node, get_graph_store_info
-from gigl.distributed.utils.networking import get_free_ports_from_master_node
+from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
@@ -157,7 +156,6 @@ def storage_node_process(
 
     logger.info(f"Number of server sessions: {num_server_sessions}")
 
-    torch_process_ports = get_free_ports_from_master_node(num_ports=num_server_sessions)
     torch.distributed.destroy_process_group()
 
     run_storage_server(
@@ -165,8 +163,6 @@ def storage_node_process(
         cluster_info=cluster_info,
         dataset=dataset,
         num_server_sessions=num_server_sessions,
-        torch_process_ports=torch_process_ports,
-        storage_world_backend=storage_world_backend,
     )
 
 

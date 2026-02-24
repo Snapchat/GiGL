@@ -27,10 +27,7 @@ from gigl.distributed.graph_store.storage_utils import (
     run_storage_server,
 )
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
-from gigl.distributed.utils.networking import (
-    get_free_ports,
-    get_free_ports_from_master_node,
-)
+from gigl.distributed.utils.networking import get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
@@ -788,22 +785,12 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
             tf_record_uri_pattern=".*tfrecord",
         )
 
-        # 3. Get free ports for each server session
-        torch_process_ports = get_free_ports_from_master_node(
-            num_ports=args.num_server_sessions,
-        )
-
-        # 4. Destroy the server-comms process group before spawning
-        torch.distributed.destroy_process_group()
-
         # 5. Run the storage server sessions
         run_storage_server(
             storage_rank=storage_rank,
             cluster_info=cluster_info,
             dataset=dataset,
             num_server_sessions=args.num_server_sessions,
-            torch_process_ports=torch_process_ports,
-            storage_world_backend="gloo",
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
         )
     except Exception:
