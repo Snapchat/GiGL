@@ -154,13 +154,16 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    query_node_type = supervision_edge_type.src_node_type
-    labeled_node_type = supervision_edge_type.dst_node_type
-
     if dataset.get_edge_dir() == "in":
+        query_node_type = supervision_edge_type.dst_node_type
+        labeled_node_type = supervision_edge_type.src_node_type
         anchor_node_type = labeled_node_type
     else:
+        query_node_type = supervision_edge_type.src_node_type
+        labeled_node_type = supervision_edge_type.dst_node_type
         anchor_node_type = query_node_type
+
+    logger.info(f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.get_edge_dir()}")
 
     shuffle = split == "train"
 
@@ -200,13 +203,13 @@ def _setup_dataloaders(
     all_node_ids = dataset.get_node_ids(
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        node_type=anchor_node_type,
+        node_type=labeled_node_type,
     )
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(anchor_node_type, all_node_ids),
+        input_nodes=(labeled_node_type, all_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=device,
@@ -233,6 +236,7 @@ def _compute_loss(
     random_negative_data: HeteroData,
     loss_fn: RetrievalLoss,
     supervision_edge_type: EdgeType,
+    edge_dir: str,
     device: torch.device,
 ) -> torch.Tensor:
     """
@@ -243,14 +247,20 @@ def _compute_loss(
         random_negative_data (HeteroData): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
+        edge_dir (str): Direction of the supervision edge
         device (torch.device): Device for training or validation
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
     # Extract relevant node types from the supervision edge
-    query_node_type = supervision_edge_type.src_node_type
-    labeled_node_type = supervision_edge_type.dst_node_type
+    if edge_dir == "in":
+        query_node_type = supervision_edge_type.src_node_type
+        labeled_node_type = supervision_edge_type.dst_node_type
+    else:
+        query_node_type = supervision_edge_type.dst_node_type
+        labeled_node_type = supervision_edge_type.src_node_type
 
+    logger.info(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]
     else:
@@ -532,6 +542,7 @@ def _training_process(
                 random_negative_data=random_data,
                 loss_fn=loss_fn,
                 supervision_edge_type=args.supervision_edge_type,
+                edge_dir=dataset.get_edge_dir(),
                 device=device,
             )
             optimizer.zero_grad()
@@ -567,6 +578,7 @@ def _training_process(
                     random_negative_loader=val_random_negative_loader_iter,
                     loss_fn=loss_fn,
                     supervision_edge_type=args.supervision_edge_type,
+                    edge_dir=dataset.get_edge_dir(),
                     device=device,
                     log_every_n_batch=args.log_every_n_batch,
                     num_batches=num_val_batches_per_process,
@@ -646,6 +658,7 @@ def _training_process(
         random_negative_loader=test_random_negative_loader_iter,
         loss_fn=loss_fn,
         supervision_edge_type=args.supervision_edge_type,
+        edge_dir=dataset.get_edge_dir(),
         device=device,
         log_every_n_batch=args.log_every_n_batch,
     )
@@ -681,6 +694,7 @@ def _run_validation_loops(
     random_negative_loader: Iterator[HeteroData],
     loss_fn: RetrievalLoss,
     supervision_edge_type: EdgeType,
+    edge_dir: str,
     device: torch.device,
     log_every_n_batch: int,
     num_batches: Optional[int] = None,
@@ -694,6 +708,7 @@ def _run_validation_loops(
         random_negative_loader (Iterator[HeteroData]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
         supervision_edge_type (EdgeType): The supervision edge type to use for training
+        edge_dir (Literal["in", "out"]): Direction of the supervision edge
         device (torch.device): Device to use for training or testing
         log_every_n_batch (int): The frequency we should log batch information
         num_batches (Optional[int]): The number of batches to run the validation loop for.
@@ -719,11 +734,13 @@ def _run_validation_loops(
 
     while True:
         if num_batches and batch_idx >= num_batches:
+            logger.info(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
             break
         try:
             main_data = next(main_loader)
             random_data = next(random_negative_loader)
         except StopIteration:
+            logger.info(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
             break
 
         loss = _compute_loss(
@@ -732,6 +749,7 @@ def _run_validation_loops(
             random_negative_data=random_data,
             loss_fn=loss_fn,
             supervision_edge_type=supervision_edge_type,
+            edge_dir=edge_dir,
             device=device,
         )
 

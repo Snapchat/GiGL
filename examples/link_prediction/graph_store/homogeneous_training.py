@@ -656,11 +656,13 @@ def _run_validation_loops(
 
     while True:
         if num_batches and batch_idx >= num_batches:
+            logger.info(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
             break
         try:
             main_data = next(main_loader)
             random_data = next(random_negative_loader)
         except StopIteration:
+            logger.info(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
             break
 
         loss = _compute_loss(
