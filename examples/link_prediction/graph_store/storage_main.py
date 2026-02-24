@@ -188,13 +188,6 @@ if __name__ == "__main__":
     # This is needed so we can get the cluster information (e.g. number of storage and compute nodes) and rank/world_size.
     torch.distributed.init_process_group(backend="gloo")
     cluster_info = get_graph_store_info()
-    logger.info(f"Cluster info: {cluster_info}")
-    logger.info(
-        f"World size: {torch.distributed.get_world_size()}, "
-        f"rank: {torch.distributed.get_rank()}, "
-        f"OS world size: {os.environ['WORLD_SIZE']}, "
-        f"OS rank: {os.environ['RANK']}"
-    )
     # Tear down the """"global""" process group so we can have a server-specific process group.
     torch.distributed.destroy_process_group()
     storage_node_process(
