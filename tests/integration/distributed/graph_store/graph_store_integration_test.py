@@ -744,7 +744,7 @@ class ServerProcessArgs:
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
 
 
-def _run_server_processes(args: ServerProcessArgs) -> None:
+def _run_storage_main_process(args: ServerProcessArgs) -> None:
     process_name = f"server_{args.cluster_info.storage_node_rank}"
     try:
         storage_rank = args.cluster_info.storage_node_rank
@@ -951,7 +951,7 @@ class GraphStoreIntegrationTest(TestCase):
                     exception_dict=exception_dict,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
@@ -1045,7 +1045,7 @@ class GraphStoreIntegrationTest(TestCase):
                     splitter=splitter,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                 )
                 server_process.start()
@@ -1142,7 +1142,7 @@ class GraphStoreIntegrationTest(TestCase):
                     splitter=splitter,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
@@ -1247,7 +1247,7 @@ class GraphStoreIntegrationTest(TestCase):
                     exception_dict=exception_dict,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )

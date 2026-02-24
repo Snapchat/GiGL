@@ -36,6 +36,7 @@ from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitt
 logger = Logger()
 
 
+# TODO(kmonte): Add support for TFDatasetOptions.
 def build_storage_dataset(
     task_config_uri: Uri,
     sample_edge_direction: Literal["in", "out"],
@@ -81,7 +82,6 @@ def build_storage_dataset(
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
-    # TODO(kmonte): Add support for TFDatasetOptions.
     return build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
@@ -210,6 +210,10 @@ def run_storage_server(
             ``None`` waits indefinitely.
     """
     mp_context = torch.multiprocessing.get_context("spawn")
+    if num_server_sessions > len(torch_process_ports):
+        raise ValueError(
+            f"num_server_sessions ({num_server_sessions}) must be greater than or equal to the number of torch_process_ports ({len(torch_process_ports)})"
+        )
     for i in range(num_server_sessions):
         logger.info(
             f"Starting storage node rank {storage_rank} / "
