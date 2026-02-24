@@ -248,6 +248,12 @@ def _run_compute_train_tests(
         assert isinstance(
             ablp_batch.y_positive, dict
         ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        if node_type is not None:
+            assert isinstance(ablp_batch, HeteroData)
+            assert isinstance(random_negative_batch, HeteroData)
+        else:
+            assert isinstance(ablp_batch, Data)
+            assert isinstance(random_negative_batch, Data)
         count += 1
 
     torch.distributed.barrier()
