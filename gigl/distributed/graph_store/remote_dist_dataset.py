@@ -122,7 +122,7 @@ class RemoteDistDataset:
             The partition book for the requested node type, or ``None`` if
             no partition book is available.
         """
-        node_type = self._maybe_infer_node_type(node_type)
+        node_type = self._infer_node_type_for_homogeneous_with_label_edges(node_type)
         return request_server(
             0,
             DistServer.get_node_partition_book,
@@ -150,18 +150,18 @@ class RemoteDistDataset:
             edge_type=edge_type,
         )
 
-    def _maybe_infer_node_type(
+    def _infer_node_type_for_homogeneous_with_label_edges(
         self, node_type: Optional[NodeType]
     ) -> Optional[NodeType]:
         """
-        Auto-infers the default homogeneous node type for labeled-homogeneous datasets.
+        Auto-infers the default homogeneous node type for homogeneous datasets with label edges.
         """
         if node_type is None:
             node_types = self.get_node_types()
             if node_types is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in node_types:
                 node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
                 logger.info(
-                    f"Auto-inferred default node type {node_type} for labeled-homogeneous dataset "
+                    f"Auto-inferred default node type {node_type} for homogeneous dataset with label edges "
                     f"as {DEFAULT_HOMOGENEOUS_NODE_TYPE} is in the node types: {node_types}"
                 )
         return node_type
@@ -170,14 +170,14 @@ class RemoteDistDataset:
         self, edge_type: Optional[EdgeType]
     ) -> Optional[EdgeType]:
         """
-        Auto-infers the default homogeneous edge type for labeled-homogeneous datasets.
+        Auto-infers the default homogeneous edge type for homogeneous datasets with label edges.
         """
         if edge_type is None:
             edge_types = self.get_edge_types()
             if edge_types is not None and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
                 edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
                 logger.info(
-                    f"Auto-inferred default edge type {edge_type} for labeled-homogeneous dataset "
+                    f"Auto-inferred default edge type {edge_type} for homogeneous dataset with label edges "
                     f"as {DEFAULT_HOMOGENEOUS_EDGE_TYPE} is in the edge types: {edge_types}"
                 )
         return edge_type
@@ -191,7 +191,7 @@ class RemoteDistDataset:
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         futures: list[torch.futures.Future[torch.Tensor]] = []
-        node_type = self._maybe_infer_node_type(node_type)
+        node_type = self._infer_node_type_for_homogeneous_with_label_edges(node_type)
 
         logger.info(
             f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
