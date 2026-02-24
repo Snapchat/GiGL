@@ -912,7 +912,7 @@ class DistABLPLoader(BaseDistLoader):
         )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
-        if self.is_homogeneous_with_labeled_edge_type:
+        if self._is_homogeneous_with_labeled_edge_type:
             if len(self._supervision_edge_types) != 1:
                 raise ValueError(
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
