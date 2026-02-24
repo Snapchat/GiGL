@@ -155,6 +155,48 @@ class TestRemoteDistDataset(TestCase):
         result = remote_dataset.get_node_ids(rank=1, world_size=2)
         self.assert_tensor_equality(result[0], torch.arange(5, 10))
 
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_partition_book_homogeneous(self, mock_request):
+        """Test get_node_partition_book returns the tensor partition book for homogeneous graphs."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        result = remote_dataset.get_node_partition_book()
+        self.assertIsInstance(result, torch.Tensor)
+        assert isinstance(result, torch.Tensor)  # for type narrowing
+        self.assertEqual(result.shape[0], 10)
+        self.assert_tensor_equality(result, torch.zeros(10, dtype=torch.int64))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_edge_partition_book_homogeneous(self, mock_request):
+        """Test get_edge_partition_book returns the tensor partition book for homogeneous graphs."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        result = remote_dataset.get_edge_partition_book()
+        self.assertIsInstance(result, torch.Tensor)
+        assert isinstance(result, torch.Tensor)  # for type narrowing
+        self.assertEqual(result.shape[0], 10)
+        self.assert_tensor_equality(result, torch.zeros(10, dtype=torch.int64))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_partition_book_homogeneous_rejects_node_type(self, mock_request):
+        """Test get_node_partition_book raises ValueError when node_type is given for homogeneous graphs."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.get_node_partition_book(node_type=USER)
+
 
 class TestRemoteDistDatasetHeterogeneous(TestCase):
     def setUp(self) -> None:
@@ -227,6 +269,77 @@ class TestRemoteDistDatasetHeterogeneous(TestCase):
         # With sharding: second half of user nodes (rank 1 of 2)
         result = remote_dataset.get_node_ids(rank=1, world_size=2, node_type=USER)
         self.assert_tensor_equality(result[0], torch.arange(2, 5))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_partition_book_heterogeneous(self, mock_request):
+        """Test get_node_partition_book returns per-type partition books for heterogeneous graphs."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        user_pb = remote_dataset.get_node_partition_book(node_type=USER)
+        self.assertIsInstance(user_pb, torch.Tensor)
+        assert isinstance(user_pb, torch.Tensor)
+        self.assertEqual(user_pb.shape[0], 5)
+        self.assert_tensor_equality(user_pb, torch.zeros(5, dtype=torch.int64))
+
+        story_pb = remote_dataset.get_node_partition_book(node_type=STORY)
+        self.assertIsInstance(story_pb, torch.Tensor)
+        assert isinstance(story_pb, torch.Tensor)
+        self.assertEqual(story_pb.shape[0], 5)
+        self.assert_tensor_equality(story_pb, torch.zeros(5, dtype=torch.int64))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_edge_partition_book_heterogeneous(self, mock_request):
+        """Test get_edge_partition_book returns per-type partition books for heterogeneous graphs."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        user_to_story_pb = remote_dataset.get_edge_partition_book(
+            edge_type=USER_TO_STORY
+        )
+        self.assertIsInstance(user_to_story_pb, torch.Tensor)
+        assert isinstance(user_to_story_pb, torch.Tensor)
+        self.assert_tensor_equality(
+            user_to_story_pb,
+            torch.zeros(
+                DEFAULT_HETEROGENEOUS_EDGE_INDICES[USER_TO_STORY].shape[1],
+                dtype=torch.int64,
+            ),
+        )
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_partition_book_heterogeneous_requires_node_type(
+        self, mock_request
+    ):
+        """Test get_node_partition_book raises ValueError when no node_type for heterogeneous graphs."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.get_node_partition_book()
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_edge_partition_book_heterogeneous_requires_edge_type(
+        self, mock_request
+    ):
+        """Test get_edge_partition_book raises ValueError when no edge_type for heterogeneous graphs."""
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.get_edge_partition_book()
 
 
 class TestRemoteDistDatasetWithSplits(TestCase):
@@ -569,6 +682,40 @@ class TestRemoteDistDatasetLabeledHomogeneous(TestCase):
             neg_labels,
             torch.tensor([[2], [3], [4]]),
         )
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_node_partition_book_auto_infers_default_node_type(self, mock_request):
+        """Test get_node_partition_book auto-infers DEFAULT_HOMOGENEOUS_NODE_TYPE when None."""
+        self._create_server_with_labeled_homogeneous_splits()
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # No node_type: should auto-infer DEFAULT_HOMOGENEOUS_NODE_TYPE
+        result = remote_dataset.get_node_partition_book()
+        self.assertIsInstance(result, torch.Tensor)
+        assert isinstance(result, torch.Tensor)
+        self.assertEqual(result.shape[0], 5)
+        self.assert_tensor_equality(result, torch.zeros(5, dtype=torch.int64))
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    def test_get_edge_partition_book_auto_infers_default_edge_type(self, mock_request):
+        """Test get_edge_partition_book auto-infers DEFAULT_HOMOGENEOUS_EDGE_TYPE when None."""
+        self._create_server_with_labeled_homogeneous_splits()
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # No edge_type: should auto-infer DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        result = remote_dataset.get_edge_partition_book()
+        self.assertIsInstance(result, torch.Tensor)
+        assert isinstance(result, torch.Tensor)
+        self.assertEqual(result.shape[0], 5)
+        self.assert_tensor_equality(result, torch.zeros(5, dtype=torch.int64))
 
     def test_get_ablp_input_mismatched_params_raises(self):
         """Test get_ablp_input raises ValueError when exactly one type param is None."""
