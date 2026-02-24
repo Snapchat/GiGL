@@ -1,27 +1,20 @@
 import ast
-import concurrent.futures
-import time
-from collections import Counter, abc, defaultdict
+from collections import abc, defaultdict
 from itertools import count
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage, ShmChannel
+from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import (
-    DistLoader,
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
-    get_context,
-    request_server,
 )
-from graphlearn_torch.sampler import SamplingConfig, SamplingType
-from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
-from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
+from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
@@ -38,7 +31,6 @@ from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
     labeled_to_homogeneous,
-    patch_fanout_for_sampling,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
@@ -61,7 +53,7 @@ from gigl.utils.sampling import ABLPInputNodes
 logger = Logger()
 
 
-class DistABLPLoader(DistLoader):
+class DistABLPLoader(BaseDistLoader):
     # Counts instantiations of this class, per process.
     # This is needed so we can generate unique worker key for each instance, for graph store mode.
     # NOTE: This is per-class, not per-instance.
@@ -204,20 +196,7 @@ class DistABLPLoader(DistLoader):
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
-        # We set to `True` as we don't need to cleanup right away, and this will get set
-        # to `False` in super().__init__()` e.g.
-        # https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_loader.py#L125C1-L126C1
         self._shutdowned = True
-
-        node_world_size: int
-        node_rank: int
-        rank: int
-        world_size: int
-        local_rank: int
-        local_world_size: int
-
-        master_ip_address: str
-        should_cleanup_distributed_context: bool = False
 
         # Determine sampling cluster setup based on dataset type
         if isinstance(dataset, RemoteDistDataset):
@@ -250,81 +229,23 @@ class DistABLPLoader(DistLoader):
 
         del supervision_edge_type
         self._instance_count = next(self._counter)
-        self.data: Optional[Union[DistDataset, RemoteDistDataset]] = None
-        if isinstance(dataset, DistDataset):
-            self.data = dataset
 
-        if context:
-            assert (
-                local_process_world_size is not None
-            ), "context: DistributedContext provided, so local_process_world_size must be provided."
-            assert (
-                local_process_rank is not None
-            ), "context: DistributedContext provided, so local_process_rank must be provided."
-
-            master_ip_address = context.main_worker_ip_address
-            node_world_size = context.global_world_size
-            node_rank = context.global_rank
-            local_world_size = local_process_world_size
-            local_rank = local_process_rank
-
-            rank = node_rank * local_world_size + local_rank
-            world_size = node_world_size * local_world_size
-
-            if not torch.distributed.is_initialized():
-                logger.info(
-                    "process group is not available, trying to torch.distributed.init_process_group to communicate necessary setup information."
-                )
-                should_cleanup_distributed_context = True
-                logger.info(
-                    f"Initializing process group with master ip address: {master_ip_address}, rank: {rank}, world size: {world_size}, local_rank: {local_rank}, local_world_size: {local_world_size}"
-                )
-                torch.distributed.init_process_group(
-                    backend="gloo",  # We just default to gloo for this temporary process group
-                    init_method=f"tcp://{master_ip_address}:{DEFAULT_MASTER_INFERENCE_PORT}",
-                    rank=rank,
-                    world_size=world_size,
-                )
-
-        else:
-            assert (
-                torch.distributed.is_initialized()
-            ), f"context: DistributedContext is None, so process group must be initialized before constructing this object {self.__class__.__name__}."
-            world_size = torch.distributed.get_world_size()
-            rank = torch.distributed.get_rank()
-
-            rank_ip_addresses = gigl.distributed.utils.get_internal_ip_from_all_ranks()
-            master_ip_address = rank_ip_addresses[0]
-
-            count_ranks_per_ip_address = Counter(rank_ip_addresses)
-            local_world_size = count_ranks_per_ip_address[master_ip_address]
-            for rank_ip_address, count in count_ranks_per_ip_address.items():
-                if count != local_world_size:
-                    raise ValueError(
-                        f"All ranks must have the same number of processes, but found {count} processes for rank {rank} on ip {rank_ip_address}, expected {local_world_size}."
-                        + f"count_ranks_per_ip_address = {count_ranks_per_ip_address}"
-                    )
-
-            node_world_size = len(count_ranks_per_ip_address)
-            local_rank = rank % local_world_size
-            node_rank = rank // local_world_size
-
-        del (
-            context,
-            local_process_rank,
-            local_process_world_size,
-        )  # delete deprecated vars so we don't accidentally use them.
+        # Resolve distributed context
+        runtime = BaseDistLoader.resolve_runtime(
+            context, local_process_rank, local_process_world_size
+        )
+        del context, local_process_rank, local_process_world_size
 
         device = (
             pin_memory_device
             if pin_memory_device
             else gigl.distributed.utils.get_available_device(
-                local_process_rank=local_rank
+                local_process_rank=runtime.local_rank
             )
         )
         self.to_device = device
 
-        # Call appropriate setup method based on sampling cluster setup
+        # Mode-specific setup
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(
                 dataset, DistDataset
@@ -334,26 +255,29 @@ class DistABLPLoader(DistLoader):
                 raise ValueError(
                     f"When using Colocated mode, input_nodes must be of type "
                     f"(torch.Tensor | tuple[NodeType, torch.Tensor] | None), "
-                    f"received Graph Store format: dict[int, ABLPInputNodes]"
+                    f"received {type(input_nodes)}"
                 )
-            (
-                sampler_input,
-                worker_options,
-                dataset_metadata,
-            ) = self._setup_for_colocated(
+            setup_info = self._setup_for_colocated(
                 input_nodes=input_nodes,
                 dataset=dataset,
-                local_rank=local_rank,
-                local_world_size=local_world_size,
+                local_rank=runtime.local_rank,
+                local_world_size=runtime.local_world_size,
                 device=device,
-                master_ip_address=master_ip_address,
-                node_rank=node_rank,
-                node_world_size=node_world_size,
+                master_ip_address=runtime.master_ip_address,
+                node_rank=runtime.node_rank,
+                node_world_size=runtime.node_world_size,
                 num_workers=num_workers,
                 worker_concurrency=worker_concurrency,
                 channel_size=channel_size,
                 num_cpu_threads=num_cpu_threads,
             )
+            sampler_input: Union[
+                ABLPNodeSamplerInput, list[ABLPNodeSamplerInput]
+            ] = setup_info[0]
+            worker_options: Union[
+                MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
+            ] = setup_info[1]
+            dataset_schema: DatasetSchema = setup_info[2]
         else:  # Graph Store mode
             assert isinstance(
                 dataset, RemoteDistDataset
@@ -371,7 +295,7 @@ class DistABLPLoader(DistLoader):
             (
                 sampler_input,
                 worker_options,
-                dataset_metadata,
+                dataset_schema,
             ) = self._setup_for_graph_store(
                 input_nodes=input_nodes,
                 dataset=dataset,
@@ -380,146 +304,56 @@ class DistABLPLoader(DistLoader):
                 prefetch_size=prefetch_size,
             )
 
-        self.is_homogeneous_with_labeled_edge_type = (
-            dataset_metadata.is_homogeneous_with_labeled_edge_type
-        )
-        self._node_feature_info = dataset_metadata.node_feature_info
-        self._edge_feature_info = dataset_metadata.edge_feature_info
-
-        num_neighbors = patch_fanout_for_sampling(
-            dataset_metadata.edge_types, num_neighbors
-        )
-
-        if should_cleanup_distributed_context and torch.distributed.is_initialized():
+        # Cleanup temporary process group if needed
+        if (
+            runtime.should_cleanup_distributed_context
+            and torch.distributed.is_initialized()
+        ):
             logger.info(
                 f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
             )
             torch.distributed.destroy_process_group()
 
-        sampling_config = SamplingConfig(
-            sampling_type=SamplingType.NODE,
+        # Create SamplingConfig (with patched fanout)
+        sampling_config = BaseDistLoader.create_sampling_config(
             num_neighbors=num_neighbors,
+            dataset_schema=dataset_schema,
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
-            with_edge=True,
-            collect_features=True,
-            with_neg=False,
-            with_weight=False,
-            edge_dir=dataset_metadata.edge_dir,
-            seed=None,  # it's actually optional - None means random.
         )
 
+        # Build the sampler: a pre-constructed producer for colocated mode,
+        # or an RPC callable for graph store mode.
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
-            # Code below this point is taken from the GLT DistNeighborLoader.__init__() function
-            # (graphlearn_torch/python/distributed/dist_neighbor_loader.py).
-            # We do this so that we may override the DistSamplingProducer that is used with the GiGL implementation.
-
-            # Type narrowing for colocated mode
-
-            self.input_data = sampler_input[0]
-            del sampler_input
-            assert isinstance(self.data, DistDataset)
-            assert isinstance(self.input_data, ABLPNodeSamplerInput)
-
-            self.sampling_type = sampling_config.sampling_type
-            self.num_neighbors = sampling_config.num_neighbors
-            self.batch_size = sampling_config.batch_size
-            self.shuffle = sampling_config.shuffle
-            self.drop_last = sampling_config.drop_last
-            self.with_edge = sampling_config.with_edge
-            self.with_weight = sampling_config.with_weight
-            self.collect_features = sampling_config.collect_features
-            self.edge_dir = sampling_config.edge_dir
-            self.sampling_config = sampling_config
-            self.worker_options = worker_options
-
-            # We can set shutdowned to false now
-            self._shutdowned = False
-
-            self._is_mp_worker = True
-            self._is_collocated_worker = False
-            self._is_remote_worker = False
-
-            self.num_data_partitions = self.data.num_partitions
-            self.data_partition_idx = self.data.partition_idx
-            self._set_ntypes_and_etypes(
-                self.data.get_node_types(), self.data.get_edge_types()
+            assert isinstance(dataset, DistDataset)
+            assert isinstance(worker_options, MpDistSamplingWorkerOptions)
+            channel = BaseDistLoader.create_colocated_channel(worker_options)
+            sampler: Union[
+                DistABLPSamplingProducer, Callable[..., int]
+            ] = DistABLPSamplingProducer(
+                dataset,
+                sampler_input,
+                sampling_config,
+                worker_options,
+                channel,
             )
-
-            self._num_recv = 0
-            self._epoch = 0
-
-            current_ctx = get_context()
-
-            self._input_len = len(self.input_data)
-            self._input_type = self.input_data.input_type
-            self._num_expected = self._input_len // self.batch_size
-            if not self.drop_last and self._input_len % self.batch_size != 0:
-                self._num_expected += 1
-
-            if not current_ctx.is_worker():
-                raise RuntimeError(
-                    f"'{self.__class__.__name__}': only supports "
-                    f"launching multiprocessing sampling workers with "
-                    f"a non-server distribution mode, current role of "
-                    f"distributed context is {current_ctx.role}."
-                )
-            if self.data is None:
-                raise ValueError(
-                    f"'{self.__class__.__name__}': missing input dataset "
-                    f"when launching multiprocessing sampling workers."
-                )
-
-            # Launch multiprocessing sampling workers
-            self._with_channel = True
-            self.worker_options._set_worker_ranks(current_ctx)
-
-            self._channel = ShmChannel(
-                self.worker_options.channel_capacity, self.worker_options.channel_size
-            )
-            if self.worker_options.pin_memory:
-                self._channel.pin_memory()
-
-            self._mp_producer = DistABLPSamplingProducer(
-                self.data,
-                self.input_data,
-                self.sampling_config,
-                self.worker_options,
-                self._channel,
-            )
-            # When initiating data loader(s), there will be a spike of memory usage lasting for ~30s.
-            # The current hypothesis is making connections across machines require a lot of memory.
-            # If we start all data loaders in all processes simultaneously, the spike of memory
-            # usage will add up and cause CPU memory OOM. Hence, we initiate the data loaders group by group
-            # to smooth the memory usage. The definition of group is discussed in init_neighbor_loader_worker.
-            logger.info(
-                f"---Machine {rank} local process number {local_rank} preparing to sleep for {process_start_gap_seconds * local_rank} seconds"
-            )
-            time.sleep(process_start_gap_seconds * local_rank)
-            self._mp_producer.init()
         else:
-            # Graph Store mode - re-implement remote worker setup
-            # Use sequential initialization per compute node to avoid race conditions
-            # when initializing the samplers on the storage nodes.
-            node_rank = dataset.cluster_info.compute_node_rank
-            for target_node_rank in range(dataset.cluster_info.num_compute_nodes):
-                if node_rank == target_node_rank:
-                    self._init_remote_worker(
-                        dataset=dataset,
-                        sampler_input=sampler_input,
-                        sampling_config=sampling_config,
-                        worker_options=worker_options,
-                        dataset_metadata=dataset_metadata,
-                    )
-                    logger.info(
-                        f"node_rank {node_rank} / {dataset.cluster_info.num_compute_nodes} initialized the dist loader"
-                    )
-                torch.distributed.barrier()
-            torch.distributed.barrier()
-            logger.info(
-                f"node_rank {node_rank} / {dataset.cluster_info.num_compute_nodes} finished initializing the dist loader"
-            )
+            sampler = DistServer.create_sampling_ablp_producer
+
+        # Call base class — handles metadata storage and connection initialization
+        # (including staggered init for colocated mode).
+        super().__init__(
+            dataset=dataset,
+            sampler_input=sampler_input,
+            dataset_schema=dataset_schema,
+            worker_options=worker_options,
+            sampling_config=sampling_config,
+            device=device,
+            runtime=runtime,
+            sampler=sampler,
+            process_start_gap_seconds=process_start_gap_seconds,
+        )
 
     def _setup_for_colocated(
         self,
@@ -540,7 +374,7 @@ class DistABLPLoader(DistLoader):
         worker_concurrency: int,
         channel_size: str,
         num_cpu_threads: Optional[int],
-    ) -> tuple[list[ABLPNodeSamplerInput], MpDistSamplingWorkerOptions, DatasetSchema]:
+    ) -> tuple[ABLPNodeSamplerInput, MpDistSamplingWorkerOptions, DatasetSchema]:
         """
         Setup method for colocated (non-Graph Store) mode.
 
@@ -559,7 +393,7 @@ class DistABLPLoader(DistLoader):
             num_cpu_threads: Number of CPU threads for PyTorch.
 
         Returns:
-            Tuple of (list[ABLPNodeSamplerInput], MpDistSamplingWorkerOptions, DatasetSchema).
+            Tuple of (ABLPNodeSamplerInput, MpDistSamplingWorkerOptions, DatasetSchema).
         """
         # Validate input format - should not be Graph Store format
         if isinstance(input_nodes, abc.Mapping):
@@ -741,7 +575,7 @@ class DistABLPLoader(DistLoader):
         edge_types = list(dataset.graph.keys())
 
         return (
-            [sampler_input],
+            sampler_input,
             worker_options,
             DatasetSchema(
                 is_homogeneous_with_labeled_edge_type=is_homogeneous_with_labeled_edge_type,
@@ -788,10 +622,6 @@ class DistABLPLoader(DistLoader):
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
-        # TODO(kmonte) - We need to be able to differentiate between different instances of the same loader.
-        # e.g. if we have two different DistABLPLoaders, then they will have conflicting worker keys.
-        # And they will share each others data. Therefor, the second loader will not load the data it's expecting.
-        # Probably, we can just keep track of the insantiations on the server-side and include the count in the worker key.
         worker_key = (
             f"compute_ablp_loader_rank_{node_rank}_worker_{self._instance_count}"
         )
@@ -917,114 +747,6 @@ class DistABLPLoader(DistLoader):
                 edge_feature_info=edge_feature_info,
                 edge_dir=dataset.get_edge_dir(),
             ),
-        )
-
-    def _init_remote_worker(
-        self,
-        dataset: RemoteDistDataset,
-        sampler_input: list[ABLPNodeSamplerInput],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-        dataset_metadata: DatasetSchema,
-    ) -> None:
-        """
-        Initialize the remote worker code path for Graph Store mode.
-
-        This re-implements GLT's DistLoader remote worker setup but uses GiGL's DistServer.
-
-        Args:
-            dataset: The RemoteDistDataset to sample from.
-            sampler_input: List of ABLPNodeSamplerInput, one per server.
-            sampling_config: Configuration for sampling.
-            worker_options: Options for remote sampling workers.
-            dataset_metadata: Metadata about the dataset schema.
-        """
-        # Set instance variables (like DistLoader does)
-        self.sampling_type = sampling_config.sampling_type
-        self.num_neighbors = sampling_config.num_neighbors
-        self.batch_size = sampling_config.batch_size
-        self.shuffle = sampling_config.shuffle
-        self.drop_last = sampling_config.drop_last
-        self.with_edge = sampling_config.with_edge
-        self.with_weight = sampling_config.with_weight
-        self.collect_features = sampling_config.collect_features
-        self.edge_dir = sampling_config.edge_dir
-        self.sampling_config = sampling_config
-        self.worker_options = worker_options
-
-        self._shutdowned = False
-
-        # Set worker type flags
-        self._is_mp_worker = False
-        self._is_collocated_worker = False
-        self._is_remote_worker = True
-
-        # For remote worker, end of epoch is determined by server
-        self._num_expected = float("inf")
-        self._with_channel = True
-
-        self._num_recv = 0
-        self._epoch = 0
-
-        # Get server rank list from worker_options
-        self._server_rank_list = (
-            worker_options.server_rank
-            if isinstance(worker_options.server_rank, list)
-            else [worker_options.server_rank]
-        )
-        self._input_data_list = sampler_input  # Already a list (one per server)
-
-        # Get input type from first input
-        self._input_type = self._input_data_list[0].input_type
-
-        # Get dataset metadata from cluster_info (not via RPC)
-        self.num_data_partitions = dataset.cluster_info.num_storage_nodes
-        self.data_partition_idx = dataset.cluster_info.compute_node_rank
-
-        # Derive node types from edge types
-        # For labeled homogeneous: edge_types contains DEFAULT_HOMOGENEOUS_EDGE_TYPE
-        # For heterogeneous: extract unique src/dst types from edge types
-        edge_types = dataset_metadata.edge_types or []
-        if edge_types:
-            node_types = list(
-                set([et[0] for et in edge_types] + [et[2] for et in edge_types])
-            )
-        else:
-            node_types = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
-        self._set_ntypes_and_etypes(node_types, edge_types)
-
-        # Create sampling producers on each server (concurrently)
-        # Move input data to CPU before sending to server
-        for input_data in self._input_data_list:
-            input_data.to(torch.device("cpu"))
-
-        self._producer_id_list = []
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    request_server,
-                    server_rank,
-                    DistServer.create_sampling_ablp_producer,
-                    input_data,
-                    self.sampling_config,
-                    self.worker_options,
-                )
-                for server_rank, input_data in zip(
-                    self._server_rank_list, self._input_data_list
-                )
-            ]
-
-        for future in futures:
-            producer_id = future.result()
-            self._producer_id_list.append(producer_id)
-        logger.info(
-            f"DistABLPLoader rank {torch.distributed.get_rank()} producers: ({[producer_id for producer_id in self._producer_id_list]})"
-        )
-        # Create remote receiving channel for cross-machine message passing
-        self._channel = RemoteReceivingChannel(
-            self._server_rank_list,
-            self._producer_id_list,
-            self.worker_options.prefetch_size,
         )
 
     def _get_labels(
