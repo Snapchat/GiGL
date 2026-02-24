@@ -656,13 +656,15 @@ def _run_validation_loops(
 
     while True:
         if num_batches and batch_idx >= num_batches:
-            logger.info(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
+            print(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
+            flush()
             break
         try:
             main_data = next(main_loader)
             random_data = next(random_negative_loader)
         except StopIteration:
-            logger.info(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
+            print(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
+            flush()
             break
 
         loss = _compute_loss(
@@ -678,7 +680,7 @@ def _run_validation_loops(
         batch_start = time.time()
         batch_idx += 1
         if batch_idx % log_every_n_batch == 0:
-            logger.info(f"rank={rank}, batch={batch_idx}, latest test_loss={loss:.6f}")
+            print(f"rank={rank}, batch={batch_idx}, latest test_loss={loss:.6f}")
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             logger.info(

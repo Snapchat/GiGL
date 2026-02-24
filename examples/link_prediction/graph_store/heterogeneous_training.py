@@ -154,7 +154,7 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    if dataset.get_edge_dir() == "in":
+    if dataset.get_edge_dir() == "out":
         query_node_type = supervision_edge_type.dst_node_type
         labeled_node_type = supervision_edge_type.src_node_type
         anchor_node_type = labeled_node_type
