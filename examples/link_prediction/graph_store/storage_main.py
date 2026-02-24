@@ -4,79 +4,71 @@ Derived from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/example
 
 This module is a **CLI entry point** that composes the utility functions
 from :mod:`gigl.distributed.graph_store.storage_utils` with
-example-specific orchestration logic (parsing CLI args, determining
-inference node types, spawning one server session per inference node
-type).
+example-specific orchestration logic.
+
+Note about "num_server_sessions":
+
+For each (gigl.distributed.graph_store.dist_server.init_server / gigl.distributed.graph_store.compute.init_compute_process)
+pair we must have one "server session". This is because each session is a process and we need to recreate
+the RPC connections for every new process.
+As in inference we often use one process per node type, we will have one server session per node type.
 
 Cluster Setup
 =============
 
-In Graph Store mode, storage nodes hold the graph data and serve sampling
-requests from compute nodes.  Each storage node initializes a GLT
-(GraphLearn-Torch) server and waits for connections from compute nodes.
+In Graph Store mode, storage nodes hold the graph data and serve sampling requests from compute nodes.
+Each storage node initializes a GLT (GraphLearn-Torch) server and waits for connections from compute nodes.
 
-Storage nodes accept connections from compute nodes **sequentially, by
-compute node**. For example:
-
-- First, all connections from Compute Node 0 are established to Storage
-  Nodes 0, 1, 2, ...
-- Then, all connections from Compute Node 1 are established to Storage
-  Nodes 0, 1, 2, ...
+Storage nodes accept connections from compute nodes **sequentially, by compute node**. For example:
+- First, all connections from Compute Node 0 are established to Storage Nodes 0, 1, 2, ...
+- Then, all connections from Compute Node 1 are established to Storage Nodes 0, 1, 2, ...
 - And so on.
 
 It's important to distinguish between:
+- **Compute Node**: A physical machine in the compute cluster (e.g., a VM with multiple GPUs).
+- **Compute Process**: A process running on a compute node (typically one per GPU).
 
-- **Compute Node**: A physical machine in the compute cluster (e.g., a VM
-  with multiple GPUs).
-- **Compute Process**: A process running on a compute node (typically one
-  per GPU).
+Each compute node may have multiple compute processes (e.g., one per GPU), and each compute process
+establishes its own connection to every storage node. For example, if a compute node has 4 GPUs,
+it will establish 4 connections to each storage node.
 
-Each compute node may have multiple compute processes (e.g., one per GPU),
-and each compute process establishes its own connection to every storage
-node. For example, if a compute node has 4 GPUs, it will establish 4
-connections to each storage node.
-
-This sequential connection setup is required because the GLT server uses a
-per-server lock when initializing samplers. If connections from multiple
-compute nodes were established concurrently, it could cause a deadlock.
 
 Connection Diagram
 ------------------
 
-    ╔══════════════════════════════════════════════════════════════════════════════════╗
-    ║                      COMPUTE TO STORAGE NODE CONNECTIONS                         ║
-    ╚══════════════════════════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════════════════════════╗
+║                         COMPUTE TO STORAGE NODE CONNECTIONS                            ║
+╚═══════════════════════════════════════════════════════════════════════════════════════╝
 
-         COMPUTE NODES                                              STORAGE NODES
-         ═════════════                                              ═════════════
+     COMPUTE NODES                                              STORAGE NODES
+     ═════════════                                              ═════════════
 
-      ┌──────────────────────┐          (1)                      ┌───────────────┐
-      │    COMPUTE NODE 0    │                                   │               │
-      │  ┌────┬────┬────┬────┤ ══════════════════════════════════│   STORAGE 0   │
-      │  │GPU │GPU │GPU │GPU │                                 ╱ │               │
-      │  │ 0  │ 1  │ 2  │ 3  │ ════════════════════╲         ╱   └───────────────┘
-      │  └────┴────┴────┴────┤          (2)          ╲     ╱
-      └──────────────────────┘                         ╲ ╱
-                                                        ╳
-                                              (3)     ╱   ╲     (4)
-      ┌──────────────────────┐                      ╱       ╲    ┌───────────────┐
-      │    COMPUTE NODE 1    │                    ╱           ╲  │               │
-      │  ┌────┬────┬────┬────┤ ═════════════════╱               ═│   STORAGE 1   │
-      │  │GPU │GPU │GPU │GPU │                                   │               │
-      │  │ 0  │ 1  │ 2  │ 3  │ ══════════════════════════════════│               │
-      │  └────┴────┴────┴────┤                                   └───────────────┘
-      └──────────────────────┘
+  ┌──────────────────────┐          (1)                      ┌───────────────┐
+  │    COMPUTE NODE 0    │                                   │               │
+  │  ┌────┬────┬────┬────┤ ══════════════════════════════════│   STORAGE 0   │
+  │  │GPU │GPU │GPU │GPU │                                 ╱ │               │
+  │  │ 0  │ 1  │ 2  │ 3  │ ════════════════════╲         ╱   └───────────────┘
+  │  └────┴────┴────┴────┤          (2)          ╲     ╱
+  └──────────────────────┘                         ╲ ╱
+                                                    ╳
+                                          (3)     ╱   ╲     (4)
+  ┌──────────────────────┐                      ╱       ╲    ┌───────────────┐
+  │    COMPUTE NODE 1    │                    ╱           ╲  │               │
+  │  ┌────┬────┬────┬────┤ ═════════════════╱               ═│   STORAGE 1   │
+  │  │GPU │GPU │GPU │GPU │                                   │               │
+  │  │ 0  │ 1  │ 2  │ 3  │ ══════════════════════════════════│               │
+  │  └────┴────┴────┴────┤                                   └───────────────┘
+  └──────────────────────┘
 
-      ┌─────────────────────────────────────────────────────────────────────────────┐
-      │  (1) Compute Node 0  →  Storage 0   (4 connections, one per GPU)            │
-      │  (2) Compute Node 0  →  Storage 1   (4 connections, one per GPU)            │
-      │  (3) Compute Node 1  →  Storage 0   (4 connections, one per GPU)            │
-      │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
-      └─────────────────────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  (1) Compute Node 0  →  Storage 0   (4 connections, one per GPU)            │
+  │  (2) Compute Node 0  →  Storage 1   (4 connections, one per GPU)            │
+  │  (3) Compute Node 1  →  Storage 0   (4 connections, one per GPU)            │
+  │  (4) Compute Node 1  →  Storage 1   (4 connections, one per GPU)            │
+  └─────────────────────────────────────────────────────────────────────────────┘
 
-Storage nodes wait for all compute processes to connect, then serve sampling
-requests until the compute processes signal shutdown via
-``gigl.distributed.graph_store.compute.shutdown_compute_process``.
+Storage nodes wait for all compute processes to connect, then serve sampling requests until
+the compute processes signal shutdown via `gigl.distributed.graph_store.compute.shutdown_compute_process`.
 """
 
 import argparse
@@ -147,11 +139,7 @@ def storage_node_process(
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
-        f"Initializing storage node {storage_rank} / "
-        f"{cluster_info.num_storage_nodes}. "
-        f"OS rank: {os.environ['RANK']}, "
-        f"OS world size: {os.environ['WORLD_SIZE']} "
-        f"init method: {init_method}"
+        f"Initializing storage node {storage_rank} / {cluster_info.num_storage_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']} init method: {init_method}"
     )
     torch.distributed.init_process_group(
         backend="gloo",
@@ -161,8 +149,7 @@ def storage_node_process(
         group_name="gigl_server_comms",
     )
     logger.info(
-        f"Storage node {storage_rank} / "
-        f"{cluster_info.num_storage_nodes} process group initialized"
+        f"Storage node {storage_rank} / {cluster_info.num_storage_nodes} process group initialized"
     )
 
     dataset = build_storage_dataset(
@@ -203,9 +190,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
-    # Setup cluster-wide (e.g. storage and compute nodes) Torch Distributed
-    # process group.  This is needed so we can get the cluster information
-    # (e.g. number of storage and compute nodes) and rank/world_size.
+    # Setup cluster-wide (e.g. storage and compute nodes) Torch Distributed process group.
+    # This is needed so we can get the cluster information (e.g. number of storage and compute nodes) and rank/world_size.
     torch.distributed.init_process_group(backend="gloo")
     cluster_info = get_graph_store_info()
     logger.info(f"Cluster info: {cluster_info}")
@@ -215,8 +201,7 @@ if __name__ == "__main__":
         f"OS world size: {os.environ['WORLD_SIZE']}, "
         f"OS rank: {os.environ['RANK']}"
     )
-    # Tear down the "global" process group so we can have a
-    # server-specific process group.
+    # Tear down the """"global""" process group so we can have a server-specific process group.
     torch.distributed.destroy_process_group()
     storage_node_process(
         storage_rank=cluster_info.storage_node_rank,
