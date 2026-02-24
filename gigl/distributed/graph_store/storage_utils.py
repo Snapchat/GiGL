@@ -160,12 +160,12 @@ def _run_storage_server_session(
     # `RemoteDistDataset.get_free_ports_on_storage_cluster` to work.
     # Note: this is called on the *compute* cluster, but requires the
     # storage cluster to have a process group initialized.
-    torch.distributed.init_process_group(
-        backend=storage_world_backend,
-        world_size=cluster_info.num_storage_nodes,
-        rank=storage_rank,
-        init_method=init_method,
-    )
+    # torch.distributed.init_process_group(
+    #     backend=storage_world_backend,
+    #     world_size=cluster_info.num_storage_nodes,
+    #     rank=storage_rank,
+    #     init_method=init_method,
+    # )
 
     logger.info(
         f"Waiting for storage node "
