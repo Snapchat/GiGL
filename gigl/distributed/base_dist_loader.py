@@ -8,11 +8,13 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
+import queue
 import sys
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Callable, Final, Optional, Union
 
 import torch
 from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
@@ -48,6 +50,8 @@ from gigl.distributed.utils.neighborloader import (
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
+
+_COLLATION_SENTINEL: Final = object()  # Signals end-of-epoch to consumer
 
 
 # We don't see logs for graph store mode for whatever reason.
@@ -101,6 +105,12 @@ class BaseDistLoader(DistLoader):
         sampler: Either a pre-constructed ``DistMpSamplingProducer`` (colocated mode)
             or a callable to dispatch on the ``DistServer`` (graph store mode).
         process_start_gap_seconds: Delay between each process for staggered colocated init.
+        background_collation_queue_size: If set to a positive integer, enables
+            background collation in a daemon thread. The collation of sampled
+            messages (via ``_collate_fn``) is performed in a background thread,
+            overlapping with GPU training. The value controls the maximum number
+            of pre-collated batches buffered in memory. ``None`` disables
+            background collation (default behavior).
     """
 
     @staticmethod
@@ -206,10 +216,25 @@ class BaseDistLoader(DistLoader):
         runtime: DistributedRuntimeInfo,
         sampler: Union[DistMpSamplingProducer, Callable[..., int]],
         process_start_gap_seconds: float = 60.0,
+        background_collation_queue_size: Optional[int] = None,
     ):
         # Set right away so __del__ can clean up if we throw during init.
         # Will be set to False once connections are initialized.
         self._shutdowned = True
+
+        # --- Background collation setup (validate early, before heavy init) ---
+        if (
+            background_collation_queue_size is not None
+            and background_collation_queue_size < 1
+        ):
+            raise ValueError(
+                f"background_collation_queue_size must be >= 1 if provided, "
+                f"got {background_collation_queue_size}"
+            )
+        self._background_collation_queue_size = background_collation_queue_size
+        self._collation_thread: Optional[threading.Thread] = None
+        self._collated_queue: Optional[queue.Queue] = None
+        self._collation_stop_event: Optional[threading.Event] = None
 
         # Store dataset metadata for subclass _collate_fn usage
         self._is_homogeneous_with_labeled_edge_type = (
@@ -542,10 +567,137 @@ class BaseDistLoader(DistLoader):
         )
         _flush()
 
+    # --- Background collation methods ---
+
+    def __next__(self):  # type: ignore[override]
+        """Returns the next collated batch.
+
+        When background collation is enabled, retrieves pre-collated results
+        from the bounded queue. Otherwise, falls back to the synchronous
+        path (replicated from GLT ``DistLoader``).
+
+        Returns:
+            A ``Data`` or ``HeteroData`` batch.
+
+        Raises:
+            StopIteration: When the epoch is exhausted.
+        """
+        if self._background_collation_queue_size is not None:
+            return self._next_from_background_collation()
+        # Original synchronous path (replicated from GLT DistLoader)
+        if self._num_recv == self._num_expected:
+            raise StopIteration
+        if self._with_channel:
+            msg = self._channel.recv()
+        else:
+            msg = self._collocated_producer.sample()
+        result = self._collate_fn(msg)
+        self._num_recv += 1
+        return result
+
+    def _next_from_background_collation(self):
+        """Retrieves the next pre-collated batch from the background queue.
+
+        Returns:
+            A ``Data`` or ``HeteroData`` batch.
+
+        Raises:
+            StopIteration: On sentinel or when expected count is reached.
+        """
+        assert self._collated_queue is not None
+        item = self._collated_queue.get()
+        if item is _COLLATION_SENTINEL:
+            raise StopIteration
+        if isinstance(item, BaseException):
+            raise item
+        self._num_recv += 1
+        return item
+
+    def _collation_worker(self) -> None:
+        """Target function for the background collation daemon thread.
+
+        Continuously receives messages from the channel (or collocated
+        producer) and runs ``_collate_fn``, placing collated results into
+        ``_collated_queue``. Exits when the epoch batch count is reached,
+        a ``StopIteration`` is received from the channel, or the stop event
+        is set.
+        """
+        assert self._collated_queue is not None
+        assert self._collation_stop_event is not None
+        num_produced = 0
+        try:
+            while True:
+                # For finite epochs, exit after producing all expected batches
+                if (
+                    self._num_expected != float("inf")
+                    and num_produced >= self._num_expected
+                ):
+                    self._collated_queue.put(_COLLATION_SENTINEL)
+                    return
+
+                # Receive next sampled message
+                try:
+                    if self._with_channel:
+                        msg = self._channel.recv()
+                    else:
+                        msg = self._collocated_producer.sample()
+                except StopIteration:
+                    self._collated_queue.put(_COLLATION_SENTINEL)
+                    return
+
+                # Check stop event between recv and collate
+                if self._collation_stop_event.is_set():
+                    return
+
+                result = self._collate_fn(msg)
+                num_produced += 1
+                self._collated_queue.put(result)
+        except Exception as e:
+            self._collated_queue.put(e)
+
+    def _start_collation_thread(self) -> None:
+        """Creates and starts a fresh background collation thread."""
+        assert self._background_collation_queue_size is not None
+        self._collation_stop_event = threading.Event()
+        self._collated_queue = queue.Queue(
+            maxsize=self._background_collation_queue_size
+        )
+        self._collation_thread = threading.Thread(
+            target=self._collation_worker, daemon=True
+        )
+        self._collation_thread.start()
+
+    def _stop_collation_thread(self) -> None:
+        """Stops the background collation thread if it is running.
+
+        Sets the stop event and drains the queue to unblock the worker
+        if it is blocked on ``queue.put()``. Joins the thread with a
+        10-second timeout.
+        """
+        if self._collation_thread is None or not self._collation_thread.is_alive():
+            return
+        assert self._collation_stop_event is not None
+        assert self._collated_queue is not None
+
+        self._collation_stop_event.set()
+        # Drain the queue to unblock the worker if it's blocked on put()
+        while True:
+            try:
+                self._collated_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._collation_thread.join(timeout=10.0)
+        if self._collation_thread.is_alive():
+            logger.warning(
+                "Background collation thread did not terminate within 10 seconds."
+            )
+
     # Overwrite DistLoader.shutdown to so we can use our own shutdown and rpc calls
     def shutdown(self) -> None:
         if self._shutdowned:
             return
+        if self._background_collation_queue_size is not None:
+            self._stop_collation_thread()
         if self._is_collocated_worker:
             self._collocated_producer.shutdown()
         elif self._is_mp_worker:
@@ -564,6 +716,9 @@ class BaseDistLoader(DistLoader):
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
+        if self._background_collation_queue_size is not None:
+            self._stop_collation_thread()
+
         self._num_recv = 0
         if self._is_collocated_worker:
             self._collocated_producer.reset()
@@ -584,4 +739,8 @@ class BaseDistLoader(DistLoader):
             torch.futures.wait_all(rpc_futures)
             self._channel.reset()
         self._epoch += 1
+
+        if self._background_collation_queue_size is not None:
+            self._start_collation_thread()
+
         return self

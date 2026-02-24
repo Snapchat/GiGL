@@ -81,6 +81,7 @@ class DistNeighborLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        background_collation_queue_size: Optional[int] = None,
     ):
         """
         Distributed Neighbor Loader.
@@ -146,6 +147,12 @@ class DistNeighborLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            background_collation_queue_size (Optional[int]): If set to a positive
+                integer, enables background collation in a daemon thread. The
+                collation of sampled messages is performed in a background thread,
+                overlapping with GPU training. The value controls the maximum
+                number of pre-collated batches buffered in memory. ``None``
+                disables background collation (default behavior).
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -261,6 +268,7 @@ class DistNeighborLoader(BaseDistLoader):
             runtime=runtime,
             sampler=sampler,
             process_start_gap_seconds=process_start_gap_seconds,
+            background_collation_queue_size=background_collation_queue_size,
         )
 
     def _setup_for_graph_store(
