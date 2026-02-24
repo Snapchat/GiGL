@@ -157,7 +157,7 @@ def _setup_dataloaders(
     if dataset.get_edge_dir() == "out":
         query_node_type = supervision_edge_type.dst_node_type
         labeled_node_type = supervision_edge_type.src_node_type
-        anchor_node_type = labeled_node_type
+        anchor_node_type = query_node_type
     else:
         query_node_type = supervision_edge_type.src_node_type
         labeled_node_type = supervision_edge_type.dst_node_type

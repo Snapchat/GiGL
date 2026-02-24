@@ -159,6 +159,14 @@ def _setup_dataloaders(
         world_size=cluster_info.num_compute_nodes,
     )
 
+    for storage_rank, ablp_nodes in ablp_input.items():
+        print(
+            f"Rank {rank} split={split}: storage_rank={storage_rank}, "
+            f"num_anchors={ablp_nodes.anchor_nodes.shape}, "
+            f"labels: {ablp_nodes.labels}"
+        )
+        flush()
+
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -184,6 +192,13 @@ def _setup_dataloaders(
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
+
+    for storage_rank, node_ids_tensor in all_node_ids.items():
+        print(
+            f"Rank {rank} split={split}: random_negative storage_rank={storage_rank}, "
+            f"num_node_ids={node_ids_tensor.shape}"
+        )
+        flush()
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
@@ -227,9 +242,9 @@ def _compute_loss(
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
-    print(f"Computing loss for main data: {main_data}")
-    print(f"Computing loss for random negative data: {random_negative_data}")
-    print(f"Using model: {model}")
+    # print(f"Computing loss for main data: {main_data}")
+    # print(f"Computing loss for random negative data: {random_negative_data}")
+    # print(f"Using model: {model}")
     flush()
     # Forward pass through encoder
     main_embeddings = model(data=main_data, device=device)
@@ -656,14 +671,19 @@ def _run_validation_loops(
 
     while True:
         if num_batches and batch_idx >= num_batches:
-            print(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
+            print(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop with batch_idx={batch_idx} and num_batches={num_batches}")
             flush()
             break
         try:
             main_data = next(main_loader)
+        except StopIteration:
+            print(f"Rank {torch.distributed.get_rank()} MAIN loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}")
+            flush()
+            break
+        try:
             random_data = next(random_negative_loader)
         except StopIteration:
-            print(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
+            print(f"Rank {torch.distributed.get_rank()} RANDOM NEGATIVE loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}")
             flush()
             break
 
@@ -688,14 +708,18 @@ def _run_validation_loops(
             )
             last_n_batch_time.clear()
             flush()
-    local_avg_loss = statistics.mean(batch_losses)
-    logger.info(
-        f"rank={rank} finished validation loop, local loss: {local_avg_loss=:.6f}"
-    )
+    if batch_losses:
+        local_avg_loss = statistics.mean(batch_losses)
+    else:
+        print(f"rank={rank} WARNING: 0 batches processed in validation loop, setting local loss to 0.0")
+        flush()
+        local_avg_loss = 0.0
+    print(f"rank={rank} finished validation loop, num_batches_processed={len(batch_losses)}, local loss: {local_avg_loss:.6f}")
+    flush()
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
     )
-    logger.info(f"rank={rank} got global validation loss {global_avg_val_loss=:.6f}")
+    print(f"rank={rank} got global validation loss {global_avg_val_loss=:.6f}")
     flush()
 
     return
@@ -719,7 +743,8 @@ def _run_example_training(
         f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
     )
     cluster_info = get_graph_store_info()
-    logger.info(f"Cluster info: {cluster_info}")
+    print(f"Cluster info: {cluster_info}")
+    flush()
     torch.distributed.destroy_process_group()
     logger.info(
         f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
