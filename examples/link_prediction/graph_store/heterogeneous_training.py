@@ -154,7 +154,7 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    if dataset.get_edge_dir() == "out":
+    if dataset.get_edge_dir() == "in":
         query_node_type = supervision_edge_type.dst_node_type
         labeled_node_type = supervision_edge_type.src_node_type
         anchor_node_type = query_node_type
@@ -163,7 +163,7 @@ def _setup_dataloaders(
         labeled_node_type = supervision_edge_type.dst_node_type
         anchor_node_type = query_node_type
 
-    logger.info(f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.get_edge_dir()}")
+    print(f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.get_edge_dir()}")
 
     shuffle = split == "train"
 
