@@ -9,6 +9,65 @@ from torch_geometric.utils import to_torch_sparse_tensor
 
 from gigl.transforms.utils import add_node_attr, add_edge_attr
 
+r"""
+Positional and Structural Encodings for Heterogeneous Graphs.
+
+This module provides PyG-compatible transforms for adding positional and structural
+encodings to HeteroData objects. All transforms follow the PyG BaseTransform interface
+and can be composed using `torch_geometric.transforms.Compose`.
+
+Available Transforms:
+    - AddHeteroRandomWalkPE: Random walk positional encoding (column sum of non-diagonal)
+    - AddHeteroRandomWalkSE: Random walk structural encoding (diagonal elements)
+    - AddHeteroHopDistanceEncoding: Shortest path distance encoding
+
+Example Usage:
+    >>> from torch_geometric.data import HeteroData
+    >>> from torch_geometric.transforms import Compose
+    >>> from gigl.transforms.add_positional_encodings import (
+    ...     AddHeteroRandomWalkPE,
+    ...     AddHeteroRandomWalkSE,
+    ...     AddHeteroHopDistanceEncoding,
+    ... )
+    >>>
+    >>> # Create a heterogeneous graph
+    >>> data = HeteroData()
+    >>> data['user'].x = torch.randn(5, 16)
+    >>> data['item'].x = torch.randn(3, 16)
+    >>> data['user', 'buys', 'item'].edge_index = torch.tensor([[0, 1, 2], [0, 1, 2]])
+    >>> data['item', 'bought_by', 'user'].edge_index = torch.tensor([[0, 1, 2], [0, 1, 2]])
+    >>>
+    >>> # Apply single transform
+    >>> transform = AddHeteroRandomWalkPE(walk_length=8)
+    >>> data = transform(data)
+    >>> print(data['user'].random_walk_pe.shape)  # (5, 8)
+    >>>
+    >>> # Compose multiple transforms
+    >>> transform = Compose([
+    ...     AddHeteroRandomWalkPE(walk_length=8),
+    ...     AddHeteroRandomWalkSE(walk_length=8),
+    ...     AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True),
+    ... ])
+    >>> data = transform(data)
+    >>>
+    >>> # For Graph Transformers, use full_matrix=True to get full pairwise distances
+    >>> transform = AddHeteroHopDistanceEncoding(h_max=5, full_matrix=True)
+    >>> data = transform(data)
+    >>> print(data.hop_distance.shape)  # (num_total_nodes, num_total_nodes)
+    >>>
+    >>> # For heterogeneous Graph Transformers, use node_type_aware=True to preserve
+    >>> # node type information for type-aware attention bias
+    >>> transform = AddHeteroHopDistanceEncoding(h_max=5, full_matrix=True, node_type_aware=True)
+    >>> data = transform(data)
+    >>> print(data.hop_distance.shape)      # (8, 8) - pairwise distances
+    >>> print(data.node_type_ids.shape)     # (8,) - type ID for each node
+    >>> print(data.node_type_pair.shape)    # (8, 8) - encodes (src_type, dst_type) pairs
+    >>> print(data.node_type_names)         # ['item', 'user'] - sorted alphabetically
+    >>>
+    >>> # In a Graph Transformer, combine hop distance and node type for attention bias:
+    >>> # bias = hop_embedding[data.hop_distance.long()] + type_pair_embedding[data.node_type_pair]
+"""
+
 
 @functional_transform('add_hetero_random_walk_pe')
 class AddHeteroRandomWalkPE(BaseTransform):
@@ -198,6 +257,15 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
     Based on the approach from `"Do Transformers Really Perform Bad for Graph
     Representation?" <https://arxiv.org/abs/2106.05234>`_ (Graphormer).
 
+    For heterogeneous graphs, when `full_matrix=True`, additional node type
+    information can be preserved by setting `node_type_aware=True`. This stores:
+        - `data.hop_distance`: (num_nodes, num_nodes) distance matrix
+        - `data.node_type_ids`: (num_nodes,) node type ID for each node
+        - `data.node_type_pair`: (num_nodes, num_nodes) encodes (src_type, dst_type) pairs
+
+    This allows Graph Transformers to use both structural (hop distance) and
+    semantic (node type) information in attention bias computation.
+
     Args:
         h_max (int): Maximum hop distance to consider. Distances > h_max
             are clipped to h_max (representing "far" or "unreachable" nodes).
@@ -215,6 +283,13 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             :obj:`full_matrix=False`, the hop distance for existing edges is
             always 1 (direct connection), which may be redundant. Use
             :obj:`full_matrix=True` for attention bias in Graph Transformers.
+            (default: :obj:`True`)
+        node_type_aware (bool, optional): If set to :obj:`True` (only effective
+            when `full_matrix=True`), also stores node type information:
+            - `node_type_ids`: (num_nodes,) tensor mapping each node to its type ID
+            - `node_type_pair`: (num_nodes, num_nodes) tensor encoding the
+              (src_type, dst_type) pair as `src_type * num_node_types + dst_type`
+            This enables type-aware attention bias in heterogeneous Graph Transformers.
             (default: :obj:`False`)
     """
     def __init__(
@@ -222,12 +297,14 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         h_max: int,
         attr_name: Optional[str] = 'hop_distance',
         is_undirected: bool = False,
-        full_matrix: bool = False,
+        full_matrix: bool = True,
+        node_type_aware: bool = False,
     ) -> None:
         self.h_max = h_max
         self.attr_name = attr_name
         self.is_undirected = is_undirected
         self.full_matrix = full_matrix
+        self.node_type_aware = node_type_aware
 
     def forward(self, data: HeteroData) -> HeteroData:
         assert isinstance(data, HeteroData), (
@@ -247,6 +324,11 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
                 data[self.attr_name] = torch.zeros(
                     (num_nodes, num_nodes), dtype=torch.long
                 )
+                if self.node_type_aware:
+                    data['node_type_ids'] = torch.zeros(num_nodes, dtype=torch.long)
+                    data['node_type_pair'] = torch.zeros(
+                        (num_nodes, num_nodes), dtype=torch.long
+                    )
             else:
                 for edge_type in data.edge_types:
                     num_type_edges = data[edge_type].num_edges
@@ -291,33 +373,6 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             # Expand frontier to next hop neighbors
             current_frontier = (current_frontier.float() @ adj_dense) > 0
 
-        # Example
-        # Graph: 0 -> 1 -> 2 (3 nodes, chain)
-        # edge_index = [[0, 1], [1, 2]]  (edges: 0→1, 1→2)
-        # h_max = 3
-
-        # Initial state:
-        # dist_matrix = [[0, 3, 3],    # 3 = h_max (unreachable)
-        #                [3, 0, 3],
-        #                [3, 3, 0]]
-        # reachable = eye(3) = [[T,F,F], [F,T,F], [F,F,T]]
-        # current_frontier = adj_dense = [[F,T,F], [F,F,T], [F,F,F]]
-
-        # Hop 1:
-        # newly_reachable = [[F,T,F], [F,F,T], [F,F,F]]  (0→1, 1→2)
-        # dist_matrix[0,1] = 1, dist_matrix[1,2] = 1
-        # dist_matrix = [[0, 1, 3],
-        #                [3, 0, 1],
-        #                [3, 3, 0]]
-
-        # Hop 2:
-        # current_frontier = frontier @ adj = [[F,F,T], [F,F,F], [F,F,F]]
-        # newly_reachable = [[F,F,T], ...]  (0→2 in 2 hops)
-        # dist_matrix[0,2] = 2
-        # dist_matrix = [[0, 1, 2],
-        #                [3, 0, 1],
-        #                [3, 3, 0]]
-
         if self.full_matrix:
             # Store full pairwise distance matrix as graph-level attribute on HeteroData
             # Shape: (num_nodes, num_nodes) - for use in Graph Transformers
@@ -325,17 +380,29 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             # Can be used as attention bias: bias = learnable_embedding[data.hop_distance.long()]
             # Note: Node ordering follows data.to_homogeneous() order (by node_type alphabetically)
             data[self.attr_name] = dist_matrix.float()
+
+            if self.node_type_aware:
+                # Store node type information for heterogeneous-aware attention
+                # homo_data.node_type contains the type ID for each node after to_homogeneous()
+                node_type_ids = homo_data.node_type  # Shape: (num_nodes,)
+                data['node_type_ids'] = node_type_ids
+
+                # Compute pairwise node type encoding: (src_type, dst_type) -> single ID
+                # node_type_pair[i, j] = node_type_ids[i] * num_node_types + node_type_ids[j]
+                # This allows looking up type-specific attention biases
+                num_node_types = len(data.node_types)
+                # Outer product style: src_types[:, None] * num_types + dst_types[None, :]
+                node_type_pair = (
+                    node_type_ids.unsqueeze(1) * num_node_types +
+                    node_type_ids.unsqueeze(0)
+                )
+                data['node_type_pair'] = node_type_pair
+
+                # Also store the mapping from type ID to type name for reference
+                # Node types are sorted alphabetically in to_homogeneous()
+                data['node_type_names'] = sorted(data.node_types)
         else:
             # Extract hop distances for each edge in edge_index
-            # Example:
-            # Graph: 0 -> 1 -> 2 (3 nodes, chain)
-            # edge_index = [[0, 1], [1, 2]]  (edges: 0→1, 1→2)
-            # h_max = 3
-            # edge_index = [[0, 1], [1, 2]]
-            # src_nodes = [0, 1], dst_nodes = [1, 2]
-            # edge_hop_distances = [dist_matrix[0,1], dist_matrix[1,2]] = [1, 1]
-
-            # Output: tensor([[1.], [1.]])  # Both edges are direct (1-hop)
             src_nodes = edge_index[0]  # Source nodes
             dst_nodes = edge_index[1]  # Destination nodes
             edge_hop_distances = dist_matrix[src_nodes, dst_nodes]
@@ -346,4 +413,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         return data
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}(h_max={self.h_max}, full_matrix={self.full_matrix})'
+        return (
+            f'{self.__class__.__name__}(h_max={self.h_max}, '
+            f'full_matrix={self.full_matrix}, node_type_aware={self.node_type_aware})'
+        )
