@@ -206,8 +206,8 @@ def _run_compute_train_tests(
         mp_sharing_dict=mp_sharing_dict,
     )
 
-    # Test get_ablp_input for train split
-    ablp_result = remote_dist_dataset.get_ablp_input(
+    # Test fetch_ablp_input for train split
+    ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -224,7 +224,7 @@ def _run_compute_train_tests(
         worker_concurrency=2,
     )
 
-    random_negative_input = remote_dist_dataset.get_node_ids(
+    random_negative_input = remote_dist_dataset.fetch_node_ids(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -298,13 +298,13 @@ def _run_compute_multiple_loaders_test(
         mp_sharing_dict=mp_sharing_dict,
     )
 
-    ablp_result = remote_dist_dataset.get_ablp_input(
+    ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
 
-    random_negative_input = remote_dist_dataset.get_node_ids(
+    random_negative_input = remote_dist_dataset.fetch_node_ids(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -573,15 +573,15 @@ def _run_compute_tests(
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
     assert (
-        remote_dist_dataset.get_edge_dir() == "in"
-    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.get_edge_dir()}"
+        remote_dist_dataset.fetch_edge_dir() == "in"
+    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.fetch_edge_dir()}"
     assert (
-        remote_dist_dataset.get_edge_feature_info() is not None
+        remote_dist_dataset.fetch_edge_feature_info() is not None
     ), "Edge feature info must not be None for the test dataset"
     assert (
-        remote_dist_dataset.get_node_feature_info() is not None
+        remote_dist_dataset.fetch_node_feature_info() is not None
     ), "Node feature info must not be None for the test dataset"
-    ports = remote_dist_dataset.get_free_ports_on_storage_cluster(num_ports=2)
+    ports = remote_dist_dataset.fetch_free_ports_on_storage_cluster(num_ports=2)
     assert len(ports) == 2, "Expected 2 free ports"
     if rank == 0:
         all_ports = [None] * torch.distributed.get_world_size()
@@ -600,7 +600,7 @@ def _run_compute_tests(
     torch.distributed.barrier()
     logger.info("Verified that all ranks received the same free ports")
 
-    sampler_input = remote_dist_dataset.get_node_ids(
+    sampler_input = remote_dist_dataset.fetch_node_ids(
         node_type=node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -612,7 +612,7 @@ def _run_compute_tests(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=None,
-    ).get_node_ids(
+    ).fetch_node_ids(
         node_type=node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -620,8 +620,8 @@ def _run_compute_tests(
     _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
     assert (
-        remote_dist_dataset.get_edge_types() == expected_edge_types
-    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.get_edge_types()}"
+        remote_dist_dataset.fetch_edge_types() == expected_edge_types
+    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.fetch_edge_types()}"
 
     torch.distributed.barrier()
     if node_type is not None:

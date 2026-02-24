@@ -40,7 +40,7 @@ class RemoteDistDataset:
             local_rank (int): The local rank of the process on the compute node.
             mp_sharing_dict (Optional[MutableMapping[str, torch.Tensor]]):
                 (Optional) If provided, will be used to share tensors across the local machine.
-                e.g. for `get_node_ids`.
+                e.g. for `fetch_node_ids`.
                 If provided, *must* be a `DictProxy` e.g. the return value of a mp.Manager.
                 ex. torch.multiprocessing.Manager().dict().
         """
@@ -65,10 +65,10 @@ class RemoteDistDataset:
     def cluster_info(self) -> GraphStoreInfo:
         return self._cluster_info
 
-    def get_node_feature_info(
+    def fetch_node_feature_info(
         self,
     ) -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
-        """Get node feature information from the registered dataset.
+        """Fetch node feature information from the registered dataset.
 
         Returns:
             Node feature information, which can be:
@@ -81,10 +81,10 @@ class RemoteDistDataset:
             DistServer.get_node_feature_info,
         )
 
-    def get_edge_feature_info(
+    def fetch_edge_feature_info(
         self,
     ) -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:
-        """Get edge feature information from the registered dataset.
+        """Fetch edge feature information from the registered dataset.
 
         Returns:
             Edge feature information, which can be:
@@ -97,8 +97,8 @@ class RemoteDistDataset:
             DistServer.get_edge_feature_info,
         )
 
-    def get_edge_dir(self) -> Union[str, Literal["in", "out"]]:
-        """Get the edge direction from the registered dataset.
+    def fetch_edge_dir(self) -> Union[str, Literal["in", "out"]]:
+        """Fetch the edge direction from the registered dataset.
 
         Returns:
             The edge direction.
@@ -108,11 +108,11 @@ class RemoteDistDataset:
             DistServer.get_edge_dir,
         )
 
-    def get_node_partition_book(
+    def fetch_node_partition_book(
         self, node_type: Optional[NodeType] = None
     ) -> Optional[PartitionBook]:
         """
-        Gets the partition book for the specified node type.
+        Fetches the partition book for the specified node type.
 
         Args:
             node_type: The node type to look up.  Must be ``None`` for
@@ -122,18 +122,18 @@ class RemoteDistDataset:
             The partition book for the requested node type, or ``None`` if
             no partition book is available.
         """
-        node_type = self._maybe_infer_node_type(node_type)
+        node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
         return request_server(
             0,
             DistServer.get_node_partition_book,
             node_type=node_type,
         )
 
-    def get_edge_partition_book(
+    def fetch_edge_partition_book(
         self, edge_type: Optional[EdgeType] = None
     ) -> Optional[PartitionBook]:
         """
-        Gets the partition book for the specified edge type.
+        Fetches the partition book for the specified edge type.
 
         Args:
             edge_type: The edge type to look up.  Must be ``None`` for
@@ -143,37 +143,37 @@ class RemoteDistDataset:
             The partition book for the requested edge type, or ``None`` if
             no partition book is available.
         """
-        edge_type = self._maybe_infer_edge_type(edge_type)
+        edge_type = self._infer_edge_type_for_homogeneous_with_label_edges(edge_type)
         return request_server(
             0,
             DistServer.get_edge_partition_book,
             edge_type=edge_type,
         )
 
-    def _maybe_infer_node_type(
+    def _infer_node_type_if_homogeneous_with_label_edges(
         self, node_type: Optional[NodeType]
     ) -> Optional[NodeType]:
         """
-        Auto-infers the default homogeneous node type for labeled-homogeneous datasets.
+        Auto-infers the default homogeneous node type for homogeneous datasets with label edges.
         """
         if node_type is None:
-            node_types = self.get_node_types()
+            node_types = self.fetch_node_types()
             if node_types is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in node_types:
                 node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
                 logger.info(
-                    f"Auto-inferred default node type {node_type} for labeled-homogeneous dataset "
+                    f"Auto-inferred default node type {node_type} for homogeneous dataset with label edges "
                     f"as {DEFAULT_HOMOGENEOUS_NODE_TYPE} is in the node types: {node_types}"
                 )
         return node_type
 
-    def _maybe_infer_edge_type(
+    def _infer_edge_type_for_homogeneous_with_label_edges(
         self, edge_type: Optional[EdgeType]
     ) -> Optional[EdgeType]:
         """
-        Auto-infers the default homogeneous edge type for labeled-homogeneous datasets.
+        Auto-infers the default homogeneous edge type for homogeneous datasets with label edges.
         """
         if edge_type is None:
-            edge_types = self.get_edge_types()
+            edge_types = self.fetch_edge_types()
             if edge_types is not None and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
                 edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
                 logger.info(
@@ -182,7 +182,7 @@ class RemoteDistDataset:
                 )
         return edge_type
 
-    def _get_node_ids(
+    def _fetch_node_ids(
         self,
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
@@ -191,7 +191,7 @@ class RemoteDistDataset:
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         futures: list[torch.futures.Future[torch.Tensor]] = []
-        node_type = self._maybe_infer_node_type(node_type)
+        node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
 
         logger.info(
             f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
@@ -211,7 +211,7 @@ class RemoteDistDataset:
             node_ids = torch.futures.wait_all(futures)
         return {server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)}
 
-    def get_node_ids(
+    def fetch_node_ids(
         self,
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
@@ -247,7 +247,7 @@ class RemoteDistDataset:
 
             Get all nodes (no split filtering, no sharding):
 
-            >>> dataset.get_node_ids()
+            >>> dataset.fetch_node_ids()
             {
                 0: tensor([0, 1, 2, 3, 4, 5, 6, 7]),      # All 8 nodes from storage rank 0
                 1: tensor([8, 9, 10, 11, 12, 13, 14, 15]) # All 8 nodes from storage rank 1
@@ -255,7 +255,7 @@ class RemoteDistDataset:
 
             Shard all nodes across 2 compute nodes (compute rank 0 gets first half from each storage):
 
-            >>> dataset.get_node_ids(rank=0, world_size=2)
+            >>> dataset.fetch_node_ids(rank=0, world_size=2)
             {
                 0: tensor([0, 1, 2, 3]),   # First 4 of all 8 nodes from storage rank 0
                 1: tensor([8, 9, 10, 11])  # First 4 of all 8 nodes from storage rank 1
@@ -263,7 +263,7 @@ class RemoteDistDataset:
 
             Get only training nodes (no sharding):
 
-            >>> dataset.get_node_ids(split="train")
+            >>> dataset.fetch_node_ids(split="train")
             {
                 0: tensor([0, 1, 2, 3]),   # 4 training nodes from storage rank 0
                 1: tensor([8, 9, 10, 11])  # 4 training nodes from storage rank 1
@@ -271,7 +271,7 @@ class RemoteDistDataset:
 
             Combine split and sharding (training nodes, sharded for compute rank 0):
 
-            >>> dataset.get_node_ids(rank=0, world_size=2, split="train")
+            >>> dataset.fetch_node_ids(rank=0, world_size=2, split="train")
             {
                 0: tensor([0, 1]),  # First 2 of 4 training nodes from storage rank 0
                 1: tensor([8, 9])   # First 2 of 4 training nodes from storage rank 1
@@ -297,7 +297,7 @@ class RemoteDistDataset:
                 logger.info(
                     f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
                 )
-                node_ids = self._get_node_ids(rank, world_size, node_type, split)
+                node_ids = self._fetch_node_ids(rank, world_size, node_type, split)
                 for server_rank, node_id in node_ids.items():
                     node_id.share_memory_()
                     self._mp_sharing_dict[server_key(server_rank)] = node_id
@@ -311,9 +311,9 @@ class RemoteDistDataset:
             }
             return node_ids
         else:
-            return self._get_node_ids(rank, world_size, node_type, split)
+            return self._fetch_node_ids(rank, world_size, node_type, split)
 
-    def get_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
+    def fetch_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
         Get free ports from the storage master node.
 
@@ -351,7 +351,7 @@ class RemoteDistDataset:
         logger.info(f"Compute rank {compute_cluster_rank} received free ports: {ports}")
         return cast(list[int], ports)
 
-    def _get_ablp_input(
+    def _fetch_ablp_input(
         self,
         split: Literal["train", "val", "test"],
         rank: Optional[int] = None,
@@ -389,7 +389,7 @@ class RemoteDistDataset:
         }
 
     # TODO(#488) - support multiple supervision edge types
-    def get_ablp_input(
+    def fetch_ablp_input(
         self,
         split: Literal["train", "val", "test"],
         rank: Optional[int] = None,
@@ -439,7 +439,7 @@ class RemoteDistDataset:
 
             Get training ABLP input (heterogeneous):
 
-            >>> dataset.get_ablp_input(split="train", node_type=USER, supervision_edge_type=USER_TO_ITEM)
+            >>> dataset.fetch_ablp_input(split="train", node_type=USER, supervision_edge_type=USER_TO_ITEM)
             {
                 0: ABLPInputNodes(
                     anchor_nodes=tensor([0, 1, 2]),
@@ -503,7 +503,7 @@ class RemoteDistDataset:
                 logger.info(
                     f"Compute rank {torch.distributed.get_rank()} is getting ABLP input from storage nodes"
                 )
-                raw_ablp_inputs = self._get_ablp_input(
+                raw_ablp_inputs = self._fetch_ablp_input(
                     split=split,
                     rank=rank,
                     world_size=world_size,
@@ -551,7 +551,7 @@ class RemoteDistDataset:
                 )
             return returned_ablp_inputs
         else:
-            raw_inputs = self._get_ablp_input(
+            raw_inputs = self._fetch_ablp_input(
                 split=split,
                 rank=rank,
                 world_size=world_size,
@@ -572,8 +572,8 @@ class RemoteDistDataset:
                 ) in raw_inputs.items()
             }
 
-    def get_edge_types(self) -> Optional[list[EdgeType]]:
-        """Get the edge types from the registered dataset.
+    def fetch_edge_types(self) -> Optional[list[EdgeType]]:
+        """Fetch the edge types from the registered dataset.
 
         Returns:
             The edge types in the dataset, None if the dataset is homogeneous.
@@ -583,8 +583,8 @@ class RemoteDistDataset:
             DistServer.get_edge_types,
         )
 
-    def get_node_types(self) -> Optional[list[NodeType]]:
-        """Get the node types from the registered dataset.
+    def fetch_node_types(self) -> Optional[list[NodeType]]:
+        """Fetch the node types from the registered dataset.
 
         Returns:
             The node types in the dataset, None if the dataset is homogeneous.
