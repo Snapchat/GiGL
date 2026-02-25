@@ -4,6 +4,7 @@ from multiprocessing.managers import DictProxy
 from typing import Literal, Optional, Union, cast
 
 import torch
+from graphlearn_torch.partition import PartitionBook
 
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.compute import async_request_server, request_server
@@ -107,6 +108,80 @@ class RemoteDistDataset:
             DistServer.get_edge_dir,
         )
 
+    def get_node_partition_book(
+        self, node_type: Optional[NodeType] = None
+    ) -> Optional[PartitionBook]:
+        """
+        Gets the partition book for the specified node type.
+
+        Args:
+            node_type: The node type to look up.  Must be ``None`` for
+                homogeneous datasets and non-``None`` for heterogeneous ones.
+
+        Returns:
+            The partition book for the requested node type, or ``None`` if
+            no partition book is available.
+        """
+        node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
+        return request_server(
+            0,
+            DistServer.get_node_partition_book,
+            node_type=node_type,
+        )
+
+    def get_edge_partition_book(
+        self, edge_type: Optional[EdgeType] = None
+    ) -> Optional[PartitionBook]:
+        """
+        Gets the partition book for the specified edge type.
+
+        Args:
+            edge_type: The edge type to look up.  Must be ``None`` for
+                homogeneous datasets and non-``None`` for heterogeneous ones.
+
+        Returns:
+            The partition book for the requested edge type, or ``None`` if
+            no partition book is available.
+        """
+        edge_type = self._infer_edge_type_if_homogeneous_with_label_edges(edge_type)
+        return request_server(
+            0,
+            DistServer.get_edge_partition_book,
+            edge_type=edge_type,
+        )
+
+    def _infer_node_type_if_homogeneous_with_label_edges(
+        self, node_type: Optional[NodeType]
+    ) -> Optional[NodeType]:
+        """
+        Auto-infers the default homogeneous node type for homogeneous datasets with label edges.
+        """
+        if node_type is None:
+            node_types = self.get_node_types()
+            if node_types is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in node_types:
+                node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
+                logger.info(
+                    f"Auto-inferred default node type {node_type} for homogeneous dataset with label edges "
+                    f"as {DEFAULT_HOMOGENEOUS_NODE_TYPE} is in the node types: {node_types}"
+                )
+        return node_type
+
+    def _infer_edge_type_if_homogeneous_with_label_edges(
+        self, edge_type: Optional[EdgeType]
+    ) -> Optional[EdgeType]:
+        """
+        Auto-infers the default homogeneous edge type for homogeneous datasets with label edges.
+        """
+        if edge_type is None:
+            edge_types = self.get_edge_types()
+            if edge_types is not None and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
+                edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+                logger.info(
+                    f"Auto-inferred default edge type {edge_type} for homogeneous dataset with label edges "
+                    f"as {DEFAULT_HOMOGENEOUS_EDGE_TYPE} is in the edge types: {edge_types}"
+                )
+        return edge_type
+
     def _get_node_ids(
         self,
         rank: Optional[int] = None,
@@ -116,13 +191,7 @@ class RemoteDistDataset:
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         futures: list[torch.futures.Future[torch.Tensor]] = []
-        if node_type is None:
-            node_types = self.get_node_types()
-            if node_types is not None and DEFAULT_HOMOGENEOUS_NODE_TYPE in node_types:
-                node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-                logger.info(
-                    f"Using default node type {node_type} for homogeneous dataset with label edge types as {DEFAULT_HOMOGENEOUS_NODE_TYPE} is in the node types: {node_types}"
-                )
+        node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
 
         logger.info(
             f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"

@@ -136,6 +136,69 @@ class DistServer:
             return partition_id
         return None
 
+    def get_node_partition_book(
+        self, node_type: Optional[NodeType]
+    ) -> Optional[PartitionBook]:
+        """
+        Gets the partition book for the specified node type.
+
+        Args:
+            node_type: The node type to look up.  Must be ``None`` for
+                homogeneous datasets and non-``None`` for heterogeneous ones.
+
+        Returns:
+            The partition book for the requested node type, or ``None`` if
+            no partition book is available.
+
+        Raises:
+            ValueError: If ``node_type`` is mismatched with the dataset type.
+        """
+        node_pb = self.dataset.node_pb
+        if isinstance(node_pb, dict):
+            if node_type is None:
+                raise ValueError(
+                    "node_type must be provided for heterogeneous dataset. "
+                    f"Available node types: {list(node_pb.keys())}"
+                )
+            return node_pb[node_type]
+        else:
+            if node_type is not None:
+                raise ValueError(
+                    f"node_type must be None for homogeneous dataset. Received: {node_type}"
+                )
+            return node_pb
+
+    def get_edge_partition_book(
+        self, edge_type: Optional[EdgeType]
+    ) -> Optional[PartitionBook]:
+        """
+        Gets the partition book for the specified edge type.
+        Args:
+            edge_type: The edge type to look up.  Must be ``None`` for
+                homogeneous datasets and non-``None`` for heterogeneous ones.
+
+        Returns:
+            The partition book for the requested edge type, or ``None`` if
+            no partition book is available.
+
+        Raises:
+            ValueError: If ``edge_type`` is mismatched with the dataset type.
+        """
+        edge_pb = self.dataset.edge_pb
+        if isinstance(edge_pb, dict):
+            if edge_type is None:
+                raise ValueError(
+                    "edge_type must be provided for heterogeneous dataset. "
+                    f"Available edge types: {list(edge_pb.keys())}"
+                )
+            return edge_pb[edge_type]
+        else:
+            if edge_type is not None:
+                raise ValueError(
+                    f"edge_type must be None for homogeneous dataset. Received: {edge_type}"
+                )
+            return edge_pb
+
     def get_node_feature(
         self, node_type: Optional[NodeType], index: torch.Tensor
     ) -> torch.Tensor:
