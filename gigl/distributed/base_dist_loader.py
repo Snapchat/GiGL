@@ -820,8 +820,7 @@ class BaseDistLoader(DistLoader):
         # Log previous epoch timing (if any) and reset for new epoch
         if self._epoch > 0:
             logger.info(
-                f"[iter] Resetting for epoch {self._epoch}. "
-                f"Previous epoch timing:"
+                f"[iter] Resetting for epoch {self._epoch}. " f"Previous epoch timing:"
             )
             logger.info(self._timing.summary())
             _flush()
@@ -831,9 +830,7 @@ class BaseDistLoader(DistLoader):
             if self._background_collation_queue_size is not None
             else "synchronous"
         )
-        self._timing = TimingStats(
-            f"BaseDistLoader ({mode_label}) epoch={self._epoch}"
-        )
+        self._timing = TimingStats(f"BaseDistLoader ({mode_label}) epoch={self._epoch}")
         self._epoch_start_time = time.time()
 
         self._num_recv = 0

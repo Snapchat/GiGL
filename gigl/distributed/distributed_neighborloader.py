@@ -563,9 +563,7 @@ class DistNeighborLoader(BaseDistLoader):
             self._timing.record("collate/strip_label_edges", t_strip - t_feat)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
-            self._timing.record(
-                "collate/labeled_to_homogeneous", time.time() - t_feat
-            )
+            self._timing.record("collate/labeled_to_homogeneous", time.time() - t_feat)
 
         self._timing.record("collate/total", time.time() - t0)
         return data
