@@ -585,7 +585,8 @@ def _training_process(
                     num_batches=num_val_batches_per_process,
                 )
                 model.train()
-
+        else:
+            print(f"rank={rank} ended training early - no break condition was met")
         print(f"---Rank {rank} finished training")
         flush()
 
