@@ -151,7 +151,7 @@ class DistABLPLoader(BaseDistLoader):
                 For Graph Store mode: `dict[int, ABLPInputNodes]`
                     Maps server_rank to an ABLPInputNodes dataclass containing anchor nodes,
                     positive labels, and negative labels with explicit node type and edge type info.
-                    This is the return type of `RemoteDistDataset.get_ablp_input()`.
+                    This is the return type of `RemoteDistDataset.fetch_ablp_input()`.
             supervision_edge_type (Optional[Union[EdgeType, list[EdgeType]]]):
                 The edge type(s) to use for supervision.
                 For Colocated mode: Must be None iff the dataset is labeled homogeneous.
@@ -600,7 +600,7 @@ class DistABLPLoader(BaseDistLoader):
         Setup method for Graph Store mode.
 
         Args:
-            input_nodes: ABLP input from RemoteDistDataset.get_ablp_input().
+            input_nodes: ABLP input from RemoteDistDataset.fetch_ablp_input().
                 Maps server_rank to ABLPInputNodes containing anchor nodes, positive/negative
                 labels with explicit node type and edge type information.
             dataset: The RemoteDistDataset to sample from.
@@ -612,13 +612,13 @@ class DistABLPLoader(BaseDistLoader):
         Returns:
             Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema).
         """
-        node_feature_info = dataset.get_node_feature_info()
-        edge_feature_info = dataset.get_edge_feature_info()
-        edge_types = dataset.get_edge_types()
+        node_feature_info = dataset.fetch_node_feature_info()
+        edge_feature_info = dataset.fetch_edge_feature_info()
+        edge_types = dataset.fetch_edge_types()
         node_rank = dataset.cluster_info.compute_node_rank
 
         # Get sampling ports for compute-storage connections.
-        sampling_ports = dataset.get_free_ports_on_storage_cluster(
+        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
@@ -745,7 +745,7 @@ class DistABLPLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
-                edge_dir=dataset.get_edge_dir(),
+                edge_dir=dataset.fetch_edge_dir(),
             ),
         )
 
