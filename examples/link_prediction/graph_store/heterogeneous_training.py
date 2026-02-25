@@ -768,10 +768,12 @@ def _run_validation_loops(
             )
             last_n_batch_time.clear()
             flush()
-    local_avg_loss = statistics.mean(batch_losses)
-    print(
-        f"rank={rank} finished validation loop, local loss: {local_avg_loss=:.6f}"
-    )
+    if len(batch_losses) == 0:
+        print(f"rank={rank} WARNING: 0 batches processed in validation loop, setting local loss to 0.0")
+        flush()
+        local_avg_loss = 0.0
+    else:
+        local_avg_loss = statistics.mean(batch_losses)
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
     )
