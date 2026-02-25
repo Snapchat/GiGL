@@ -253,14 +253,14 @@ def _compute_loss(
         torch.Tensor: Final loss for the current batch on the current process
     """
     # Extract relevant node types from the supervision edge
-    if edge_dir == "in":
+    if edge_dir == "out":
         query_node_type = supervision_edge_type.src_node_type
         labeled_node_type = supervision_edge_type.dst_node_type
     else:
         query_node_type = supervision_edge_type.dst_node_type
         labeled_node_type = supervision_edge_type.src_node_type
 
-    logger.info(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
+    print(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]
     else:
