@@ -22,7 +22,10 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_proccess,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.graph_store.storage_main import storage_node_process
+from gigl.distributed.graph_store.storage_utils import (
+    build_storage_dataset,
+    run_storage_server,
+)
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
@@ -731,6 +734,8 @@ class ServerProcessArgs:
         task_config_uri: URI to the task configuration.
         sample_edge_direction: Direction for edge sampling ("in" or "out").
         exception_dict: Shared dictionary for storing exceptions from processes.
+        num_server_sessions: Number of sequential server sessions to run
+            (e.g. one per inference node type).
         splitter: Optional splitter for node anchor link or node splitting.
     """
 
@@ -738,23 +743,54 @@ class ServerProcessArgs:
     task_config_uri: Uri
     sample_edge_direction: Literal["in", "out"]
     exception_dict: MutableMapping[str, str]
+    num_server_sessions: int = 1
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
 
 
-def _run_server_processes(args: ServerProcessArgs) -> None:
+def _run_storage_main_process(args: ServerProcessArgs) -> None:
     process_name = f"server_{args.cluster_info.storage_node_rank}"
     try:
+        storage_rank = args.cluster_info.storage_node_rank
+        cluster_info = args.cluster_info
         logger.info(
-            f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
+            f"Initializing server processes. OS rank: {os.environ['RANK']}, "
+            f"OS world size: {os.environ['WORLD_SIZE']}"
         )
-        storage_node_process(
-            storage_rank=args.cluster_info.storage_node_rank,
-            cluster_info=args.cluster_info,
+        # 1. Init process group for server comms
+        init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
+        logger.info(
+            f"Initializing storage node {storage_rank} / "
+            f"{cluster_info.num_storage_nodes}. "
+            f"OS rank: {os.environ['RANK']}, "
+            f"OS world size: {os.environ['WORLD_SIZE']} "
+            f"init method: {init_method}"
+        )
+        torch.distributed.init_process_group(
+            backend="gloo",
+            world_size=cluster_info.num_storage_nodes,
+            rank=storage_rank,
+            init_method=init_method,
+            group_name="gigl_server_comms",
+        )
+        logger.info(
+            f"Storage node {storage_rank} / "
+            f"{cluster_info.num_storage_nodes} process group initialized"
+        )
+
+        # 2. Build the dataset
+        dataset = build_storage_dataset(
             task_config_uri=args.task_config_uri,
             sample_edge_direction=args.sample_edge_direction,
             splitter=args.splitter,
             tf_record_uri_pattern=".*tfrecord",
-            storage_world_backend="gloo",
+        )
+
+        # 5. Run the storage server sessions
+        run_storage_server(
+            storage_rank=storage_rank,
+            cluster_info=cluster_info,
+            dataset=dataset,
+            num_server_sessions=args.num_server_sessions,
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
         )
     except Exception:
@@ -908,7 +944,7 @@ class GraphStoreIntegrationTest(TestCase):
                     exception_dict=exception_dict,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
@@ -1002,7 +1038,7 @@ class GraphStoreIntegrationTest(TestCase):
                     splitter=splitter,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                 )
                 server_process.start()
@@ -1099,7 +1135,7 @@ class GraphStoreIntegrationTest(TestCase):
                     splitter=splitter,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
@@ -1204,7 +1240,7 @@ class GraphStoreIntegrationTest(TestCase):
                     exception_dict=exception_dict,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
