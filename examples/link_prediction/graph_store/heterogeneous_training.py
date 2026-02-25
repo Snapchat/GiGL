@@ -155,7 +155,7 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    if dataset.get_edge_dir() == "in":
+    if dataset.fetch_edge_dir() == "in":
         query_node_type = supervision_edge_type.dst_node_type
         labeled_node_type = supervision_edge_type.src_node_type
         anchor_node_type = query_node_type
@@ -164,7 +164,7 @@ def _setup_dataloaders(
         labeled_node_type = supervision_edge_type.dst_node_type
         anchor_node_type = query_node_type
 
-    print(f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.get_edge_dir()}")
+    print(f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.fetch_edge_dir()}")
 
     shuffle = split == "train"
 
@@ -172,7 +172,7 @@ def _setup_dataloaders(
     # This returns dict[server_rank, (anchors, pos_labels, neg_labels)] which the DistABLPLoader knows how to handle.
     print(f"---Rank {rank} fetching ABLP input for split={split}")
     flush()
-    ablp_input = dataset.get_ablp_input(
+    ablp_input = dataset.fetch_ablp_input(
         split=split,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -201,7 +201,7 @@ def _setup_dataloaders(
     torch.distributed.barrier()
 
     # For the random negative loader, we get all node IDs of the labeled node type from the storage cluster.
-    all_node_ids = dataset.get_node_ids(
+    all_node_ids = dataset.fetch_node_ids(
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
         node_type=labeled_node_type,
@@ -543,7 +543,7 @@ def _training_process(
                 random_negative_data=random_data,
                 loss_fn=loss_fn,
                 supervision_edge_type=args.supervision_edge_type,
-                edge_dir=dataset.get_edge_dir(),
+                edge_dir=dataset.fetch_edge_dir(),
                 device=device,
             )
             optimizer.zero_grad()
@@ -579,7 +579,7 @@ def _training_process(
                     random_negative_loader=val_random_negative_loader_iter,
                     loss_fn=loss_fn,
                     supervision_edge_type=args.supervision_edge_type,
-                    edge_dir=dataset.get_edge_dir(),
+                    edge_dir=dataset.fetch_edge_dir(),
                     device=device,
                     log_every_n_batch=args.log_every_n_batch,
                     num_batches=num_val_batches_per_process,
@@ -660,7 +660,7 @@ def _training_process(
         random_negative_loader=test_random_negative_loader_iter,
         loss_fn=loss_fn,
         supervision_edge_type=args.supervision_edge_type,
-        edge_dir=dataset.get_edge_dir(),
+        edge_dir=dataset.fetch_edge_dir(),
         device=device,
         log_every_n_batch=args.log_every_n_batch,
     )

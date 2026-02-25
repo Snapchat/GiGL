@@ -1,58 +1,105 @@
 """
-This file contains an example for how to run homogeneous training in **graph store mode** using GiGL.
+This file contains an example for how to run homogeneous link prediction training in
+**graph store mode** using GiGL.
 
-Graph Store Mode vs Standard Mode:
-----------------------------------
+Graph Store Mode vs Standard (Colocated) Mode
+----------------------------------------------
 Graph store mode uses a heterogeneous cluster architecture with two distinct sub-clusters:
+
   1. **Storage Cluster (graph_store_pool)**: Dedicated machines for storing and serving the graph
      data. These are typically high-memory machines without GPUs (e.g., n2-highmem-32).
   2. **Compute Cluster (compute_pool)**: Dedicated machines for running model training.
      These typically have GPUs attached (e.g., n1-standard-16 with NVIDIA_TESLA_T4).
 
-This separation allows for:
-  - Independent scaling of storage and compute resources
-  - Better memory utilization (graph data stays on storage nodes)
-  - Cost optimization by using appropriate hardware for each role
+This separation allows for independent scaling of storage and compute resources, better memory
+utilization (graph data stays on storage nodes), and cost optimization by using appropriate
+hardware for each role.
 
-In contrast, the standard training mode (see `examples/link_prediction/homogeneous_training.py`)
-uses a homogeneous cluster where each machine handles both graph storage and computation.
+In contrast, the standard colocated training mode
+(see ``examples/link_prediction/homogeneous_training.py``) uses a homogeneous cluster where each
+machine handles both graph storage and computation.
 
-Key Implementation Differences:
--------------------------------
-This file (graph store mode):
-  - Uses `RemoteDistDataset` to connect to a remote graph store cluster
-  - Uses `init_compute_process` to initialize the compute node connection to storage
-  - Obtains cluster topology via `get_graph_store_info()` which returns `GraphStoreInfo`
-  - Uses `mp_sharing_dict` for efficient tensor sharing between local processes
-  - Fetches ABLP input via `RemoteDistDataset.get_ablp_input()` for the train/val/test splits
-  - Fetches random negative node IDs via `RemoteDistDataset.get_node_ids()`
+Key Implementation Differences
+------------------------------
 
-Standard mode (`homogeneous_training.py`):
-  - Uses `DistDataset` with `build_dataset_from_task_config_uri` where each node loads its partition
-  - Manually manages distributed process groups with master IP and port
-  - Each machine stores its own partition of the graph data
++---------------------------+----------------------------------------------+----------------------------------------------+
+| Aspect                    | Standard (``homogeneous_training.py``)       | Graph Store (this file)                      |
++===========================+==============================================+==============================================+
+| **Dataset class**         | ``DistDataset`` (local partition)             | ``RemoteDistDataset`` (RPC to storage)       |
++---------------------------+----------------------------------------------+----------------------------------------------+
+| **Dataset loading**       | ``build_dataset_from_task_config_uri()``      | Storage nodes build data; compute nodes      |
+|                           | loads and partitions data locally             | connect via ``init_compute_process()``       |
++---------------------------+----------------------------------------------+----------------------------------------------+
+| **Process group init**    | Manual ``init_process_group`` with master     | ``init_process_group(gloo)`` to              |
+|                           | IP/port, ``destroy_process_group``, then      | ``get_graph_store_info()``, then             |
+|                           | re-init in spawned processes                  | ``destroy_process_group``; spawned processes |
+|                           |                                               | call ``init_compute_process()``              |
++---------------------------+----------------------------------------------+----------------------------------------------+
+| **Split/label access**    | ``dataset.train_node_ids`` /                  | ``dataset.fetch_ablp_input(split=...)``      |
+|                           | ``dataset.val_node_ids`` /                    | fetches anchors + labels from storage via    |
+|                           | ``dataset.test_node_ids`` via                 | RPC                                          |
+|                           | ``to_homogeneous()``                          |                                              |
++---------------------------+----------------------------------------------+----------------------------------------------+
+| **Random negative nodes** | ``dataset.node_ids`` via                      | ``dataset.fetch_node_ids()`` fetches from    |
+|                           | ``to_homogeneous()``                          | storage via RPC                              |
++---------------------------+----------------------------------------------+----------------------------------------------+
+| **Cluster info**          | ``machine_rank``, ``machine_world_size``,     | ``GraphStoreInfo`` dataclass from            |
+|                           | ``master_ip_address`` extracted manually       | ``get_graph_store_info()`` encapsulates all  |
+|                           |                                               | topology                                     |
++---------------------------+----------------------------------------------+----------------------------------------------+
+| **Inter-process sharing** | N/A (each process loads own partition)        | ``mp_sharing_dict`` for efficient tensor     |
+|                           |                                               | sharing between local processes              |
++---------------------------+----------------------------------------------+----------------------------------------------+
+| **Cleanup**               | ``torch.distributed.destroy_process_group()`` | ``shutdown_compute_proccess()`` disconnects  |
+|                           |                                               | from storage cluster                         |
++---------------------------+----------------------------------------------+----------------------------------------------+
 
-To run this file with GiGL orchestration, set the fields similar to below:
+Data Splitting and Storage Pipeline
+------------------------------------
+Before training begins, the **storage cluster** prepares the graph data including train/val/test
+splits.  The flow is:
 
-trainerConfig:
-  trainerArgs:
-    log_every_n_batch: "50"
-    num_neighbors: "[10, 10]"
-  command: python -m examples.link_prediction.graph_store.homogeneous_training
-  graphStoreStorageConfig:
-    command: python -m examples.link_prediction.graph_store.storage_main
-    storageArgs:
-      sample_edge_direction: "in"
-      splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
-      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": true, "num_val": 0.1, "num_test": 0.1}'
-      num_server_sessions: "1"
-featureFlags:
-  should_run_glt_backend: 'True'
+1. **Splitter configuration**: The ``splitter_cls_path`` and ``splitter_kwargs`` are specified in
+   the YAML config under ``graphStoreStorageConfig.storageArgs``.  The storage entry point
+   (``storage_main.py``) parses these via ``argparse`` and dynamically imports the splitter class
+   using ``import_obj()``.  The kwargs string is evaluated with ``ast.literal_eval`` and passed to
+   the splitter constructor (e.g. ``DistNodeAnchorLinkSplitter(**splitter_kwargs)``).
 
-Note: Ensure you use a resource config with `vertex_ai_graph_store_trainer_config` when
+2. **ABLP input fetching** (at training time): ``RemoteDistDataset.fetch_ablp_input(split=...)``
+   issues an RPC to the storage cluster and returns a ``dict[int, ABLPInputNodes]`` keyed by
+   storage rank.  Each ``ABLPInputNodes`` contains ``anchor_nodes``, ``positive_labels``, and
+   optional ``negative_labels`` tensors for the requested split.
+
+3. **Node ID fetching**: ``RemoteDistDataset.fetch_node_ids()`` similarly fetches all node IDs
+   from storage, used for the random negative sampling loader.
+
+Because the storage cluster owns the split, compute nodes see train/val/test as first-class
+properties of the remote dataset.
+
+Config Example
+--------------
+To run this file with GiGL orchestration, set the fields similar to below::
+
+    trainerConfig:
+      trainerArgs:
+        log_every_n_batch: "50"
+        num_neighbors: "[10, 10]"
+      command: python -m examples.link_prediction.graph_store.homogeneous_training
+      graphStoreStorageConfig:
+        command: python -m examples.link_prediction.graph_store.storage_main
+        storageArgs:
+          sample_edge_direction: "in"
+          splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
+          splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": true, "num_val": 0.1, "num_test": 0.1}'
+          num_server_sessions: "1"
+    featureFlags:
+      should_run_glt_backend: 'True'
+
+Note: Ensure you use a resource config with ``vertex_ai_graph_store_trainer_config`` when
 running in graph store mode.
 
-You can run this example in a full pipeline with `make run_hom_cora_sup_gs_e2e_test` from GiGL root.
+You can run this example in a full pipeline with ``make run_hom_cora_sup_gs_e2e_test`` from
+GiGL root.
 """
 
 import argparse
@@ -153,7 +200,7 @@ def _setup_dataloaders(
     # For homogeneous graphs, no node type or supervision edge type wrapper is needed.
     logger.info(f"---Rank {rank} fetching ABLP input for split={split}")
     flush()
-    ablp_input = dataset.get_ablp_input(
+    ablp_input = dataset.fetch_ablp_input(
         split=split,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -188,7 +235,7 @@ def _setup_dataloaders(
     torch.distributed.barrier()
 
     # For the random negative loader, we get all node IDs from the storage cluster.
-    all_node_ids = dataset.get_node_ids(
+    all_node_ids = dataset.fetch_node_ids(
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
