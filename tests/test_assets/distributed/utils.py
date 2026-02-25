@@ -137,7 +137,7 @@ class MockRemoteDistDataset(RemoteDistDataset):
         ...     num_storage_nodes=2,
         ...     edge_types=[EdgeType("user", "knows", "user")],
         ... )
-        >>> mock_dataset.get_edge_types()  # Returns the configured edge_types
+        >>> mock_dataset.fetch_edge_types()  # Returns the configured edge_types
         >>> mock_dataset.cluster_info.num_storage_nodes  # Returns 2
     """
 
@@ -174,22 +174,26 @@ class MockRemoteDistDataset(RemoteDistDataset):
         """Returns a MockGraphStoreInfo with the configured compute_node_rank."""
         return MockGraphStoreInfo(self._mock_cluster_info, self._mock_compute_node_rank)
 
-    def get_node_feature_info(self):
+    def fetch_node_feature_info(self):
         """Returns None (no node features configured)."""
         return None
 
-    def get_edge_feature_info(self):
+    def fetch_edge_feature_info(self):
         """Returns None (no edge features configured)."""
         return None
 
-    def get_edge_dir(self) -> str:
+    def fetch_edge_dir(self) -> str:
         """Returns the configured edge direction."""
         return self._mock_edge_dir
 
-    def get_edge_types(self) -> Optional[list[EdgeType]]:
+    def fetch_edge_types(self) -> Optional[list[EdgeType]]:
         """Returns the configured edge types."""
         return self._mock_edge_types
 
-    def get_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
-        """Returns a list of mock port numbers starting at 20000."""
+    def fetch_node_types(self) -> None:
+        """Returns None (no node types configured)."""
+        return None
+
+    def fetch_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
+        """Returns a list of mock free port numbers."""
         return get_free_ports(num_ports=num_ports)

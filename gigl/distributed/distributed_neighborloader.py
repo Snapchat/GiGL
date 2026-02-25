@@ -293,13 +293,13 @@ class DistNeighborLoader(BaseDistLoader):
                 f"When using Graph Store mode, input nodes must be of type (dict[int, torch.Tensor] | (NodeType, dict[int, torch.Tensor])), received {type(input_nodes)} ({type(input_nodes[0])}, {type(input_nodes[1])})"
             )
 
-        node_feature_info = dataset.get_node_feature_info()
-        edge_feature_info = dataset.get_edge_feature_info()
-        edge_types = dataset.get_edge_types()
+        node_feature_info = dataset.fetch_node_feature_info()
+        edge_feature_info = dataset.fetch_edge_feature_info()
+        edge_types = dataset.fetch_edge_types()
         node_rank = dataset.cluster_info.compute_node_rank
 
         # Get sampling ports for compute-storage connections.
-        sampling_ports = dataset.get_free_ports_on_storage_cluster(
+        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
             num_ports=dataset.cluster_info.num_compute_nodes
         )
         sampling_port = sampling_ports[node_rank]
@@ -379,7 +379,7 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
-                edge_dir=dataset.get_edge_dir(),
+                edge_dir=dataset.fetch_edge_dir(),
             ),
         )
 

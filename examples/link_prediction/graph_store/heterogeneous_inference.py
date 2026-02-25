@@ -233,7 +233,7 @@ def _inference_process(
     )
 
     # Get the node ids on the current machine for the current node type
-    input_nodes = dataset.get_node_ids(node_type=args.inference_node_type)
+    input_nodes = dataset.fetch_node_ids(node_type=args.inference_node_type)
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
     )
