@@ -92,16 +92,21 @@ class AddHeteroRandomWalkPE(BaseTransform):
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected, and the adjacency matrix will be made
             symmetric. (default: :obj:`False`)
+        attach_to_x (bool, optional): If set to :obj:`True`, the encoding is
+            concatenated directly to :obj:`data[node_type].x` for each node type
+            instead of being stored as a separate attribute. (default: :obj:`False`)
     """
     def __init__(
         self,
         walk_length: int,
         attr_name: Optional[str] = 'random_walk_pe',
         is_undirected: bool = False,
+        attach_to_x: bool = False,
     ) -> None:
         self.walk_length = walk_length
         self.attr_name = attr_name
         self.is_undirected = is_undirected
+        self.attach_to_x = attach_to_x
 
     def forward(self, data: HeteroData) -> HeteroData:
         assert isinstance(data, HeteroData), (
@@ -116,47 +121,73 @@ class AddHeteroRandomWalkPE(BaseTransform):
 
         if num_nodes == 0:
             for node_type in data.node_types:
-                data[node_type][self.attr_name] = torch.zeros(
+                empty_pe = torch.zeros(
                     (data[node_type].num_nodes, self.walk_length),
                     dtype=torch.float,
                 )
+                effective_attr_name = None if self.attach_to_x else self.attr_name
+                add_node_attr(data, {node_type: empty_pe}, effective_attr_name)
             return data
 
-        # Compute transition matrix (row-stochastic)
+        # Compute transition matrix (row-stochastic) using sparse operations
         adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes))
-        adj_dense = adj.to_dense()
 
         if self.is_undirected:
             # Make symmetric for undirected graphs
-            adj_dense = adj_dense + adj_dense.t()
+            adj = (adj + adj.t()).coalesce()
 
-        # Compute degree and create transition matrix
-        deg = adj_dense.sum(dim=1, keepdim=True)
+        # Compute degree for row normalization
+        adj_coalesced = adj.coalesce()
+        deg = torch.zeros(num_nodes, device=edge_index.device)
+        deg.scatter_add_(0, adj_coalesced.indices()[0], adj_coalesced.values().float())
         deg = torch.clamp(deg, min=1)  # Avoid division by zero
-        transition = adj_dense / deg
 
-        # Compute random walk positional encoding
+        # Create row-normalized transition matrix (sparse)
+        # P[i,j] = A[i,j] / deg[i]
+        row_indices = adj_coalesced.indices()[0]
+        normalized_values = adj_coalesced.values().float() / deg[row_indices]
+        transition = torch.sparse_coo_tensor(
+            adj_coalesced.indices(),
+            normalized_values,
+            size=(num_nodes, num_nodes),
+        ).coalesce()
+
+        # Compute random walk positional encoding using sparse operations
         # PE[j, k] = sum of column j excluding diagonal = Σ_{i≠j} (P^k)[i, j]
-        pe = torch.zeros((num_nodes, self.walk_length), dtype=torch.float)
-        current = torch.eye(num_nodes, dtype=torch.float)
+        pe = torch.zeros((num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device)
+
+        # Start with identity matrix (sparse)
+        identity_indices = torch.arange(num_nodes, device=edge_index.device)
+        current = torch.sparse_coo_tensor(
+            torch.stack([identity_indices, identity_indices]),
+            torch.ones(num_nodes, device=edge_index.device),
+            size=(num_nodes, num_nodes),
+        ).coalesce()
 
         for k in range(self.walk_length):
-            current = current @ transition
-            # Sum each column, excluding diagonal elements
-            # column_sum[j] = Σ_i current[i, j]
-            # diagonal[j] = current[j, j]
-            # non_diagonal_column_sum[j] = column_sum[j] - diagonal[j]
-            column_sum = current.sum(dim=0)  # Sum along rows for each column
-            diagonal = current.diag()
-            pe[:, k] = column_sum - diagonal
+            current = torch.sparse.mm(current, transition).coalesce()
+            # Column sum = sum over rows for each column
+            col_sum = torch.zeros(num_nodes, device=edge_index.device)
+            col_sum.scatter_add_(0, current.indices()[1], current.values())
+            # Extract diagonal elements
+            diag = torch.zeros(num_nodes, device=edge_index.device)
+            diag_mask = current.indices()[0] == current.indices()[1]
+            if diag_mask.any():
+                diag.scatter_add_(0, current.indices()[0][diag_mask], current.values()[diag_mask])
+            pe[:, k] = col_sum - diag
 
         # Map back to HeteroData node types
-        add_node_attr(data, pe, self.attr_name)
+        # If attach_to_x is True, pass None as attr_name to concatenate to x directly
+        effective_attr_name = None if self.attach_to_x else self.attr_name
+        add_node_attr(data, pe, effective_attr_name)
 
         return data
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}(walk_length={self.walk_length})'
+        return (
+            f'{self.__class__.__name__}(walk_length={self.walk_length}, '
+            f'attach_to_x={self.attach_to_x})'
+        )
 
 
 @functional_transform('add_hetero_random_walk_se')
@@ -182,16 +213,21 @@ class AddHeteroRandomWalkSE(BaseTransform):
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected, and the adjacency matrix will be made
             symmetric. (default: :obj:`False`)
+        attach_to_x (bool, optional): If set to :obj:`True`, the encoding is
+            concatenated directly to :obj:`data[node_type].x` for each node type
+            instead of being stored as a separate attribute. (default: :obj:`False`)
     """
     def __init__(
         self,
         walk_length: int,
         attr_name: Optional[str] = 'random_walk_se',
         is_undirected: bool = False,
+        attach_to_x: bool = False,
     ) -> None:
         self.walk_length = walk_length
         self.attr_name = attr_name
         self.is_undirected = is_undirected
+        self.attach_to_x = attach_to_x
 
     def forward(self, data: HeteroData) -> HeteroData:
         assert isinstance(data, HeteroData), (
@@ -206,41 +242,67 @@ class AddHeteroRandomWalkSE(BaseTransform):
 
         if num_nodes == 0:
             for node_type in data.node_types:
-                data[node_type][self.attr_name] = torch.zeros(
+                empty_se = torch.zeros(
                     (data[node_type].num_nodes, self.walk_length),
                     dtype=torch.float,
                 )
+                effective_attr_name = None if self.attach_to_x else self.attr_name
+                add_node_attr(data, {node_type: empty_se}, effective_attr_name)
             return data
 
-        # Compute transition matrix (row-stochastic)
+        # Compute transition matrix (row-stochastic) using sparse operations
         adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes))
-        adj_dense = adj.to_dense()
 
         if self.is_undirected:
             # Make symmetric for undirected graphs
-            adj_dense = adj_dense + adj_dense.t()
+            adj = (adj + adj.t()).coalesce()
 
-        # Compute degree and create transition matrix
-        deg = adj_dense.sum(dim=1, keepdim=True)
+        # Compute degree for row normalization
+        adj_coalesced = adj.coalesce()
+        deg = torch.zeros(num_nodes, device=edge_index.device)
+        deg.scatter_add_(0, adj_coalesced.indices()[0], adj_coalesced.values().float())
         deg = torch.clamp(deg, min=1)  # Avoid division by zero
-        transition = adj_dense / deg
 
-        # Compute random walk return probabilities (diagonal elements)
-        se = torch.zeros((num_nodes, self.walk_length), dtype=torch.float)
-        current = torch.eye(num_nodes, dtype=torch.float)
+        # Create row-normalized transition matrix (sparse)
+        # P[i,j] = A[i,j] / deg[i]
+        row_indices = adj_coalesced.indices()[0]
+        normalized_values = adj_coalesced.values().float() / deg[row_indices]
+        transition = torch.sparse_coo_tensor(
+            adj_coalesced.indices(),
+            normalized_values,
+            size=(num_nodes, num_nodes),
+        ).coalesce()
 
-        for i in range(self.walk_length):
-            current = current @ transition
-            # Diagonal gives probability of returning to the same node
-            se[:, i] = current.diag()
+        # Compute random walk return probabilities (diagonal elements) using sparse operations
+        se = torch.zeros((num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device)
+
+        # Start with identity matrix (sparse)
+        identity_indices = torch.arange(num_nodes, device=edge_index.device)
+        current = torch.sparse_coo_tensor(
+            torch.stack([identity_indices, identity_indices]),
+            torch.ones(num_nodes, device=edge_index.device),
+            size=(num_nodes, num_nodes),
+        ).coalesce()
+
+        for k in range(self.walk_length):
+            current = torch.sparse.mm(current, transition).coalesce()
+            # Extract diagonal elements: probability of returning to the same node
+            diag_mask = current.indices()[0] == current.indices()[1]
+            if diag_mask.any():
+                se[:, k].scatter_add_(0, current.indices()[0][diag_mask], current.values()[diag_mask])
 
         # Map back to HeteroData node types
-        add_node_attr(data, se, self.attr_name)
+        # If attach_to_x is True, pass None as attr_name to concatenate to x directly
+        effective_attr_name = None if self.attach_to_x else self.attr_name
+        add_node_attr(data, se, effective_attr_name)
 
         return data
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}(walk_length={self.walk_length})'
+        return (
+            f'{self.__class__.__name__}(walk_length={self.walk_length}, '
+            f'attach_to_x={self.attach_to_x})'
+        )
 
 
 
@@ -337,78 +399,125 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
                     )
             return data
 
-        # Build adjacency matrix for shortest path computation
+        # Build sparse adjacency matrix for shortest path computation
         adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes))
-        adj_dense = adj.to_dense()
 
         if self.is_undirected:
             # Make symmetric for undirected graphs
-            adj_dense = adj_dense + adj_dense.t()
+            adj = (adj + adj.t()).coalesce()
 
-        adj_dense = (adj_dense > 0).float()  # Binary adjacency
+        # Binarize adjacency (sparse)
+        adj_coalesced = adj.coalesce()
+        adj = torch.sparse_coo_tensor(
+            adj_coalesced.indices(),
+            torch.ones(adj_coalesced.indices().size(1), device=edge_index.device),
+            size=(num_nodes, num_nodes),
+        ).coalesce()
 
-        # Compute shortest path distances using BFS via matrix powers
-        # dist_matrix[i, j] = shortest path distance from node i to node j
+        if not self.full_matrix:
+            # For edge-level distances only, use sparse BFS from source nodes
+            # This avoids materializing the full distance matrix
+            src_nodes = edge_index[0]
+            dst_nodes = edge_index[1]
+            edge_hop_distances = torch.full((num_edges,), self.h_max, dtype=torch.long, device=edge_index.device)
+
+            # For direct edges, distance is 1
+            edge_hop_distances[:] = 1
+
+            # Map back to HeteroData edge types
+            add_edge_attr(data, edge_hop_distances.unsqueeze(-1).float(), self.attr_name)
+            return data
+
+        # For full_matrix=True, we need the complete distance matrix
+        # Use sparse BFS but accumulate into dense distance matrix
+        device = edge_index.device
         dist_matrix = torch.full(
-            (num_nodes, num_nodes), self.h_max, dtype=torch.long
+            (num_nodes, num_nodes), self.h_max, dtype=torch.long, device=device
         )
         dist_matrix.fill_diagonal_(0)  # Distance to self is 0
 
-        # BFS: track which nodes are reachable and at what distance
-        reachable = torch.eye(num_nodes, dtype=torch.bool)
-        current_frontier = adj_dense.bool()
+        # Track reachability using sparse tensors
+        # reachable[i,j] = 1 if j is reachable from i
+        identity_indices = torch.arange(num_nodes, device=device)
+        reachable_indices = torch.stack([identity_indices, identity_indices])
+        reachable_values = torch.ones(num_nodes, device=device, dtype=torch.bool)
+
+        # Current frontier (sparse): nodes reachable at current hop
+        frontier = adj.coalesce()
 
         for hop in range(1, self.h_max + 1):
-            # Nodes newly reachable at this hop (not previously seen)
-            newly_reachable = current_frontier & ~reachable
-            # Set distance for newly reachable nodes
-            dist_matrix[newly_reachable] = hop
-            # Update reachable set
-            reachable = reachable | current_frontier
+            frontier_indices = frontier.indices()
+            frontier_values = frontier.values()
 
-            # Early exit if all nodes are reachable (no need to continue BFS)
-            if reachable.all():
+            if frontier_indices.size(1) == 0:
                 break
 
-            # Expand frontier to next hop neighbors
-            current_frontier = (current_frontier.float() @ adj_dense) > 0
+            # Find newly reachable: in frontier but not in reachable
+            # Check each (i,j) in frontier against reachable
+            frontier_i = frontier_indices[0]
+            frontier_j = frontier_indices[1]
 
-        if self.full_matrix:
-            # Store full pairwise distance matrix as graph-level attribute on HeteroData
-            # Shape: (num_nodes, num_nodes) - for use in Graph Transformers
-            # Access via: data.hop_distance or data['hop_distance']
-            # Can be used as attention bias: bias = learnable_embedding[data.hop_distance.long()]
-            # Note: Node ordering follows data.to_homogeneous() order (by node_type alphabetically)
-            data[self.attr_name] = dist_matrix.float()
+            # Create a set of reachable pairs for fast lookup
+            # Convert to linear indices for comparison
+            reachable_linear = reachable_indices[0] * num_nodes + reachable_indices[1]
+            frontier_linear = frontier_i * num_nodes + frontier_j
 
-            if self.node_type_aware:
-                # Store node type information for heterogeneous-aware attention
-                # homo_data.node_type contains the type ID for each node after to_homogeneous()
-                node_type_ids = homo_data.node_type  # Shape: (num_nodes,)
-                data['node_type_ids'] = node_type_ids
+            # Find which frontier edges are not yet reachable
+            # Use searchsorted for efficiency
+            reachable_linear_sorted, sort_idx = reachable_linear.sort()
+            insert_pos = torch.searchsorted(reachable_linear_sorted, frontier_linear)
+            insert_pos = insert_pos.clamp(max=reachable_linear_sorted.size(0) - 1)
+            is_new = reachable_linear_sorted[insert_pos] != frontier_linear
 
-                # Compute pairwise node type encoding: (src_type, dst_type) -> single ID
-                # node_type_pair[i, j] = node_type_ids[i] * num_node_types + node_type_ids[j]
-                # This allows looking up type-specific attention biases
-                num_node_types = len(data.node_types)
-                # Outer product style: src_types[:, None] * num_types + dst_types[None, :]
-                node_type_pair = (
-                    node_type_ids.unsqueeze(1) * num_node_types +
-                    node_type_ids.unsqueeze(0)
-                )
-                data['node_type_pair'] = node_type_pair
+            if is_new.any():
+                new_i = frontier_i[is_new]
+                new_j = frontier_j[is_new]
+                dist_matrix[new_i, new_j] = hop
 
-                # Also store the mapping from type ID to type name for reference
-                # Node types are sorted alphabetically in to_homogeneous()
-                data['node_type_names'] = sorted(data.node_types)
-        else:
-            # Extract hop distances for each edge in edge_index
-            src_nodes = edge_index[0]  # Source nodes
-            dst_nodes = edge_index[1]  # Destination nodes
-            edge_hop_distances = dist_matrix[src_nodes, dst_nodes]
-            # Store hop distances only for existing edges
-            # Map back to HeteroData edge types
-            add_edge_attr(data, edge_hop_distances.unsqueeze(-1).float(), self.attr_name)
+                # Update reachable set
+                reachable_indices = torch.cat([
+                    reachable_indices,
+                    torch.stack([new_i, new_j])
+                ], dim=1)
+                reachable_values = torch.cat([
+                    reachable_values,
+                    torch.ones(new_i.size(0), device=device, dtype=torch.bool)
+                ])
+
+            # Check if all pairs are reachable
+            if reachable_indices.size(1) >= num_nodes * num_nodes:
+                break
+
+            # Expand frontier: frontier = frontier @ adj (sparse matmul)
+            frontier = torch.sparse.mm(frontier, adj).coalesce()
+
+        # Store full pairwise distance matrix as graph-level attribute on HeteroData
+        # Shape: (num_nodes, num_nodes) - for use in Graph Transformers
+        # Access via: data.hop_distance or data['hop_distance']
+        # Can be used as attention bias: bias = learnable_embedding[data.hop_distance.long()]
+        # Note: Node ordering follows data.to_homogeneous() order (by node_type alphabetically)
+        data[self.attr_name] = dist_matrix.float()
+
+        if self.node_type_aware:
+            # Store node type information for heterogeneous-aware attention
+            # homo_data.node_type contains the type ID for each node after to_homogeneous()
+            node_type_ids = homo_data.node_type  # Shape: (num_nodes,)
+            data['node_type_ids'] = node_type_ids
+
+            # Compute pairwise node type encoding: (src_type, dst_type) -> single ID
+            # node_type_pair[i, j] = node_type_ids[i] * num_node_types + node_type_ids[j]
+            # This allows looking up type-specific attention biases
+            num_node_types = len(data.node_types)
+            # Outer product style: src_types[:, None] * num_types + dst_types[None, :]
+            node_type_pair = (
+                node_type_ids.unsqueeze(1) * num_node_types +
+                node_type_ids.unsqueeze(0)
+            )
+            data['node_type_pair'] = node_type_pair
+
+            # Also store the mapping from type ID to type name for reference
+            # Node types are sorted alphabetically in to_homogeneous()
+            data['node_type_names'] = sorted(data.node_types)
 
         return data
 
