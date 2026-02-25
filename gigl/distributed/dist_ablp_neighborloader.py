@@ -412,13 +412,13 @@ class DistABLPLoader(BaseDistLoader):
                 f"The dataset must be heterogeneous for ABLP. Received dataset with graph of type: {type(dataset.graph)}"
             )
 
-        is_homogeneous_with_labeled_edge_type: bool = False
+        is_homogeneous_with_labeled_edge_type: bool = True
         if isinstance(input_nodes, tuple):
             if self._supervision_edge_types == [DEFAULT_HOMOGENEOUS_EDGE_TYPE]:
                 raise ValueError(
                     "When using heterogeneous ABLP, you must provide supervision_edge_types."
                 )
-            is_homogeneous_with_labeled_edge_type = True
+            is_homogeneous_with_labeled_edge_type = False
             anchor_node_type, anchor_node_ids = input_nodes
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
@@ -912,7 +912,7 @@ class DistABLPLoader(BaseDistLoader):
         )
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
-        if not self._is_homogeneous_with_labeled_edge_type:
+        if self._is_homogeneous_with_labeled_edge_type:
             if len(self._supervision_edge_types) != 1:
                 raise ValueError(
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"

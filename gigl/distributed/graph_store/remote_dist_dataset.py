@@ -143,7 +143,7 @@ class RemoteDistDataset:
             The partition book for the requested edge type, or ``None`` if
             no partition book is available.
         """
-        edge_type = self._infer_edge_type_for_homogeneous_with_label_edges(edge_type)
+        edge_type = self._infer_edge_type_if_homogeneous_with_label_edges(edge_type)
         return request_server(
             0,
             DistServer.get_edge_partition_book,
@@ -166,7 +166,7 @@ class RemoteDistDataset:
                 )
         return node_type
 
-    def _infer_edge_type_for_homogeneous_with_label_edges(
+    def _infer_edge_type_if_homogeneous_with_label_edges(
         self, edge_type: Optional[EdgeType]
     ) -> Optional[EdgeType]:
         """
@@ -177,7 +177,7 @@ class RemoteDistDataset:
             if edge_types is not None and DEFAULT_HOMOGENEOUS_EDGE_TYPE in edge_types:
                 edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
                 logger.info(
-                    f"Auto-inferred default edge type {edge_type} for labeled-homogeneous dataset "
+                    f"Auto-inferred default edge type {edge_type} for homogeneous dataset with label edges "
                     f"as {DEFAULT_HOMOGENEOUS_EDGE_TYPE} is in the edge types: {edge_types}"
                 )
         return edge_type
