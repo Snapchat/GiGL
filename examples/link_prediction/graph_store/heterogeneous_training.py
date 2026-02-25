@@ -169,7 +169,7 @@ def _setup_dataloaders(
 
     # In graph store mode, we fetch ABLP input (anchors + positive/negative labels) from the storage cluster.
     # This returns dict[server_rank, (anchors, pos_labels, neg_labels)] which the DistABLPLoader knows how to handle.
-    logger.info(f"---Rank {rank} fetching ABLP input for split={split}")
+    print(f"---Rank {rank} fetching ABLP input for split={split}")
     flush()
     ablp_input = dataset.get_ablp_input(
         split=split,
@@ -192,7 +192,7 @@ def _setup_dataloaders(
         shuffle=shuffle,
     )
 
-    logger.info(f"---Rank {rank} finished setting up main loader for split={split}")
+    print(f"---Rank {rank} finished setting up main loader for split={split}")
     flush()
 
     # We need to wait for all processes to finish initializing the main_loader before creating the
@@ -219,7 +219,7 @@ def _setup_dataloaders(
         shuffle=shuffle,
     )
 
-    logger.info(
+    print(
         f"---Rank {rank} finished setting up random negative loader for split={split}"
     )
     flush()
@@ -267,9 +267,9 @@ def _compute_loss(
         inference_node_types = [query_node_type, labeled_node_type]
 
     # Forward pass through encoder
-    print(f"Computing loss for main data: {main_data}")
-    print(f"Computing loss for random negative data: {random_negative_data}")
-    print(f"Using model: {model}")
+    # print(f"Computing loss for main data: {main_data}")
+    # print(f"Computing loss for random negative data: {random_negative_data}")
+    # print(f"Using model: {model}")
     flush()
     main_embeddings = model(
         data=main_data, output_node_types=inference_node_types, device=device
@@ -425,7 +425,7 @@ def _training_process(
 
     # Note: This is a *critical* step in Graph Store mode. It initializes the connection to the storage cluster
     # and sets up torch.distributed with the appropriate backend (NCCL if CUDA available, gloo otherwise).
-    logger.info(
+    print(
         f"Initializing compute process for local_rank {local_rank} in machine {args.cluster_info.compute_node_rank}"
     )
     flush()
@@ -436,7 +436,7 @@ def _training_process(
 
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
-    logger.info(
+    print(
         f"---Current training process rank: {rank}, training process world size: {world_size}"
     )
     flush()
@@ -445,7 +445,7 @@ def _training_process(
     device = get_available_device(local_process_rank=local_rank)
     if torch.cuda.is_available():
         torch.cuda.set_device(device)
-    logger.info(f"---Rank {rank} training process set device {device}")
+    print(f"---Rank {rank} training process set device {device}")
 
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -504,7 +504,7 @@ def _training_process(
             lr=args.learning_rate,
             weight_decay=args.weight_decay,
         )
-        logger.info(
+        print(
             f"Model initialized on rank {rank} training device {device}\n{model}"
         )
         flush()
@@ -520,7 +520,7 @@ def _training_process(
         last_n_batch_time: list[float] = []
         num_max_train_batches_per_process = args.num_max_train_batches // world_size
         num_val_batches_per_process = args.num_val_batches // world_size
-        logger.info(
+        print(
             f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
         )
 
@@ -531,7 +531,7 @@ def _training_process(
             train_main_loader_iter, train_random_negative_loader_iter
         ):
             if batch_idx >= num_max_train_batches_per_process:
-                logger.info(
+                print(
                     f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
                     f"stopping training on machine {args.cluster_info.compute_node_rank} local rank {local_rank}"
                 )
@@ -554,23 +554,23 @@ def _training_process(
             batch_start = time.time()
             batch_idx += 1
             if batch_idx % args.log_every_n_batch == 0:
-                logger.info(
+                print(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
-                logger.info(
+                print(
                     f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
                 )
                 last_n_batch_time.clear()
-                logger.info(
+                print(
                     f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
                 )
                 last_n_batch_avg_loss.clear()
                 flush()
 
             if batch_idx % args.val_every_n_batch == 0:
-                logger.info(f"rank={rank}, batch={batch_idx}, validating...")
+                print(f"rank={rank}, batch={batch_idx}, validating...")
                 model.eval()
                 _run_validation_loops(
                     model=model,
@@ -585,7 +585,7 @@ def _training_process(
                 )
                 model.train()
 
-        logger.info(f"---Rank {rank} finished training")
+        print(f"---Rank {rank} finished training")
         flush()
 
         # Memory cleanup and waiting for all processes to finish
@@ -602,7 +602,7 @@ def _training_process(
 
         # We save the model on the process with rank 0.
         if torch.distributed.get_rank() == 0:
-            logger.info(
+            print(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
             )
             save_state_dict(
@@ -624,11 +624,11 @@ def _training_process(
             find_unused_encoder_parameters=True,
             state_dict=state_dict,
         )
-        logger.info(
+        print(
             f"Model initialized on rank {rank} training device {device}\n{model}"
         )
 
-    logger.info(f"---Rank {rank} started testing")
+    print(f"---Rank {rank} started testing")
     flush()
     testing_start_time = time.time()
 
@@ -672,7 +672,7 @@ def _training_process(
     test_main_loader.shutdown()
     test_random_negative_loader.shutdown()
 
-    logger.info(
+    print(
         f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
     )
     flush()
@@ -681,7 +681,7 @@ def _training_process(
     shutdown_compute_proccess()
     gc.collect()
 
-    logger.info(
+    print(
         f"---Rank {rank} finished all training and testing, shut down compute process"
     )
     flush()
@@ -716,7 +716,7 @@ def _run_validation_loops(
 
     rank = torch.distributed.get_rank()
 
-    logger.info(
+    print(
         f"Running validation loop on rank={rank}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
     )
     if num_batches is None:
@@ -734,13 +734,13 @@ def _run_validation_loops(
 
     while True:
         if num_batches and batch_idx >= num_batches:
-            logger.info(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
+            print(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
             break
         try:
             main_data = next(main_loader)
             random_data = next(random_negative_loader)
         except StopIteration:
-            logger.info(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
+            print(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
             break
 
         loss = _compute_loss(
@@ -758,22 +758,22 @@ def _run_validation_loops(
         batch_start = time.time()
         batch_idx += 1
         if batch_idx % log_every_n_batch == 0:
-            logger.info(f"rank={rank}, batch={batch_idx}, latest test_loss={loss:.6f}")
+            print(f"rank={rank}, batch={batch_idx}, latest test_loss={loss:.6f}")
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-            logger.info(
+            print(
                 f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
             last_n_batch_time.clear()
             flush()
     local_avg_loss = statistics.mean(batch_losses)
-    logger.info(
+    print(
         f"rank={rank} finished validation loop, local loss: {local_avg_loss=:.6f}"
     )
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
     )
-    logger.info(f"rank={rank} got global validation loss {global_avg_val_loss=:.6f}")
+    print(f"rank={rank} got global validation loss {global_avg_val_loss=:.6f}")
     flush()
 
     return
@@ -789,17 +789,17 @@ def _run_example_training(
     """
     program_start_time = time.time()
     mp.set_start_method("spawn")
-    logger.info(f"Starting sub process method: {mp.get_start_method()}")
+    print(f"Starting sub process method: {mp.get_start_method()}")
 
     # Step 1: Initialize global process group to get cluster info
     torch.distributed.init_process_group(backend="gloo")
-    logger.info(
+    print(
         f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
     )
     cluster_info = get_graph_store_info()
-    logger.info(f"Cluster info: {cluster_info}")
+    print(f"Cluster info: {cluster_info}")
     torch.distributed.destroy_process_group()
-    logger.info(
+    print(
         f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
     )
     flush()
@@ -852,7 +852,7 @@ def _run_example_training(
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
-    logger.info(
+    print(
         f"Got training args local_world_size={local_world_size}, \
         num_neighbors={num_neighbors}, \
         sampling_workers_per_process={sampling_workers_per_process}, \
@@ -906,7 +906,7 @@ def _run_example_training(
     mp_sharing_dict = mp.Manager().dict()
 
     # Step 5: Spawn training processes
-    logger.info("--- Launching training processes ...\n")
+    print("--- Launching training processes ...\n")
     flush()
     start_time = time.time()
 
@@ -941,8 +941,8 @@ def _run_example_training(
         nprocs=local_world_size,
         join=True,
     )
-    logger.info(f"--- Training finished, took {time.time() - start_time} seconds")
-    logger.info(
+    print(f"--- Training finished, took {time.time() - start_time} seconds")
+    print(
         f"--- Program finished, which took {time.time() - program_start_time:.2f} seconds"
     )
     flush()
@@ -955,7 +955,7 @@ if __name__ == "__main__":
     parser.add_argument("--task_config_uri", type=str, help="Gbml config uri")
 
     args, unused_args = parser.parse_known_args()
-    logger.info(f"Unused arguments: {unused_args}")
+    print(f"Unused arguments: {unused_args}")
 
     _run_example_training(
         task_config_uri=args.task_config_uri,
