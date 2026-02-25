@@ -217,13 +217,11 @@ def _run_compute_train_tests(
     )
 
     _assert_ablp_input(cluster_info, ablp_result)
-    # For labeled homogeneous, pass the dict directly (not as tuple)
-    input_nodes = ablp_result
 
     ablp_loader = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
-        input_nodes=input_nodes,
+        input_nodes=ablp_result,
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
@@ -248,7 +246,6 @@ def _run_compute_train_tests(
     for i, (ablp_batch, random_negative_batch) in enumerate(
         zip(ablp_loader, random_negative_loader)
     ):
-        # Verify batch structure
         assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
         # y_positive should be dict mapping local anchor idx -> local label indices
         assert isinstance(
