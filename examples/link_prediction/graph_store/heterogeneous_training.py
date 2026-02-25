@@ -117,6 +117,7 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
     assert is_distributed_available_and_initialized(), "DDP is not initialized"
     # Make a copy of the local loss tensor
     loss_tensor = metric.detach().clone()
+    print(f"---Rank {torch.distributed.get_rank()} loss tensor: {loss_tensor}")
     torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
     return loss_tensor.item() / torch.distributed.get_world_size()
 
@@ -260,7 +261,7 @@ def _compute_loss(
         query_node_type = supervision_edge_type.dst_node_type
         labeled_node_type = supervision_edge_type.src_node_type
 
-    print(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
+    #print(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]
     else:
@@ -553,7 +554,7 @@ def _training_process(
             last_n_batch_time.append(time.time() - batch_start)
             batch_start = time.time()
             batch_idx += 1
-            if batch_idx % args.log_every_n_batch == 0:
+            if batch_idx % args.log_every_n_batch == 0 or batch_idx < 10: # Log the first 10 batches to ensure the model is initialized correctly
                 print(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
