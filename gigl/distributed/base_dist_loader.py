@@ -12,7 +12,7 @@ import queue
 import sys
 import threading
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Callable, Final, Optional, Union
 
@@ -52,6 +52,50 @@ from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 logger = Logger()
 
 _COLLATION_SENTINEL: Final = object()  # Signals end-of-epoch to consumer
+
+
+class TimingStats:
+    """Accumulates timing measurements for profiling and outputs a summary."""
+
+    def __init__(self, name: str):
+        self._name = name
+        self._totals: dict[str, float] = defaultdict(float)
+        self._counts: dict[str, int] = defaultdict(int)
+        self._mins: dict[str, float] = {}
+        self._maxs: dict[str, float] = {}
+        self._order: list[str] = []
+
+    def record(self, key: str, elapsed: float) -> None:
+        if key not in self._totals:
+            self._order.append(key)
+        self._totals[key] += elapsed
+        self._counts[key] += 1
+        if key not in self._mins or elapsed < self._mins[key]:
+            self._mins[key] = elapsed
+        if key not in self._maxs or elapsed > self._maxs[key]:
+            self._maxs[key] = elapsed
+
+    def summary(self) -> str:
+        lines = [
+            f"\n{'=' * 80}",
+            f"  {self._name} — Timing Summary",
+            f"{'=' * 80}",
+        ]
+        for key in self._order:
+            total = self._totals[key]
+            count = self._counts[key]
+            avg = total / count if count > 0 else 0
+            min_v = self._mins.get(key, 0)
+            max_v = self._maxs.get(key, 0)
+            if count == 1:
+                lines.append(f"  {key:<45s} {total:>10.4f}s")
+                continue
+            lines.append(
+                f"  {key:<45s} total={total:>10.4f}s  n={count:>6d}  "
+                f"avg={avg:>8.4f}s  min={min_v:>8.4f}s  max={max_v:>8.4f}s"
+            )
+        lines.append(f"{'=' * 80}\n")
+        return "\n".join(lines)
 
 
 # We don't see logs for graph store mode for whatever reason.
@@ -235,6 +279,16 @@ class BaseDistLoader(DistLoader):
         self._collation_thread: Optional[threading.Thread] = None
         self._collated_queue: Optional[queue.Queue] = None
         self._collation_stop_event: Optional[threading.Event] = None
+
+        # --- Timing instrumentation ---
+        mode_label = (
+            "background_collation"
+            if background_collation_queue_size is not None
+            else "synchronous"
+        )
+        self._timing = TimingStats(f"BaseDistLoader ({mode_label})")
+        self._epoch_start_time: Optional[float] = None
+        self._log_timing_every_n_batches: Final[int] = 10
 
         # Store dataset metadata for subclass _collate_fn usage
         self._is_homogeneous_with_labeled_edge_type = (
@@ -569,6 +623,12 @@ class BaseDistLoader(DistLoader):
 
     # --- Background collation methods ---
 
+    def _maybe_log_timing(self) -> None:
+        """Log timing summary periodically and at end of epoch."""
+        if self._num_recv % self._log_timing_every_n_batches == 0:
+            logger.info(self._timing.summary())
+            _flush()
+
     def __next__(self):  # type: ignore[override]
         """Returns the next collated batch.
 
@@ -586,13 +646,28 @@ class BaseDistLoader(DistLoader):
             return self._next_from_background_collation()
         # Original synchronous path (replicated from GLT DistLoader)
         if self._num_recv == self._num_expected:
+            logger.info(
+                f"[sync] Epoch done. Total batches: {self._num_recv}, "
+                f"epoch wall time: {time.time() - self._epoch_start_time:.2f}s"
+            )
+            logger.info(self._timing.summary())
+            _flush()
             raise StopIteration
+        t0 = time.time()
         if self._with_channel:
             msg = self._channel.recv()
         else:
             msg = self._collocated_producer.sample()
+        t_recv = time.time()
+        self._timing.record("sync/recv", t_recv - t0)
+
         result = self._collate_fn(msg)
+        t_collate = time.time()
+        self._timing.record("sync/collate_fn", t_collate - t_recv)
+        self._timing.record("sync/total_next", t_collate - t0)
+
         self._num_recv += 1
+        self._maybe_log_timing()
         return result
 
     def _next_from_background_collation(self):
@@ -605,12 +680,25 @@ class BaseDistLoader(DistLoader):
             StopIteration: On sentinel or when expected count is reached.
         """
         assert self._collated_queue is not None
+        t0 = time.time()
+        qsize_before = self._collated_queue.qsize()
         item = self._collated_queue.get()
+        t_get = time.time()
+        self._timing.record("bg_consumer/queue_get", t_get - t0)
+        self._timing.record("bg_consumer/queue_size_at_get", qsize_before)
+
         if item is _COLLATION_SENTINEL:
+            logger.info(
+                f"[bg] Epoch done. Total batches: {self._num_recv}, "
+                f"epoch wall time: {time.time() - self._epoch_start_time:.2f}s"
+            )
+            logger.info(self._timing.summary())
+            _flush()
             raise StopIteration
         if isinstance(item, BaseException):
             raise item
         self._num_recv += 1
+        self._maybe_log_timing()
         return item
 
     def _collation_worker(self) -> None:
@@ -636,6 +724,7 @@ class BaseDistLoader(DistLoader):
                     return
 
                 # Receive next sampled message
+                t0 = time.time()
                 try:
                     if self._with_channel:
                         msg = self._channel.recv()
@@ -644,14 +733,23 @@ class BaseDistLoader(DistLoader):
                 except StopIteration:
                     self._collated_queue.put(_COLLATION_SENTINEL)
                     return
+                t_recv = time.time()
+                self._timing.record("bg_producer/recv", t_recv - t0)
 
                 # Check stop event between recv and collate
                 if self._collation_stop_event.is_set():
                     return
 
                 result = self._collate_fn(msg)
-                num_produced += 1
+                t_collate = time.time()
+                self._timing.record("bg_producer/collate_fn", t_collate - t_recv)
+
                 self._collated_queue.put(result)
+                t_put = time.time()
+                self._timing.record("bg_producer/queue_put", t_put - t_collate)
+                self._timing.record("bg_producer/total_iteration", t_put - t0)
+
+                num_produced += 1
         except Exception as e:
             self._collated_queue.put(e)
 
@@ -718,6 +816,25 @@ class BaseDistLoader(DistLoader):
     def __iter__(self) -> Self:
         if self._background_collation_queue_size is not None:
             self._stop_collation_thread()
+
+        # Log previous epoch timing (if any) and reset for new epoch
+        if self._epoch > 0:
+            logger.info(
+                f"[iter] Resetting for epoch {self._epoch}. "
+                f"Previous epoch timing:"
+            )
+            logger.info(self._timing.summary())
+            _flush()
+
+        mode_label = (
+            "background_collation"
+            if self._background_collation_queue_size is not None
+            else "synchronous"
+        )
+        self._timing = TimingStats(
+            f"BaseDistLoader ({mode_label}) epoch={self._epoch}"
+        )
+        self._epoch_start_time = time.time()
 
         self._num_recv = 0
         if self._is_collocated_worker:

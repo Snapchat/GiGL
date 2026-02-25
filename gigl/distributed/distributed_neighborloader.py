@@ -1,4 +1,5 @@
 import sys
+import time
 from collections import abc
 from itertools import count
 from typing import Callable, Optional, Tuple, Union
@@ -542,15 +543,29 @@ class DistNeighborLoader(BaseDistLoader):
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        t0 = time.time()
         data = super()._collate_fn(msg)
+        t_base = time.time()
+        self._timing.record("collate/glt_base_collate", t_base - t0)
+
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
             edge_feature_info=self._edge_feature_info,
             device=self.to_device,
         )
+        t_feat = time.time()
+        self._timing.record("collate/set_missing_features", t_feat - t_base)
+
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
+            t_strip = time.time()
+            self._timing.record("collate/strip_label_edges", t_strip - t_feat)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+            self._timing.record(
+                "collate/labeled_to_homogeneous", time.time() - t_feat
+            )
+
+        self._timing.record("collate/total", time.time() - t0)
         return data

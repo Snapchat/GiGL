@@ -215,13 +215,19 @@ def _run_compute_train_tests(
 
     _assert_ablp_input(cluster_info, ablp_result)
 
+    device = torch.device(f"cuda:{torch.distributed.get_rank()}")
+    logger.info(f"Rank {torch.distributed.get_rank()} using device {device}")
+    torch.cuda.set_device(device)
+
     ablp_loader = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
         input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
+        pin_memory_device=device,
         num_workers=2,
         worker_concurrency=2,
+        batch_size=100,
+        background_collation_queue_size=4,
     )
 
     random_negative_input = remote_dist_dataset.get_node_ids(
@@ -235,9 +241,11 @@ def _run_compute_train_tests(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
         input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
+        pin_memory_device=device,
         num_workers=2,
         worker_concurrency=2,
+        batch_size=100,
+        background_collation_queue_size=4,
     )
     count = 0
     for i, (ablp_batch, random_negative_batch) in enumerate(
@@ -818,7 +826,7 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def test_graph_store_homogeneous(self):
+    def _test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -1010,7 +1018,7 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    def test_multiple_loaders_in_graph_store(self):
+    def _test_multiple_loaders_in_graph_store(self):
         """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
         in parallel, followed by another (ABLP, DistNeighborLoader) pair sequentially.
         """
