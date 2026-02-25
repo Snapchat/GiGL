@@ -528,3 +528,17 @@ class RemoteDistDataset:
                 0,
                 DistServer.get_edge_types,
             )
+
+
+    def get_num_nodes(self, node_type: Optional[NodeType] = None) -> int:
+        """Get the number of nodes in the registered dataset.
+
+        Returns:
+            The number of nodes in the dataset.
+        """
+        with TimingStats.get_instance().track("RemoteDistDataset.get_num_nodes"):
+            return request_server(
+                0,
+                DistServer.get_num_nodes,
+                node_type=node_type,
+            )

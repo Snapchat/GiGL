@@ -45,6 +45,7 @@ from gigl.types.graph import (
     select_label_edge_types,
 )
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.distributed.utils.partition_book import get_total_ids
 
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
 r""" Interval (in seconds) to check exit status of server.
@@ -533,6 +534,22 @@ class DistServer:
                 except QueueTimeoutError as e:
                     if producer.is_all_sampling_completed():
                         return None, True
+
+    def get_num_nodes(self, node_type: Optional[NodeType] = None) -> int:
+        """Get the number of nodes in the dataset."""
+        with TimingStats.get_instance().track("DistServer.get_num_nodes"):
+            if node_type is not None:
+                if not isinstance(self.dataset.node_pb, dict):
+                    raise ValueError(
+                        f"node_type was provided as {node_type}, so node partition book must be a dict[NodeType, PartitionBook] (e.g. a heterogeneous dataset), got {type(self.dataset.node_pb)}"
+                    )
+                return get_total_ids(self.dataset.node_pb[node_type])
+            else:
+                if not isinstance(self.dataset.node_pb, PartitionBook):
+                    raise ValueError(
+                        f"node_type was not provided, so node partition book must be a PartitionBook (e.g. a homogeneous dataset), got {type(self.dataset.node_pb)}"
+                    )
+                return get_total_ids(self.dataset.node_pb)
 
 
 _dist_server: Optional[DistServer] = None

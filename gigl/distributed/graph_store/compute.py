@@ -10,6 +10,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.graph_store.dist_server import _call_func_on_server
 from gigl.distributed.utils.timing import TimingStats
 from gigl.env.distributed import GraphStoreInfo
+from datetime import timedelta
 
 logger = Logger()
 
@@ -72,6 +73,7 @@ def init_compute_process(
                 world_size=cluster_info.compute_cluster_world_size,
                 rank=compute_cluster_rank,
                 init_method=f"tcp://{cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port}",
+                timeout=timedelta(minutes=180)
             )
 
 
