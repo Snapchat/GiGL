@@ -4,10 +4,10 @@ import unittest
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Iterator, Tuple
+from unittest import TestCase
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
-from unittest import TestCase
 
 logger = Logger()
 
