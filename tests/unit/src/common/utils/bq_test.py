@@ -51,7 +51,7 @@ class GetLatestTableTest(TestCase):
     PREFIX = "myproject.mydataset.events_"
 
     def _make_bq_utils(self, mock_client_cls: MagicMock) -> BqUtils:
-        return BqUtils(project_id="myproject")
+        return BqUtils(project="myproject")
 
     def test_returns_latest_table(self, mock_client_cls: MagicMock) -> None:
         bq_utils = self._make_bq_utils(mock_client_cls)
@@ -103,3 +103,21 @@ class GetLatestTableTest(TestCase):
                 bq_utils.get_latest_table(
                     bq_table_path_prefix=self.PREFIX, cap_date="20250101"
                 )
+
+    def test_returns_latest_table_with_hourly_suffix(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        bq_utils = self._make_bq_utils(mock_client_cls)
+        with patch.object(
+            bq_utils,
+            "list_matching_tables",
+            return_value=[
+                "myproject.mydataset.events_2025010100",
+                "myproject.mydataset.events_2025010112",
+                "myproject.mydataset.events_2025010106",
+            ],
+        ):
+            result = bq_utils.get_latest_table(
+                bq_table_path_prefix=self.PREFIX, table_partition_suffix="YYYYMMDDHH"
+            )
+        self.assertEqual(result, "myproject.mydataset.events_2025010112")

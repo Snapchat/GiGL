@@ -282,22 +282,33 @@ class BqUtils:
                 matching_tables.append(formatted_table_path)
         return matching_tables
 
-
     def get_latest_table(
         self,
         bq_table_path_prefix: str,
+        table_partition_suffix: str = "YYYYMMDD",
         cap_date: Optional[str] = None,
     ) -> str:
         """Return the latest table matching *bq_table_path_prefix*.
 
-        Tables are expected to have a ``YYYYMMDD`` date suffix.  If *cap_date*
-        is given, only tables with suffix <= cap_date are considered.
+        Tables are expected to have a partition suffix whose length matches
+        *table_partition_suffix*.  All supported GCP partition suffixes (``YYYY``,
+        ``YYYYMM``, ``YYYYMMDD``, ``YYYYMMDDHH``, integer ranges) are
+        lexicographically sortable, so the latest table is the
+        lexicographic maximum.
+
+
+        If *cap_date* is given, only tables with suffix <= cap_date are
+        considered.
 
         Args:
             bq_table_path_prefix: Fully qualified prefix in
                 ``"project.dataset.table_prefix"`` format.
-            cap_date: Optional upper-bound date (``YYYYMMDD``).  Only tables
-                with a date suffix <= this value are considered.
+            table_partition_suffix: A representative suffix string whose length
+                determines how many trailing characters form the sortable
+                partition key.  Defaults to ``"YYYYMMDD"`` (8 characters).
+            cap_date: Optional upper-bound date string that is in the format of
+            *table_partition_suffix*. Only tables with a suffix <= this value are
+            considered.
 
         Returns:
             The fully qualified table path of the latest matching table.
@@ -309,20 +320,22 @@ class BqUtils:
         matched_full_table_paths = self.list_matching_tables(
             bq_dataset_path=bq_dataset_path, table_match_string=table_prefix
         )
+        suffix_len = len(table_partition_suffix)
         candidates = []
         for table_name in matched_full_table_paths:
-            # Ensure table ends with a datetime string of format YYYYMMDD
-            assert len(table_name) == len(bq_table_path_prefix) + len(
-                "YYYYMMDD"
-            ), f"Table name {table_name} does not end with a datetime string of format YYYYMMDD"
-            if cap_date is None or table_name[-len("YYYYMMDD") :] <= cap_date:
+            assert (
+                len(table_name) == len(bq_table_path_prefix) + suffix_len
+            ), f"Table name {table_name} does not end with a suffix of format {table_partition_suffix}"
+            if cap_date is None or table_name[-suffix_len:] <= cap_date:
                 candidates.append(table_name)
         if not candidates:
             raise ValueError(
                 f"No tables found with prefix {bq_table_path_prefix} and cap date {cap_date}"
             )
         candidates.sort()
-        return candidates[-1]  # Get the latest table @ last index (since sorted Ascending)
+        return candidates[
+            -1
+        ]  # Get the latest table @ last index (since sorted Ascending)
 
     def delete_matching_tables(
         self, bq_dataset_path: str, table_match_string: str
