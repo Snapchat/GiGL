@@ -223,7 +223,7 @@ def _inference_process(
     # We expect that each compute machine has the same input nodes.
     # As such, we shard across the compute machine cluster.
     # If this is not done, then all nodes will receive the same input nodes, which is not what we want.
-    input_nodes = dataset.get_node_ids(
+    input_nodes = dataset.fetch_node_ids(
         rank=args.cluster_info.compute_node_rank,
         world_size=args.cluster_info.num_compute_nodes,
     )

@@ -71,6 +71,7 @@ inferencerConfig:
     command: python -m examples.link_prediction.graph_store.storage_main
     storageArgs:
       sample_edge_direction: "in"
+      num_server_sessions: "2" # We do inference for 2 node types, author and paper (the supervision edge type is paper -> author)
 sharedConfig:
   shouldSkipAutomaticTempAssetCleanup: false
   shouldSkipInference: false
