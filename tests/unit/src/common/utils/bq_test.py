@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 from parameterized import param, parameterized
 
 from gigl.src.common.utils.bq import BqUtils
@@ -42,3 +44,62 @@ class BqUtilsTest(TestCase):
         self.assertEqual(
             reconstructed_bq_table_path, BqUtils.format_bq_path(bq_table_path)
         )
+
+
+@patch("gigl.src.common.utils.bq.bigquery.Client")
+class GetLatestTableTest(TestCase):
+    PREFIX = "myproject.mydataset.events_"
+
+    def _make_bq_utils(self, mock_client_cls: MagicMock) -> BqUtils:
+        return BqUtils(project_id="myproject")
+
+    def test_returns_latest_table(self, mock_client_cls: MagicMock) -> None:
+        bq_utils = self._make_bq_utils(mock_client_cls)
+        with patch.object(
+            bq_utils,
+            "list_matching_tables",
+            return_value=[
+                "myproject.mydataset.events_20250101",
+                "myproject.mydataset.events_20250103",
+                "myproject.mydataset.events_20250102",
+            ],
+        ):
+            result = bq_utils.get_latest_table(bq_table_path_prefix=self.PREFIX)
+        self.assertEqual(result, "myproject.mydataset.events_20250103")
+
+    def test_cap_date_filters_newer_tables(self, mock_client_cls: MagicMock) -> None:
+        bq_utils = self._make_bq_utils(mock_client_cls)
+        with patch.object(
+            bq_utils,
+            "list_matching_tables",
+            return_value=[
+                "myproject.mydataset.events_20250101",
+                "myproject.mydataset.events_20250103",
+                "myproject.mydataset.events_20250102",
+            ],
+        ):
+            result = bq_utils.get_latest_table(
+                bq_table_path_prefix=self.PREFIX, cap_date="20250102"
+            )
+        self.assertEqual(result, "myproject.mydataset.events_20250102")
+
+    def test_no_matching_tables_raises(self, mock_client_cls: MagicMock) -> None:
+        bq_utils = self._make_bq_utils(mock_client_cls)
+        with patch.object(bq_utils, "list_matching_tables", return_value=[]):
+            with self.assertRaises(ValueError):
+                bq_utils.get_latest_table(bq_table_path_prefix=self.PREFIX)
+
+    def test_cap_date_filters_all_raises(self, mock_client_cls: MagicMock) -> None:
+        bq_utils = self._make_bq_utils(mock_client_cls)
+        with patch.object(
+            bq_utils,
+            "list_matching_tables",
+            return_value=[
+                "myproject.mydataset.events_20250201",
+                "myproject.mydataset.events_20250202",
+            ],
+        ):
+            with self.assertRaises(ValueError):
+                bq_utils.get_latest_table(
+                    bq_table_path_prefix=self.PREFIX, cap_date="20250101"
+                )
