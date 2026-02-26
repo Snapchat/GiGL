@@ -7,7 +7,7 @@ from typing import Iterator, Tuple
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
-from tests.test_assets.test_case import TestCase
+from unittest import TestCase
 
 logger = Logger()
 
