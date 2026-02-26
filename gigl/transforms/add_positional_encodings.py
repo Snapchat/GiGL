@@ -7,7 +7,7 @@ from torch_geometric.data.datapipes import functional_transform
 from torch_geometric.transforms import BaseTransform
 from torch_geometric.utils import to_torch_sparse_tensor
 
-from gigl.transforms.utils import add_node_attr, add_edge_attr
+from gigl.transforms.utils import add_node_attr
 
 r"""
 Positional and Structural Encodings for Heterogeneous Graphs.
@@ -46,22 +46,24 @@ Example Usage:
     >>> transform = Compose([
     ...     AddHeteroRandomWalkPE(walk_length=8),
     ...     AddHeteroRandomWalkSE(walk_length=8),
-    ...     AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True),
+    ...     AddHeteroHopDistanceEncoding(h_max=3),
     ... ])
     >>> data = transform(data)
     >>>
-    >>> # For Graph Transformers, use full_matrix=True to get full pairwise distances
-    >>> transform = AddHeteroHopDistanceEncoding(h_max=5, full_matrix=True)
+    >>> # For Graph Transformers, use hop distance encoding for attention bias
+    >>> # Returns sparse matrix (0 for unreachable, 1-h_max for reachable pairs)
+    >>> transform = AddHeteroHopDistanceEncoding(h_max=5)
     >>> data = transform(data)
-    >>> print(data.hop_distance.shape)  # (num_total_nodes, num_total_nodes)
+    >>> print(data.hop_distance.shape)       # (num_total_nodes, num_total_nodes) sparse
+    >>> print(data.hop_distance.is_sparse)   # True
     >>>
     >>> # For heterogeneous Graph Transformers, use node_type_aware=True to preserve
     >>> # node type information for type-aware attention bias
-    >>> transform = AddHeteroHopDistanceEncoding(h_max=5, full_matrix=True, node_type_aware=True)
+    >>> transform = AddHeteroHopDistanceEncoding(h_max=5, node_type_aware=True)
     >>> data = transform(data)
-    >>> print(data.hop_distance.shape)      # (8, 8) - pairwise distances
+    >>> print(data.hop_distance.shape)      # (8, 8) - sparse pairwise distances
     >>> print(data.node_type_ids.shape)     # (8,) - type ID for each node
-    >>> print(data.node_type_pair.shape)    # (8, 8) - encodes (src_type, dst_type) pairs
+    >>> print(data.node_type_pair.shape)    # (8, 8) - sparse (src_type, dst_type) pairs
     >>> print(data.node_type_names)         # ['item', 'user'] - sorted alphabetically
     >>>
     >>> # In a Graph Transformer, combine hop distance and node type for attention bias:
@@ -308,7 +310,7 @@ class AddHeteroRandomWalkSE(BaseTransform):
 
 @functional_transform('add_hetero_hop_distance_encoding')
 class AddHeteroHopDistanceEncoding(BaseTransform):
-    r"""Adds hop distance positional encoding as relative encoding.
+    r"""Adds hop distance positional encoding as relative encoding (sparse).
 
     For each pair of nodes (vi, vj), computes the shortest path distance p(vi, vj).
     This captures structural proximity and can be used with a learnable embedding
@@ -319,37 +321,36 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
     Based on the approach from `"Do Transformers Really Perform Bad for Graph
     Representation?" <https://arxiv.org/abs/2106.05234>`_ (Graphormer).
 
-    For heterogeneous graphs, when `full_matrix=True`, additional node type
-    information can be preserved by setting `node_type_aware=True`. This stores:
-        - `data.hop_distance`: (num_nodes, num_nodes) distance matrix
+    The output is a **sparse matrix** where:
+        - Reachable pairs (i, j) within h_max hops have value = hop distance (1 to h_max)
+        - Unreachable pairs have value = 0 (not stored in sparse tensor)
+        - Self-loops (diagonal) are not stored (distance to self is implicitly 0)
+
+    This sparse representation avoids GPU memory blowup for large graphs.
+
+    For heterogeneous graphs, additional node type information can be preserved
+    by setting `node_type_aware=True`. This stores:
+        - `data.hop_distance`: sparse (num_nodes, num_nodes) distance matrix
         - `data.node_type_ids`: (num_nodes,) node type ID for each node
-        - `data.node_type_pair`: (num_nodes, num_nodes) encodes (src_type, dst_type) pairs
+        - `data.node_type_pair`: sparse (num_nodes, num_nodes) encodes (src_type, dst_type) pairs
 
     This allows Graph Transformers to use both structural (hop distance) and
     semantic (node type) information in attention bias computation.
 
     Args:
         h_max (int): Maximum hop distance to consider. Distances > h_max
-            are clipped to h_max (representing "far" or "unreachable" nodes).
-            Set to 2 - 3 for 2hop sampled subgraphs.
+            are treated as unreachable (value 0 in sparse matrix).
+            Set to 2-3 for 2-hop sampled subgraphs.
             Set to min(walk_length // 2, 10) for random walk sampled subgraphs.
         attr_name (str, optional): The attribute name of the positional
             encoding. (default: :obj:`"hop_distance"`)
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected for distance computation.
             (default: :obj:`False`)
-        full_matrix (bool, optional): If set to :obj:`True`, stores the full
-            pairwise distance matrix as a graph-level attribute (for use in
-            Graph Transformers with fully-connected attention). If :obj:`False`,
-            stores hop distances only for existing edges. Note that when
-            :obj:`full_matrix=False`, the hop distance for existing edges is
-            always 1 (direct connection), which may be redundant. Use
-            :obj:`full_matrix=True` for attention bias in Graph Transformers.
-            (default: :obj:`True`)
-        node_type_aware (bool, optional): If set to :obj:`True` (only effective
-            when `full_matrix=True`), also stores node type information:
+        node_type_aware (bool, optional): If set to :obj:`True`, also stores
+            node type information:
             - `node_type_ids`: (num_nodes,) tensor mapping each node to its type ID
-            - `node_type_pair`: (num_nodes, num_nodes) tensor encoding the
+            - `node_type_pair`: sparse (num_nodes, num_nodes) tensor encoding the
               (src_type, dst_type) pair as `src_type * num_node_types + dst_type`
             This enables type-aware attention bias in heterogeneous Graph Transformers.
             (default: :obj:`False`)
@@ -359,13 +360,11 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         h_max: int,
         attr_name: Optional[str] = 'hop_distance',
         is_undirected: bool = False,
-        full_matrix: bool = True,
         node_type_aware: bool = False,
     ) -> None:
         self.h_max = h_max
         self.attr_name = attr_name
         self.is_undirected = is_undirected
-        self.full_matrix = full_matrix
         self.node_type_aware = node_type_aware
 
     def forward(self, data: HeteroData) -> HeteroData:
@@ -381,23 +380,19 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         num_edges = edge_index.size(1)
 
         if num_nodes == 0 or num_edges == 0:
-            # Handle empty graph case
-            if self.full_matrix:
-                data[self.attr_name] = torch.zeros(
-                    (num_nodes, num_nodes), dtype=torch.long
-                )
-                if self.node_type_aware:
-                    data['node_type_ids'] = torch.zeros(num_nodes, dtype=torch.long)
-                    data['node_type_pair'] = torch.zeros(
-                        (num_nodes, num_nodes), dtype=torch.long
-                    )
-            else:
-                for edge_type in data.edge_types:
-                    num_type_edges = data[edge_type].num_edges
-                    data[edge_type][self.attr_name] = torch.zeros(
-                        num_type_edges, dtype=torch.long
-                    )
+            # Handle empty graph case - return empty sparse tensor
+            empty_sparse = torch.sparse_coo_tensor(
+                torch.zeros((2, 0), dtype=torch.long),
+                torch.zeros(0, dtype=torch.float),
+                size=(num_nodes, num_nodes),
+            ).coalesce()
+            data[self.attr_name] = empty_sparse
+            if self.node_type_aware:
+                data['node_type_ids'] = torch.zeros(num_nodes, dtype=torch.long)
+                data['node_type_pair'] = empty_sparse
             return data
+
+        device = edge_index.device
 
         # Build sparse adjacency matrix for shortest path computation
         adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes))
@@ -410,113 +405,105 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         adj_coalesced = adj.coalesce()
         adj = torch.sparse_coo_tensor(
             adj_coalesced.indices(),
-            torch.ones(adj_coalesced.indices().size(1), device=edge_index.device),
+            torch.ones(adj_coalesced.indices().size(1), device=device),
             size=(num_nodes, num_nodes),
         ).coalesce()
 
-        if not self.full_matrix:
-            # For edge-level distances only, use sparse BFS from source nodes
-            # This avoids materializing the full distance matrix
-            src_nodes = edge_index[0]
-            dst_nodes = edge_index[1]
-            edge_hop_distances = torch.full((num_edges,), self.h_max, dtype=torch.long, device=edge_index.device)
+        # Compute sparse BFS to find all reachable pairs within h_max hops
+        # Store (row, col, distance) for all reachable pairs
+        all_rows = []
+        all_cols = []
+        all_dists = []
 
-            # For direct edges, distance is 1
-            edge_hop_distances[:] = 1
-
-            # Map back to HeteroData edge types
-            add_edge_attr(data, edge_hop_distances.unsqueeze(-1).float(), self.attr_name)
-            return data
-
-        # For full_matrix=True, we need the complete distance matrix
-        # Use sparse BFS but accumulate into dense distance matrix
-        device = edge_index.device
-        dist_matrix = torch.full(
-            (num_nodes, num_nodes), self.h_max, dtype=torch.long, device=device
-        )
-        dist_matrix.fill_diagonal_(0)  # Distance to self is 0
-
-        # Track reachability using sparse tensors
-        # reachable[i,j] = 1 if j is reachable from i
+        # Track which pairs have been visited (using set of linear indices)
+        # Start with diagonal (self-loops) as visited but don't include in output
         identity_indices = torch.arange(num_nodes, device=device)
-        reachable_indices = torch.stack([identity_indices, identity_indices])
-        reachable_values = torch.ones(num_nodes, device=device, dtype=torch.bool)
+        visited_linear = set((identity_indices * num_nodes + identity_indices).tolist())
 
-        # Current frontier (sparse): nodes reachable at current hop
+        # Current frontier (sparse): edges reachable at current hop
         frontier = adj.coalesce()
 
         for hop in range(1, self.h_max + 1):
             frontier_indices = frontier.indices()
-            frontier_values = frontier.values()
 
             if frontier_indices.size(1) == 0:
                 break
 
-            # Find newly reachable: in frontier but not in reachable
-            # Check each (i,j) in frontier against reachable
             frontier_i = frontier_indices[0]
             frontier_j = frontier_indices[1]
+            frontier_linear = (frontier_i * num_nodes + frontier_j).tolist()
 
-            # Create a set of reachable pairs for fast lookup
-            # Convert to linear indices for comparison
-            reachable_linear = reachable_indices[0] * num_nodes + reachable_indices[1]
-            frontier_linear = frontier_i * num_nodes + frontier_j
+            # Find newly reachable pairs (not in visited set)
+            new_mask = []
+            new_pairs_linear = []
+            for idx, lin_idx in enumerate(frontier_linear):
+                if lin_idx not in visited_linear:
+                    new_mask.append(idx)
+                    new_pairs_linear.append(lin_idx)
+                    visited_linear.add(lin_idx)
 
-            # Find which frontier edges are not yet reachable
-            # Use searchsorted for efficiency
-            reachable_linear_sorted, sort_idx = reachable_linear.sort()
-            insert_pos = torch.searchsorted(reachable_linear_sorted, frontier_linear)
-            insert_pos = insert_pos.clamp(max=reachable_linear_sorted.size(0) - 1)
-            is_new = reachable_linear_sorted[insert_pos] != frontier_linear
+            if new_mask:
+                new_mask = torch.tensor(new_mask, device=device, dtype=torch.long)
+                new_i = frontier_i[new_mask]
+                new_j = frontier_j[new_mask]
 
-            if is_new.any():
-                new_i = frontier_i[is_new]
-                new_j = frontier_j[is_new]
-                dist_matrix[new_i, new_j] = hop
-
-                # Update reachable set
-                reachable_indices = torch.cat([
-                    reachable_indices,
-                    torch.stack([new_i, new_j])
-                ], dim=1)
-                reachable_values = torch.cat([
-                    reachable_values,
-                    torch.ones(new_i.size(0), device=device, dtype=torch.bool)
-                ])
-
-            # Check if all pairs are reachable
-            if reachable_indices.size(1) >= num_nodes * num_nodes:
-                break
+                all_rows.append(new_i)
+                all_cols.append(new_j)
+                all_dists.append(torch.full((new_i.size(0),), hop, device=device, dtype=torch.float))
 
             # Expand frontier: frontier = frontier @ adj (sparse matmul)
             frontier = torch.sparse.mm(frontier, adj).coalesce()
 
-        # Store full pairwise distance matrix as graph-level attribute on HeteroData
-        # Shape: (num_nodes, num_nodes) - for use in Graph Transformers
+        # Build sparse distance matrix
+        if all_rows:
+            dist_rows = torch.cat(all_rows)
+            dist_cols = torch.cat(all_cols)
+            dist_vals = torch.cat(all_dists)
+        else:
+            dist_rows = torch.zeros(0, dtype=torch.long, device=device)
+            dist_cols = torch.zeros(0, dtype=torch.long, device=device)
+            dist_vals = torch.zeros(0, dtype=torch.float, device=device)
+
+        # Create sparse distance matrix
+        # Unreachable pairs have value 0 (not stored)
+        # Reachable pairs have value = hop distance (1 to h_max)
+        dist_sparse = torch.sparse_coo_tensor(
+            torch.stack([dist_rows, dist_cols]),
+            dist_vals,
+            size=(num_nodes, num_nodes),
+        ).coalesce()
+
+        # Store sparse pairwise distance matrix as graph-level attribute
         # Access via: data.hop_distance or data['hop_distance']
-        # Can be used as attention bias: bias = learnable_embedding[data.hop_distance.long()]
+        # Usage in attention: dist = data.hop_distance.to_dense() for small graphs,
+        #   or use sparse indexing for memory efficiency
         # Note: Node ordering follows data.to_homogeneous() order (by node_type alphabetically)
-        data[self.attr_name] = dist_matrix.float()
+        data[self.attr_name] = dist_sparse
 
         if self.node_type_aware:
             # Store node type information for heterogeneous-aware attention
-            # homo_data.node_type contains the type ID for each node after to_homogeneous()
             node_type_ids = homo_data.node_type  # Shape: (num_nodes,)
             data['node_type_ids'] = node_type_ids
 
-            # Compute pairwise node type encoding: (src_type, dst_type) -> single ID
+            # Compute sparse pairwise node type encoding for reachable pairs only
             # node_type_pair[i, j] = node_type_ids[i] * num_node_types + node_type_ids[j]
-            # This allows looking up type-specific attention biases
             num_node_types = len(data.node_types)
-            # Outer product style: src_types[:, None] * num_types + dst_types[None, :]
-            node_type_pair = (
-                node_type_ids.unsqueeze(1) * num_node_types +
-                node_type_ids.unsqueeze(0)
-            )
-            data['node_type_pair'] = node_type_pair
+            if dist_rows.size(0) > 0:
+                type_pair_vals = (
+                    node_type_ids[dist_rows] * num_node_types +
+                    node_type_ids[dist_cols]
+                ).float()
+            else:
+                type_pair_vals = torch.zeros(0, dtype=torch.float, device=device)
+
+            node_type_pair_sparse = torch.sparse_coo_tensor(
+                torch.stack([dist_rows, dist_cols]),
+                type_pair_vals,
+                size=(num_nodes, num_nodes),
+            ).coalesce()
+            data['node_type_pair'] = node_type_pair_sparse
 
             # Also store the mapping from type ID to type name for reference
-            # Node types are sorted alphabetically in to_homogeneous()
             data['node_type_names'] = sorted(data.node_types)
 
         return data
@@ -524,5 +511,5 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
     def __repr__(self) -> str:
         return (
             f'{self.__class__.__name__}(h_max={self.h_max}, '
-            f'full_matrix={self.full_matrix}, node_type_aware={self.node_type_aware})'
+            f'node_type_aware={self.node_type_aware})'
         )

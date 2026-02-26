@@ -297,111 +297,91 @@ class TestAddHeteroRandomWalkSE(TestCase):
 
 class TestAddHeteroHopDistanceEncoding(TestCase):
     def test_forward_basic(self):
-        """Test basic forward pass with full_matrix=True (default)."""
+        """Test basic forward pass returns sparse matrix."""
         data = create_simple_hetero_data()
         transform = AddHeteroHopDistanceEncoding(h_max=3)
 
         result = transform(data)
 
-        # Check that full pairwise distance matrix is stored as graph-level attribute
+        # Check that sparse pairwise distance matrix is stored as graph-level attribute
         self.assertTrue(hasattr(result, 'hop_distance'))
         # Total nodes: 3 users + 2 items = 5 nodes
         self.assertEqual(result.hop_distance.shape, (5, 5))
+        # Should be sparse
+        self.assertTrue(result.hop_distance.is_sparse)
 
-    def test_forward_full_matrix_false(self):
-        """Test forward pass with full_matrix=False (edge-level)."""
+    def test_forward_sparse_values(self):
+        """Test that sparse matrix has correct values (0 for unreachable, 1-h_max for reachable)."""
         data = create_simple_hetero_data()
-        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=False)
+        transform = AddHeteroHopDistanceEncoding(h_max=3)
 
         result = transform(data)
 
-        # Check that PE was added to both edge types
-        self.assertTrue(hasattr(result['user', 'buys', 'item'], 'hop_distance'))
-        self.assertTrue(hasattr(result['item', 'bought_by', 'user'], 'hop_distance'))
+        # Convert to dense for easier testing
+        dense = result.hop_distance.to_dense()
 
-        # Check shapes (3 edges each)
-        self.assertEqual(result['user', 'buys', 'item'].hop_distance.shape, (3, 1))
-        self.assertEqual(result['item', 'bought_by', 'user'].hop_distance.shape, (3, 1))
+        # Diagonal should be 0 (distance to self, not stored in sparse = 0)
+        self.assertTrue((dense.diag() == 0).all())
 
-        # Direct edges should have distance <= h_max
-        self.assertTrue((result['user', 'buys', 'item'].hop_distance <= 3).all())
+        # Non-zero values (reachable pairs) should be in [1, h_max]
+        nonzero_vals = result.hop_distance.values()
+        if nonzero_vals.numel() > 0:
+            self.assertTrue((nonzero_vals >= 1).all())
+            self.assertTrue((nonzero_vals <= 3).all())
 
     def test_forward_with_custom_attr_name(self):
         """Test forward pass with custom attribute name."""
         data = create_simple_hetero_data()
-        transform = AddHeteroHopDistanceEncoding(h_max=2, attr_name='custom_hop', full_matrix=False)
+        transform = AddHeteroHopDistanceEncoding(h_max=2, attr_name='custom_hop')
 
         result = transform(data)
 
-        self.assertTrue(hasattr(result['user', 'buys', 'item'], 'custom_hop'))
-        self.assertTrue(hasattr(result['item', 'bought_by', 'user'], 'custom_hop'))
-        self.assertFalse(hasattr(result['user', 'buys', 'item'], 'hop_distance'))
+        self.assertTrue(hasattr(result, 'custom_hop'))
+        self.assertFalse(hasattr(result, 'hop_distance'))
+        self.assertTrue(result.custom_hop.is_sparse)
 
     def test_forward_undirected(self):
         """Test forward pass with undirected graph setting."""
         data = create_simple_hetero_data()
-        transform = AddHeteroHopDistanceEncoding(h_max=2, is_undirected=True, full_matrix=False)
+        transform = AddHeteroHopDistanceEncoding(h_max=2, is_undirected=True)
 
         result = transform(data)
 
-        self.assertEqual(result['user', 'buys', 'item'].hop_distance.shape, (3, 1))
-        self.assertEqual(result['item', 'bought_by', 'user'].hop_distance.shape, (3, 1))
+        self.assertTrue(result.hop_distance.is_sparse)
+        self.assertEqual(result.hop_distance.shape, (5, 5))
 
     def test_forward_empty_graph(self):
         """Test forward pass with empty graph."""
         data = create_empty_hetero_data()
         # Add empty edge types
         data['user', 'buys', 'item'].edge_index = torch.zeros((2, 0), dtype=torch.long)
-        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=False)
-
-        result = transform(data)
-
-        self.assertEqual(result['user', 'buys', 'item'].hop_distance.shape, (0,))
-
-    def test_forward_full_matrix(self):
-        """Test forward pass with full_matrix=True for Graph Transformer use."""
-        data = create_simple_hetero_data()
-        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True)
-
-        result = transform(data)
-
-        # Check that full pairwise distance matrix is stored as graph-level attribute
-        self.assertTrue(hasattr(result, 'hop_distance'))
-        # Total nodes: 3 users + 2 items = 5 nodes
-        self.assertEqual(result.hop_distance.shape, (5, 5))
-        # Diagonal should be 0 (distance to self)
-        self.assertTrue((result.hop_distance.diag() == 0).all())
-        # All distances should be <= h_max
-        self.assertTrue((result.hop_distance <= 3).all())
-
-    def test_forward_full_matrix_empty_graph(self):
-        """Test forward pass with full_matrix=True on empty graph."""
-        data = create_empty_hetero_data()
-        data['user', 'buys', 'item'].edge_index = torch.zeros((2, 0), dtype=torch.long)
-        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True)
+        transform = AddHeteroHopDistanceEncoding(h_max=3)
 
         result = transform(data)
 
         self.assertTrue(hasattr(result, 'hop_distance'))
+        self.assertTrue(result.hop_distance.is_sparse)
         self.assertEqual(result.hop_distance.shape, (0, 0))
 
     def test_forward_node_type_aware(self):
         """Test forward pass with node_type_aware=True for heterogeneous Graph Transformers."""
         data = create_simple_hetero_data()
-        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True, node_type_aware=True)
+        transform = AddHeteroHopDistanceEncoding(h_max=3, node_type_aware=True)
 
         result = transform(data)
 
-        # Check that hop distance matrix is stored
+        # Check that hop distance matrix is stored (sparse)
         self.assertTrue(hasattr(result, 'hop_distance'))
+        self.assertTrue(result.hop_distance.is_sparse)
         self.assertEqual(result.hop_distance.shape, (5, 5))
 
         # Check that node type information is stored
         self.assertTrue(hasattr(result, 'node_type_ids'))
         self.assertEqual(result.node_type_ids.shape, (5,))
 
-        # Check that node type pair matrix is stored
+        # Check that node type pair matrix is stored (sparse)
         self.assertTrue(hasattr(result, 'node_type_pair'))
+        self.assertTrue(result.node_type_pair.is_sparse)
         self.assertEqual(result.node_type_pair.shape, (5, 5))
 
         # Check that node type names are stored
@@ -414,56 +394,40 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
 
         # Verify node_type_pair encodes (src_type, dst_type) correctly
         # For 2 node types, pair values should be in [0, 3] (0*2+0, 0*2+1, 1*2+0, 1*2+1)
-        self.assertTrue((result.node_type_pair >= 0).all())
-        self.assertTrue((result.node_type_pair < 4).all())
+        type_pair_vals = result.node_type_pair.values()
+        if type_pair_vals.numel() > 0:
+            self.assertTrue((type_pair_vals >= 0).all())
+            self.assertTrue((type_pair_vals < 4).all())
 
     def test_forward_node_type_aware_empty_graph(self):
         """Test forward pass with node_type_aware=True on empty graph."""
         data = create_empty_hetero_data()
         data['user', 'buys', 'item'].edge_index = torch.zeros((2, 0), dtype=torch.long)
-        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True, node_type_aware=True)
+        transform = AddHeteroHopDistanceEncoding(h_max=3, node_type_aware=True)
 
         result = transform(data)
 
         self.assertTrue(hasattr(result, 'hop_distance'))
+        self.assertTrue(result.hop_distance.is_sparse)
         self.assertEqual(result.hop_distance.shape, (0, 0))
         self.assertTrue(hasattr(result, 'node_type_ids'))
         self.assertEqual(result.node_type_ids.shape, (0,))
         self.assertTrue(hasattr(result, 'node_type_pair'))
+        self.assertTrue(result.node_type_pair.is_sparse)
         self.assertEqual(result.node_type_pair.shape, (0, 0))
-
-    def test_node_type_aware_only_with_full_matrix(self):
-        """Test that node_type_aware only takes effect when full_matrix=True."""
-        data = create_simple_hetero_data()
-        # node_type_aware=True but full_matrix=False should not add node type info
-        transform = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=False, node_type_aware=True)
-
-        result = transform(data)
-
-        # Should have edge-level hop_distance
-        self.assertTrue(hasattr(result['user', 'buys', 'item'], 'hop_distance'))
-        # Should NOT have node type information (only added when full_matrix=True)
-        self.assertFalse(hasattr(result, 'node_type_ids'))
-        self.assertFalse(hasattr(result, 'node_type_pair'))
 
     def test_repr(self):
         """Test string representation."""
-        transform = AddHeteroHopDistanceEncoding(h_max=5, full_matrix=False)
+        transform = AddHeteroHopDistanceEncoding(h_max=5)
         self.assertEqual(
             repr(transform),
-            'AddHeteroHopDistanceEncoding(h_max=5, full_matrix=False, node_type_aware=False)'
+            'AddHeteroHopDistanceEncoding(h_max=5, node_type_aware=False)'
         )
 
-        transform_full = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True)
-        self.assertEqual(
-            repr(transform_full),
-            'AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True, node_type_aware=False)'
-        )
-
-        transform_type_aware = AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True, node_type_aware=True)
+        transform_type_aware = AddHeteroHopDistanceEncoding(h_max=3, node_type_aware=True)
         self.assertEqual(
             repr(transform_type_aware),
-            'AddHeteroHopDistanceEncoding(h_max=3, full_matrix=True, node_type_aware=True)'
+            'AddHeteroHopDistanceEncoding(h_max=3, node_type_aware=True)'
         )
 
 
