@@ -56,18 +56,6 @@ Example Usage:
     >>> data = transform(data)
     >>> print(data.hop_distance.shape)       # (num_total_nodes, num_total_nodes) sparse
     >>> print(data.hop_distance.is_sparse)   # True
-    >>>
-    >>> # For heterogeneous Graph Transformers, use node_type_aware=True to preserve
-    >>> # node type information for type-aware attention bias
-    >>> transform = AddHeteroHopDistanceEncoding(h_max=5, node_type_aware=True)
-    >>> data = transform(data)
-    >>> print(data.hop_distance.shape)      # (8, 8) - sparse pairwise distances
-    >>> print(data.node_type_ids.shape)     # (8,) - type ID for each node
-    >>> print(data.node_type_pair.shape)    # (8, 8) - sparse (src_type, dst_type) pairs
-    >>> print(data.node_type_names)         # ['item', 'user'] - sorted alphabetically
-    >>>
-    >>> # In a Graph Transformer, combine hop distance and node type for attention bias:
-    >>> # bias = hop_embedding[data.hop_distance.long()] + type_pair_embedding[data.node_type_pair]
 """
 
 
@@ -328,15 +316,6 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
 
     This sparse representation avoids GPU memory blowup for large graphs.
 
-    For heterogeneous graphs, additional node type information can be preserved
-    by setting `node_type_aware=True`. This stores:
-        - `data.hop_distance`: sparse (num_nodes, num_nodes) distance matrix
-        - `data.node_type_ids`: (num_nodes,) node type ID for each node
-        - `data.node_type_pair`: sparse (num_nodes, num_nodes) encodes (src_type, dst_type) pairs
-
-    This allows Graph Transformers to use both structural (hop distance) and
-    semantic (node type) information in attention bias computation.
-
     Args:
         h_max (int): Maximum hop distance to consider. Distances > h_max
             are treated as unreachable (value 0 in sparse matrix).
@@ -347,25 +326,16 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected for distance computation.
             (default: :obj:`False`)
-        node_type_aware (bool, optional): If set to :obj:`True`, also stores
-            node type information:
-            - `node_type_ids`: (num_nodes,) tensor mapping each node to its type ID
-            - `node_type_pair`: sparse (num_nodes, num_nodes) tensor encoding the
-              (src_type, dst_type) pair as `src_type * num_node_types + dst_type`
-            This enables type-aware attention bias in heterogeneous Graph Transformers.
-            (default: :obj:`False`)
     """
     def __init__(
         self,
         h_max: int,
         attr_name: Optional[str] = 'hop_distance',
         is_undirected: bool = False,
-        node_type_aware: bool = False,
     ) -> None:
         self.h_max = h_max
         self.attr_name = attr_name
         self.is_undirected = is_undirected
-        self.node_type_aware = node_type_aware
 
     def forward(self, data: HeteroData) -> HeteroData:
         assert isinstance(data, HeteroData), (
@@ -387,9 +357,6 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
                 size=(num_nodes, num_nodes),
             ).coalesce()
             data[self.attr_name] = empty_sparse
-            if self.node_type_aware:
-                data['node_type_ids'] = torch.zeros(num_nodes, dtype=torch.long)
-                data['node_type_pair'] = empty_sparse
             return data
 
         device = edge_index.device
@@ -480,36 +447,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         # Note: Node ordering follows data.to_homogeneous() order (by node_type alphabetically)
         data[self.attr_name] = dist_sparse
 
-        if self.node_type_aware:
-            # Store node type information for heterogeneous-aware attention
-            node_type_ids = homo_data.node_type  # Shape: (num_nodes,)
-            data['node_type_ids'] = node_type_ids
-
-            # Compute sparse pairwise node type encoding for reachable pairs only
-            # node_type_pair[i, j] = node_type_ids[i] * num_node_types + node_type_ids[j]
-            num_node_types = len(data.node_types)
-            if dist_rows.size(0) > 0:
-                type_pair_vals = (
-                    node_type_ids[dist_rows] * num_node_types +
-                    node_type_ids[dist_cols]
-                ).float()
-            else:
-                type_pair_vals = torch.zeros(0, dtype=torch.float, device=device)
-
-            node_type_pair_sparse = torch.sparse_coo_tensor(
-                torch.stack([dist_rows, dist_cols]),
-                type_pair_vals,
-                size=(num_nodes, num_nodes),
-            ).coalesce()
-            data['node_type_pair'] = node_type_pair_sparse
-
-            # Also store the mapping from type ID to type name for reference
-            data['node_type_names'] = sorted(data.node_types)
-
         return data
 
     def __repr__(self) -> str:
-        return (
-            f'{self.__class__.__name__}(h_max={self.h_max}, '
-            f'node_type_aware={self.node_type_aware})'
-        )
+        return f'{self.__class__.__name__}(h_max={self.h_max})'
