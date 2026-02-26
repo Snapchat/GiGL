@@ -1,6 +1,8 @@
 from collections.abc import Iterable, Iterator
 from typing import TypeVar
 
+import torch
+
 _T = TypeVar("_T")
 
 
@@ -20,6 +22,9 @@ class InfiniteIterator(Iterator[_T]):
         try:
             return next(self._iter)
         except StopIteration:
-            print(f"InfiniteIterator: _iterable={self._iterable} exhausted, resetting iterator")
+            if torch.distributed.is_initialized():
+                print(f"rank={torch.distributed.get_rank()}: InfiniteIterator: _iterable={self._iterable} exhausted, resetting iterator")
+            else:
+                print(f"InfiniteIterator: _iterable={self._iterable} exhausted, resetting iterator")
             self._iter = iter(self._iterable)
             return next(self._iter)
