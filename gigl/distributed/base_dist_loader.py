@@ -564,14 +564,14 @@ class BaseDistLoader(DistLoader):
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
-        logger.info(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__")
+        print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__")
         self._num_recv = 0
         if self._is_collocated_worker:
             self._collocated_producer.reset()
         elif self._is_mp_worker:
             self._mp_producer.produce_all()
         else:
-            logger.info(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls")
+            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls")
             rpc_futures: list[torch.futures.Future[None]] = []
             for server_rank, producer_id in zip(
                 self._server_rank_list, self._producer_id_list
@@ -583,11 +583,11 @@ class BaseDistLoader(DistLoader):
                     self._epoch,
                 )
                 rpc_futures.append(fut)
-            logger.info(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: waiting for {len(rpc_futures)} rpc calls")
+            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: waiting for {len(rpc_futures)} rpc calls")
             torch.futures.wait_all(rpc_futures)
-            logger.info(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls done")
+            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls done")
             self._channel.reset()
-            logger.info(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: channel reset")
-        logger.info(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: epoch incremented to {self._epoch}")
+            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: channel reset")
+        print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: epoch incremented to {self._epoch}")
         self._epoch += 1
         return self

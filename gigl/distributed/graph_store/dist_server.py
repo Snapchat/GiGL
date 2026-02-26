@@ -555,13 +555,19 @@ class DistServer:
         r"""Start a new epoch sampling tasks for a specific sampling producer
         with its producer id.
         """
+        logger.info(f"DistServer.start_new_epoch_sampling: producer_id={producer_id}, epoch={epoch}")
         with self._producer_lock[producer_id]:
             cur_epoch = self._epoch[producer_id]
             if cur_epoch < epoch:
                 self._epoch[producer_id] = epoch
                 producer = self._producer_pool.get(producer_id, None)
                 if producer is not None:
+                    logger.info(f"DistServer.start_new_epoch_sampling: producing all for producer {producer_id}")
                     producer.produce_all()
+                else:
+                    logger.warning(f"DistServer.start_new_epoch_sampling: producer {producer_id} not found")
+            else:
+                logger.info(f"DistServer.start_new_epoch_sampling: producer {producer_id} already on epoch {cur_epoch}, skipping")
 
     def fetch_one_sampled_message(
         self, producer_id: int
