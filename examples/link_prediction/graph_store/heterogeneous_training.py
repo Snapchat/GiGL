@@ -164,7 +164,9 @@ def _setup_dataloaders(
         labeled_node_type = supervision_edge_type.dst_node_type
         anchor_node_type = query_node_type
 
-    print(f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.fetch_edge_dir()}")
+    print(
+        f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.fetch_edge_dir()}"
+    )
 
     shuffle = split == "train"
 
@@ -261,7 +263,7 @@ def _compute_loss(
         query_node_type = supervision_edge_type.dst_node_type
         labeled_node_type = supervision_edge_type.src_node_type
 
-    #print(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
+    # print(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]
     else:
@@ -505,9 +507,7 @@ def _training_process(
             lr=args.learning_rate,
             weight_decay=args.weight_decay,
         )
-        print(
-            f"Model initialized on rank {rank} training device {device}\n{model}"
-        )
+        print(f"Model initialized on rank {rank} training device {device}\n{model}")
         flush()
 
         # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model
@@ -554,7 +554,9 @@ def _training_process(
             last_n_batch_time.append(time.time() - batch_start)
             batch_start = time.time()
             batch_idx += 1
-            if batch_idx % args.log_every_n_batch == 0 or batch_idx < 10: # Log the first 10 batches to ensure the model is initialized correctly
+            if (
+                batch_idx % args.log_every_n_batch == 0 or batch_idx < 10
+            ):  # Log the first 10 batches to ensure the model is initialized correctly
                 print(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
@@ -626,9 +628,7 @@ def _training_process(
             find_unused_encoder_parameters=True,
             state_dict=state_dict,
         )
-        print(
-            f"Model initialized on rank {rank} training device {device}\n{model}"
-        )
+        print(f"Model initialized on rank {rank} training device {device}\n{model}")
 
     print(f"---Rank {rank} started testing")
     flush()
@@ -736,13 +736,17 @@ def _run_validation_loops(
 
     while True:
         if num_batches and batch_idx >= num_batches:
-            print(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop")
+            print(
+                f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop"
+            )
             break
         try:
             main_data = next(main_loader)
             random_data = next(random_negative_loader)
         except StopIteration:
-            print(f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop")
+            print(
+                f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop"
+            )
             break
 
         loss = _compute_loss(
@@ -769,7 +773,9 @@ def _run_validation_loops(
             last_n_batch_time.clear()
             flush()
     if len(batch_losses) == 0:
-        print(f"rank={rank} WARNING: 0 batches processed in validation loop, setting local loss to 0.0")
+        print(
+            f"rank={rank} WARNING: 0 batches processed in validation loop, setting local loss to 0.0"
+        )
         flush()
         local_avg_loss = 0.0
     else:
@@ -803,9 +809,7 @@ def _run_example_training(
     cluster_info = get_graph_store_info()
     print(f"Cluster info: {cluster_info}")
     torch.distributed.destroy_process_group()
-    print(
-        f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
-    )
+    print(f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool")
     flush()
 
     # Step 2: Read config

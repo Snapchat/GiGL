@@ -551,23 +551,37 @@ class DistServer:
                 self._msg_buffer_pool.pop(producer_id)
                 self._epoch.pop(producer_id)
 
-    def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> None:
+    def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> int:
         r"""Start a new epoch sampling tasks for a specific sampling producer
         with its producer id.
+
+        Returns:
+            The server's current epoch for this producer after processing the
+            request. Clients should use this to synchronize their local epoch
+            counter, since multiple clients may share the same producer.
         """
-        logger.info(f"DistServer.start_new_epoch_sampling: producer_id={producer_id}, epoch={epoch}")
+        logger.info(
+            f"DistServer.start_new_epoch_sampling: producer_id={producer_id}, epoch={epoch}"
+        )
         with self._producer_lock[producer_id]:
             cur_epoch = self._epoch[producer_id]
             if cur_epoch < epoch:
                 self._epoch[producer_id] = epoch
                 producer = self._producer_pool.get(producer_id, None)
                 if producer is not None:
-                    logger.info(f"DistServer.start_new_epoch_sampling: producing all for producer {producer_id}")
+                    logger.info(
+                        f"DistServer.start_new_epoch_sampling: producing all for producer {producer_id}"
+                    )
                     producer.produce_all()
                 else:
-                    logger.warning(f"DistServer.start_new_epoch_sampling: producer {producer_id} not found")
+                    logger.warning(
+                        f"DistServer.start_new_epoch_sampling: producer {producer_id} not found"
+                    )
             else:
-                logger.info(f"DistServer.start_new_epoch_sampling: producer {producer_id} already on epoch {cur_epoch}, skipping")
+                logger.info(
+                    f"DistServer.start_new_epoch_sampling: producer {producer_id} already on epoch {cur_epoch}, skipping"
+                )
+            return self._epoch[producer_id]
 
     def fetch_one_sampled_message(
         self, producer_id: int

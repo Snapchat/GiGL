@@ -568,11 +568,15 @@ class BaseDistLoader(DistLoader):
         self._num_recv = 0
         if self._is_collocated_worker:
             self._collocated_producer.reset()
+            self._epoch += 1
         elif self._is_mp_worker:
             self._mp_producer.produce_all()
+            self._epoch += 1
         else:
-            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls")
-            rpc_futures: list[torch.futures.Future[None]] = []
+            print(
+                f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls"
+            )
+            rpc_futures: list[torch.futures.Future[int]] = []
             for server_rank, producer_id in zip(
                 self._server_rank_list, self._producer_id_list
             ):
@@ -583,11 +587,19 @@ class BaseDistLoader(DistLoader):
                     self._epoch,
                 )
                 rpc_futures.append(fut)
-            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: waiting for {len(rpc_futures)} rpc calls")
-            torch.futures.wait_all(rpc_futures)
-            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls done")
+            print(
+                f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: waiting for {len(rpc_futures)} rpc calls"
+            )
+            server_epochs: list[int] = torch.futures.wait_all(rpc_futures)
+            print(
+                f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls done, server_epochs={server_epochs}"
+            )
             self._channel.reset()
-            print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: channel reset")
-        print(f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: epoch incremented to {self._epoch}")
-        self._epoch += 1
+            print(
+                f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: channel reset"
+            )
+            self._epoch = max(server_epochs) + 1
+        print(
+            f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: epoch={self._epoch}"
+        )
         return self

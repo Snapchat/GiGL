@@ -718,19 +718,25 @@ def _run_validation_loops(
 
     while True:
         if num_batches and batch_idx >= num_batches:
-            print(f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop with batch_idx={batch_idx} and num_batches={num_batches}")
+            print(
+                f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop with batch_idx={batch_idx} and num_batches={num_batches}"
+            )
             flush()
             break
         try:
             main_data = next(main_loader)
         except StopIteration:
-            print(f"Rank {torch.distributed.get_rank()} MAIN loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}")
+            print(
+                f"Rank {torch.distributed.get_rank()} MAIN loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}"
+            )
             flush()
             break
         try:
             random_data = next(random_negative_loader)
         except StopIteration:
-            print(f"Rank {torch.distributed.get_rank()} RANDOM NEGATIVE loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}")
+            print(
+                f"Rank {torch.distributed.get_rank()} RANDOM NEGATIVE loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}"
+            )
             flush()
             break
 
@@ -758,10 +764,14 @@ def _run_validation_loops(
     if batch_losses:
         local_avg_loss = statistics.mean(batch_losses)
     else:
-        print(f"rank={rank} WARNING: 0 batches processed in validation loop, setting local loss to 0.0")
+        print(
+            f"rank={rank} WARNING: 0 batches processed in validation loop, setting local loss to 0.0"
+        )
         flush()
         local_avg_loss = 0.0
-    print(f"rank={rank} finished validation loop, num_batches_processed={len(batch_losses)}, local loss: {local_avg_loss:.6f}")
+    print(
+        f"rank={rank} finished validation loop, num_batches_processed={len(batch_losses)}, local loss: {local_avg_loss:.6f}"
+    )
     flush()
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
