@@ -1,6 +1,9 @@
 """
 Transform HeteroData to Graph Transformer sequence input.
 
+TODO: Doesn't support multiple node types with different feature dim yet.
+TODO: Doesn't support relative encoding used for attention bias yet.
+
 This module provides functionality to convert PyG HeteroData objects (typically
 batched 2-hop subgraphs) into sequence format suitable for Graph Transformers.
 
@@ -9,7 +12,7 @@ and creates a fixed-length sequence of node features with padding.
 
 Example Usage:
     >>> from torch_geometric.data import HeteroData
-    >>> from gigl.transforms.hetero_to_graph_transformer import HeteroToGraphTransformerInput
+    >>> from gigl.transforms.graph_transformer import HeteroToGraphTransformerInput
     >>>
     >>> # Create batched HeteroData (e.g., from NeighborLoader)
     >>> # First batch_size nodes in each node type are anchor nodes
@@ -28,6 +31,25 @@ Example Usage:
     >>> # sequences: (batch_size, max_seq_len, feature_dim)
     >>> # attention_mask: (batch_size, max_seq_len) - 1 for valid, 0 for padding
     >>> # anchor_positions: (batch_size,) - position of anchor in each sequence
+
+    Using with PyTorch TransformerEncoderLayer:
+    >>> import torch.nn as nn
+    >>>
+    >>> feature_dim = 64
+    >>> encoder_layer = nn.TransformerEncoderLayer(
+    ...     d_model=feature_dim,
+    ...     nhead=8,
+    ...     dim_feedforward=256,
+    ...     batch_first=True,
+    ... )
+    >>> transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
+    >>>
+    >>> # Transform data and pass to transformer
+    >>> sequences, attention_mask, _ = transform(data)
+    >>> # Convert attention_mask to key_padding_mask (True = ignore)
+    >>> key_padding_mask = (attention_mask == 0)
+    >>> output = transformer_encoder(sequences, src_key_padding_mask=key_padding_mask)
+    >>> # output: (batch_size, max_seq_len, feature_dim)
 """
 
 from typing import Optional, Tuple
