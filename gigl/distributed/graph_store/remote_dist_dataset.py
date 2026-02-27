@@ -1,4 +1,5 @@
 import gc
+import threading
 import time
 from collections.abc import MutableMapping
 from multiprocessing.managers import DictProxy
@@ -29,6 +30,7 @@ class RemoteDistDataset:
         cluster_info: GraphStoreInfo,
         local_rank: int,
         mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]] = None,
+        mp_barrier: Optional[threading.Barrier] = None,
     ):
         """
         Represents a dataset that is stored on a difference storage cluster.
@@ -44,10 +46,18 @@ class RemoteDistDataset:
                 e.g. for `fetch_node_ids`.
                 If provided, *must* be a `DictProxy` e.g. the return value of a mp.Manager.
                 ex. torch.multiprocessing.Manager().dict().
+            mp_barrier (Optional[threading.Barrier]):
+                (Optional) If provided, will be used to synchronize processes on the local machine
+                when sharing tensors via ``mp_sharing_dict``.
+                Must be provided when ``mp_sharing_dict`` is provided.
+                Must be created from the same ``mp.Manager()`` as ``mp_sharing_dict``,
+                with ``parties`` equal to ``cluster_info.num_processes_per_compute``.
+                ex. torch.multiprocessing.Manager().Barrier(num_processes_per_compute).
         """
         self._cluster_info = cluster_info
         self._local_rank = local_rank
         self._mp_sharing_dict = mp_sharing_dict
+        self._mp_barrier = mp_barrier
         # We accept mp_sharing_dict as a `MutableMapping` as if we directly annotate as `DictProxy` (which is what we want)
         # Then we will have runtime failures e.g.:
         #   File "/.../GiGL/python/gigl/distributed/graph_store/remote_dist_dataset.py", line 30, in RemoteDistDataset
@@ -60,6 +70,11 @@ class RemoteDistDataset:
         ):
             raise ValueError(
                 f"When using mp_sharing_dict, you must pass in a `DictProxy` e.g. mp.manager().dict(). Recieved a {type(self._mp_sharing_dict)}"
+            )
+        if self._mp_sharing_dict is not None and self._mp_barrier is None:
+            raise ValueError(
+                "mp_barrier must be provided when mp_sharing_dict is provided. "
+                "Use mp.Manager().Barrier(num_processes_per_compute)."
             )
 
     @property
@@ -293,6 +308,7 @@ class RemoteDistDataset:
             return f"node_ids_from_server_{server_rank}"
 
         if self._mp_sharing_dict is not None:
+            assert self._mp_barrier is not None
             if self._local_rank == 0:
                 start_time = time.time()
                 logger.info(
@@ -305,12 +321,14 @@ class RemoteDistDataset:
                 logger.info(
                     f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
                 )
-            torch.distributed.barrier()
+            # Wait for rank 0 to finish writing shared data before any rank reads.
+            self._mp_barrier.wait()
             node_ids = {
                 server_rank: self._mp_sharing_dict[server_key(server_rank)]
                 for server_rank in range(self.cluster_info.num_storage_nodes)
             }
-            # Only the rank 0 process cleans up the shared memory dict
+            # Wait for all ranks to finish reading before rank 0 cleans up.
+            self._mp_barrier.wait()
             if self._local_rank == 0:
                 for server_rank in range(self.cluster_info.num_storage_nodes):
                     del self._mp_sharing_dict[server_key(server_rank)]
@@ -504,6 +522,7 @@ class RemoteDistDataset:
             )
 
         if self._mp_sharing_dict is not None:
+            assert self._mp_barrier is not None
             if self._local_rank == 0:
                 start_time = time.time()
                 logger.info(
@@ -536,7 +555,8 @@ class RemoteDistDataset:
                     f"Compute rank {torch.distributed.get_rank()} got ABLP input from storage nodes "
                     f"in {time.time() - start_time:.2f} seconds"
                 )
-            torch.distributed.barrier()
+            # Wait for rank 0 to finish writing shared data before any rank reads.
+            self._mp_barrier.wait()
             returned_ablp_inputs: dict[int, ABLPInputNodes] = {}
             for server_rank in range(self.cluster_info.num_storage_nodes):
                 anchors = self._mp_sharing_dict[anchors_key(server_rank)]
@@ -555,7 +575,8 @@ class RemoteDistDataset:
                     positive_labels=positive_labels,
                     negative_labels=negative_labels,
                 )
-            # Only the rank 0 process cleans up the shared memory dict
+            # Wait for all ranks to finish reading before rank 0 cleans up.
+            self._mp_barrier.wait()
             if self._local_rank == 0:
                 for server_rank in range(self.cluster_info.num_storage_nodes):
                     del self._mp_sharing_dict[anchors_key(server_rank)]
