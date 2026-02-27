@@ -316,26 +316,33 @@ class BqUtils:
         project_id, dataset_name, table_prefix = BqUtils.parse_bq_table_path(
             bq_table_path_prefix
         )
+
         bq_dataset_path = BqUtils.join_path(project_id, dataset_name)
-        matched_full_table_paths = self.list_matching_tables(
-            bq_dataset_path=bq_dataset_path, table_match_string=table_prefix
-        )
+        tables = self.__bq_client.list_tables(bq_dataset_path)
+
         suffix_len = len(table_partition_suffix)
-        candidates = []
-        for table_name in matched_full_table_paths:
-            assert (
-                len(table_name) == len(bq_table_path_prefix) + suffix_len
-            ), f"Table name {table_name} does not end with a suffix of format {table_partition_suffix}"
-            if cap_date is None or table_name[-suffix_len:] <= cap_date:
-                candidates.append(table_name)
-        if not candidates:
+        expected_table_path_len = len(bq_table_path_prefix) + suffix_len
+        latest_table_path: Optional[str] = None
+        curr_latest_candidate_suffix: Optional[str] = None
+        for table_list_item in tables:
+            if not table_list_item.table_id.startswith(table_prefix):
+                continue
+            table_path = BqUtils.format_bq_path(table_list_item.full_table_id)
+            if len(table_path) != expected_table_path_len:
+                continue
+            suffix = table_path[-suffix_len:]
+            if cap_date is None or suffix <= cap_date:
+                if (
+                    curr_latest_candidate_suffix is None
+                    or suffix > curr_latest_candidate_suffix
+                ):
+                    curr_latest_candidate_suffix = suffix
+                    latest_table_path = table_path
+        if curr_latest_candidate_suffix is None:
             raise ValueError(
                 f"No tables found with prefix {bq_table_path_prefix} and cap date {cap_date}"
             )
-        candidates.sort()
-        return candidates[
-            -1
-        ]  # Get the latest table @ last index (since sorted Ascending)
+        return latest_table_path
 
     def delete_matching_tables(
         self, bq_dataset_path: str, table_match_string: str
