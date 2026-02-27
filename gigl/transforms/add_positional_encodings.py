@@ -377,48 +377,74 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         ).coalesce()
 
         # Compute sparse BFS to find all reachable pairs within h_max hops
-        # Store (row, col, distance) for all reachable pairs
+        # Use sparse tensor accumulation (like AddHeteroRandomWalkPE) instead of Python set
+
+        # Track minimum hop distance using sparse accumulation
+        # We'll accumulate reachability and track first-visit hop
         all_rows = []
         all_cols = []
         all_dists = []
 
-        # Track which pairs have been visited (using set of linear indices)
-        # Start with diagonal (self-loops) as visited but don't include in output
-        identity_indices = torch.arange(num_nodes, device=device)
-        visited_linear = set((identity_indices * num_nodes + identity_indices).tolist())
-
-        # Current frontier (sparse): edges reachable at current hop
+        # Start with adjacency as hop 1
         frontier = adj.coalesce()
 
-        for hop in range(1, self.h_max + 1):
-            frontier_indices = frontier.indices()
+        # Track all visited pairs using sparse tensor (value > 0 means visited)
+        visited = torch.sparse_coo_tensor(
+            torch.stack([
+                torch.arange(num_nodes, device=device),
+                torch.arange(num_nodes, device=device),
+            ]),
+            torch.ones(num_nodes, device=device),
+            size=(num_nodes, num_nodes),
+        )  # Start with diagonal as visited
 
-            if frontier_indices.size(1) == 0:
+        for hop in range(1, self.h_max + 1):
+            if frontier._nnz() == 0:
                 break
 
+            frontier_indices = frontier.indices()
             frontier_i = frontier_indices[0]
             frontier_j = frontier_indices[1]
-            frontier_linear = (frontier_i * num_nodes + frontier_j).tolist()
 
-            # Find newly reachable pairs (not in visited set)
-            new_mask = []
-            new_pairs_linear = []
-            for idx, lin_idx in enumerate(frontier_linear):
-                if lin_idx not in visited_linear:
-                    new_mask.append(idx)
-                    new_pairs_linear.append(lin_idx)
-                    visited_linear.add(lin_idx)
+            # Find newly reachable: in frontier but not in visited
+            # Use sparse addition: visited + frontier, then check where frontier has entry but combined == 1
+            combined = (visited + frontier).coalesce()
 
-            if new_mask:
-                new_mask = torch.tensor(new_mask, device=device, dtype=torch.long)
-                new_i = frontier_i[new_mask]
-                new_j = frontier_j[new_mask]
+            # For entries in frontier, check if they're new (combined value == 1 means new)
+            # We need to find frontier entries where combined value == 1
+            frontier_keys = frontier_i * num_nodes + frontier_j
+
+            combined_indices = combined.indices()
+            combined_values = combined.values()
+            combined_keys = combined_indices[0] * num_nodes + combined_indices[1]
+
+            # Sort combined for searchsorted
+            sorted_keys, sort_perm = torch.sort(combined_keys)
+            sorted_values = combined_values[sort_perm]
+
+            # Find frontier entries in combined
+            pos = torch.searchsorted(sorted_keys, frontier_keys)
+            pos_clamped = pos.clamp(max=sorted_keys.size(0) - 1)
+
+            # New if combined value == 1 (only from frontier, not previously visited)
+            is_new = (sorted_keys[pos_clamped] == frontier_keys) & (sorted_values[pos_clamped] == 1.0)
+
+            if is_new.any():
+                new_i = frontier_i[is_new]
+                new_j = frontier_j[is_new]
 
                 all_rows.append(new_i)
                 all_cols.append(new_j)
                 all_dists.append(torch.full((new_i.size(0),), hop, device=device, dtype=torch.float))
 
-            # Expand frontier: frontier = frontier @ adj (sparse matmul)
+            # Update visited (binarize combined)
+            visited = torch.sparse_coo_tensor(
+                combined.indices(),
+                torch.ones(combined._nnz(), device=device),
+                size=(num_nodes, num_nodes),
+            )
+
+            # Expand frontier: frontier = frontier @ adj
             frontier = torch.sparse.mm(frontier, adj).coalesce()
 
         # Build sparse distance matrix
