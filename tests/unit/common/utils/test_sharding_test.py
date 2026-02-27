@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 
 import gigl.src.common.constants.local_fs as local_fs_constants
@@ -6,6 +7,27 @@ from gigl.common.utils.test_utils import _filter_tests_by_shard, _get_shard_for_
 from tests.integration.main import INTEGRATION_TEST_SHARD_PINNED_MODULES
 from tests.test_assets.test_case import TestCase
 from tests.unit.main import UNIT_TEST_SHARD_PINNED_MODULES
+
+
+def _extract_module_names(suite: unittest.TestSuite) -> list[str]:
+    """Extracts module names from a filtered test suite, preserving order.
+
+    Assumes the suite has the two-level nesting produced by
+    ``_make_test_suite_with_modules``: outer suite → inner TestSuite per
+    module → individual TestCase(s).
+
+    Args:
+        suite: A filtered test suite.
+
+    Returns:
+        Ordered list of module name strings found in the suite.
+    """
+    return [
+        type(test_case).__module__
+        for test_group in suite
+        if isinstance(test_group, unittest.TestSuite)
+        for test_case in test_group
+    ]
 
 
 def _make_test_suite_with_modules(module_names: list[str]) -> unittest.TestSuite:
@@ -78,7 +100,7 @@ class FilterTestsByShardTest(TestCase):
     def test_no_overlap_between_shards(self) -> None:
         """Each module must appear in exactly one shard."""
         total_shards = 4
-        seen_modules: list[str] = []
+        seen_modules: set[str] = set()
         for shard_index in range(total_shards):
             suite = _make_test_suite_with_modules(self.MODULES)
             result = _filter_tests_by_shard(suite, shard_index, total_shards)
@@ -91,7 +113,7 @@ class FilterTestsByShardTest(TestCase):
                         seen_modules,
                         f"Module {module} appeared in multiple shards",
                     )
-                    seen_modules.append(module)
+                    seen_modules.add(module)
 
     def test_deterministic_assignment(self) -> None:
         """Running the same shard twice must produce identical results."""
@@ -99,21 +121,11 @@ class FilterTestsByShardTest(TestCase):
         shard_index = 1
         suite1 = _make_test_suite_with_modules(self.MODULES)
         result1 = _filter_tests_by_shard(suite1, shard_index, total_shards)
-        modules1 = [
-            type(tc).__module__
-            for tg in result1
-            if isinstance(tg, unittest.TestSuite)
-            for tc in tg
-        ]
+        modules1 = _extract_module_names(result1)
 
         suite2 = _make_test_suite_with_modules(self.MODULES)
         result2 = _filter_tests_by_shard(suite2, shard_index, total_shards)
-        modules2 = [
-            type(tc).__module__
-            for tg in result2
-            if isinstance(tg, unittest.TestSuite)
-            for tc in tg
-        ]
+        modules2 = _extract_module_names(result2)
 
         self.assertEqual(modules1, modules2)
 
@@ -180,7 +192,7 @@ class ShardPinningTest(TestCase):
         total_shards = 4
         all_modules = list(self.PINNED) + self.UNPINNED
 
-        seen_modules: list[str] = []
+        seen_modules: set[str] = set()
         for shard_index in range(total_shards):
             fresh_suite = _make_test_suite_with_modules(all_modules)
             result = _filter_tests_by_shard(
@@ -195,11 +207,11 @@ class ShardPinningTest(TestCase):
                         seen_modules,
                         f"Module {module} appeared in multiple shards",
                     )
-                    seen_modules.append(module)
+                    seen_modules.add(module)
 
         self.assertEqual(
-            sorted(seen_modules),
-            sorted(all_modules),
+            seen_modules,
+            set(all_modules),
             "Not all modules were covered across shards",
         )
 
@@ -220,8 +232,6 @@ class ShardPinningTest(TestCase):
 
     def test_unpinned_modules_use_hash(self) -> None:
         """Unpinned modules still use SHA-256 hashing, unaffected by pinned list."""
-        import hashlib
-
         total_shards = 4
         for module_name in self.UNPINNED:
             expected = (
@@ -296,28 +306,6 @@ class RealDiscoveryShardingTest(TestCase):
             start_dir=start_dir.uri, pattern="*_test.py"
         )
         cls.unsharded_test_ids = _collect_test_ids(full_suite)
-
-    def test_sharded_test_count_equals_unsharded(self) -> None:
-        """Sum of test cases across all shards equals the unsharded total."""
-        sharded_total = 0
-        for shard_index in range(self.TOTAL_SHARDS):
-            suite = unittest.TestLoader().discover(
-                start_dir=self.start_dir.uri, pattern="*_test.py"
-            )
-            filtered = _filter_tests_by_shard(
-                suite,
-                shard_index,
-                self.TOTAL_SHARDS,
-                UNIT_TEST_SHARD_PINNED_MODULES,
-            )
-            sharded_total += filtered.countTestCases()
-
-        self.assertEqual(
-            sharded_total,
-            len(self.unsharded_test_ids),
-            f"Sharded total ({sharded_total}) != unsharded total "
-            f"({len(self.unsharded_test_ids)})",
-        )
 
     def test_sharded_tests_equal_unsharded(self) -> None:
         """Union of test IDs across all shards equals the full unsharded set."""

@@ -52,6 +52,10 @@ jobs:
         should_leave_progress_comments: "true"
         descriptive_workflow_name: "Python Unit Test"
         setup_gcloud: "true"
+        # We use cloud run here instead of using github hosted runners because of limitation of tests
+        # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
+        # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
+        # https://github.com/tensorflow/tensorflow/issues/57104
         use_sharded_cloud_build: "true"
         sharded_test_command: "unit_test_py_shard"
         total_shards: "4"
@@ -93,6 +97,10 @@ jobs:
         should_leave_progress_comments: "true"
         descriptive_workflow_name: "Integration Test"
         setup_gcloud: "true"
+        # We use cloud run here instead of using github hosted runners because of limitation of tests
+        # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
+        # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
+        # https://github.com/tensorflow/tensorflow/issues/57104
         use_sharded_cloud_build: "true"
         sharded_test_command: "integration_test_shard"
         total_shards: "4"
