@@ -310,9 +310,11 @@ class RemoteDistDataset:
                 server_rank: self._mp_sharing_dict[server_key(server_rank)]
                 for server_rank in range(self.cluster_info.num_storage_nodes)
             }
-            for server_rank in range(self.cluster_info.num_storage_nodes):
-                del self._mp_sharing_dict[server_key(server_rank)]
-            gc.collect()
+            # Only the rank 0 process cleans up the shared memory dict
+            if self._local_rank == 0:
+                for server_rank in range(self.cluster_info.num_storage_nodes):
+                    del self._mp_sharing_dict[server_key(server_rank)]
+                gc.collect()
             return node_ids
         else:
             return self._fetch_node_ids(rank, world_size, node_type, split)
@@ -553,13 +555,15 @@ class RemoteDistDataset:
                     positive_labels=positive_labels,
                     negative_labels=negative_labels,
                 )
-            for server_rank in range(self.cluster_info.num_storage_nodes):
-                del self._mp_sharing_dict[anchors_key(server_rank)]
-                del self._mp_sharing_dict[positive_labels_key(server_rank)]
-                negative_label_key = negative_labels_key(server_rank)
-                if negative_label_key in self._mp_sharing_dict:
-                    del self._mp_sharing_dict[negative_label_key]
-            gc.collect()
+            # Only the rank 0 process cleans up the shared memory dict
+            if self._local_rank == 0:
+                for server_rank in range(self.cluster_info.num_storage_nodes):
+                    del self._mp_sharing_dict[anchors_key(server_rank)]
+                    del self._mp_sharing_dict[positive_labels_key(server_rank)]
+                    negative_label_key = negative_labels_key(server_rank)
+                    if negative_label_key in self._mp_sharing_dict:
+                        del self._mp_sharing_dict[negative_label_key]
+                gc.collect()
             return returned_ablp_inputs
         else:
             raw_inputs = self._fetch_ablp_input(
