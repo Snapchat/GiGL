@@ -54,8 +54,8 @@ trainerConfig:
     storageArgs:
       sample_edge_direction: "in"
       splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
-      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": True, "num_val": 0.1, "num_test": 0.1, "supervision_edge_types": [("author", "to", "paper")]}'
-      ssl_positive_label_percentage: "0.05"
+      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": True, "num_val": 0.3, "num_test": 0.3, "supervision_edge_types": [("author", "to", "paper")]}'
+      ssl_positive_label_percentage: "0.15"
       num_server_sessions: "1"
 # TODO(kmonte): Move to user-defined server code
 inferencerConfig:
