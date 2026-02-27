@@ -562,6 +562,8 @@ class BaseDistLoader(DistLoader):
             torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
 
+    _MAX_EPOCH_CATCH_UP_RETRIES: int = 10
+
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
         self._num_recv = 0
@@ -570,7 +572,21 @@ class BaseDistLoader(DistLoader):
         elif self._is_mp_worker:
             self._mp_producer.produce_all()
         else:
-            rpc_futures: list[torch.futures.Future[None]] = []
+            self._request_new_epoch_production()
+            self._channel.reset()
+        self._epoch += 1
+        return self
+
+    def _request_new_epoch_production(self) -> None:
+        """Request production from all servers, retrying if epoch is stale.
+
+        In graph store mode, multiple GPUs on the same compute node share a
+        producer. If another GPU has advanced the server's epoch past ours,
+        our request is silently skipped. This method detects that condition,
+        fast-forwards our epoch, and retries until production is triggered.
+        """
+        for attempt in range(self._MAX_EPOCH_CATCH_UP_RETRIES):
+            rpc_futures: list[torch.futures.Future[tuple[int, bool]]] = []
             for server_rank, producer_id in zip(
                 self._server_rank_list, self._producer_id_list
             ):
@@ -581,7 +597,24 @@ class BaseDistLoader(DistLoader):
                     self._epoch,
                 )
                 rpc_futures.append(fut)
-            torch.futures.wait_all(rpc_futures)
-            self._channel.reset()
-        self._epoch += 1
-        return self
+
+            results = [fut.wait() for fut in rpc_futures]
+            any_produced = any(produced for _, produced in results)
+
+            if any_produced:
+                return
+
+            # No server produced — our epoch is stale.
+            max_server_epoch = max(server_epoch for server_epoch, _ in results)
+            logger.warning(
+                f"Epoch skew detected: client epoch {self._epoch} <= "
+                f"server epoch {max_server_epoch}. Retrying with epoch "
+                f"{max_server_epoch + 1} (attempt {attempt + 1})."
+            )
+            self._epoch = max_server_epoch + 1
+
+        raise RuntimeError(
+            f"Failed to trigger production after "
+            f"{self._MAX_EPOCH_CATCH_UP_RETRIES} attempts. "
+            f"This indicates a persistent epoch skew."
+        )
