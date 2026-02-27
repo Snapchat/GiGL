@@ -48,7 +48,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     - name: Run Python Unit Tests
-      uses: ./.github/actions/run-sharded-cloud-build
+      uses: ./.github/actions/run-command-on-pr
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -95,7 +95,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     - name: Run Integration Tests
-      uses: ./.github/actions/run-sharded-cloud-build
+      uses: ./.github/actions/run-command-on-pr
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
