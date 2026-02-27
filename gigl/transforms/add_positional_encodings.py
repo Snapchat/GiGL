@@ -410,9 +410,9 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
                     visited_linear.add(lin_idx)
 
             if new_mask:
-                new_mask = torch.tensor(new_mask, device=device, dtype=torch.long)
-                new_i = frontier_i[new_mask]
-                new_j = frontier_j[new_mask]
+                new_mask_tensor = torch.tensor(new_mask, device=device, dtype=torch.long)
+                new_i = frontier_i[new_mask_tensor]
+                new_j = frontier_j[new_mask_tensor]
 
                 all_rows.append(new_i)
                 all_cols.append(new_j)
