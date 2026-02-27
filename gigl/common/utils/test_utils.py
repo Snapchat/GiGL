@@ -4,7 +4,7 @@ import time
 import unittest
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Iterator, Tuple
+from typing import Iterator
 from unittest import TestCase
 
 from gigl.common import LocalUri
@@ -70,20 +70,52 @@ def parse_args() -> TestArgs:
     return test_args
 
 
+def _get_shard_for_module(
+    module_name: str,
+    total_shards: int,
+    pinned_modules: tuple[str, ...],
+) -> int:
+    """Returns the shard index a module should be assigned to.
+
+    Pinned modules use their position in ``pinned_modules`` to determine the
+    shard (``index % total_shards``).  All other modules fall back to
+    SHA-256 hashing.
+
+    Args:
+        module_name: Fully-qualified module name.
+        total_shards: Total number of shards (must be >= 2).
+        pinned_modules: Ordered tuple of module names with deterministic
+            position-based shard assignment.
+
+    Returns:
+        Zero-based shard index for the module.
+    """
+    if module_name in pinned_modules:
+        return pinned_modules.index(module_name) % total_shards
+    hash_value = int(hashlib.sha256(module_name.encode()).hexdigest(), 16)
+    return hash_value % total_shards
+
+
 def _filter_tests_by_shard(
-    suite: unittest.TestSuite, shard_index: int, total_shards: int
+    suite: unittest.TestSuite,
+    shard_index: int,
+    total_shards: int,
+    pinned_modules: tuple[str, ...] = (),
 ) -> unittest.TestSuite:
     """Filters a test suite to only include tests belonging to the given shard.
 
     Sharding is done at the file (module) level so that setUpClass/tearDownClass
-    are not split across shards. Each top-level test group's module name is
-    SHA-256 hashed and assigned to a shard via ``hash % total_shards``.
+    are not split across shards. Pinned modules are assigned by their position
+    in ``pinned_modules`` (``index % total_shards``); all other modules use
+    SHA-256 hashing.
 
     Args:
         suite: The full test suite discovered by unittest.
         shard_index: Zero-based index of the current shard.
         total_shards: Total number of shards. If <= 1, the suite is returned
             unchanged.
+        pinned_modules: Ordered tuple of module names with deterministic
+            position-based shard assignment.
 
     Returns:
         A new TestSuite containing only the tests assigned to this shard.
@@ -94,8 +126,10 @@ def _filter_tests_by_shard(
     filtered = unittest.TestSuite()
     for test_group in suite:
         module_name = _get_test_group_module_name(test_group)
-        hash_value = int(hashlib.sha256(module_name.encode()).hexdigest(), 16)
-        if hash_value % total_shards == shard_index:
+        if (
+            _get_shard_for_module(module_name, total_shards, pinned_modules)
+            == shard_index
+        ):
             filtered.addTest(test_group)
     return filtered
 
@@ -117,7 +151,7 @@ def _get_test_group_module_name(test_group: unittest.TestSuite | TestCase) -> st
     return type(test_group).__module__
 
 
-def _run_individual_test(test: TestCase) -> Tuple[bool, int]:
+def _run_individual_test(test: TestCase) -> tuple[bool, int]:
     # If we don't have any test cases, we skip running the test.
     # This reduces some noise in the logs.
     if test.countTestCases() == 0:
@@ -137,6 +171,7 @@ def run_tests(
     use_sequential_execution: bool = False,
     shard_index: int = 0,
     total_shards: int = 0,
+    pinned_modules: tuple[str, ...] = (),
 ) -> bool:
     """Discovers and runs tests, optionally filtering by shard.
 
@@ -146,6 +181,8 @@ def run_tests(
         use_sequential_execution: Whether sequential execution should be used.
         shard_index: Zero-based index of the current shard.
         total_shards: Total number of shards. 0 or 1 means no sharding.
+        pinned_modules: Ordered tuple of module names with deterministic
+            position-based shard assignment (``index % total_shards``).
 
     Returns:
         Whether all tests passed successfully.
@@ -160,7 +197,7 @@ def run_tests(
     )
 
     total_discovered: int = suite.countTestCases()
-    suite = _filter_tests_by_shard(suite, shard_index, total_shards)
+    suite = _filter_tests_by_shard(suite, shard_index, total_shards, pinned_modules)
 
     if total_shards > 1:
         logger.info(
@@ -176,7 +213,7 @@ def run_tests(
         total_num_test_cases = suite.countTestCases()
     else:
         with ProcessPoolExecutor() as executor:
-            was_successful_iter: Iterator[Tuple[bool, int]] = executor.map(
+            was_successful_iter: Iterator[tuple[bool, int]] = executor.map(
                 _run_individual_test, suite._tests
             )
         was_successful = True
@@ -186,5 +223,5 @@ def run_tests(
 
     logger.info(f"Ran {total_num_test_cases}/{suite.countTestCases()} test cases")
     finish = time.perf_counter()
-    logger.info(f"It took {finish-start: .2f} second(s) to run tests")
+    logger.info(f"It took {finish - start: .2f} second(s) to run tests")
     return was_successful
