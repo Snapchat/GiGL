@@ -36,6 +36,8 @@ runs:
         BUILD_IDS=""
         BUILD_LABELS=""
         TOTAL_SHARDS=${{ inputs.total_shards }}
+        PROJECT="${{ inputs.project }}"
+        CLOUD_BUILD_URL_BASE="https://console.cloud.google.com/cloud-build/builds"
 
         # Launch type-check job if enabled
         if [[ "${{ inputs.run_type_check }}" == "true" ]]; then
@@ -43,15 +45,15 @@ runs:
           TYPE_CHECK_BUILD_ID=$(gcloud builds submit . \
             --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
             --substitutions=_CMD="make type_check_only" \
-            --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
-            --project="${{ inputs.project }}" \
+            --service-account="projects/${PROJECT}/serviceAccounts/${{ inputs.service_account }}" \
+            --project="${PROJECT}" \
             --machine-type="${{ inputs.machine_type }}" \
             --timeout="${{ inputs.timeout }}" \
             --async \
             --format='value(id)' 2>&1 | tail -1)
           BUILD_IDS="${TYPE_CHECK_BUILD_ID}"
           BUILD_LABELS="type_check"
-          echo "  Type-check build ID: ${TYPE_CHECK_BUILD_ID}"
+          echo "  Type-check build: ${CLOUD_BUILD_URL_BASE}/${TYPE_CHECK_BUILD_ID}?project=${PROJECT}"
         fi
 
         # Launch shard jobs
@@ -60,8 +62,8 @@ runs:
           SHARD_BUILD_ID=$(gcloud builds submit . \
             --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
             --substitutions=_CMD="make ${{ inputs.test_command }} SHARD_INDEX=${i} TOTAL_SHARDS=${TOTAL_SHARDS}" \
-            --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
-            --project="${{ inputs.project }}" \
+            --service-account="projects/${PROJECT}/serviceAccounts/${{ inputs.service_account }}" \
+            --project="${PROJECT}" \
             --machine-type="${{ inputs.machine_type }}" \
             --timeout="${{ inputs.timeout }}" \
             --async \
@@ -73,7 +75,7 @@ runs:
             BUILD_IDS="${SHARD_BUILD_ID}"
             BUILD_LABELS="shard_${i}"
           fi
-          echo "  Shard ${i} build ID: ${SHARD_BUILD_ID}"
+          echo "  Shard ${i} build: ${CLOUD_BUILD_URL_BASE}/${SHARD_BUILD_ID}?project=${PROJECT}"
         done
 
         echo "build_ids=${BUILD_IDS}" >> $GITHUB_OUTPUT
@@ -121,15 +123,18 @@ runs:
 
         # Check results
         FAILED=0
+        PROJECT="${{ inputs.project }}"
+        CLOUD_BUILD_URL_BASE="https://console.cloud.google.com/cloud-build/builds"
         for idx in "${!BUILD_LABELS[@]}"; do
           LABEL="${BUILD_LABELS[$idx]}"
           BUILD_ID="${BUILD_IDS[$idx]}"
+          BUILD_URL="${CLOUD_BUILD_URL_BASE}/${BUILD_ID}?project=${PROJECT}"
           RESULT=$(cat "${TEMP_DIR}/${LABEL}" 2>/dev/null || echo "UNKNOWN")
           if [[ "${RESULT}" != "SUCCESS" ]]; then
-            echo "FAILED: ${LABEL} (${BUILD_ID}) - status: ${RESULT}"
+            echo "FAILED: ${LABEL} - ${BUILD_URL}"
             FAILED=1
           else
-            echo "PASSED: ${LABEL} (${BUILD_ID})"
+            echo "PASSED: ${LABEL} - ${BUILD_URL}"
           fi
         done
 
