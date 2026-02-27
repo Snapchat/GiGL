@@ -578,12 +578,23 @@ class BaseDistLoader(DistLoader):
         return self
 
     def _request_new_epoch_production(self) -> None:
-        """Request production from all servers, retrying if epoch is stale.
+        """Request production from all servers, retrying only on genuine epoch skew.
 
         In graph store mode, multiple GPUs on the same compute node share a
-        producer. If another GPU has advanced the server's epoch past ours,
-        our request is silently skipped. This method detects that condition,
-        fast-forwards our epoch, and retries until production is triggered.
+        producer per server (same ``worker_key``).  Only the first GPU to call
+        ``start_new_epoch_sampling`` for a given epoch triggers
+        ``produce_all()``; subsequent calls at the same epoch are no-ops
+        because the data is already flowing through the shared buffer.
+
+        Two distinct cases are handled:
+
+        * **Same epoch** (``self._epoch >= max_server_epoch``): another GPU
+          already triggered production for this epoch.  Data is in the shared
+          buffer — return immediately without retrying.
+        * **Behind** (``self._epoch < max_server_epoch``): our epoch is
+          genuinely stale.  Fast-forward past the server's epoch and retry so
+          ``produce_all()`` is guaranteed to fire.  This typically resolves in
+          two iterations (first detects staleness, second triggers).
         """
         for attempt in range(self._MAX_EPOCH_CATCH_UP_RETRIES):
             rpc_futures: list[torch.futures.Future[tuple[int, bool]]] = []
@@ -604,10 +615,19 @@ class BaseDistLoader(DistLoader):
             if any_produced:
                 return
 
-            # No server produced — our epoch is stale.
+            # No server produced — check whether we are genuinely behind or
+            # another GPU sharing the same producer simply beat us.
             max_server_epoch = max(server_epoch for server_epoch, _ in results)
+
+            if self._epoch >= max_server_epoch:
+                # Another GPU already triggered production for this epoch.
+                # Data is flowing through the shared buffer — nothing to do.
+                return
+
+            # Our epoch is genuinely behind the server's.  Fast-forward and
+            # retry so the next RPC has epoch > max_server_epoch.
             logger.warning(
-                f"Epoch skew detected: client epoch {self._epoch} <= "
+                f"Epoch skew detected: client epoch {self._epoch} behind "
                 f"server epoch {max_server_epoch}. Retrying with epoch "
                 f"{max_server_epoch + 1} (attempt {attempt + 1})."
             )
