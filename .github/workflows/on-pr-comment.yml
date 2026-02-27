@@ -45,6 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
     - name: Run Python Unit Tests
       uses: ./.github/actions/run-command-on-pr
       with:
@@ -90,6 +94,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
     - name: Run Integration Tests
       uses: ./.github/actions/run-command-on-pr
       with:
