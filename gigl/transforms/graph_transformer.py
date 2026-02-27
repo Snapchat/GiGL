@@ -27,9 +27,8 @@ Example Usage:
     ...     max_seq_len=128,
     ...     anchor_node_type='user',
     ... )
-    >>> sequences, attention_mask = transform(data)
+    >>> sequences = transform(data)
     >>> # sequences: (batch_size, max_seq_len, feature_dim)
-    >>> # attention_mask: (batch_size, max_seq_len) - 1 for valid, 0 for padding
 
     Using with PyTorch TransformerEncoderLayer:
     >>> import torch.nn as nn
@@ -44,9 +43,9 @@ Example Usage:
     >>> transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
     >>>
     >>> # Transform data and pass to transformer
-    >>> sequences, attention_mask = transform(data)
-    >>> # Convert attention_mask to key_padding_mask (True = ignore)
-    >>> key_padding_mask = (attention_mask == 0)
+    >>> sequences = transform(data)
+    >>> # Create attention mask from padding (padding_value positions)
+    >>> key_padding_mask = (sequences.sum(dim=-1) == 0)  # True where all features are 0
     >>> output = transformer_encoder(sequences, src_key_padding_mask=key_padding_mask)
     >>> # output: (batch_size, max_seq_len, feature_dim)
 
@@ -83,12 +82,12 @@ Example Usage:
     >>> # 1. Project node features to common dimension
     >>> data = projector(data)
     >>> # 2. Now all node types have same feature dim, safe to transform
-    >>> sequences, attention_mask = transform(data)
+    >>> sequences = transform(data)
     >>> # 3. Pass to transformer
-    >>> output = transformer_encoder(sequences, src_key_padding_mask=(attention_mask == 0))
+    >>> output = transformer_encoder(sequences)
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 from torch import Tensor
@@ -107,7 +106,7 @@ def hetero_to_graph_transformer_input(
     hop_distance: int = 2,
     include_anchor_first: bool = True,
     padding_value: float = 0.0,
-) -> Tuple[Tensor, Tensor]:
+) -> Tensor:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
 
@@ -130,9 +129,7 @@ def hetero_to_graph_transformer_input(
         padding_value: Value to use for padding (default: 0.0).
 
     Returns:
-        Tuple of:
-            - sequences: (batch_size, max_seq_len, feature_dim) padded node features
-            - attention_mask: (batch_size, max_seq_len) binary mask (1=valid, 0=padding)
+        sequences: (batch_size, max_seq_len, feature_dim) padded node features
     """
     device = data[anchor_node_type].x.device
 
@@ -172,7 +169,7 @@ def hetero_to_graph_transformer_input(
     )
 
     # Build sequences for each anchor using the sparse reachable mask
-    sequences, attention_mask = _build_sequences_from_sparse_neighbors(
+    sequences = _build_sequences_from_sparse_neighbors(
         reachable=reachable,
         anchor_indices=anchor_indices,
         node_features=homo_x,
@@ -182,7 +179,7 @@ def hetero_to_graph_transformer_input(
         device=device,
     )
 
-    return sequences, attention_mask
+    return sequences
 
 
 def _get_k_hop_neighbors_sparse(
@@ -259,7 +256,7 @@ def _build_sequences_from_sparse_neighbors(
     include_anchor_first: bool,
     padding_value: float,
     device: torch.device,
-) -> Tuple[Tensor, Tensor]:
+) -> Tensor:
     """
     Build padded sequences from sparse reachability information.
 
@@ -273,45 +270,61 @@ def _build_sequences_from_sparse_neighbors(
         device: Device for tensors
 
     Returns:
-        Tuple of:
-            - sequences: (batch_size, max_seq_len, feature_dim)
-            - attention_mask: (batch_size, max_seq_len)
+        sequences: (batch_size, max_seq_len, feature_dim)
     """
     batch_size = anchor_indices.size(0)
     feature_dim = node_features.size(1)
 
-    # Initialize outputs
+    # Initialize output
     sequences = torch.full(
         (batch_size, max_seq_len, feature_dim),
         padding_value,
         dtype=node_features.dtype,
         device=device,
     )
-    attention_mask = torch.zeros(batch_size, max_seq_len, dtype=torch.float, device=device)
 
-    # Extract sparse indices
-    indices = reachable.indices()  # (2, nnz)
+    # Extract sparse indices - sorted by (batch, node) after coalesce
+    indices = reachable.indices()
     batch_idx = indices[0]
     node_idx = indices[1]
 
-    # For each batch, grab reachable node features
-    for b in range(batch_size):
-        # Get reachable nodes for this batch
-        mask = batch_idx == b
-        nodes = node_idx[mask]
-
+    if batch_idx.numel() == 0:
         if include_anchor_first:
-            # Put anchor first
-            anchor = anchor_indices[b]
-            other_nodes = nodes[nodes != anchor]
-            nodes = torch.cat([anchor.unsqueeze(0), other_nodes])
+            sequences[:, 0] = node_features[anchor_indices]
+        return sequences
 
-        # Truncate to max_seq_len and place features
-        n = min(nodes.size(0), max_seq_len)
-        sequences[b, :n] = node_features[nodes[:n]]
-        attention_mask[b, :n] = 1.0
+    if include_anchor_first:
+        # Place anchors at position 0
+        sequences[:, 0] = node_features[anchor_indices]
 
-    return sequences, attention_mask
+        # Remove anchors from node list
+        keep = node_idx != anchor_indices[batch_idx]
+        batch_idx = batch_idx[keep]
+        node_idx = node_idx[keep]
+        start_pos = 1
+    else:
+        start_pos = 0
+
+    if batch_idx.numel() == 0:
+        return sequences
+
+    # Compute positions within each batch
+    # Indices are sorted by batch, so detect boundaries
+    n = batch_idx.size(0)
+    is_new_batch = torch.zeros(n, dtype=torch.long, device=device)
+    is_new_batch[0] = 1
+    if n > 1:
+        is_new_batch[1:] = (batch_idx[1:] != batch_idx[:-1]).long()
+
+    group_id = is_new_batch.cumsum(0) - 1
+    group_starts = torch.nonzero(is_new_batch, as_tuple=True)[0]
+    positions = torch.arange(n, device=device) - group_starts[group_id] + start_pos
+
+    # Filter to max_seq_len and scatter
+    valid = positions < max_seq_len
+    sequences[batch_idx[valid], positions[valid]] = node_features[node_idx[valid]]
+
+    return sequences
 
 
 class HeteroToGraphTransformerInput:
@@ -336,7 +349,7 @@ class HeteroToGraphTransformerInput:
         ...     max_seq_len=128,
         ...     anchor_node_type='user',
         ... )
-        >>> sequences, attention_mask = transform(data)
+        >>> sequences = transform(data)
     """
 
     def __init__(
@@ -359,7 +372,7 @@ class HeteroToGraphTransformerInput:
 
     def __call__(
         self, data: HeteroData
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> Tensor:
         """Transform HeteroData to Graph Transformer input."""
         return hetero_to_graph_transformer_input(
             data=data,
