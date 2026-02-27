@@ -512,7 +512,7 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
         mp_context = torch.multiprocessing.get_context("spawn")
         manager = torch.multiprocessing.Manager()
         mp_sharing_dict = manager.dict()
-        mp_barrier = manager.Barrier(args.cluster_info.num_processes_per_compute)
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting train client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -547,7 +547,7 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
         mp_context = torch.multiprocessing.get_context("spawn")
         manager = torch.multiprocessing.Manager()
         mp_sharing_dict = manager.dict()
-        mp_barrier = manager.Barrier(args.cluster_info.num_processes_per_compute)
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting multiple loaders client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -715,7 +715,7 @@ def _client_process(args: ClientProcessArgs) -> None:
         mp_context = torch.multiprocessing.get_context("spawn")
         manager = torch.multiprocessing.Manager()
         mp_sharing_dict = manager.dict()
-        mp_barrier = manager.Barrier(args.cluster_info.num_processes_per_compute)
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting client processes")
         for i in range(args.cluster_info.num_processes_per_compute):

@@ -541,7 +541,7 @@ def _run_example_inference(
             cluster_info=cluster_info,
             inference_node_type=inference_node_type,
             mp_sharing_dict=manager.dict(),
-            mp_barrier=manager.Barrier(num_inference_processes_per_machine),
+            mp_barrier=mp.Barrier(num_inference_processes_per_machine),
             model_state_dict_uri=model_uri,
             hid_dim=hid_dim,
             out_dim=out_dim,
