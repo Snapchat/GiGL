@@ -49,25 +49,21 @@ jobs:
       uses: actions/checkout@v4
       with:
         ref: ${{ github.sha }}
-    - name: Run Python Unit Tests
-      uses: ./.github/actions/run-command-on-pr
+    - name: Setup development environment
+      uses: ./.github/actions/setup-python-tools
       with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: ${{ github.event.issue.number }}
-        #should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Python Unit Test"
         setup_gcloud: "true"
-        # We use cloud run here instead of using github hosted runners because of limitation of tests
-        # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
-        # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
-        # https://github.com/tensorflow/tensorflow/issues/57104
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        use_sharded_cloud_build: "true"
+    - name: Run Python Unit Tests (sharded)
+      uses: ./.github/actions/run-sharded-cloud-build
+      with:
+        test_command: "unit_test_py_shard"
         total_shards: "4"
-        sharded_test_command: "unit_test_py_shard"
         run_type_check: "true"
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        project: ${{ vars.GCP_PROJECT_ID }}
 
   unit-test-scala:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
@@ -98,21 +94,21 @@ jobs:
       uses: actions/checkout@v4
       with:
         ref: ${{ github.sha }}
-    - name: Run Integration Tests
-      uses: ./.github/actions/run-command-on-pr
+    - name: Setup development environment
+      uses: ./.github/actions/setup-python-tools
       with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: ${{ github.event.issue.number }}
-        #should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Integration Test"
         setup_gcloud: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        use_sharded_cloud_build: "true"
+    - name: Run Integration Tests (sharded)
+      uses: ./.github/actions/run-sharded-cloud-build
+      with:
+        test_command: "integration_test_shard"
         total_shards: "4"
-        sharded_test_command: "integration_test_shard"
         run_type_check: "false"
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        project: ${{ vars.GCP_PROJECT_ID }}
 
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
