@@ -1,0 +1,143 @@
+name: "Run Sharded Cloud Build"
+description: "Launches N Cloud Build shard jobs (and optionally a type-check job) in parallel, then waits for all to complete."
+inputs:
+  test_command:
+    description: "The Make target to run for each shard (e.g. 'unit_test_py_shard')"
+    required: true
+  total_shards:
+    description: "Number of parallel test shards"
+    required: true
+  run_type_check:
+    description: "Whether to launch a separate type-check Cloud Build job"
+    required: false
+    default: "false"
+  service_account:
+    description: "Service account email for Cloud Build"
+    required: true
+  project:
+    description: "Google Cloud Project ID"
+    required: true
+  machine_type:
+    description: "Machine type for Cloud Build jobs"
+    default: "e2-highcpu-32"
+  timeout:
+    description: "Timeout for each Cloud Build job (duration format, e.g. '3h')"
+    default: "3h"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Launch sharded Cloud Build jobs
+      id: launch_builds
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        BUILD_IDS=""
+        BUILD_LABELS=""
+        TOTAL_SHARDS=${{ inputs.total_shards }}
+
+        # Launch type-check job if enabled
+        if [[ "${{ inputs.run_type_check }}" == "true" ]]; then
+          echo "Launching type-check Cloud Build job..."
+          TYPE_CHECK_BUILD_ID=$(gcloud builds submit . \
+            --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
+            --substitutions=_CMD="make type_check_only" \
+            --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
+            --project="${{ inputs.project }}" \
+            --machine-type="${{ inputs.machine_type }}" \
+            --timeout="${{ inputs.timeout }}" \
+            --async \
+            --format='value(id)' 2>&1 | tail -1)
+          BUILD_IDS="${TYPE_CHECK_BUILD_ID}"
+          BUILD_LABELS="type_check"
+          echo "  Type-check build ID: ${TYPE_CHECK_BUILD_ID}"
+        fi
+
+        # Launch shard jobs
+        for i in $(seq 0 $(( TOTAL_SHARDS - 1 ))); do
+          echo "Launching shard ${i}/${TOTAL_SHARDS} Cloud Build job..."
+          SHARD_BUILD_ID=$(gcloud builds submit . \
+            --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
+            --substitutions=_CMD="make ${{ inputs.test_command }} SHARD_INDEX=${i} TOTAL_SHARDS=${TOTAL_SHARDS}" \
+            --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
+            --project="${{ inputs.project }}" \
+            --machine-type="${{ inputs.machine_type }}" \
+            --timeout="${{ inputs.timeout }}" \
+            --async \
+            --format='value(id)' 2>&1 | tail -1)
+          if [[ -n "${BUILD_IDS}" ]]; then
+            BUILD_IDS="${BUILD_IDS},${SHARD_BUILD_ID}"
+            BUILD_LABELS="${BUILD_LABELS},shard_${i}"
+          else
+            BUILD_IDS="${SHARD_BUILD_ID}"
+            BUILD_LABELS="shard_${i}"
+          fi
+          echo "  Shard ${i} build ID: ${SHARD_BUILD_ID}"
+        done
+
+        echo "build_ids=${BUILD_IDS}" >> $GITHUB_OUTPUT
+        echo "build_labels=${BUILD_LABELS}" >> $GITHUB_OUTPUT
+        echo "All Cloud Build jobs launched."
+
+    - name: Wait for all Cloud Build jobs to complete
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        IFS=',' read -ra BUILD_IDS <<< "${{ steps.launch_builds.outputs.build_ids }}"
+        IFS=',' read -ra BUILD_LABELS <<< "${{ steps.launch_builds.outputs.build_labels }}"
+
+        PIDS=()
+        TEMP_DIR=$(mktemp -d)
+
+        # Stream logs for each build in background and record exit status
+        for idx in "${!BUILD_IDS[@]}"; do
+          BUILD_ID="${BUILD_IDS[$idx]}"
+          LABEL="${BUILD_LABELS[$idx]}"
+          (
+            echo "=== Streaming logs for ${LABEL} (${BUILD_ID}) ==="
+            gcloud builds log --stream "${BUILD_ID}" --project="${{ inputs.project }}" 2>&1 | \
+              sed "s/^/[${LABEL}] /" || true
+
+            # Check final build status
+            STATUS=$(gcloud builds describe "${BUILD_ID}" \
+              --project="${{ inputs.project }}" \
+              --format='value(status)')
+            echo "=== ${LABEL} (${BUILD_ID}) finished with status: ${STATUS} ==="
+            if [[ "${STATUS}" != "SUCCESS" ]]; then
+              echo "FAILED" > "${TEMP_DIR}/${LABEL}"
+            else
+              echo "SUCCESS" > "${TEMP_DIR}/${LABEL}"
+            fi
+          ) &
+          PIDS+=($!)
+        done
+
+        # Wait for all background processes
+        for PID in "${PIDS[@]}"; do
+          wait "${PID}" || true
+        done
+
+        # Check results
+        FAILED=0
+        for idx in "${!BUILD_LABELS[@]}"; do
+          LABEL="${BUILD_LABELS[$idx]}"
+          BUILD_ID="${BUILD_IDS[$idx]}"
+          RESULT=$(cat "${TEMP_DIR}/${LABEL}" 2>/dev/null || echo "UNKNOWN")
+          if [[ "${RESULT}" != "SUCCESS" ]]; then
+            echo "FAILED: ${LABEL} (${BUILD_ID}) - status: ${RESULT}"
+            FAILED=1
+          else
+            echo "PASSED: ${LABEL} (${BUILD_ID})"
+          fi
+        done
+
+        rm -rf "${TEMP_DIR}"
+
+        if [[ "${FAILED}" -eq 1 ]]; then
+          echo "One or more Cloud Build jobs failed."
+          exit 1
+        fi
+
+        echo "All Cloud Build jobs completed successfully."

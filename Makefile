@@ -23,6 +23,8 @@ DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${D
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 PY_TEST_FILES?="*_test.py"
+SHARD_INDEX?=0
+TOTAL_SHARDS?=0
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_config.yaml
@@ -81,6 +83,17 @@ unit_test_py: clean_build_files_py type_check
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
 
+# Runs only the type checker without tests. Used as a standalone Cloud Build shard job.
+type_check_only: clean_build_files_py type_check
+
+# Runs a single shard of the Python unit tests (no type checking).
+# Usage: make unit_test_py_shard SHARD_INDEX=0 TOTAL_SHARDS=4
+unit_test_py_shard: clean_build_files_py
+	uv run python -m tests.unit.main \
+		--env=test \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+		--test_file_pattern=$(PY_TEST_FILES) \
+		--shard_index=$(SHARD_INDEX) --total_shards=$(TOTAL_SHARDS)
 
 unit_test_scala: clean_build_files_scala
 	( cd scala; sbt test )
@@ -121,6 +134,14 @@ integration_test:
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
 
+# Runs a single shard of the integration tests.
+# Usage: make integration_test_shard SHARD_INDEX=0 TOTAL_SHARDS=4
+integration_test_shard: clean_build_files_py
+	uv run python -m tests.integration.main \
+		--env=test \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+		--test_file_pattern=$(PY_TEST_FILES) \
+		--shard_index=$(SHARD_INDEX) --total_shards=$(TOTAL_SHARDS)
 
 notebooks_test:
 	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m tests.config_tests.notebooks_test

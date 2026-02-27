@@ -7,7 +7,11 @@ from gigl.src.common.utils.metrics_service_provider import initialize_metrics
 from tests.test_assets.uri_constants import DEFAULT_NABLP_TASK_CONFIG_URI
 
 
-def run(pattern: str = "*_test.py") -> bool:
+def run(
+    pattern: str = "*_test.py",
+    shard_index: int = 0,
+    total_shards: int = 0,
+) -> bool:
     initialize_metrics(
         task_config_uri=DEFAULT_NABLP_TASK_CONFIG_URI, service_name="integration_test"
     )
@@ -17,9 +21,16 @@ def run(pattern: str = "*_test.py") -> bool:
         ),
         pattern=pattern,
         use_sequential_execution=True,
+        shard_index=shard_index,
+        total_shards=total_shards,
     )
 
 
 if __name__ == "__main__":
-    was_successful: bool = run(pattern=parse_args().test_file_pattern)
+    test_args = parse_args()
+    was_successful: bool = run(
+        pattern=test_args.test_file_pattern,
+        shard_index=test_args.shard_index,
+        total_shards=test_args.total_shards,
+    )
     sys.exit(not was_successful)

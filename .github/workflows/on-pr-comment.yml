@@ -3,6 +3,7 @@ name: On Demand Pr Comment Workflows
 on:
   issue_comment:
     types: [created]
+  push:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -42,11 +43,10 @@ jobs:
   unit-test-python:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
-    # TODO(kmonte): Reduce this :(
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
     - name: Run Python Unit Tests
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      uses: ./.github/actions/run-sharded-cloud-build
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -57,12 +57,13 @@ jobs:
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
         # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
         # https://github.com/tensorflow/tensorflow/issues/57104
-        use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        command: |
-          make unit_test_py
+        use_sharded_cloud_build: "true"
+        total_shards: "4"
+        sharded_test_command: "unit_test_py_shard"
+        run_type_check: "true"
 
   unit-test-scala:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
@@ -87,23 +88,23 @@ jobs:
   integration-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
-    # TODO(kmonte): Reduce this :(
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
     - name: Run Integration Tests
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      uses: ./.github/actions/run-sharded-cloud-build
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
         descriptive_workflow_name: "Integration Test"
         setup_gcloud: "true"
-        use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        command: |
-            make integration_test
+        use_sharded_cloud_build: "true"
+        total_shards: "4"
+        sharded_test_command: "integration_test_shard"
+        run_type_check: "false"
 
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}

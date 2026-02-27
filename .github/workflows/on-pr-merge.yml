@@ -32,16 +32,18 @@ jobs:
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run Python Unit Tests
-      # We use cloud run here instead of using github hosted runners because of limitation of tests
+    - name: Run Python Unit Tests (sharded)
+      # We use Cloud Build instead of GitHub hosted runners because of limitation of tests
       # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
       # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
       # https://github.com/tensorflow/tensorflow/issues/57104
-      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
+      uses: ./.github/actions/run-sharded-cloud-build
       with:
-        cmd: "make unit_test_py"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
+        test_command: "unit_test_py_shard"
+        total_shards: "4"
+        run_type_check: "true"
+        service_account: ${{ secrets.gcp_service_account_email }}
+        project: ${{ vars.GCP_PROJECT_ID }}
 
   ci-unit-test-scala:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
@@ -82,12 +84,14 @@ jobs:
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run Integration Tests
-      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
+    - name: Run Integration Tests (sharded)
+      uses: ./.github/actions/run-sharded-cloud-build
       with:
-        cmd: "make integration_test"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
+        test_command: "integration_test_shard"
+        total_shards: "4"
+        run_type_check: "false"
+        service_account: ${{ secrets.gcp_service_account_email }}
+        project: ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-e2e-test:
     if: github.event_name == 'merge_group'
