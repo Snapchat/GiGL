@@ -27,10 +27,9 @@ Example Usage:
     ...     max_seq_len=128,
     ...     anchor_node_type='user',
     ... )
-    >>> sequences, attention_mask, anchor_positions = transform(data)
+    >>> sequences, attention_mask = transform(data)
     >>> # sequences: (batch_size, max_seq_len, feature_dim)
     >>> # attention_mask: (batch_size, max_seq_len) - 1 for valid, 0 for padding
-    >>> # anchor_positions: (batch_size,) - position of anchor in each sequence
 
     Using with PyTorch TransformerEncoderLayer:
     >>> import torch.nn as nn
@@ -45,11 +44,48 @@ Example Usage:
     >>> transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
     >>>
     >>> # Transform data and pass to transformer
-    >>> sequences, attention_mask, _ = transform(data)
+    >>> sequences, attention_mask = transform(data)
     >>> # Convert attention_mask to key_padding_mask (True = ignore)
     >>> key_padding_mask = (attention_mask == 0)
     >>> output = transformer_encoder(sequences, src_key_padding_mask=key_padding_mask)
     >>> # output: (batch_size, max_seq_len, feature_dim)
+
+    Handling Multiple Node Types with Different Feature Dimensions:
+    When node types have different feature dimensions, project them to a common
+    dimension BEFORE calling to_homogeneous(). This ensures all nodes have the
+    same feature dimension when converted to sequences.
+
+    >>> import torch.nn as nn
+    >>> from torch_geometric.data import HeteroData
+    >>>
+    >>> # Define per-node-type linear projections
+    >>> class NodeTypeProjector(nn.Module):
+    ...     def __init__(self, input_dims: dict, output_dim: int):
+    ...         super().__init__()
+    ...         self.projectors = nn.ModuleDict({
+    ...             node_type: nn.Linear(in_dim, output_dim)
+    ...             for node_type, in_dim in input_dims.items()
+    ...         })
+    ...
+    ...     def forward(self, data: HeteroData) -> HeteroData:
+    ...         # Project each node type's features to common dimension
+    ...         for node_type, projector in self.projectors.items():
+    ...             if node_type in data.node_types:
+    ...                 data[node_type].x = projector(data[node_type].x)
+    ...         return data
+    >>>
+    >>> # Example usage
+    >>> input_dims = {'user': 128, 'item': 64, 'category': 32}
+    >>> common_dim = 256
+    >>> projector = NodeTypeProjector(input_dims, common_dim)
+    >>>
+    >>> # In your forward pass:
+    >>> # 1. Project node features to common dimension
+    >>> data = projector(data)
+    >>> # 2. Now all node types have same feature dim, safe to transform
+    >>> sequences, attention_mask = transform(data)
+    >>> # 3. Pass to transformer
+    >>> output = transformer_encoder(sequences, src_key_padding_mask=(attention_mask == 0))
 """
 
 from typing import Optional, Tuple
@@ -71,7 +107,7 @@ def hetero_to_graph_transformer_input(
     hop_distance: int = 2,
     include_anchor_first: bool = True,
     padding_value: float = 0.0,
-) -> Tuple[Tensor, Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
 
@@ -97,7 +133,6 @@ def hetero_to_graph_transformer_input(
         Tuple of:
             - sequences: (batch_size, max_seq_len, feature_dim) padded node features
             - attention_mask: (batch_size, max_seq_len) binary mask (1=valid, 0=padding)
-            - neighbor_counts: (batch_size,) number of neighbors per anchor (before padding)
     """
     device = data[anchor_node_type].x.device
 
@@ -127,8 +162,8 @@ def hetero_to_graph_transformer_input(
         feature_dim = homo_x.size(1)
 
     # Use sparse matrix operations for efficient k-hop neighbor extraction
-    # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are neighbors
-    neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
+    # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
+    reachable = _get_k_hop_neighbors_sparse(
         anchor_indices=anchor_indices,
         edge_index=homo_edge_index,
         num_nodes=num_nodes,
@@ -136,10 +171,9 @@ def hetero_to_graph_transformer_input(
         device=device,
     )
 
-    # Build sequences for each anchor using the sparse neighbor mask
-    sequences, attention_mask, neighbor_counts = _build_sequences_from_sparse_neighbors(
-        neighbor_mask=neighbor_mask,
-        hop_distances=hop_distances,
+    # Build sequences for each anchor using the sparse reachable mask
+    sequences, attention_mask = _build_sequences_from_sparse_neighbors(
+        reachable=reachable,
         anchor_indices=anchor_indices,
         node_features=homo_x,
         max_seq_len=max_seq_len,
@@ -148,7 +182,7 @@ def hetero_to_graph_transformer_input(
         device=device,
     )
 
-    return sequences, attention_mask, neighbor_counts
+    return sequences, attention_mask
 
 
 def _get_k_hop_neighbors_sparse(
@@ -157,12 +191,12 @@ def _get_k_hop_neighbors_sparse(
     num_nodes: int,
     k: int,
     device: torch.device,
-) -> Tuple[Tensor, Tensor]:
+) -> Tensor:
     """
-    Get k-hop neighbors for all anchors using sparse matrix multiplication.
+    Get k-hop reachable nodes for all anchors using sparse matrix multiplication.
 
-    This is much more efficient than per-node BFS for batched operations.
-    Uses fully sparse operations to avoid memory blowup.
+    Follows the same efficient pattern as AddHeteroRandomWalkPE: simple sparse
+    matrix powers to accumulate reachability without expensive membership checks.
 
     Args:
         anchor_indices: (batch_size,) anchor node indices
@@ -172,142 +206,65 @@ def _get_k_hop_neighbors_sparse(
         device: Device for tensors
 
     Returns:
-        Tuple of:
-            - neighbor_mask: (batch_size, num_nodes) sparse bool tensor, True if node is neighbor
-            - hop_distances: (batch_size, num_nodes) sparse tensor with hop distance (0 = not reachable)
+        reachable: (batch_size, num_nodes) sparse tensor, non-zero if node is reachable within k hops
     """
     batch_size = anchor_indices.size(0)
 
-    # Build sparse adjacency matrix (binarized)
-    adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes))
-    adj = adj.coalesce()
-    # Binarize adjacency
+    # Build sparse adjacency matrix (binarized) - coalesce once
+    adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes)).coalesce()
     adj = torch.sparse_coo_tensor(
         adj.indices(),
         torch.ones(adj.indices().size(1), device=device, dtype=torch.float),
         size=(num_nodes, num_nodes),
-    ).coalesce()
+    )  # No coalesce needed - indices already unique from previous coalesce
 
-    # Initialize frontier as sparse: each anchor can reach itself
-    # frontier[i, j] = 1.0 if node j is in frontier for anchor i
-    frontier_indices = torch.stack([
-        torch.arange(batch_size, device=device),
-        anchor_indices,
-    ])
-    frontier = torch.sparse_coo_tensor(
-        frontier_indices,
+    # Initialize: sparse matrix where row i has a 1 at column anchor_indices[i]
+    reachable = torch.sparse_coo_tensor(
+        torch.stack([
+            torch.arange(batch_size, device=device),
+            anchor_indices,
+        ]),
         torch.ones(batch_size, device=device, dtype=torch.float),
         size=(batch_size, num_nodes),
-    ).coalesce()
+    )  # No coalesce needed - indices are unique
 
-    # Track all reachable nodes and their hop distances using lists
-    # We'll build the final sparse tensors at the end
-    all_batch_indices = [torch.arange(batch_size, device=device)]  # hop 0: anchors
-    all_node_indices = [anchor_indices.clone()]
-    all_hop_values = [torch.zeros(batch_size, device=device, dtype=torch.long)]
+    current = reachable
 
-    # Previous reachable set (sparse)
-    reachable = frontier.clone()
+    for _ in range(k):
+        # Expand: current @ adj gives nodes reachable in one more hop
+        current = torch.sparse.mm(current, adj)
 
-    for hop in range(1, k + 1):
-        # Expand frontier: frontier @ adj (sparse matmul)
-        # frontier: (batch_size, num_nodes), adj: (num_nodes, num_nodes)
-        next_frontier = torch.sparse.mm(frontier, adj).coalesce()
-
-        if next_frontier._nnz() == 0:
+        if current._nnz() == 0:
             break
 
-        # Get indices of nodes in next frontier
-        next_indices = next_frontier.indices()  # (2, nnz)
-        next_batch = next_indices[0]  # which anchor
-        next_nodes = next_indices[1]  # which node
+        # Accumulate into reachable
+        reachable = reachable + current
 
-        # Find newly reachable: in next_frontier but not in reachable
-        # Convert reachable to set of (batch, node) tuples for fast lookup
-        reachable_indices = reachable.indices()
-        reachable_set = set(zip(
-            reachable_indices[0].tolist(),
-            reachable_indices[1].tolist()
-        ))
-
-        # Filter to only newly reachable
-        new_mask = torch.tensor([
-            (b.item(), n.item()) not in reachable_set
-            for b, n in zip(next_batch, next_nodes)
-        ], device=device, dtype=torch.bool)
-
-        if not new_mask.any():
-            break
-
-        new_batch = next_batch[new_mask]
-        new_nodes = next_nodes[new_mask]
-
-        # Store newly reachable nodes and their hop distances
-        all_batch_indices.append(new_batch)
-        all_node_indices.append(new_nodes)
-        all_hop_values.append(torch.full((new_batch.size(0),), hop, device=device, dtype=torch.long))
-
-        # Update reachable set
-        new_frontier_indices = torch.stack([new_batch, new_nodes])
-        new_entries = torch.sparse_coo_tensor(
-            new_frontier_indices,
-            torch.ones(new_batch.size(0), device=device, dtype=torch.float),
-            size=(batch_size, num_nodes),
-        )
-        reachable = (reachable + new_entries).coalesce()
-        # Binarize (in case of duplicates)
-        reachable = torch.sparse_coo_tensor(
-            reachable.indices(),
-            torch.ones(reachable._nnz(), device=device, dtype=torch.float),
-            size=(batch_size, num_nodes),
-        ).coalesce()
-
-        # Update frontier to only newly reachable for next iteration
-        frontier = torch.sparse_coo_tensor(
-            new_frontier_indices,
-            torch.ones(new_batch.size(0), device=device, dtype=torch.float),
-            size=(batch_size, num_nodes),
-        ).coalesce()
-
-    # Build final sparse tensors
-    all_batch = torch.cat(all_batch_indices)
-    all_nodes = torch.cat(all_node_indices)
-    all_hops = torch.cat(all_hop_values)
-
-    # neighbor_mask: sparse bool-like tensor (values are 1.0 for reachable)
-    neighbor_indices = torch.stack([all_batch, all_nodes])
-    neighbor_mask = torch.sparse_coo_tensor(
-        neighbor_indices,
-        torch.ones(all_batch.size(0), device=device, dtype=torch.bool),
+    # Coalesce and binarize final result
+    reachable = reachable.coalesce()
+    reachable = torch.sparse_coo_tensor(
+        reachable.indices(),
+        torch.ones(reachable._nnz(), device=device, dtype=torch.float),
         size=(batch_size, num_nodes),
     ).coalesce()
 
-    # hop_distances: sparse tensor with hop values
-    hop_distances = torch.sparse_coo_tensor(
-        neighbor_indices,
-        all_hops,
-        size=(batch_size, num_nodes),
-    ).coalesce()
-
-    return neighbor_mask, hop_distances
+    return reachable
 
 
 def _build_sequences_from_sparse_neighbors(
-    neighbor_mask: Tensor,
-    hop_distances: Tensor,
+    reachable: Tensor,
     anchor_indices: Tensor,
     node_features: Tensor,
     max_seq_len: int,
     include_anchor_first: bool,
     padding_value: float,
     device: torch.device,
-) -> Tuple[Tensor, Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor]:
     """
-    Build padded sequences from sparse neighbor information.
+    Build padded sequences from sparse reachability information.
 
     Args:
-        neighbor_mask: (batch_size, num_nodes) sparse bool tensor
-        hop_distances: (batch_size, num_nodes) sparse hop distance tensor
+        reachable: (batch_size, num_nodes) sparse tensor, non-zero if node is reachable
         anchor_indices: (batch_size,) anchor node indices
         node_features: (num_nodes, feature_dim) node features
         max_seq_len: Maximum sequence length
@@ -319,12 +276,11 @@ def _build_sequences_from_sparse_neighbors(
         Tuple of:
             - sequences: (batch_size, max_seq_len, feature_dim)
             - attention_mask: (batch_size, max_seq_len)
-            - neighbor_counts: (batch_size,)
     """
     batch_size = anchor_indices.size(0)
     feature_dim = node_features.size(1)
 
-    # Initialize output tensors
+    # Initialize outputs
     sequences = torch.full(
         (batch_size, max_seq_len, feature_dim),
         padding_value,
@@ -332,71 +288,30 @@ def _build_sequences_from_sparse_neighbors(
         device=device,
     )
     attention_mask = torch.zeros(batch_size, max_seq_len, dtype=torch.float, device=device)
-    neighbor_counts = torch.zeros(batch_size, dtype=torch.long, device=device)
 
-    # Extract indices from sparse tensors
-    mask_indices = neighbor_mask.indices()  # (2, nnz)
-    mask_batch = mask_indices[0]
-    mask_nodes = mask_indices[1]
+    # Extract sparse indices
+    indices = reachable.indices()  # (2, nnz)
+    batch_idx = indices[0]
+    node_idx = indices[1]
 
-    dist_indices = hop_distances.indices()  # (2, nnz)
-    dist_batch = dist_indices[0]
-    dist_nodes = dist_indices[1]
-    dist_values = hop_distances.values()
-
-    for i in range(batch_size):
-        anchor_idx = int(anchor_indices[i].item())
-
-        # Get neighbor indices for this anchor from sparse tensor
-        batch_mask = mask_batch == i
-        neighbor_idx = mask_nodes[batch_mask]
-
-        if neighbor_idx.numel() == 0:
-            # No neighbors, just anchor
-            if include_anchor_first:
-                sequences[i, 0] = node_features[anchor_idx]
-                attention_mask[i, 0] = 1.0
-                neighbor_counts[i] = 1
-            continue
-
-        # Get hop distances for these neighbors
-        dist_batch_mask = dist_batch == i
-        dist_nodes_for_batch = dist_nodes[dist_batch_mask]
-        dist_vals_for_batch = dist_values[dist_batch_mask]
-
-        # Create mapping from node to distance
-        node_to_dist = {n.item(): d.item() for n, d in zip(dist_nodes_for_batch, dist_vals_for_batch)}
-
-        # Sort neighbors by hop distance (closer nodes first)
-        neighbor_distances = torch.tensor(
-            [node_to_dist.get(n.item(), 0) for n in neighbor_idx],
-            device=device,
-            dtype=torch.long
-        )
-        sorted_order = torch.argsort(neighbor_distances)
-        sorted_neighbors = neighbor_idx[sorted_order]
+    # For each batch, grab reachable node features
+    for b in range(batch_size):
+        # Get reachable nodes for this batch
+        mask = batch_idx == b
+        nodes = node_idx[mask]
 
         if include_anchor_first:
-            # Remove anchor from sorted list if present (it has distance 0)
-            is_anchor = sorted_neighbors == anchor_idx
-            if is_anchor.any():
-                sorted_neighbors = sorted_neighbors[~is_anchor]
-            # Prepend anchor
-            sorted_neighbors = torch.cat([
-                torch.tensor([anchor_idx], device=device, dtype=torch.long),
-                sorted_neighbors
-            ])
+            # Put anchor first
+            anchor = anchor_indices[b]
+            other_nodes = nodes[nodes != anchor]
+            nodes = torch.cat([anchor.unsqueeze(0), other_nodes])
 
-        # Truncate to max_seq_len
-        seq_len = min(sorted_neighbors.size(0), max_seq_len)
-        sorted_neighbors = sorted_neighbors[:seq_len]
+        # Truncate to max_seq_len and place features
+        n = min(nodes.size(0), max_seq_len)
+        sequences[b, :n] = node_features[nodes[:n]]
+        attention_mask[b, :n] = 1.0
 
-        # Fill sequence
-        sequences[i, :seq_len] = node_features[sorted_neighbors]
-        attention_mask[i, :seq_len] = 1.0
-        neighbor_counts[i] = seq_len
-
-    return sequences, attention_mask, neighbor_counts
+    return sequences, attention_mask
 
 
 class HeteroToGraphTransformerInput:
@@ -421,7 +336,7 @@ class HeteroToGraphTransformerInput:
         ...     max_seq_len=128,
         ...     anchor_node_type='user',
         ... )
-        >>> sequences, mask, counts = transform(data)
+        >>> sequences, attention_mask = transform(data)
     """
 
     def __init__(
@@ -444,7 +359,7 @@ class HeteroToGraphTransformerInput:
 
     def __call__(
         self, data: HeteroData
-    ) -> Tuple[Tensor, Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor]:
         """Transform HeteroData to Graph Transformer input."""
         return hetero_to_graph_transformer_input(
             data=data,
