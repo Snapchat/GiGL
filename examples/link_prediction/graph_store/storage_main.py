@@ -101,7 +101,7 @@ def storage_node_process(
     should_load_tf_records_in_parallel: bool = True,
     tf_record_uri_pattern: str = r".*-of-.*\.tfrecord(\.gz)?$",
     ssl_positive_label_percentage: Optional[float] = None,
-    storage_world_backend: Optional[str] = None,
+    num_rpc_threads: int = 16,
 ) -> None:
     """Run a storage node process.
 
@@ -128,7 +128,8 @@ def storage_node_process(
         ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
             Must be None if supervised edge labels are provided in advance.
             If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
-        storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
+        num_rpc_threads (int): The number of RPC threads to use for the server.
+            This is the maximum number of concurrent RPC requests that the server can handle.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
@@ -177,6 +178,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--should_load_tf_records_in_parallel", type=str, default="True"
     )
+    parser.add_argument("--num_rpc_threads", type=int, default=16)
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
@@ -195,4 +197,5 @@ if __name__ == "__main__":
         should_load_tf_records_in_parallel=bool(
             strtobool(args.should_load_tf_records_in_parallel)
         ),
+        num_rpc_threads=args.num_rpc_threads,
     )
