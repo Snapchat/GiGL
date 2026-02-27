@@ -488,7 +488,7 @@ def _run_example_inference(
 
     manager = mp.Manager()
     mp_sharing_dict = manager.dict()
-    mp_barrier = mp.Barrier(local_world_size)
+    mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
     if cluster_info.compute_node_rank == 0:
         gcs_utils = GcsUtils()
         num_files_at_gcs_path = gcs_utils.count_blobs_in_gcs_path(
