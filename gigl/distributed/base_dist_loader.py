@@ -576,7 +576,12 @@ class BaseDistLoader(DistLoader):
             print(
                 f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls"
             )
-            rpc_futures: list[torch.futures.Future[int]] = []
+            # When multiple GPUs on the same node share a producer, the second
+            # GPU to call start_new_epoch_sampling for a given epoch gets
+            # skipped (no produce_all). We sync the local epoch to the server's
+            # current epoch + 1 so that the next __iter__ call (e.g. from
+            # InfiniteIterator reset) is guaranteed to trigger produce_all.
+            rpc_futures: list[torch.futures.Future[tuple[int, bool]]] = []
             for server_rank, producer_id in zip(
                 self._server_rank_list, self._producer_id_list
             ):
@@ -590,15 +595,17 @@ class BaseDistLoader(DistLoader):
             print(
                 f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: waiting for {len(rpc_futures)} rpc calls"
             )
-            server_epochs: list[int] = torch.futures.wait_all(rpc_futures)
+            results: list[tuple[int, bool]] = torch.futures.wait_all(rpc_futures)
+            server_epochs = [epoch for epoch, _ in results]
+            any_produced = any(produced for _, produced in results)
             print(
-                f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls done, server_epochs={server_epochs}"
+                f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: rpc calls done, server_epochs={server_epochs}, any_produced={any_produced}"
             )
+            self._epoch = max(server_epochs) + 1
             self._channel.reset()
             print(
                 f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: channel reset"
             )
-            self._epoch = max(server_epochs) + 1
         print(
             f"rank={torch.distributed.get_rank()}: BaseDistLoader.__iter__: epoch={self._epoch}"
         )

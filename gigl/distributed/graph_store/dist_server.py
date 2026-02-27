@@ -551,14 +551,19 @@ class DistServer:
                 self._msg_buffer_pool.pop(producer_id)
                 self._epoch.pop(producer_id)
 
-    def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> int:
+    def start_new_epoch_sampling(
+        self, producer_id: int, epoch: int
+    ) -> tuple[int, bool]:
         r"""Start a new epoch sampling tasks for a specific sampling producer
         with its producer id.
 
         Returns:
-            The server's current epoch for this producer after processing the
-            request. Clients should use this to synchronize their local epoch
-            counter, since multiple clients may share the same producer.
+            A tuple of (server_epoch, did_produce) where server_epoch is the
+            server's current epoch for this producer after processing the
+            request, and did_produce indicates whether ``produce_all`` was
+            called. Clients should use server_epoch to synchronize their local
+            epoch counter (since multiple clients may share the same producer)
+            and retry with a higher epoch if no server produced data.
         """
         logger.info(
             f"DistServer.start_new_epoch_sampling: producer_id={producer_id}, epoch={epoch}"
@@ -569,19 +574,30 @@ class DistServer:
                 self._epoch[producer_id] = epoch
                 producer = self._producer_pool.get(producer_id, None)
                 if producer is not None:
+                    # Wait for any in-flight workers from a previous
+                    # produce_all to finish before starting the next epoch.
+                    # This prevents corruption of sampling_completed_worker_count
+                    # when a retry triggers produce_all in quick succession.
+                    # Only wait if produce_all was called before (cur_epoch >= 0);
+                    # on the very first call (cur_epoch == -1), no workers exist.
+                    if cur_epoch >= 0:
+                        while not producer.is_all_sampling_completed():
+                            time.sleep(0.01)
                     logger.info(
                         f"DistServer.start_new_epoch_sampling: producing all for producer {producer_id}"
                     )
                     producer.produce_all()
+                    return self._epoch[producer_id], True
                 else:
                     logger.warning(
                         f"DistServer.start_new_epoch_sampling: producer {producer_id} not found"
                     )
+                    return self._epoch[producer_id], False
             else:
                 logger.info(
                     f"DistServer.start_new_epoch_sampling: producer {producer_id} already on epoch {cur_epoch}, skipping"
                 )
-            return self._epoch[producer_id]
+                return self._epoch[producer_id], False
 
     def fetch_one_sampled_message(
         self, producer_id: int
