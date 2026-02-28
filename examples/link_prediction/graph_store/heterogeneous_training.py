@@ -181,7 +181,8 @@ def _setup_dataloaders(
         anchor_node_type=anchor_node_type,
         supervision_edge_type=supervision_edge_type,
     )
-
+    pos_labels = [a.labels[supervision_edge_type][0].shape for a in ablp_input.values()]
+    print(f"---Rank {rank} split {split} ABLP input sizes: main_loader: {[a.anchor_nodes.shape for a in ablp_input.values()]}, pos labels: {pos_labels}")
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -208,6 +209,9 @@ def _setup_dataloaders(
         world_size=cluster_info.num_compute_nodes,
         node_type=labeled_node_type,
     )
+
+    print(f"---Rank {rank} split {split} all node ids sizes: {[n.shape for n in all_node_ids.values()]}")
+    flush()
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
@@ -841,8 +845,8 @@ def _run_example_training(
         trainer_args.get("sampling_workers_per_process", "4")
     )
 
-    main_batch_size = int(trainer_args.get("main_batch_size", "16"))
-    random_batch_size = int(trainer_args.get("random_batch_size", "16"))
+    main_batch_size = int(trainer_args.get("main_batch_size", "4"))
+    random_batch_size = int(trainer_args.get("random_batch_size", "4"))
 
     hid_dim = int(trainer_args.get("hid_dim", "16"))
     out_dim = int(trainer_args.get("out_dim", "16"))
