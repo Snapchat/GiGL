@@ -80,6 +80,7 @@ class DataflowResourceConfig(google.protobuf.message.Message):
     MAX_NUM_WORKERS_FIELD_NUMBER: builtins.int
     MACHINE_TYPE_FIELD_NUMBER: builtins.int
     DISK_SIZE_GB_FIELD_NUMBER: builtins.int
+    TIMEOUT_FIELD_NUMBER: builtins.int
     num_workers: builtins.int
     """Number of workers for Dataflow resources"""
     max_num_workers: builtins.int
@@ -88,6 +89,10 @@ class DataflowResourceConfig(google.protobuf.message.Message):
     """Machine type for Dataflow resources"""
     disk_size_gb: builtins.int
     """Disk size in GB for Dataflow resources"""
+    timeout: builtins.int
+    """Timeout in seconds for the Dataflow job. If unset or zero, will use the default of 24 hours.
+    See https://cloud.google.com/dataflow/docs/reference/service-options for max_workflow_runtime_walltime_seconds
+    """
     def __init__(
         self,
         *,
@@ -95,8 +100,9 @@ class DataflowResourceConfig(google.protobuf.message.Message):
         max_num_workers: builtins.int = ...,
         machine_type: builtins.str = ...,
         disk_size_gb: builtins.int = ...,
+        timeout: builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing_extensions.Literal["disk_size_gb", b"disk_size_gb", "machine_type", b"machine_type", "max_num_workers", b"max_num_workers", "num_workers", b"num_workers"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["disk_size_gb", b"disk_size_gb", "machine_type", b"machine_type", "max_num_workers", b"max_num_workers", "num_workers", b"num_workers", "timeout", b"timeout"]) -> None: ...
 
 global___DataflowResourceConfig = DataflowResourceConfig
 
