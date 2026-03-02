@@ -16,7 +16,7 @@ package snapchat.research.gbml.gigl_resource_config
   * @param diskSizeGb
   *   Disk size in GB for Dataflow resources
   * @param timeout
-  *   Timeout in seconds for the Dataflow job. If unset or zero, will use the default of 24 hours.
+  *   Timeout in seconds for the Dataflow job. If unset or zero, will default to 24 hours.
   *   See https://cloud.google.com/dataflow/docs/reference/service-options for max_workflow_runtime_walltime_seconds
   */
 @SerialVersionUID(0L)
