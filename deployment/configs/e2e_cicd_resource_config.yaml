@@ -28,11 +28,13 @@ preprocessor_config:
     max_num_workers: 128
     machine_type: "n2d-highmem-32"
     disk_size_gb: 300
+    timeout_seconds: 10
   node_preprocessor_config:
     num_workers: 1
     max_num_workers: 128
     machine_type: "n2d-highmem-64"
     disk_size_gb: 300
+    timeout_seconds: 10
 subgraph_sampler_config:
   machine_type: "n2d-highmem-16"
   num_local_ssds: 2
