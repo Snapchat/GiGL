@@ -97,6 +97,7 @@ def _run_storage_server_session(
     cluster_info: GraphStoreInfo,
     dataset: DistDataset,
     num_rpc_threads: int = 16,
+    rpc_timeout: Optional[int] = None,
 ) -> None:
     """Run a single storage-server session and block until shutdown.
 
@@ -122,6 +123,8 @@ def _run_storage_server_session(
         dataset: The :class:`DistDataset` to serve.
         num_rpc_threads: The number of RPC threads to use for the server.
             This is the maximum number of concurrent RPC requests that the server can handle.
+        rpc_timeout: The max timeout in seconds for remote RPC requests.
+            If ``None``, uses the ``init_server`` default of 180 seconds.
     """
     cluster_master_ip = cluster_info.storage_cluster_master_ip
     logger.info(
@@ -140,6 +143,7 @@ def _run_storage_server_session(
         master_port=cluster_info.rpc_master_port,
         num_clients=cluster_info.compute_cluster_world_size,
         num_rpc_threads=num_rpc_threads,
+        request_timeout=rpc_timeout if rpc_timeout is not None else 180,
     )
 
     logger.info(
@@ -159,6 +163,7 @@ def run_storage_server(
     num_server_sessions: int,
     timeout_seconds: Optional[float] = None,
     num_rpc_threads: int = 16,
+    rpc_timeout: Optional[int] = None,
 ) -> None:
     """Spawn sequential storage-server sessions as subprocesses.
 
@@ -178,6 +183,8 @@ def run_storage_server(
             ``None`` waits indefinitely.
         num_rpc_threads: The number of RPC threads to use for the server.
             This is the maximum number of concurrent RPC requests that the server can handle.
+        rpc_timeout: The max timeout in seconds for remote RPC requests.
+            If ``None``, uses the ``init_server`` default of 180 seconds.
     """
     mp_context = torch.multiprocessing.get_context("spawn")
     for i in range(num_server_sessions):
@@ -197,6 +204,7 @@ def run_storage_server(
                     cluster_info,  # cluster_info
                     dataset,  # dataset
                     num_rpc_threads,  # num_rpc_threads
+                    rpc_timeout,  # rpc_timeout
                 ),
             )
             server_processes.append(server_process)
