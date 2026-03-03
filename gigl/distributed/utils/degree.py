@@ -5,8 +5,8 @@ This module provides functions to compute node out-degrees from graph partitions
 and aggregate them across distributed machines. Degrees are computed from the
 CSR (Compressed Sparse Row) topology stored in GraphLearn-Torch Graph objects.
 
-The main entry point is compute_and_broadcast_degree_tensors(dataset), which dispatches
-to the appropriate computation function based on dataset type.
+The main entry point is compute_and_broadcast_degree_tensors(dataset), which
+computes degrees from local graph topology and aggregates across machines.
 
 Note: Degree tensors are not moved to shared memory and may be duplicated across
 processes on the same machine.
@@ -16,15 +16,11 @@ Overview
 
     compute_and_broadcast_degree_tensors(dataset)
         │
-        ├─► DistDataset (local graph partition)
-        │       └─► _compute_degrees_from_local_dataset
-        │               └─► _process_graph
-        │                       └─► _compute_degrees_from_indptr
-        │                       └─► _all_reduce_with_size_sync (if distributed)
-        │
-        └─► RemoteDistDataset (graph store mode)
-                └─► _compute_degrees_from_remote_dataset
-                        └─► _sum_tensors_with_padding
+        └─► DistDataset (local graph partition)
+                └─► _compute_degrees_from_local_dataset
+                        └─► _process_graph
+                                └─► _compute_degrees_from_indptr
+                                └─► _all_reduce_with_size_sync (if distributed)
 """
 
 from collections import Counter
@@ -37,22 +33,25 @@ from torch_geometric.typing import EdgeType
 import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 
 logger = Logger()
 
 
+# =============================================================================
+# Entry Point
+# =============================================================================
+
+
 def compute_and_broadcast_degree_tensors(
-    dataset: Union[DistDataset, RemoteDistDataset],
+    dataset: DistDataset,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """
     Compute node degrees from the graph partition and aggregate across all machines.
 
-    For DistDataset: extracts topology locally and uses all-reduce.
-    For RemoteDistDataset: fetches degrees from storage nodes and aggregates.
+    Extracts topology locally and uses all-reduce to aggregate degrees.
 
     Args:
-        dataset: Either a DistDataset or RemoteDistDataset containing the graph data.
+        dataset: A DistDataset containing the graph data.
 
     Returns:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
@@ -61,17 +60,13 @@ def compute_and_broadcast_degree_tensors(
 
     Raises:
         ValueError: If the dataset graph is None or topology is unavailable.
-        TypeError: If the dataset type is not supported.
     """
-    if isinstance(dataset, DistDataset):
-        return _compute_degrees_from_local_dataset(dataset)
-    elif isinstance(dataset, RemoteDistDataset):
-        return _compute_degrees_from_remote_dataset(dataset)
-    else:
-        raise TypeError(
-            f"Unsupported dataset type: {type(dataset)}. "
-            f"Expected DistDataset or RemoteDistDataset."
-        )
+    return _compute_degrees_from_local_dataset(dataset)
+
+
+# =============================================================================
+# Shared Utilities
+# =============================================================================
 
 
 def _pad_to_size(tensor: torch.Tensor, target_size: int) -> torch.Tensor:
@@ -97,7 +92,9 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
     return (indptr[1:] - indptr[:-1]).contiguous().to(torch.int16)
 
 
-# Dist Dataset Degree Computation Utilities
+# =============================================================================
+# DistDataset (Local Graph Partition) Functions
+# =============================================================================
 
 
 def _compute_degrees_from_local_dataset(
@@ -204,65 +201,3 @@ def _process_graph(
         )
 
     return result
-
-
-# Remote Dist Dataset Degree Computation Utilities
-
-
-def _sum_tensors_with_padding(tensors: list[torch.Tensor]) -> torch.Tensor:
-    """Sum multiple tensors, padding shorter ones to match the longest."""
-    if not tensors:
-        return torch.tensor([], dtype=torch.int16)
-
-    max_size = max(t.size(0) for t in tensors)
-    result = torch.zeros(max_size, dtype=torch.int64)
-
-    for tensor in tensors:
-        padded = _pad_to_size(tensor, max_size)
-        result += padded.to(torch.int64)
-
-    return _clamp_to_int16(result)
-
-
-def _compute_degrees_from_remote_dataset(
-    dataset: RemoteDistDataset,
-) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
-    """Compute degrees by fetching from remote storage nodes and aggregating."""
-    all_local_degrees = dataset.fetch_local_degrees()
-
-    if not all_local_degrees:
-        raise ValueError("No degree tensors returned from storage nodes.")
-
-    first_result = next(iter(all_local_degrees.values()))
-
-    # Homogeneous case: each server returns a tensor
-    if isinstance(first_result, torch.Tensor):
-        tensors = [d for d in all_local_degrees.values() if isinstance(d, torch.Tensor)]
-        result = _sum_tensors_with_padding(tensors)
-        logger.info(
-            f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
-        )
-        return result
-
-    # Heterogeneous case: each server returns dict[EdgeType, Tensor]
-    all_edge_types: set[EdgeType] = set()
-    for degrees in all_local_degrees.values():
-        if isinstance(degrees, dict):
-            all_edge_types.update(degrees.keys())
-
-    result_dict: dict[EdgeType, torch.Tensor] = {}
-    for edge_type in all_edge_types:
-        tensors = [
-            degrees[edge_type]
-            for degrees in all_local_degrees.values()
-            if isinstance(degrees, dict) and edge_type in degrees
-        ]
-        if tensors:
-            result_dict[edge_type] = _sum_tensors_with_padding(tensors)
-            logger.info(
-                f"{result_dict[edge_type].size(0)} nodes, max={result_dict[edge_type].max().item()}, min={result_dict[edge_type].min().item()}"
-            )
-        else:
-            logger.warning(f"No degree tensors found for edge type {edge_type}")
-
-    return result_dict
