@@ -63,10 +63,10 @@ def compute_and_broadcast_degree_tensors(
         ValueError: If the dataset graph is None or topology is unavailable.
         TypeError: If the dataset type is not supported.
     """
-    if isinstance(dataset, RemoteDistDataset):
-        return _compute_degrees_from_remote_dataset(dataset)
-    elif isinstance(dataset, DistDataset):
+    if isinstance(dataset, DistDataset):
         return _compute_degrees_from_local_dataset(dataset)
+    elif isinstance(dataset, RemoteDistDataset):
+        return _compute_degrees_from_remote_dataset(dataset)
     else:
         raise TypeError(
             f"Unsupported dataset type: {type(dataset)}. "
@@ -92,24 +92,12 @@ def _clamp_to_int16(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.clamp(max=max_int16).to(torch.int16)
 
 
-def _sum_tensors_with_padding(tensors: list[torch.Tensor]) -> torch.Tensor:
-    """Sum multiple tensors, padding shorter ones to match the longest."""
-    if not tensors:
-        return torch.tensor([], dtype=torch.int16)
-
-    max_size = max(t.size(0) for t in tensors)
-    result = torch.zeros(max_size, dtype=torch.int64)
-
-    for tensor in tensors:
-        padded = _pad_to_size(tensor, max_size)
-        result += padded.to(torch.int64)
-
-    return _clamp_to_int16(result)
-
-
 def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
     """Compute degrees from CSR row pointers: degree[i] = indptr[i+1] - indptr[i]."""
     return (indptr[1:] - indptr[:-1]).contiguous().to(torch.int16)
+
+
+# Dist Dataset Degree Computation Utilities
 
 
 def _compute_degrees_from_local_dataset(
@@ -166,50 +154,6 @@ def _all_reduce_with_size_sync(local_degrees: torch.Tensor) -> torch.Tensor:
     return (local_degrees // local_world_size).cpu()
 
 
-def _compute_degrees_from_remote_dataset(
-    dataset: RemoteDistDataset,
-) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
-    """Compute degrees by fetching from remote storage nodes and aggregating."""
-    all_local_degrees = dataset.fetch_local_degrees()
-
-    if not all_local_degrees:
-        raise ValueError("No degree tensors returned from storage nodes.")
-
-    first_result = next(iter(all_local_degrees.values()))
-
-    # Homogeneous case: each server returns a tensor
-    if isinstance(first_result, torch.Tensor):
-        tensors = [d for d in all_local_degrees.values() if isinstance(d, torch.Tensor)]
-        result = _sum_tensors_with_padding(tensors)
-        logger.info(
-            f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
-        )
-        return result
-
-    # Heterogeneous case: each server returns dict[EdgeType, Tensor]
-    all_edge_types: set[EdgeType] = set()
-    for degrees in all_local_degrees.values():
-        if isinstance(degrees, dict):
-            all_edge_types.update(degrees.keys())
-
-    result_dict: dict[EdgeType, torch.Tensor] = {}
-    for edge_type in all_edge_types:
-        tensors = [
-            degrees[edge_type]
-            for degrees in all_local_degrees.values()
-            if isinstance(degrees, dict) and edge_type in degrees
-        ]
-        if tensors:
-            result_dict[edge_type] = _sum_tensors_with_padding(tensors)
-            logger.info(
-                f"{result_dict[edge_type].size(0)} nodes, max={result_dict[edge_type].max().item()}, min={result_dict[edge_type].min().item()}"
-            )
-        else:
-            logger.warning(f"No degree tensors found for edge type {edge_type}")
-
-    return result_dict
-
-
 def _process_graph(
     graph: Union[Graph, dict[EdgeType, Graph]],
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
@@ -260,3 +204,65 @@ def _process_graph(
         )
 
     return result
+
+
+# Remote Dist Dataset Degree Computation Utilities
+
+
+def _sum_tensors_with_padding(tensors: list[torch.Tensor]) -> torch.Tensor:
+    """Sum multiple tensors, padding shorter ones to match the longest."""
+    if not tensors:
+        return torch.tensor([], dtype=torch.int16)
+
+    max_size = max(t.size(0) for t in tensors)
+    result = torch.zeros(max_size, dtype=torch.int64)
+
+    for tensor in tensors:
+        padded = _pad_to_size(tensor, max_size)
+        result += padded.to(torch.int64)
+
+    return _clamp_to_int16(result)
+
+
+def _compute_degrees_from_remote_dataset(
+    dataset: RemoteDistDataset,
+) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+    """Compute degrees by fetching from remote storage nodes and aggregating."""
+    all_local_degrees = dataset.fetch_local_degrees()
+
+    if not all_local_degrees:
+        raise ValueError("No degree tensors returned from storage nodes.")
+
+    first_result = next(iter(all_local_degrees.values()))
+
+    # Homogeneous case: each server returns a tensor
+    if isinstance(first_result, torch.Tensor):
+        tensors = [d for d in all_local_degrees.values() if isinstance(d, torch.Tensor)]
+        result = _sum_tensors_with_padding(tensors)
+        logger.info(
+            f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
+        )
+        return result
+
+    # Heterogeneous case: each server returns dict[EdgeType, Tensor]
+    all_edge_types: set[EdgeType] = set()
+    for degrees in all_local_degrees.values():
+        if isinstance(degrees, dict):
+            all_edge_types.update(degrees.keys())
+
+    result_dict: dict[EdgeType, torch.Tensor] = {}
+    for edge_type in all_edge_types:
+        tensors = [
+            degrees[edge_type]
+            for degrees in all_local_degrees.values()
+            if isinstance(degrees, dict) and edge_type in degrees
+        ]
+        if tensors:
+            result_dict[edge_type] = _sum_tensors_with_padding(tensors)
+            logger.info(
+                f"{result_dict[edge_type].size(0)} nodes, max={result_dict[edge_type].max().item()}, min={result_dict[edge_type].min().item()}"
+            )
+        else:
+            logger.warning(f"No degree tensors found for edge type {edge_type}")
+
+    return result_dict

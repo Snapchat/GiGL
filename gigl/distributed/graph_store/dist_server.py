@@ -35,7 +35,6 @@ from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.utils.degree import _compute_degrees_from_indptr
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -400,6 +399,9 @@ class DistServer:
         Raises:
             ValueError: If the graph topology is not available.
         """
+        # import function here to avoid circular import
+        from gigl.distributed.utils.degree import _compute_degrees_from_indptr
+
         graph = self.dataset.get_graph(edge_type)
         if graph is None:
             raise ValueError(
