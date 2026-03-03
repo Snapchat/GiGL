@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Callable, Mapping, Optional, Union
 
 import torch
 
@@ -131,6 +131,9 @@ class MockRemoteDistDataset(RemoteDistDataset):
         compute_node_rank: The rank of the compute node. Defaults to 0.
         edge_types: Optional list of edge types for heterogeneous graphs. Defaults to None.
         edge_dir: Edge direction, either "in" or "out". Defaults to "out".
+        local_degrees: Optional mapping of server rank to degree tensors for fetch_local_degrees().
+            For homogeneous graphs: dict[int, torch.Tensor].
+            For heterogeneous graphs: dict[int, dict[EdgeType, torch.Tensor]].
 
     Example:
         >>> mock_dataset = MockRemoteDistDataset(
@@ -139,6 +142,13 @@ class MockRemoteDistDataset(RemoteDistDataset):
         ... )
         >>> mock_dataset.fetch_edge_types()  # Returns the configured edge_types
         >>> mock_dataset.cluster_info.num_storage_nodes  # Returns 2
+
+        >>> # For degree computation testing:
+        >>> mock_dataset = MockRemoteDistDataset(
+        ...     num_storage_nodes=2,
+        ...     local_degrees={0: torch.tensor([1, 2, 3]), 1: torch.tensor([4, 5, 6])},
+        ... )
+        >>> mock_dataset.fetch_local_degrees()  # Returns the configured local_degrees
     """
 
     def __init__(
@@ -149,6 +159,9 @@ class MockRemoteDistDataset(RemoteDistDataset):
         compute_node_rank: int = 0,
         edge_types: Optional[list[EdgeType]] = None,
         edge_dir: str = "out",
+        local_degrees: Optional[
+            Mapping[int, Union[torch.Tensor, Mapping[EdgeType, torch.Tensor]]]
+        ] = None,
     ):
         # Create a mock GraphStoreInfo with placeholder values
         self._mock_cluster_info = GraphStoreInfo(
@@ -167,6 +180,7 @@ class MockRemoteDistDataset(RemoteDistDataset):
         self._mock_compute_node_rank = compute_node_rank
         self._mock_edge_types = edge_types
         self._mock_edge_dir = edge_dir
+        self._mock_local_degrees = local_degrees
         # Don't call super().__init__() to avoid needing a real cluster connection
 
     @property
@@ -197,3 +211,28 @@ class MockRemoteDistDataset(RemoteDistDataset):
     def fetch_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """Returns a list of mock free port numbers."""
         return get_free_ports(num_ports=num_ports)
+
+    def fetch_local_degrees(
+        self,
+    ) -> dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
+        """Returns the configured local degrees for degree computation testing.
+
+        Returns:
+            The local_degrees mapping configured at construction time.
+            For homogeneous graphs: dict[int, torch.Tensor] mapping server rank to degrees.
+            For heterogeneous graphs: dict[int, dict[EdgeType, torch.Tensor]].
+
+        Raises:
+            ValueError: If local_degrees was not configured.
+        """
+        if self._mock_local_degrees is None:
+            raise ValueError(
+                "local_degrees not configured. Pass local_degrees to MockRemoteDistDataset constructor."
+            )
+        result: dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = {}
+        for key, value in self._mock_local_degrees.items():
+            if isinstance(value, torch.Tensor):
+                result[key] = value
+            else:
+                result[key] = dict(value)
+        return result

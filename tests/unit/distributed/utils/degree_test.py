@@ -1,20 +1,27 @@
 import torch
 from absl.testing import absltest
 from parameterized import param, parameterized
+from torch_geometric.typing import EdgeType
 
 from gigl.distributed.utils.degree import (
     _clamp_to_int16,
     _compute_degrees_from_indptr,
     _pad_to_size,
+    _sum_tensors_with_padding,
     compute_and_broadcast_degree_tensors,
 )
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+    STORY_TO_USER,
+    USER_TO_STORY,
     create_heterogeneous_dataset,
     create_homogeneous_dataset,
 )
-from tests.test_assets.distributed.utils import create_test_process_group
+from tests.test_assets.distributed.utils import (
+    MockRemoteDistDataset,
+    create_test_process_group,
+)
 from tests.test_assets.test_case import TestCase
 
 
@@ -74,6 +81,69 @@ class TestLocalDegreeComputation(TestCase):
             self.assert_tensor_equality(result[edge_type], expected)
 
 
+class TestRemoteDegreeComputation(TestCase):
+    """Tests for remote RemoteDistDataset degree computation.
+
+    RemoteDistDataset requires RPC connections to storage nodes,
+    so these tests use MockRemoteDistDataset from test_assets to simulate
+    the remote degree fetching.
+    """
+
+    def test_homogeneous_aggregation(self):
+        """Test degree aggregation for homogeneous remote graph."""
+        num_nodes, num_servers = 100, 3
+        partition_degrees = [
+            torch.randint(0, 5, (num_nodes,), dtype=torch.int32)
+            for _ in range(num_servers)
+        ]
+        expected = sum(d.to(torch.int64) for d in partition_degrees)
+        local_degrees: dict[int, torch.Tensor] = {
+            i: d for i, d in enumerate(partition_degrees)
+        }
+        dataset = MockRemoteDistDataset(
+            num_storage_nodes=num_servers, local_degrees=local_degrees
+        )
+        result = compute_and_broadcast_degree_tensors(dataset)
+        self.assertIsInstance(result, torch.Tensor)
+        assert isinstance(result, torch.Tensor)
+        assert isinstance(expected, torch.Tensor)
+        self.assert_tensor_equality(result.to(torch.int64), expected)
+
+    def test_heterogeneous_aggregation(self):
+        """Test degree aggregation for heterogeneous remote graph."""
+        edge_types = [USER_TO_STORY, STORY_TO_USER]
+        num_servers = 2
+        partition_data: dict[int, dict[EdgeType, torch.Tensor]] = {
+            i: {} for i in range(num_servers)
+        }
+        expected_by_type: dict[EdgeType, torch.Tensor] = {}
+        for et in edge_types:
+            num_nodes = 50
+            total = torch.zeros(num_nodes, dtype=torch.int64)
+            for i in range(num_servers):
+                d = torch.randint(0, 5, (num_nodes,), dtype=torch.int32)
+                partition_data[i][et] = d
+                total += d.to(torch.int64)
+            expected_by_type[et] = total
+        dataset = MockRemoteDistDataset(
+            num_storage_nodes=num_servers,
+            edge_types=edge_types,
+            local_degrees=partition_data,
+        )
+        result = compute_and_broadcast_degree_tensors(dataset)
+        assert isinstance(result, dict)
+        for et in edge_types:
+            self.assert_tensor_equality(
+                result[et].to(torch.int64), expected_by_type[et]
+            )
+
+    def test_empty_fetch_result_raises_error(self):
+        """Test that ValueError is raised when no degrees returned."""
+        dataset = MockRemoteDistDataset(num_storage_nodes=1, local_degrees={})
+        with self.assertRaises(ValueError):
+            compute_and_broadcast_degree_tensors(dataset)
+
+
 class TestDistributedDegreeComputation(TestCase):
     """Tests for degree computation with torch.distributed initialized.
 
@@ -124,6 +194,36 @@ class TestDistributedDegreeComputation(TestCase):
 
 class TestHelperFunctions(TestCase):
     """Tests for internal helper functions."""
+
+    @parameterized.expand(
+        [
+            param(
+                "sum_equal_length_tensors",
+                tensors=[
+                    torch.tensor([1, 2, 3], dtype=torch.int32),
+                    torch.tensor([4, 5, 6], dtype=torch.int32),
+                ],
+                expected=torch.tensor([5, 7, 9], dtype=torch.int16),
+            ),
+            param(
+                "sum_different_length_tensors",
+                tensors=[
+                    torch.tensor([1, 2], dtype=torch.int32),
+                    torch.tensor([4, 5, 6], dtype=torch.int32),
+                ],
+                expected=torch.tensor([5, 7, 6], dtype=torch.int16),
+            ),
+            param(
+                "sum_empty_list",
+                tensors=[],
+                expected=torch.tensor([], dtype=torch.int16),
+            ),
+        ]
+    )
+    def test_sum_tensors_with_padding(self, _, tensors, expected):
+        """Test _sum_tensors_with_padding helper function."""
+        result = _sum_tensors_with_padding(tensors)
+        self.assert_tensor_equality(result, expected)
 
     @parameterized.expand(
         [
