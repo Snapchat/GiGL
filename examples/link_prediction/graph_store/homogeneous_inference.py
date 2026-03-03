@@ -85,6 +85,7 @@ import argparse
 import gc
 import os
 import sys
+import threading
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
@@ -178,6 +179,7 @@ class InferenceProcessArgs:
     inference_node_type: NodeType
     gbml_config_pb_wrapper: GbmlConfigPbWrapper
     mp_sharing_dict: MutableMapping[str, torch.Tensor]
+    mp_barrier: threading.Barrier
 
 
 @torch.no_grad()
@@ -212,7 +214,10 @@ def _inference_process(
     # If this is not done, the dataloader will not be able to sample from the graph store and will crash.
     init_compute_process(local_rank, args.cluster_info)
     dataset = RemoteDistDataset(
-        args.cluster_info, local_rank, mp_sharing_dict=args.mp_sharing_dict
+        args.cluster_info,
+        local_rank,
+        mp_sharing_dict=args.mp_sharing_dict,
+        mp_barrier=args.mp_barrier,
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
@@ -481,7 +486,9 @@ def _run_example_inference(
             )
             local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
-    mp_sharing_dict = mp.Manager().dict()
+    manager = mp.Manager()
+    mp_sharing_dict = manager.dict()
+    mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
     if cluster_info.compute_node_rank == 0:
         gcs_utils = GcsUtils()
         num_files_at_gcs_path = gcs_utils.count_blobs_in_gcs_path(
@@ -541,6 +548,7 @@ def _run_example_inference(
         inference_node_type=graph_metadata.homogeneous_node_type,
         gbml_config_pb_wrapper=gbml_config_pb_wrapper,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
     )
     mp.spawn(
         fn=_inference_process,
