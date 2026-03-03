@@ -382,42 +382,6 @@ class DistServer:
         else:
             return None
 
-    def _compute_degrees_for_edge_type(
-        self,
-        edge_type: Optional[EdgeType] = None,
-    ) -> torch.Tensor:
-        """Compute node degrees from CSR topology for a single edge type.
-
-        Args:
-            edge_type: The edge type to get degrees for. Must be None for
-                homogeneous datasets and non-None for heterogeneous ones.
-
-        Returns:
-            A tensor of shape [num_nodes] containing the degree of each node
-            in this partition.
-
-        Raises:
-            ValueError: If the graph topology is not available.
-        """
-        # import function here to avoid circular import
-        from gigl.distributed.utils.degree import _compute_degrees_from_indptr
-
-        graph = self.dataset.get_graph(edge_type)
-        if graph is None:
-            raise ValueError(
-                f"Graph is None for edge_type={edge_type}. "
-                "Cannot compute degrees without graph topology."
-            )
-
-        topo = graph.topo
-        if topo is None or topo.indptr is None:
-            raise ValueError(
-                f"Topology or indptr not available for edge_type={edge_type}. "
-                "Cannot compute degree tensors."
-            )
-
-        return _compute_degrees_from_indptr(topo.indptr)
-
     def get_local_degrees(
         self,
     ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
@@ -435,6 +399,9 @@ class DistServer:
         Raises:
             ValueError: If the graph topology is not available.
         """
+        # import function here to avoid circular import
+        from gigl.distributed.utils.degree import _compute_degrees_from_indptr
+
         graph = self.dataset.graph
         if graph is None:
             raise ValueError(
@@ -443,18 +410,22 @@ class DistServer:
 
         if isinstance(graph, dict):
             degree_tensors: dict[EdgeType, torch.Tensor] = {}
-            for edge_type in graph.keys():
-                try:
-                    degree_tensors[edge_type] = self._compute_degrees_for_edge_type(
-                        edge_type
+            for edge_type, edge_graph in graph.items():
+                topo = edge_graph.topo
+                if topo is None or topo.indptr is None:
+                    raise ValueError(
+                        f"Topology/indptr not available for edge type {edge_type}, skipping."
                     )
-                except ValueError as e:
-                    logger.warning(
-                        f"Could not compute degrees for edge type {edge_type}: {e}"
-                    )
+                degree_tensors[edge_type] = _compute_degrees_from_indptr(topo.indptr)
             return degree_tensors
         else:
-            return self._compute_degrees_for_edge_type(None)
+            topo = graph.topo
+            if topo is None or topo.indptr is None:
+                raise ValueError(
+                    "Topology/indptr not available for homogeneous graph. "
+                    "Cannot compute degree tensors."
+                )
+            return _compute_degrees_from_indptr(topo.indptr)
 
     def get_ablp_input(
         self,
