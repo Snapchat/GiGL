@@ -131,9 +131,13 @@ def storage_node_process(
             If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
         num_rpc_threads (int): The number of RPC threads to use for the server.
             This is the maximum number of concurrent RPC requests that the server can handle.
+            Should be set to the maximum number of concurrent RPCs a server *must* handle,
+            in practice, the compute world size is an upper bound.
         rpc_timeout (Optional[int]): The max timeout in seconds for remote
             RPC requests. If ``None``, uses the ``init_server`` default of
             180 seconds.
+            If there are long running RPCs (e.g.  producer creation), and they timeout,
+            then this parameter should be increased to avoid timeout errors.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(

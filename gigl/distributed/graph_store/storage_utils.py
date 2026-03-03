@@ -183,8 +183,12 @@ def run_storage_server(
             ``None`` waits indefinitely.
         num_rpc_threads: The number of RPC threads to use for the server.
             This is the maximum number of concurrent RPC requests that the server can handle.
+            Should be set to the maximum number of concurrent RPCs a server *must* handle,
+            in practice, the compute world size is an upper bound.
         rpc_timeout: The max timeout in seconds for remote RPC requests.
             If ``None``, uses the ``init_server`` default of 180 seconds.
+            If there are long running RPCs (e.g.  producer creation), and they timeout,
+            then this parameter should be increased to avoid timeout errors.
     """
     mp_context = torch.multiprocessing.get_context("spawn")
     for i in range(num_server_sessions):
