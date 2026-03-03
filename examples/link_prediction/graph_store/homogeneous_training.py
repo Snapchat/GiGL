@@ -90,7 +90,22 @@ To run this file with GiGL orchestration, set the fields similar to below::
         storageArgs:
           sample_edge_direction: "in"
           splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
-          splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": true, "num_val": 0.1, "num_test": 0.1}'
+          # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
+          # We do this so that the tuples for edge types get parsed as such.
+          splitter_kwargs: |
+            {
+              "sampling_direction": "in",
+              "should_convert_labels_to_edges": true,
+              "num_val": 0.1,
+              "num_test": 0.1,
+              "supervision_edge_types": [("paper", "cites", "paper")]
+            }
+          # We only do one session for training.
+          # You should set one server session per process group you want to communicate with.
+          # e.g. for inference:
+          # for node_type in inference_node_types:
+          #   launch_inference_process(node_type)
+          #   num_server_sessions = len(inference_node_types)
           num_server_sessions: "1"
     featureFlags:
       should_run_glt_backend: 'True'
@@ -206,14 +221,6 @@ def _setup_dataloaders(
         world_size=cluster_info.num_compute_nodes,
     )
 
-    for storage_rank, ablp_nodes in ablp_input.items():
-        print(
-            f"Rank {rank} split={split}: storage_rank={storage_rank}, "
-            f"num_anchors={ablp_nodes.anchor_nodes.shape}, "
-            f"labels: {ablp_nodes.labels}"
-        )
-        flush()
-
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -289,10 +296,6 @@ def _compute_loss(
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
-    # print(f"Computing loss for main data: {main_data}")
-    # print(f"Computing loss for random negative data: {random_negative_data}")
-    # print(f"Using model: {model}")
-    flush()
     # Forward pass through encoder
     main_embeddings = model(data=main_data, device=device)
     random_negative_embeddings = model(data=random_negative_data, device=device)
