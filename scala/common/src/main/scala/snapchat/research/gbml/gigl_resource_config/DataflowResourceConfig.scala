@@ -15,6 +15,9 @@ package snapchat.research.gbml.gigl_resource_config
   *   Machine type for Dataflow resources
   * @param diskSizeGb
   *   Disk size in GB for Dataflow resources
+  * @param timeout
+  *   Timeout in seconds for the Dataflow job. If unset or zero, will default to 24 hours.
+  *   See https://cloud.google.com/dataflow/docs/reference/service-options for max_workflow_runtime_walltime_seconds
   */
 @SerialVersionUID(0L)
 final case class DataflowResourceConfig(
@@ -22,38 +25,46 @@ final case class DataflowResourceConfig(
     maxNumWorkers: _root_.scala.Int = 0,
     machineType: _root_.scala.Predef.String = "",
     diskSizeGb: _root_.scala.Int = 0,
+    timeout: _root_.scala.Int = 0,
     unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
     ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[DataflowResourceConfig] {
     @transient
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = numWorkers
         if (__value != 0) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(1, __value)
         }
       };
-      
+
       {
         val __value = maxNumWorkers
         if (__value != 0) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(2, __value)
         }
       };
-      
+
       {
         val __value = machineType
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(3, __value)
         }
       };
-      
+
       {
         val __value = diskSizeGb
         if (__value != 0) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(4, __value)
+        }
+      };
+
+      {
+        val __value = timeout
+        if (__value != 0) {
+          __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(5, __value)
         }
       };
       __size += unknownFields.serializedSize
@@ -66,7 +77,7 @@ final case class DataflowResourceConfig(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {
@@ -93,12 +104,19 @@ final case class DataflowResourceConfig(
           _output__.writeUInt32(4, __v)
         }
       };
+      {
+        val __v = timeout
+        if (__v != 0) {
+          _output__.writeUInt32(5, __v)
+        }
+      };
       unknownFields.writeTo(_output__)
     }
     def withNumWorkers(__v: _root_.scala.Int): DataflowResourceConfig = copy(numWorkers = __v)
     def withMaxNumWorkers(__v: _root_.scala.Int): DataflowResourceConfig = copy(maxNumWorkers = __v)
     def withMachineType(__v: _root_.scala.Predef.String): DataflowResourceConfig = copy(machineType = __v)
     def withDiskSizeGb(__v: _root_.scala.Int): DataflowResourceConfig = copy(diskSizeGb = __v)
+    def withTimeout(__v: _root_.scala.Int): DataflowResourceConfig = copy(timeout = __v)
     def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
     def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
     def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -119,6 +137,10 @@ final case class DataflowResourceConfig(
           val __t = diskSizeGb
           if (__t != 0) __t else null
         }
+        case 5 => {
+          val __t = timeout
+          if (__t != 0) __t else null
+        }
       }
     }
     def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -128,6 +150,7 @@ final case class DataflowResourceConfig(
         case 2 => _root_.scalapb.descriptors.PInt(maxNumWorkers)
         case 3 => _root_.scalapb.descriptors.PString(machineType)
         case 4 => _root_.scalapb.descriptors.PInt(diskSizeGb)
+        case 5 => _root_.scalapb.descriptors.PInt(timeout)
       }
     }
     def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -142,6 +165,7 @@ object DataflowResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     var __maxNumWorkers: _root_.scala.Int = 0
     var __machineType: _root_.scala.Predef.String = ""
     var __diskSizeGb: _root_.scala.Int = 0
+    var __timeout: _root_.scala.Int = 0
     var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
     var _done__ = false
     while (!_done__) {
@@ -156,6 +180,8 @@ object DataflowResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
           __machineType = _input__.readStringRequireUtf8()
         case 32 =>
           __diskSizeGb = _input__.readUInt32()
+        case 40 =>
+          __timeout = _input__.readUInt32()
         case tag =>
           if (_unknownFields__ == null) {
             _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -168,6 +194,7 @@ object DataflowResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
         maxNumWorkers = __maxNumWorkers,
         machineType = __machineType,
         diskSizeGb = __diskSizeGb,
+        timeout = __timeout,
         unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
     )
   }
@@ -178,7 +205,8 @@ object DataflowResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
         numWorkers = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).map(_.as[_root_.scala.Int]).getOrElse(0),
         maxNumWorkers = __fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).map(_.as[_root_.scala.Int]).getOrElse(0),
         machineType = __fieldsMap.get(scalaDescriptor.findFieldByNumber(3).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
-        diskSizeGb = __fieldsMap.get(scalaDescriptor.findFieldByNumber(4).get).map(_.as[_root_.scala.Int]).getOrElse(0)
+        diskSizeGb = __fieldsMap.get(scalaDescriptor.findFieldByNumber(4).get).map(_.as[_root_.scala.Int]).getOrElse(0),
+        timeout = __fieldsMap.get(scalaDescriptor.findFieldByNumber(5).get).map(_.as[_root_.scala.Int]).getOrElse(0)
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
@@ -191,28 +219,33 @@ object DataflowResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     numWorkers = 0,
     maxNumWorkers = 0,
     machineType = "",
-    diskSizeGb = 0
+    diskSizeGb = 0,
+    timeout = 0
   )
   implicit class DataflowResourceConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig](_l) {
     def numWorkers: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.numWorkers)((c_, f_) => c_.copy(numWorkers = f_))
     def maxNumWorkers: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.maxNumWorkers)((c_, f_) => c_.copy(maxNumWorkers = f_))
     def machineType: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.machineType)((c_, f_) => c_.copy(machineType = f_))
     def diskSizeGb: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.diskSizeGb)((c_, f_) => c_.copy(diskSizeGb = f_))
+    def timeout: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.timeout)((c_, f_) => c_.copy(timeout = f_))
   }
   final val NUM_WORKERS_FIELD_NUMBER = 1
   final val MAX_NUM_WORKERS_FIELD_NUMBER = 2
   final val MACHINE_TYPE_FIELD_NUMBER = 3
   final val DISK_SIZE_GB_FIELD_NUMBER = 4
+  final val TIMEOUT_FIELD_NUMBER = 5
   def of(
     numWorkers: _root_.scala.Int,
     maxNumWorkers: _root_.scala.Int,
     machineType: _root_.scala.Predef.String,
-    diskSizeGb: _root_.scala.Int
+    diskSizeGb: _root_.scala.Int,
+    timeout: _root_.scala.Int
   ): _root_.snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig = _root_.snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig(
     numWorkers,
     maxNumWorkers,
     machineType,
-    diskSizeGb
+    diskSizeGb,
+    timeout
   )
   // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.DataflowResourceConfig])
 }
