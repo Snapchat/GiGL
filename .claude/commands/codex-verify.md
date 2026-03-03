@@ -1,11 +1,11 @@
 ---
-description: Delegate code review to Codex CLI, save findings to docs/reviews/
+description: Delegate code review to Codex CLI, save findings to /tmp/codex-verify/
 argument-hint: "[full | unstaged | staged | feature <desc> | followup <review-file>]"
 ---
 
 # Codex Verify
 
-Delegate a structured code review to Codex CLI, capture the results, and save them to `docs/reviews/`.
+Delegate a structured code review to Codex CLI, capture the results, and save them to `/tmp/codex-verify/`.
 
 ## Instructions
 
@@ -27,7 +27,7 @@ Determine the review scope from `$ARGUMENTS`:
 
 For **feature** scope: slugify the description (lowercase, spaces/punctuation to hyphens, max 40 chars). Example: `feature embedding resume logic` -> slug `feature-embedding-resume-logic`.
 
-For **followup** scope: the `<review-file>` must be a path to an existing review markdown file (e.g. `docs/reviews/20260221-full.md`). Read it — you'll need its content for the prompt. If the file doesn't exist, tell the user and stop.
+For **followup** scope: the `<review-file>` must be a path to an existing review markdown file (e.g. `/tmp/codex-verify/20260221-full/review.md`). Read it — you'll need its content for the prompt. If the file doesn't exist, tell the user and stop.
 
 Store the scope name and slug for later steps.
 
@@ -41,16 +41,11 @@ WORK_DIR="/tmp/codex-verify/$(date +%Y%m%d-%H%M%S)-<slug>"
 mkdir -p "$WORK_DIR"
 ```
 
-**Review file naming**: `docs/reviews/YYYYMMDD-<slug>.md` where YYYYMMDD is today's date.
-
-If a file with that name already exists, append `-2`, `-3`, etc.:
-- `docs/reviews/20260221-full.md` (first)
-- `docs/reviews/20260221-full-2.md` (second same day)
-
-Determine the final `$REVIEW_FILE` path now. Also set:
+All files live inside `$WORK_DIR`:
 - `PROMPT_FILE="$WORK_DIR/prompt.md"`
 - `RESULT_FILE="$WORK_DIR/result.md"`
 - `RUN_SCRIPT="$WORK_DIR/run.sh"`
+- `REVIEW_FILE="$WORK_DIR/review.md"`
 
 ---
 
@@ -234,7 +229,7 @@ When it returns:
 
 ### 6. Save and present
 
-Read `$RESULT_FILE`. Copy its content to `$REVIEW_FILE` (the dated file in `docs/reviews/`).
+Read `$RESULT_FILE`. Copy its content to `$REVIEW_FILE`.
 
 Present to the user:
 1. **Where the review was saved**: the `$REVIEW_FILE` path
