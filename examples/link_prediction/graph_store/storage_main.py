@@ -101,7 +101,8 @@ def storage_node_process(
     should_load_tf_records_in_parallel: bool = True,
     tf_record_uri_pattern: str = r".*-of-.*\.tfrecord(\.gz)?$",
     ssl_positive_label_percentage: Optional[float] = None,
-    storage_world_backend: Optional[str] = None,
+    num_rpc_threads: int = 16,
+    rpc_timeout: Optional[int] = None,
 ) -> None:
     """Run a storage node process.
 
@@ -128,7 +129,15 @@ def storage_node_process(
         ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
             Must be None if supervised edge labels are provided in advance.
             If 0.1 is provided, 10% of the edges will be selected as self-supervised labels.
-        storage_world_backend (Optional[str]): The backend for the storage Torch Distributed process group.
+        num_rpc_threads (int): The number of RPC threads to use for the server.
+            This is the maximum number of concurrent RPC requests that the server can handle.
+            Should be set to the maximum number of concurrent RPCs a server *must* handle,
+            in practice, the compute world size is an upper bound.
+        rpc_timeout (Optional[int]): The max timeout in seconds for remote
+            RPC requests. If ``None``, uses the ``init_server`` default of
+            180 seconds.
+            If there are long running RPCs (e.g.  producer creation), and they timeout,
+            then this parameter should be increased to avoid timeout errors.
     """
     init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
     logger.info(
@@ -163,6 +172,8 @@ def storage_node_process(
         cluster_info=cluster_info,
         dataset=dataset,
         num_server_sessions=num_server_sessions,
+        num_rpc_threads=num_rpc_threads,
+        rpc_timeout=rpc_timeout,
     )
 
 
@@ -177,6 +188,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--should_load_tf_records_in_parallel", type=str, default="True"
     )
+    parser.add_argument("--num_rpc_threads", type=int, default=16)
+    parser.add_argument("--rpc_timeout", type=int, default=None)
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
@@ -195,4 +208,6 @@ if __name__ == "__main__":
         should_load_tf_records_in_parallel=bool(
             strtobool(args.should_load_tf_records_in_parallel)
         ),
+        num_rpc_threads=args.num_rpc_threads,
+        rpc_timeout=args.rpc_timeout,
     )
