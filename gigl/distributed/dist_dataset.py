@@ -76,6 +76,9 @@ class DistDataset(glt.distributed.DistDataset):
         edge_feature_info: Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
     ) -> None:
         """
         Initializes the fields of the DistDataset class. This function is called upon each serialization of the DistDataset instance.
@@ -100,6 +103,7 @@ class DistDataset(glt.distributed.DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
+            degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensors. Can be computed via compute_degree_tensors() method.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -134,6 +138,10 @@ class DistDataset(glt.distributed.DistDataset):
         # These fields are added so we can extract the node and edge feature dimensions and data type in the dataloader without having to lazily initialize the features.
         self._node_feature_info = node_feature_info
         self._edge_feature_info = edge_feature_info
+
+        self._degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = degree_tensors
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -287,6 +295,49 @@ class DistDataset(glt.distributed.DistDataset):
         Contains information about the dimension and dtype for the edge features in the graph
         """
         return self._edge_feature_info
+
+    @property
+    def degree_tensors(
+        self,
+    ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
+        """
+        Pre-computed degree tensors for the graph.
+
+        Returns:
+            The degree tensors if computed, None otherwise.
+            - For homogeneous graphs: A tensor of shape [num_nodes].
+            - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
+
+        Use compute_degree_tensors() to compute and cache the degrees.
+        """
+        return self._degree_tensors
+
+    def compute_degree_tensors(
+        self,
+    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+        """
+        Compute node degrees from the graph partition and cache them.
+
+        Extracts topology from the local graph partition and uses all-reduce
+        to aggregate degrees across all machines when distributed is initialized.
+
+        The computed degrees are cached and can be accessed via the degree_tensors property.
+
+        Returns:
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
+                - For homogeneous graphs: A tensor of shape [num_nodes].
+                - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
+
+        Raises:
+            ValueError: If the dataset graph is None or topology is unavailable.
+        """
+        if self._degree_tensors is None:
+            from gigl.distributed.utils.degree import (
+                compute_and_broadcast_degree_tensors,
+            )
+
+            self._degree_tensors = compute_and_broadcast_degree_tensors(self)
+        return self._degree_tensors
 
     @property
     def train_node_ids(
@@ -816,6 +867,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     ]:
         """
         Serializes the member variables of the DistDatasetClass
@@ -837,6 +889,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
+            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -845,6 +898,7 @@ class DistDataset(glt.distributed.DistDataset):
         share_memory(entity=self._positive_edge_label)
         share_memory(entity=self._negative_edge_label)
         share_memory(entity=self._node_ids)
+        share_memory(entity=self._degree_tensors)
         ipc_handle = (
             self._rank,
             self._world_size,
@@ -863,6 +917,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._num_test,  # Additional field unique to DistDataset class
             self._node_feature_info,  # Additional field unique to DistDataset class
             self._edge_feature_info,  # Additional field unique to DistDataset class
+            self._degree_tensors,  # Additional field unique to DistDataset class
         )
         return ipc_handle
 
@@ -1118,6 +1173,7 @@ def _rebuild_distributed_dataset(
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
     ]
 ):
     dataset = DistDataset.from_ipc_handle(ipc_handle)
