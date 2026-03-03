@@ -596,45 +596,15 @@ class RemoteDistDataset:
 
     def fetch_local_degrees(
         self,
-        edge_type: Optional[EdgeType] = None,
-    ) -> dict[int, torch.Tensor]:
+    ) -> dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
         """Fetch local node degrees from all storage nodes.
 
         Retrieves the degree tensors computed from the CSR topology on each
         storage node. These can then be aggregated (summed) to get global degrees.
 
-        Args:
-            edge_type: The edge type to get degrees for. Must be None for
-                homogeneous datasets and non-None for heterogeneous ones.
-
-        Returns:
-            dict[int, torch.Tensor]: A dict mapping storage rank to the local
-                degree tensor for that partition.
-        """
-        edge_type = self._infer_edge_type_if_homogeneous_with_label_edges(edge_type)
-        futures: list[torch.futures.Future[torch.Tensor]] = []
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            futures.append(
-                async_request_server(
-                    server_rank,
-                    DistServer.get_local_degrees,
-                    edge_type=edge_type,
-                )
-            )
-        local_degrees = torch.futures.wait_all(futures)
-        return {
-            server_rank: degrees for server_rank, degrees in enumerate(local_degrees)
-        }
-
-    def fetch_all_local_degrees(
-        self,
-    ) -> dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
-        """Fetch local node degrees for all edge types from all storage nodes.
-
-        Retrieves the degree tensors computed from the CSR topology on each
-        storage node. For heterogeneous graphs, each storage node returns a
-        dict mapping EdgeType to degree tensors.
+        For heterogeneous graphs, each storage node returns a dict mapping
+        EdgeType to degree tensors. For homogeneous graphs, each returns a
+        single degree tensor.
 
         Returns:
             dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
@@ -650,7 +620,7 @@ class RemoteDistDataset:
             futures.append(
                 async_request_server(
                     server_rank,
-                    DistServer.get_all_local_degrees,
+                    DistServer.get_local_degrees,
                 )
             )
         all_local_degrees = torch.futures.wait_all(futures)

@@ -382,14 +382,11 @@ class DistServer:
         else:
             return None
 
-    def get_local_degrees(
+    def _compute_degrees_for_edge_type(
         self,
         edge_type: Optional[EdgeType] = None,
     ) -> torch.Tensor:
-        """Get the local node degrees from the CSR topology for this partition.
-
-        Computes degrees from the CSR row pointers (indptr). In CSR format,
-        degree[i] = indptr[i+1] - indptr[i].
+        """Compute node degrees from CSR topology for a single edge type.
 
         Args:
             edge_type: The edge type to get degrees for. Must be None for
@@ -418,12 +415,15 @@ class DistServer:
 
         indptr = topo.indptr
         local_degrees = indptr[1:] - indptr[:-1]
-        return local_degrees.contiguous().to(torch.int32)
+        return local_degrees.contiguous().to(torch.int16)
 
-    def get_all_local_degrees(
+    def get_local_degrees(
         self,
     ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """Get the local node degrees for all edge types in this partition.
+
+        Computes degrees from the CSR row pointers (indptr). In CSR format,
+        degree[i] = indptr[i+1] - indptr[i].
 
         For heterogeneous graphs, returns a dict mapping EdgeType to degree tensors.
         For homogeneous graphs, returns a single degree tensor.
@@ -444,14 +444,16 @@ class DistServer:
             degree_tensors: dict[EdgeType, torch.Tensor] = {}
             for edge_type in graph.keys():
                 try:
-                    degree_tensors[edge_type] = self.get_local_degrees(edge_type)
+                    degree_tensors[edge_type] = self._compute_degrees_for_edge_type(
+                        edge_type
+                    )
                 except ValueError as e:
                     logger.warning(
                         f"Could not compute degrees for edge type {edge_type}: {e}"
                     )
             return degree_tensors
         else:
-            return self.get_local_degrees(None)
+            return self._compute_degrees_for_edge_type(None)
 
     def get_ablp_input(
         self,
