@@ -35,6 +35,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
 from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.utils.degree import _compute_degrees_from_indptr
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -413,9 +414,7 @@ class DistServer:
                 "Cannot compute degree tensors."
             )
 
-        indptr = topo.indptr
-        local_degrees = indptr[1:] - indptr[:-1]
-        return local_degrees.contiguous().to(torch.int16)
+        return _compute_degrees_from_indptr(topo.indptr)
 
     def get_local_degrees(
         self,
