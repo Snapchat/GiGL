@@ -551,17 +551,30 @@ class DistServer:
                 self._msg_buffer_pool.pop(producer_id)
                 self._epoch.pop(producer_id)
 
-    def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> None:
-        r"""Start a new epoch sampling tasks for a specific sampling producer
-        with its producer id.
+    def start_new_epoch_sampling(
+        self, producer_id: int, epoch: int
+    ) -> tuple[int, bool]:
+        """Start a new epoch sampling for a specific sampling producer.
+
+        Args:
+            producer_id: The unique id of the sampling producer.
+            epoch: The epoch requested by the client.
+
+        Returns:
+            A tuple of (server_epoch, produced) where server_epoch is the
+            current epoch on the server after this call and produced indicates
+            whether ``produce_all()`` was triggered.
         """
         with self._producer_lock[producer_id]:
             cur_epoch = self._epoch[producer_id]
+            produced = False
             if cur_epoch < epoch:
                 self._epoch[producer_id] = epoch
                 producer = self._producer_pool.get(producer_id, None)
                 if producer is not None:
                     producer.produce_all()
+                    produced = True
+            return self._epoch[producer_id], produced
 
     def fetch_one_sampled_message(
         self, producer_id: int
