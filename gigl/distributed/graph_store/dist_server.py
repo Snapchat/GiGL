@@ -390,11 +390,17 @@ class DistServer:
         Computes degrees from the CSR row pointers (indptr). In CSR format,
         degree[i] = indptr[i+1] - indptr[i].
 
+        The returned tensor is indexed by **global node ID**. Nodes whose edges
+        are not stored on this partition will have degree 0. This allows the
+        compute side to aggregate degrees across storage nodes via element-wise
+        summation.
+
         For heterogeneous graphs, returns a dict mapping EdgeType to degree tensors.
         For homogeneous graphs, returns a single degree tensor.
 
         Returns:
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The local degree tensors.
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The local degree tensors,
+                indexed by global node ID.
 
         Raises:
             ValueError: If the graph topology is not available.

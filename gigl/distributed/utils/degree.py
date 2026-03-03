@@ -25,6 +25,23 @@ Overview
         └─► RemoteDistDataset (graph store mode)
                 └─► _compute_degrees_from_remote_dataset
                         └─► _sum_tensors_with_padding
+
+Remote Aggregation Assumption
+=============================
+
+For RemoteDistDataset (graph store mode), the aggregation operates in a setting where each storage
+node's degree tensor is indexed by **global node ID**, not local node indices. This
+means each storage node returns a tensor of size [num_total_nodes] where:
+
+- degree[i] = out-degree of global node i based on edges stored on this partition
+- degree[i] = 0 for nodes whose edges are not stored on this partition
+
+This allows simple element-wise summation across storage nodes to get global degrees.
+
+Example with 2 storage nodes and 6 total nodes:
+    - Storage 0 stores edges for nodes 0, 2, 4: returns [5, 0, 10, 0, 15, 0]
+    - Storage 1 stores edges for nodes 1, 3, 5: returns [0, 20, 0, 30, 0, 40]
+    - Sum: [5, 20, 10, 30, 15, 40] = correct global degrees
 """
 
 from collections import Counter
@@ -224,7 +241,11 @@ def _process_graph(
 
 
 def _sum_tensors_with_padding(tensors: list[torch.Tensor]) -> torch.Tensor:
-    """Sum multiple tensors, padding shorter ones to match the longest."""
+    """Sum multiple tensors element-wise, padding shorter ones to match the longest.
+
+    This assumes each tensor is indexed by global node ID, with zeros for nodes
+    not present in that partition. See module docstring for details.
+    """
     if not tensors:
         return torch.tensor([], dtype=torch.int16)
 
@@ -241,7 +262,12 @@ def _sum_tensors_with_padding(tensors: list[torch.Tensor]) -> torch.Tensor:
 def _compute_degrees_from_remote_dataset(
     dataset: RemoteDistDataset,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
-    """Compute degrees by fetching from remote storage nodes and aggregating."""
+    """Compute degrees by fetching from remote storage nodes and aggregating.
+
+    Fetches local degree tensors from each storage node via RPC, then sums them
+    element-wise. Each storage node's tensor must be indexed by global node ID,
+    with zeros for nodes not stored on that partition. See module docstring.
+    """
     all_local_degrees = dataset.fetch_local_degrees()
 
     if not all_local_degrees:
