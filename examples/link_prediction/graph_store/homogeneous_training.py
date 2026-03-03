@@ -247,13 +247,6 @@ def _setup_dataloaders(
         world_size=cluster_info.num_compute_nodes,
     )
 
-    for storage_rank, node_ids_tensor in all_node_ids.items():
-        print(
-            f"Rank {rank} split={split}: random_negative storage_rank={storage_rank}, "
-            f"num_node_ids={node_ids_tensor.shape}"
-        )
-        flush()
-
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
