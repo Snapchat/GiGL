@@ -251,6 +251,66 @@ class TestDistributedDegreeComputation(TestCase):
             self.assert_tensor_equality(result[edge_type], expected)
 
 
+class TestDatasetDegreeProperty(TestCase):
+    """Tests for DistDataset.compute_degree_tensors() and degree_tensors property."""
+
+    def test_degree_tensors_initially_none(self):
+        """Test that degree_tensors is None before compute_degree_tensors is called."""
+        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+        self.assertIsNone(dataset.degree_tensors)
+
+    def test_compute_degree_tensors_homogeneous(self):
+        """Test compute_degree_tensors for a homogeneous graph."""
+        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
+        num_nodes = int(edge_index.max().item() + 1)
+
+        dataset = create_homogeneous_dataset(edge_index=edge_index)
+        result = dataset.compute_degree_tensors()
+
+        assert isinstance(result, torch.Tensor)
+        expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
+        self.assert_tensor_equality(result, expected)
+
+    def test_compute_degree_tensors_caches_result(self):
+        """Test that compute_degree_tensors caches the result."""
+        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+
+        result1 = dataset.compute_degree_tensors()
+        result2 = dataset.compute_degree_tensors()
+
+        self.assertIs(result1, result2)
+
+    def test_degree_tensors_property_after_compute(self):
+        """Test that degree_tensors property returns cached result after compute."""
+        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
+        num_nodes = int(edge_index.max().item() + 1)
+
+        dataset = create_homogeneous_dataset(edge_index=edge_index)
+        computed = dataset.compute_degree_tensors()
+        from_property = dataset.degree_tensors
+
+        self.assertIs(computed, from_property)
+        assert isinstance(from_property, torch.Tensor)
+        expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
+        self.assert_tensor_equality(from_property, expected)
+
+    def test_compute_degree_tensors_heterogeneous(self):
+        """Test compute_degree_tensors for a heterogeneous graph."""
+        edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
+        dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
+
+        result = dataset.compute_degree_tensors()
+
+        assert isinstance(result, dict)
+        self.assertEqual(len(result), len(edge_indices))
+
+        for edge_type, edge_index in edge_indices.items():
+            num_nodes = int(edge_index[0].max().item() + 1)
+            expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
+            self.assertIn(edge_type, result)
+            self.assert_tensor_equality(result[edge_type], expected)
+
+
 class TestHelperFunctions(TestCase):
     """Tests for internal helper functions."""
 
