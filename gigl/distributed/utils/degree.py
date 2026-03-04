@@ -87,7 +87,7 @@ def compute_and_broadcast_degree_tensor(
     if torch.distributed.is_initialized():
         # For heterogeneous graphs, pass the known edge types from the graph schema
         # to avoid using all_gather_object (which uses pickle)
-        all_edge_types = sorted(set(graph.keys())) if isinstance(graph, dict) else None
+        all_edge_types = sorted(graph.keys()) if isinstance(graph, dict) else None
         result = _all_reduce_degrees(local_degrees, all_edge_types)
     else:
         if isinstance(local_degrees, torch.Tensor):
@@ -134,7 +134,7 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
 
 def _all_reduce_degrees(
     local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-    all_edge_types: Optional[set[EdgeType]] = None,
+    all_edge_types: Optional[list[EdgeType]] = None,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """All-reduce degree tensors across ranks, handling both homogeneous and heterogeneous cases.
 
@@ -153,9 +153,9 @@ def _all_reduce_degrees(
     Args:
         local_degrees: Either a single tensor (homogeneous) or dict mapping EdgeType
             to tensors (heterogeneous).
-        all_edge_types: For heterogeneous graphs, the complete set of edge types from
-            the graph schema. If None, falls back to using only the edge types present
-            in local_degrees.
+        all_edge_types: For heterogeneous graphs, the complete list of edge types from
+            the graph schema (should be sorted for deterministic ordering across ranks).
+            If None, falls back to sorted edge types from local_degrees.
 
     Returns:
         Aggregated degree tensors in the same format as input.
@@ -195,9 +195,6 @@ def _all_reduce_degrees(
     if isinstance(local_degrees, torch.Tensor):
         return reduce_tensor(local_degrees)
 
-    # Heterogeneous case: use provided edge types or fall back to local keys
-    # Edge types are passed from the graph schema to avoid using all_gather_object
-    # (which uses pickle and has security implications)
     if all_edge_types is None:
         raise ValueError(
             "all_edge_types is None, meaning the graph is homogeneous, but local_degrees is a dict, indicating a heterogeneous graph."
