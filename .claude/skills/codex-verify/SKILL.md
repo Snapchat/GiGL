@@ -1,6 +1,7 @@
-______________________________________________________________________
-
-## description: Delegate code review to Codex CLI, save findings to /tmp/codex-verify/ argument-hint: "\[full | unstaged | staged | feature <desc> | followup <review-file>\]"
+---
+description: Delegate code review to Codex CLI, save findings to /tmp/codex-verify/
+argument-hint: "[full | unstaged | staged | feature <desc> | followup <review-file>]"
+---
 
 # Codex Verify
 
