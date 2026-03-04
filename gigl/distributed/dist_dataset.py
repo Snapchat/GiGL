@@ -76,7 +76,7 @@ class DistDataset(glt.distributed.DistDataset):
         edge_feature_info: Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
-        degree_tensors: Optional[
+        degree_tensor: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
     ) -> None:
@@ -103,7 +103,7 @@ class DistDataset(glt.distributed.DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
-            degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensors. Can be computed via compute_degree_tensors() method.
+            degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Can be computed via compute_degree_tensor() method.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -139,9 +139,9 @@ class DistDataset(glt.distributed.DistDataset):
         self._node_feature_info = node_feature_info
         self._edge_feature_info = edge_feature_info
 
-        self._degree_tensors: Optional[
+        self._degree_tensor: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        ] = degree_tensors
+        ] = degree_tensor
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -297,22 +297,30 @@ class DistDataset(glt.distributed.DistDataset):
         return self._edge_feature_info
 
     @property
-    def degree_tensors(
+    def degree_tensor(
         self,
     ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
         """
-        Pre-computed degree tensors for the graph.
+        Pre-computed degree tensor for the graph.
 
         Returns:
-            The degree tensors if computed, None otherwise.
+            The degree tensor if computed, None otherwise.
             - For homogeneous graphs: A tensor of shape [num_nodes].
             - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
 
-        Use compute_degree_tensors() to compute and cache the degrees.
+        Use compute_degree_tensor() to compute and cache the degrees.
         """
-        return self._degree_tensors
+        return self._degree_tensor
 
-    def compute_degree_tensors(
+    @degree_tensor.setter
+    def degree_tensor(
+        self,
+        value: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+    ) -> None:
+        """Set the degree tensor."""
+        self._degree_tensor = value
+
+    def compute_degree_tensor(
         self,
     ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """
@@ -321,23 +329,23 @@ class DistDataset(glt.distributed.DistDataset):
         Extracts topology from the local graph partition and uses all-reduce
         to aggregate degrees across all machines when distributed is initialized.
 
-        The computed degrees are cached and can be accessed via the degree_tensors property.
+        The computed degrees are cached and can be accessed via the degree_tensor property.
 
         Returns:
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
                 - For homogeneous graphs: A tensor of shape [num_nodes].
                 - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
 
         Raises:
             ValueError: If the dataset graph is None or topology is unavailable.
         """
-        if self._degree_tensors is None:
+        if self._degree_tensor is None:
             from gigl.distributed.utils.degree import (
                 compute_and_broadcast_degree_tensors,
             )
 
-            self._degree_tensors = compute_and_broadcast_degree_tensors(self)
-        return self._degree_tensors
+            self._degree_tensor = compute_and_broadcast_degree_tensors(self)
+        return self._degree_tensor
 
     @property
     def train_node_ids(
@@ -898,7 +906,7 @@ class DistDataset(glt.distributed.DistDataset):
         share_memory(entity=self._positive_edge_label)
         share_memory(entity=self._negative_edge_label)
         share_memory(entity=self._node_ids)
-        share_memory(entity=self._degree_tensors)
+        share_memory(entity=self._degree_tensor)
         ipc_handle = (
             self._rank,
             self._world_size,
@@ -917,7 +925,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._num_test,  # Additional field unique to DistDataset class
             self._node_feature_info,  # Additional field unique to DistDataset class
             self._edge_feature_info,  # Additional field unique to DistDataset class
-            self._degree_tensors,  # Additional field unique to DistDataset class
+            self._degree_tensor,  # Additional field unique to DistDataset class
         )
         return ipc_handle
 
