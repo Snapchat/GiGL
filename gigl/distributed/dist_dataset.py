@@ -14,6 +14,7 @@ from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
+from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to use torch_geometric.typing
     EdgeType,
@@ -103,7 +104,7 @@ class DistDataset(glt.distributed.DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
-            degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Can be computed via compute_degree_tensor() method.
+            degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -299,32 +300,18 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def degree_tensor(
         self,
-    ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
-        """
-        Pre-computed degree tensor for the graph.
-
-        Returns:
-            The degree tensor if computed, None otherwise.
-            - For homogeneous graphs: A tensor of shape [num_nodes].
-            - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
-
-        Use compute_degree_tensor() to compute and cache the degrees.
-        """
-        return self._degree_tensor
-
-    def compute_degree_tensor(
-        self,
     ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """
-        Compute node degrees from the graph partition and cache them.
+        Lazily compute and return the degree tensor for the graph.
 
-        Extracts topology from the local graph partition and uses all-reduce
-        to aggregate degrees across all machines when distributed is initialized.
+        On first access, computes node degrees from the graph partition and uses
+        all-reduce to aggregate across all machines. Requires torch.distributed
+        to be initialized.
 
         Over-counting correction (for processes sharing the same data on the same
         machine) is handled automatically by detecting the distributed topology.
 
-        The computed degrees are cached and can be accessed via the degree_tensor property.
+        The result is cached for subsequent accesses.
 
         Returns:
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
@@ -332,14 +319,14 @@ class DistDataset(glt.distributed.DistDataset):
                 - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
 
         Raises:
+            RuntimeError: If torch.distributed is not initialized.
             ValueError: If the dataset graph is None or topology is unavailable.
         """
         if self._degree_tensor is None:
-            from gigl.distributed.utils.degree import (
-                compute_and_broadcast_degree_tensor,
-            )
+            if self.graph is None:
+                raise ValueError("Dataset graph is None. Cannot compute degrees.")
 
-            self._degree_tensor = compute_and_broadcast_degree_tensor(self)
+            self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
         return self._degree_tensor
 
     @property

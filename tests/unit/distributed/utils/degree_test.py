@@ -35,56 +35,11 @@ def _compute_expected_degrees_from_edge_index(
     return degrees
 
 
-class TestLocalDegreeComputation(TestCase):
-    """Tests for local DistDataset degree computation."""
-
-    def test_homogeneous_graph(self):
-        """Test degree computation for a homogeneous graph using real DistDataset."""
-        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
-        num_nodes = int(edge_index.max().item() + 1)
-
-        dataset = create_homogeneous_dataset(edge_index=edge_index)
-        result = compute_and_broadcast_degree_tensor(dataset)
-
-        assert isinstance(result, torch.Tensor)
-        expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assertEqual(result.shape[0], num_nodes)
-        self.assert_tensor_equality(result, expected)
-
-    def test_homogeneous_graph_custom_edges(self):
-        """Test degree computation with a custom edge index."""
-        edge_index = torch.tensor([[0, 0, 1, 2, 2, 2, 3], [1, 2, 2, 0, 1, 3, 0]])
-        num_nodes = int(edge_index[0].max().item() + 1)
-
-        dataset = create_homogeneous_dataset(edge_index=edge_index)
-        result = compute_and_broadcast_degree_tensor(dataset)
-
-        assert isinstance(result, torch.Tensor)
-        expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assert_tensor_equality(result, expected)
-
-    def test_heterogeneous_graph(self):
-        """Test degree computation for a heterogeneous graph using real DistDataset."""
-        edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
-        dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
-
-        result = compute_and_broadcast_degree_tensor(dataset)
-
-        assert isinstance(result, dict)
-        self.assertEqual(len(result), len(edge_indices))
-
-        for edge_type, edge_index in edge_indices.items():
-            num_nodes = int(edge_index[0].max().item() + 1)
-            expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assertIn(edge_type, result)
-            self.assert_tensor_equality(result[edge_type], expected)
-
-
-class TestDistributedDegreeComputation(TestCase):
+class TestDegreeComputation(TestCase):
     """Tests for degree computation with torch.distributed initialized.
 
-    These tests verify that the all-reduce path works correctly when
-    torch.distributed is initialized. Uses a single-node process group.
+    These tests verify that the all-reduce path works correctly.
+    Uses a single-node process group.
     """
 
     def setUp(self):
@@ -98,25 +53,27 @@ class TestDistributedDegreeComputation(TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def test_homogeneous_graph_distributed(self):
-        """Test degree computation with distributed initialized."""
+    def test_homogeneous_graph(self):
+        """Test degree computation for a homogeneous graph."""
         edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
         num_nodes = int(edge_index.max().item() + 1)
 
         dataset = create_homogeneous_dataset(edge_index=edge_index)
-        result = compute_and_broadcast_degree_tensor(dataset)
+        assert dataset.graph is not None
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
         self.assertEqual(result.shape[0], num_nodes)
         self.assert_tensor_equality(result, expected)
 
-    def test_heterogeneous_graph_distributed(self):
-        """Test heterogeneous degree computation with distributed initialized."""
+    def test_heterogeneous_graph(self):
+        """Test degree computation for a heterogeneous graph."""
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
 
-        result = compute_and_broadcast_degree_tensor(dataset)
+        assert dataset.graph is not None
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
         self.assertEqual(len(result), len(edge_indices))
@@ -145,7 +102,8 @@ class TestDistributedDegreeComputation(TestCase):
         num_nodes = int(edge_index.max().item() + 1)
         dataset = create_homogeneous_dataset(edge_index=edge_index)
 
-        result = compute_and_broadcast_degree_tensor(dataset)
+        assert dataset.graph is not None
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, torch.Tensor)
         raw_expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
@@ -160,7 +118,8 @@ class TestDistributedDegreeComputation(TestCase):
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
 
-        result = compute_and_broadcast_degree_tensor(dataset)
+        assert dataset.graph is not None
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
         for edge_type, edge_index in edge_indices.items():
@@ -174,54 +133,46 @@ class TestDistributedDegreeComputation(TestCase):
 
 
 class TestDatasetDegreeProperty(TestCase):
-    """Tests for DistDataset.compute_degree_tensor() and degree_tensor property."""
+    """Tests for DistDataset.degree_tensor property."""
 
-    def test_degree_tensor_initially_none(self):
-        """Test that degree_tensor is None before compute_degree_tensor is called."""
-        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
-        self.assertIsNone(dataset.degree_tensor)
+    def setUp(self):
+        """Set up distributed process group before each test."""
+        super().setUp()
+        create_test_process_group()
 
-    def test_compute_degree_tensor_homogeneous(self):
-        """Test compute_degree_tensor for a homogeneous graph."""
+    def tearDown(self):
+        """Clean up distributed process group after each test."""
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+        super().tearDown()
+
+    def test_degree_tensor_homogeneous(self):
+        """Test degree_tensor property for a homogeneous graph."""
         edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
         num_nodes = int(edge_index.max().item() + 1)
 
         dataset = create_homogeneous_dataset(edge_index=edge_index)
-        result = dataset.compute_degree_tensor()
+        result = dataset.degree_tensor
 
         assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
         self.assert_tensor_equality(result, expected)
 
-    def test_compute_degree_tensor_caches_result(self):
-        """Test that compute_degree_tensor caches the result."""
+    def test_degree_tensor_caches_result(self):
+        """Test that degree_tensor property caches the result."""
         dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
 
-        result1 = dataset.compute_degree_tensor()
-        result2 = dataset.compute_degree_tensor()
+        result1 = dataset.degree_tensor
+        result2 = dataset.degree_tensor
 
         self.assertIs(result1, result2)
 
-    def test_degree_tensor_property_after_compute(self):
-        """Test that degree_tensor property returns cached result after compute."""
-        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
-        num_nodes = int(edge_index.max().item() + 1)
-
-        dataset = create_homogeneous_dataset(edge_index=edge_index)
-        computed = dataset.compute_degree_tensor()
-        from_property = dataset.degree_tensor
-
-        self.assertIs(computed, from_property)
-        assert isinstance(from_property, torch.Tensor)
-        expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assert_tensor_equality(from_property, expected)
-
-    def test_compute_degree_tensor_heterogeneous(self):
-        """Test compute_degree_tensor for a heterogeneous graph."""
+    def test_degree_tensor_heterogeneous(self):
+        """Test degree_tensor property for a heterogeneous graph."""
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
 
-        result = dataset.compute_degree_tensor()
+        result = dataset.degree_tensor
 
         assert isinstance(result, dict)
         self.assertEqual(len(result), len(edge_indices))
