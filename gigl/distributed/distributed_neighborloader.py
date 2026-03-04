@@ -231,13 +231,13 @@ class DistNeighborLoader(BaseDistLoader):
             drop_last=drop_last,
         )
 
-        # Build the sampler: a pre-constructed producer for colocated mode,
+        # Build the producer: a pre-constructed producer for colocated mode,
         # or an RPC callable for graph store mode.
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
-            sampler: Union[
+            producer: Union[
                 DistMpSamplingProducer, Callable[..., int]
             ] = DistMpSamplingProducer(
                 dataset,
@@ -247,7 +247,7 @@ class DistNeighborLoader(BaseDistLoader):
                 channel,
             )
         else:
-            sampler = GiglDistServer.create_sampling_producer
+            producer = GiglDistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
@@ -259,7 +259,7 @@ class DistNeighborLoader(BaseDistLoader):
             sampling_config=sampling_config,
             device=device,
             runtime=runtime,
-            sampler=sampler,
+            producer=producer,
             process_start_gap_seconds=process_start_gap_seconds,
         )
 

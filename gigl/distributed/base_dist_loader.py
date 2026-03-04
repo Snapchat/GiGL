@@ -83,9 +83,9 @@ class BaseDistLoader(DistLoader):
     2. Determine mode (colocated vs graph store).
     3. Call ``create_sampling_config()`` to build the SamplingConfig.
     4. For colocated: call ``create_colocated_channel()`` and construct the
-       ``DistMpSamplingProducer`` (or subclass), then pass the producer as ``sampler``.
+       ``DistMpSamplingProducer`` (or subclass), then pass the producer as ``producer``.
     5. For graph store: pass the RPC function (e.g. ``DistServer.create_sampling_producer``)
-       as ``sampler``.
+       as ``producer``.
     6. Call ``super().__init__()`` with the prepared data.
 
     Args:
@@ -98,7 +98,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: Configuration for the sampler (created via ``create_sampling_config``).
         device: Target device for sampled results.
         runtime: Resolved distributed runtime information.
-        sampler: Either a pre-constructed ``DistMpSamplingProducer`` (colocated mode)
+        producer: Either a pre-constructed ``DistMpSamplingProducer`` (colocated mode)
             or a callable to dispatch on the ``DistServer`` (graph store mode).
         process_start_gap_seconds: Delay between each process for staggered colocated init.
     """
@@ -204,7 +204,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         device: torch.device,
         runtime: DistributedRuntimeInfo,
-        sampler: Union[DistMpSamplingProducer, Callable[..., int]],
+        producer: Union[DistMpSamplingProducer, Callable[..., int]],
         process_start_gap_seconds: float = 60.0,
     ):
         # Set right away so __del__ can clean up if we throw during init.
@@ -239,7 +239,7 @@ class BaseDistLoader(DistLoader):
         self._epoch = 0
 
         # --- Mode-specific attributes and connection initialization ---
-        if isinstance(sampler, DistMpSamplingProducer):
+        if isinstance(producer, DistMpSamplingProducer):
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             assert isinstance(sampler_input, NodeSamplerInput)
@@ -263,7 +263,7 @@ class BaseDistLoader(DistLoader):
             self._shutdowned = False
             self._init_colocated_connections(
                 dataset=dataset,
-                producer=sampler,
+                producer=producer,
                 runtime=runtime,
                 process_start_gap_seconds=process_start_gap_seconds,
             )
@@ -271,7 +271,7 @@ class BaseDistLoader(DistLoader):
             assert isinstance(dataset, RemoteDistDataset)
             assert isinstance(worker_options, RemoteDistSamplingWorkerOptions)
             assert isinstance(sampler_input, list)
-            assert callable(sampler)
+            assert callable(producer)
 
             self.data = None
             self._is_mp_worker = False
@@ -300,7 +300,7 @@ class BaseDistLoader(DistLoader):
             self._shutdowned = False
             self._init_graph_store_connections(
                 dataset=dataset,
-                create_producer_fn=sampler,
+                create_producer_fn=producer,
             )
 
     @staticmethod
