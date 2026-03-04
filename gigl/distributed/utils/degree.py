@@ -11,7 +11,8 @@ processes on the same machine.
 Usage
 =====
 
-Use dataset.compute_degree_tensor() or compute_and_broadcast_degree_tensor(dataset):
+Use dataset.compute_degree_tensor() to build the degree tensor in-place in the dataset or compute_and_broadcast_degree_tensor(dataset)
+to extract a degree tensor directly.
 
     compute_and_broadcast_degree_tensor(dataset)
         └─► _compute_degrees_from_indptr (for each edge type)
@@ -84,7 +85,10 @@ def compute_and_broadcast_degree_tensor(
 
     # All-reduce if distributed (over-counting correction handled internally)
     if torch.distributed.is_initialized():
-        result = _all_reduce_degrees(local_degrees)
+        # For heterogeneous graphs, pass the known edge types from the graph schema
+        # to avoid using all_gather_object (which uses pickle)
+        all_edge_types = set(graph.keys()) if isinstance(graph, dict) else None
+        result = _all_reduce_degrees(local_degrees, all_edge_types)
     else:
         if isinstance(local_degrees, torch.Tensor):
             result = _clamp_to_int16(local_degrees)
@@ -130,11 +134,13 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
 
 def _all_reduce_degrees(
     local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+    all_edge_types: Optional[set[EdgeType]] = None,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """All-reduce degree tensors across ranks, handling both homogeneous and heterogeneous cases.
 
-    For heterogeneous graphs, gathers all edge types across ranks first (since different
-    ranks may have different edge types), then performs all-reduce for each edge type.
+    For heterogeneous graphs, uses the provided edge types to determine which edge types
+    to all-reduce. Each rank participates in the all-reduce for each edge type (contributing
+    zeros for edge types it doesn't have locally).
 
     Moves tensors to GPU for the all-reduce if CUDA is available (for NCCL compatibility),
     then moves back to CPU.
@@ -147,6 +153,9 @@ def _all_reduce_degrees(
     Args:
         local_degrees: Either a single tensor (homogeneous) or dict mapping EdgeType
             to tensors (heterogeneous).
+        all_edge_types: For heterogeneous graphs, the complete set of edge types from
+            the graph schema. If None, falls back to using only the edge types present
+            in local_degrees.
 
     Returns:
         Aggregated degree tensors in the same format as input.
@@ -186,19 +195,13 @@ def _all_reduce_degrees(
     if isinstance(local_degrees, torch.Tensor):
         return reduce_tensor(local_degrees)
 
-    # Heterogeneous case: gather all edge types across ranks
-    local_edge_types = list(local_degrees.keys())
-    world_size = torch.distributed.get_world_size()
-    # To all-reduce degrees correctly, all ranks must agree on which edge types exist globally and
-    # participate in the all-reduce for each one (even if they contribute zeros for edge types they don't have).
-    # Initialize with None placeholders; all_gather_object fills them with lists from each rank.
-    all_edge_types_gathered: list[Optional[list[EdgeType]]] = [None] * world_size
-    torch.distributed.all_gather_object(all_edge_types_gathered, local_edge_types)
-
-    all_edge_types: set[EdgeType] = set()
-    for edge_types in all_edge_types_gathered:
-        if edge_types is not None:
-            all_edge_types.update(edge_types)
+    # Heterogeneous case: use provided edge types or fall back to local keys
+    # Edge types are passed from the graph schema to avoid using all_gather_object
+    # (which uses pickle and has security implications)
+    if all_edge_types is None:
+        raise ValueError(
+            "all_edge_types is None, meaning the graph is homogeneous, but local_degrees is a dict, indicating a heterogeneous graph."
+        )
 
     # All-reduce each edge type
     result: dict[EdgeType, torch.Tensor] = {}
