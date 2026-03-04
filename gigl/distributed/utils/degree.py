@@ -78,10 +78,11 @@ def compute_and_broadcast_degree_tensor(
             topo = edge_graph.topo
             if topo is None or topo.indptr is None:
                 logger.warning(
-                    f"Topology/indptr not available for edge type {edge_type}, skipping."
+                    f"Topology/indptr not available for edge type {edge_type}, using empty tensor."
                 )
-                continue
-            local_dict[edge_type] = _compute_degrees_from_indptr(topo.indptr)
+                local_dict[edge_type] = torch.empty(0, dtype=torch.int16)
+            else:
+                local_dict[edge_type] = _compute_degrees_from_indptr(topo.indptr)
         local_degrees = local_dict
 
     # All-reduce across ranks (over-counting correction handled internally)
@@ -89,14 +90,22 @@ def compute_and_broadcast_degree_tensor(
 
     # Log results
     if isinstance(result, torch.Tensor):
-        logger.info(
-            f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
-        )
+        if result.numel() > 0:
+            logger.info(
+                f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
+            )
+        else:
+            logger.info("Graph contained 0 nodes when computing degrees")
     else:
         for edge_type, degrees in result.items():
-            logger.info(
-                f"{edge_type}: {degrees.size(0)} nodes, max={degrees.max().item()}, min={degrees.min().item()}"
-            )
+            if degrees.numel() > 0:
+                logger.info(
+                    f"{edge_type}: {degrees.size(0)} nodes, max={degrees.max().item()}, min={degrees.min().item()}"
+                )
+            else:
+                logger.info(
+                    f"Graph contained 0 nodes for edge type {edge_type} when computing degrees"
+                )
 
     return result
 
