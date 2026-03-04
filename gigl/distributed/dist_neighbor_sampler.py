@@ -25,16 +25,21 @@ from gigl.utils.data_splitters import PADDING_NODE
 
 
 @dataclass
-class SamplingInputs:
-    """Prepared inputs for the sampling loop.
+class SampleLoopInputs:
+    """Inputs prepared for the neighbor sampling loop in _sample_from_nodes.
+
+    This dataclass holds the processed inputs that are passed to the core
+    sampling loop. It allows _prepare_sampling_inputs to customize what nodes
+    are sampled from and what metadata is attached to the output, without
+    duplicating the sampling loop logic.
 
     Attributes:
-        input_seeds: The original anchor node seeds.
+        input_seeds: The original anchor/batch node seeds (used for batch tracking).
         input_type: The node type of the anchor seeds.
         nodes_to_sample: Dict mapping node types to tensors of nodes to include
-            in sampling. May include additional nodes beyond input_seeds
-            (e.g., supervision nodes in ABLP).
-        metadata: Metadata dict to include in the sampler output.
+            in the sampling. For standard sampling, this equals {input_type: input_seeds}.
+            For ABLP, this also includes supervision nodes (positive/negative labels).
+        metadata: Metadata dict to attach to the sampler output (e.g., label tensors).
     """
 
     input_seeds: torch.Tensor
@@ -58,7 +63,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
     def _prepare_sampling_inputs(
         self,
         inputs: NodeSamplerInput,
-    ) -> SamplingInputs:
+    ) -> SampleLoopInputs:
         """Prepare inputs for the sampling loop.
 
         Handles both standard NodeSamplerInput and ABLPNodeSamplerInput.
@@ -69,7 +74,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             inputs: Either a NodeSamplerInput or ABLPNodeSamplerInput.
 
         Returns:
-            SamplingInputs containing the seeds, node type, nodes to
+            SampleLoopInputs containing the seeds, node type, nodes to
             sample from, and metadata.
         """
         input_seeds = inputs.node.to(self.device)
@@ -78,7 +83,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         if isinstance(inputs, ABLPNodeSamplerInput):
             return self._prepare_ablp_inputs(inputs, input_seeds, input_type)
 
-        return SamplingInputs(
+        return SampleLoopInputs(
             input_seeds=input_seeds,
             input_type=input_type,
             nodes_to_sample={input_type: input_seeds},
@@ -90,7 +95,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         inputs: ABLPNodeSamplerInput,
         input_seeds: torch.Tensor,
         input_type: NodeType,
-    ) -> SamplingInputs:
+    ) -> SampleLoopInputs:
         """Prepare ABLP inputs with supervision nodes and label metadata.
 
         Args:
@@ -99,7 +104,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             input_type: The node type of the anchor seeds.
 
         Returns:
-            SamplingInputs with supervision nodes included in nodes_to_sample
+            SampleLoopInputs with supervision nodes included in nodes_to_sample
             and label tensors in metadata.
         """
         # Since GLT swaps src/dst for edge_dir = "out",
@@ -160,7 +165,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         del input_seeds_builder
         gc.collect()
 
-        return SamplingInputs(
+        return SampleLoopInputs(
             input_seeds=input_seeds,
             input_type=input_type,
             nodes_to_sample=nodes_to_sample,
