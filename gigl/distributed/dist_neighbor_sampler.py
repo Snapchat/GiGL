@@ -177,13 +177,13 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         supervision nodes are included in sampling and label metadata is
         attached to the output.
         """
-        prepared = self._prepare_sampling_inputs(inputs)
-        input_type = prepared.input_type
-        nodes_to_sample = prepared.nodes_to_sample
-        metadata = prepared.metadata
+        prepared_inputs = self._prepare_sampling_inputs(inputs)
+        input_type = prepared_inputs.input_type
+        nodes_to_sample = prepared_inputs.nodes_to_sample
+        metadata = prepared_inputs.metadata
 
         self.max_input_size: int = max(
-            self.max_input_size, prepared.input_seeds.numel()
+            self.max_input_size, prepared_inputs.input_seeds.numel()
         )
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
