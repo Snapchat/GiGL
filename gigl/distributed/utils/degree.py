@@ -23,7 +23,7 @@ detecting how many processes share the same machine (and thus the same data).
 """
 
 from collections import Counter
-from typing import Optional, Union
+from typing import Union
 
 import torch
 from graphlearn_torch.data import Graph
@@ -85,8 +85,7 @@ def compute_and_broadcast_degree_tensor(
         local_degrees = local_dict
 
     # All-reduce across ranks (over-counting correction handled internally)
-    all_edge_types = sorted(graph.keys()) if isinstance(graph, dict) else None
-    result = _all_reduce_degrees(local_degrees, all_edge_types)
+    result = _all_reduce_degrees(local_degrees)
 
     # Log results
     if isinstance(result, torch.Tensor):
@@ -127,13 +126,11 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
 
 def _all_reduce_degrees(
     local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-    all_edge_types: Optional[list[EdgeType]] = None,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """All-reduce degree tensors across ranks, handling both homogeneous and heterogeneous cases.
 
-    For heterogeneous graphs, uses the provided edge types to determine which edge types
-    to all-reduce. Each rank participates in the all-reduce for each edge type (contributing
-    zeros for edge types it doesn't have locally).
+    For heterogeneous graphs, iterates over the edge types in local_degrees. All partitions
+    are expected to have entries for all edge types (even if some have empty tensors).
 
     Moves tensors to GPU for the all-reduce if using NCCL backend (which requires CUDA),
     otherwise keeps tensors on CPU (for Gloo backend).
@@ -158,10 +155,8 @@ def _all_reduce_degrees(
 
     Args:
         local_degrees: Either a single tensor (homogeneous) or dict mapping EdgeType
-            to tensors (heterogeneous).
-        all_edge_types: For heterogeneous graphs, the complete list of edge types from
-            the graph schema (should be sorted for deterministic ordering across ranks).
-            If None, falls back to sorted edge types from local_degrees.
+            to tensors (heterogeneous). For heterogeneous graphs, all partitions must
+            have entries for all edge types.
 
     Returns:
         Aggregated degree tensors in the same format as input.
@@ -203,20 +198,10 @@ def _all_reduce_degrees(
     if isinstance(local_degrees, torch.Tensor):
         return reduce_tensor(local_degrees)
 
-    if all_edge_types is None:
-        raise ValueError(
-            "all_edge_types is None, meaning the graph is homogeneous, but local_degrees is a dict, indicating a heterogeneous graph."
-        )
-
-    # All-reduce each edge type
+    # Heterogeneous case: all-reduce each edge type
+    # Sort edge types for deterministic ordering across ranks
     result: dict[EdgeType, torch.Tensor] = {}
-    for edge_type in all_edge_types:
-        if edge_type in local_degrees:
-            tensor = local_degrees[edge_type]
-        else:
-            # Empty tensor for edge types this rank doesn't have - contributes
-            # nothing to the all-reduce sum while allowing the collective to complete
-            tensor = torch.zeros(0, dtype=torch.int16)
-        result[edge_type] = reduce_tensor(tensor)
+    for edge_type in sorted(local_degrees.keys()):
+        result[edge_type] = reduce_tensor(local_degrees[edge_type])
 
     return result
