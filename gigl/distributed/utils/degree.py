@@ -101,9 +101,9 @@ def compute_and_broadcast_degree_tensor(
             f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
         )
     else:
-        for degrees in result.values():
+        for edge_type, degrees in result.items():
             logger.info(
-                f"{degrees.size(0)} nodes, max={degrees.max().item()}, min={degrees.min().item()}"
+                f"{edge_type}: {degrees.size(0)} nodes, max={degrees.max().item()}, min={degrees.min().item()}"
             )
 
     return result
