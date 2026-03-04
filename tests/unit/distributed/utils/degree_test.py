@@ -1,6 +1,6 @@
-from unittest.mock import patch
-
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from absl.testing import absltest
 from parameterized import param, parameterized
 
@@ -16,7 +16,10 @@ from tests.test_assets.distributed.test_dataset import (
     create_heterogeneous_dataset,
     create_homogeneous_dataset,
 )
-from tests.test_assets.distributed.utils import create_test_process_group
+from tests.test_assets.distributed.utils import (
+    create_test_process_group,
+    get_process_group_init_method,
+)
 from tests.test_assets.test_case import TestCase
 
 
@@ -80,52 +83,100 @@ class TestDegreeComputation(TestCase):
             self.assertIn(edge_type, result)
             self.assert_tensor_equality(result[edge_type], expected)
 
-    @patch("gigl.distributed.utils.degree.get_internal_ip_from_all_ranks")
-    def test_local_world_size_correction_homogeneous(self, mock_get_ips):
-        """Test over-counting correction when local_world_size > 1.
 
-        Mocks get_internal_ip_from_all_ranks to simulate 2 processes on the same
-        machine (both reporting the same IP). This should cause local_world_size=2,
-        which divides the all-reduced degrees by 2.
-
-        The mock returns a list with 2 identical IPs, simulating 2 ranks that
-        share the same machine. Since my_rank=0 in a single-process test,
-        my_ip=all_ips[0] and Counter(all_ips)[my_ip]=2, giving local_world_size=2.
-        """
-        mock_get_ips.return_value = ["192.168.1.1", "192.168.1.1"]
-
-        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
-        num_nodes = int(edge_index.max().item() + 1)
+def _run_local_world_size_correction_homogeneous(
+    rank: int,
+    world_size: int,
+    init_method: str,
+    edge_index: torch.Tensor,
+    expected_degrees: torch.Tensor,
+) -> None:
+    """Worker function for multi-process local_world_size correction test (homogeneous)."""
+    dist.init_process_group(
+        backend="gloo",
+        init_method=init_method,
+        world_size=world_size,
+        rank=rank,
+    )
+    try:
         dataset = create_homogeneous_dataset(edge_index=edge_index)
-
         assert dataset.graph is not None
         result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, torch.Tensor)
-        raw_expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        expected = raw_expected // 2
-        self.assert_tensor_equality(result, expected)
+        torch.testing.assert_close(result, expected_degrees)
+    finally:
+        dist.destroy_process_group()
 
-    @patch("gigl.distributed.utils.degree.get_internal_ip_from_all_ranks")
-    def test_local_world_size_correction_heterogeneous(self, mock_get_ips):
-        """Test over-counting correction for heterogeneous graphs with local_world_size > 1."""
-        mock_get_ips.return_value = ["192.168.1.1", "192.168.1.1"]
 
-        edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
+def _run_local_world_size_correction_heterogeneous(
+    rank: int,
+    world_size: int,
+    init_method: str,
+    edge_indices: dict,
+    expected_degrees: dict,
+) -> None:
+    """Worker function for multi-process local_world_size correction test (heterogeneous)."""
+    dist.init_process_group(
+        backend="gloo",
+        init_method=init_method,
+        world_size=world_size,
+        rank=rank,
+    )
+    try:
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
-
         assert dataset.graph is not None
         result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
+        for edge_type, expected in expected_degrees.items():
+            assert edge_type in result
+            torch.testing.assert_close(result[edge_type], expected)
+    finally:
+        dist.destroy_process_group()
+
+
+class TestLocalWorldSizeCorrection(TestCase):
+    """Tests for over-counting correction with multiple processes on the same machine.
+
+    These tests spawn 2 real processes that share the same graph data, simulating
+    the scenario where multiple training processes on one machine share a partition.
+    The all-reduce should correctly divide by local_world_size=2.
+    """
+
+    def test_local_world_size_correction_homogeneous(self):
+        """Test over-counting correction with 2 processes sharing the same data."""
+        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
+        num_nodes = int(edge_index.max().item() + 1)
+
+        raw_degrees = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
+        expected_degrees = raw_degrees  # After correction: (2*raw) / 2 = raw
+
+        init_method = get_process_group_init_method()
+        mp.spawn(
+            fn=_run_local_world_size_correction_homogeneous,
+            args=(2, init_method, edge_index, expected_degrees),
+            nprocs=2,
+        )
+
+    def test_local_world_size_correction_heterogeneous(self):
+        """Test over-counting correction for heterogeneous graphs with 2 processes."""
+        edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
+
+        expected_degrees = {}
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
-            raw_expected = _compute_expected_degrees_from_edge_index(
+            raw_degrees = _compute_expected_degrees_from_edge_index(
                 edge_index, num_nodes
             )
-            expected = raw_expected // 2
-            self.assertIn(edge_type, result)
-            self.assert_tensor_equality(result[edge_type], expected)
+            expected_degrees[edge_type] = raw_degrees
+
+        init_method = get_process_group_init_method()
+        mp.spawn(
+            fn=_run_local_world_size_correction_heterogeneous,
+            args=(2, init_method, edge_indices, expected_degrees),
+            nprocs=2,
+        )
 
 
 class TestDatasetDegreeProperty(TestCase):
