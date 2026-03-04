@@ -6,7 +6,7 @@ from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.distributed import DistNeighborSampler as GltDistNeighborSampler
+from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -43,7 +43,7 @@ class SamplingInputs:
     metadata: dict[str, torch.Tensor]
 
 
-class DistNeighborSampler(GltDistNeighborSampler):
+class DistNeighborSampler(GLTDistNeighborSampler):
     """GiGL's distributed neighbor sampler supporting both standard and ABLP inputs.
 
     Extends GLT's DistNeighborSampler and overrides _sample_from_nodes to support
