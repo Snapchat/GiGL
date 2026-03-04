@@ -22,7 +22,7 @@ detecting how many processes share the same machine (and thus the same data).
 """
 
 from collections import Counter
-from typing import Union
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.data import Graph
@@ -189,12 +189,16 @@ def _all_reduce_degrees(
     # Heterogeneous case: gather all edge types across ranks
     local_edge_types = list(local_degrees.keys())
     world_size = torch.distributed.get_world_size()
-    all_edge_types_gathered: list[list[EdgeType]] = [None] * world_size  # type: ignore[list-item]
+    # To all-reduce degrees correctly, all ranks must agree on which edge types exist globally and
+    # participate in the all-reduce for each one (even if they contribute zeros for edge types they don't have).
+    # Initialize with None placeholders; all_gather_object fills them with lists from each rank.
+    all_edge_types_gathered: list[Optional[list[EdgeType]]] = [None] * world_size
     torch.distributed.all_gather_object(all_edge_types_gathered, local_edge_types)
 
     all_edge_types: set[EdgeType] = set()
     for edge_types in all_edge_types_gathered:
-        all_edge_types.update(edge_types)
+        if edge_types is not None:
+            all_edge_types.update(edge_types)
 
     # All-reduce each edge type
     result: dict[EdgeType, torch.Tensor] = {}
@@ -202,7 +206,9 @@ def _all_reduce_degrees(
         if edge_type in local_degrees:
             tensor = local_degrees[edge_type]
         else:
-            tensor = torch.zeros(1, dtype=torch.int16)
+            # Empty tensor for edge types this rank doesn't have - contributes
+            # nothing to the all-reduce sum while allowing the collective to complete
+            tensor = torch.zeros(0, dtype=torch.int16)
         result[edge_type] = reduce_tensor(tensor)
 
     return result
