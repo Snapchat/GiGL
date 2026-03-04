@@ -618,38 +618,3 @@ class RemoteDistDataset:
             0,
             DistServer.get_node_types,
         )
-
-    def fetch_local_degrees(
-        self,
-    ) -> dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
-        """Fetch local node degrees from all storage nodes.
-
-        Retrieves the degree tensor computed from the CSR topology on each
-        storage node. These can then be aggregated (summed) to get global degrees.
-
-        For heterogeneous graphs, each storage node returns a dict mapping
-        EdgeType to degree tensors. For homogeneous graphs, each returns a
-        single degree tensor.
-
-        Returns:
-            dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
-                A dict mapping storage rank to the local degree data for that
-                partition. For homogeneous graphs, the value is a tensor.
-                For heterogeneous graphs, the value is a dict of tensors per edge type.
-        """
-        futures: list[
-            torch.futures.Future[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
-        ] = []
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            futures.append(
-                async_request_server(
-                    server_rank,
-                    DistServer.get_local_degrees,
-                )
-            )
-        all_local_degrees = torch.futures.wait_all(futures)
-        return {
-            server_rank: degrees
-            for server_rank, degrees in enumerate(all_local_degrees)
-        }

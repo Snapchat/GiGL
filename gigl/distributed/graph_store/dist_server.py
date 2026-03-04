@@ -382,57 +382,6 @@ class DistServer:
         else:
             return None
 
-    def get_local_degrees(
-        self,
-    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
-        """Get the local node degrees for all edge types in this partition.
-
-        Computes degrees from the CSR row pointers (indptr). In CSR format,
-        degree[i] = indptr[i+1] - indptr[i].
-
-        The returned tensor is indexed by **global node ID**. Nodes whose edges
-        are not stored on this partition will have degree 0. This allows the
-        compute side to aggregate degrees across storage nodes via element-wise
-        summation.
-
-        For heterogeneous graphs, returns a dict mapping EdgeType to degree tensors.
-        For homogeneous graphs, returns a single degree tensor.
-
-        Returns:
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The local degree tensors,
-                indexed by global node ID.
-
-        Raises:
-            ValueError: If the graph topology is not available.
-        """
-        # import function here to avoid circular import
-        from gigl.distributed.utils.degree import _compute_degrees_from_indptr
-
-        graph = self.dataset.graph
-        if graph is None:
-            raise ValueError(
-                "Dataset graph is None. Cannot compute degrees without graph topology."
-            )
-
-        if isinstance(graph, dict):
-            degree_tensors: dict[EdgeType, torch.Tensor] = {}
-            for edge_type, edge_graph in graph.items():
-                topo = edge_graph.topo
-                if topo is None or topo.indptr is None:
-                    raise ValueError(
-                        f"Topology/indptr not available for edge type {edge_type}, skipping."
-                    )
-                degree_tensors[edge_type] = _compute_degrees_from_indptr(topo.indptr)
-            return degree_tensors
-        else:
-            topo = graph.topo
-            if topo is None or topo.indptr is None:
-                raise ValueError(
-                    "Topology/indptr not available for homogeneous graph. "
-                    "Cannot compute degree tensors."
-                )
-            return _compute_degrees_from_indptr(topo.indptr)
-
     def compute_and_distribute_global_degrees(self) -> None:
         """
         Compute global degree tensors using all-reduce across storage servers.
