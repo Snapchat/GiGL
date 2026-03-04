@@ -17,6 +17,7 @@ from tests.test_assets.distributed.test_dataset import (
     create_homogeneous_dataset,
 )
 from tests.test_assets.distributed.utils import (
+    assert_tensor_equality,
     create_test_process_group,
     get_process_group_init_method,
 )
@@ -75,13 +76,53 @@ class TestDegreeComputation(TestCase):
         result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
-        self.assertEqual(len(result), len(edge_indices))
+        self.assertEqual(set(result.keys()), set(edge_indices.keys()))
 
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assertIn(edge_type, result)
             self.assert_tensor_equality(result[edge_type], expected)
+
+    def test_heterogeneous_graph_with_missing_topology(self):
+        """Test that edge types with missing topology get empty tensors.
+
+        This test creates a real heterogeneous dataset, then manually sets one
+        edge type's topology to None to simulate the edge case where topology
+        is unavailable.
+        """
+        edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
+        dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
+
+        assert dataset.graph is not None
+        assert isinstance(dataset.graph, dict)
+
+        # Get edge types from the dataset
+        edge_types = list(dataset.graph.keys())
+
+        edge_type_with_topo = edge_types[0]
+        edge_type_without_topo = edge_types[1]
+
+        # Save the original topology for computing expected degrees
+        original_graph = dataset.graph[edge_type_with_topo]
+        assert original_graph.topo is not None
+        expected_degrees = _compute_expected_degrees_from_edge_index(
+            edge_indices[edge_type_with_topo],
+            int(edge_indices[edge_type_with_topo][0].max().item() + 1),
+        )
+
+        # Manually set one graph's topology to None to test the edge case
+        dataset.graph[edge_type_without_topo].topo = None
+
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
+
+        assert isinstance(result, dict)
+        self.assertEqual(set(result.keys()), set(edge_types))
+
+        # Edge type with topology should have computed degrees
+        self.assert_tensor_equality(result[edge_type_with_topo], expected_degrees)
+
+        # Edge type without topology should have empty tensor
+        self.assertEqual(result[edge_type_without_topo].numel(), 0)
 
 
 def _run_local_world_size_correction_homogeneous(
@@ -104,7 +145,7 @@ def _run_local_world_size_correction_homogeneous(
         result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, torch.Tensor)
-        torch.testing.assert_close(result, expected_degrees)
+        assert_tensor_equality(result, expected_degrees)
     finally:
         dist.destroy_process_group()
 
@@ -129,9 +170,9 @@ def _run_local_world_size_correction_heterogeneous(
         result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
+        assert set(result.keys()) == set(expected_degrees.keys())
         for edge_type, expected in expected_degrees.items():
-            assert edge_type in result
-            torch.testing.assert_close(result[edge_type], expected)
+            assert_tensor_equality(result[edge_type], expected)
     finally:
         dist.destroy_process_group()
 
@@ -222,12 +263,11 @@ class TestDatasetDegreeProperty(TestCase):
         result = dataset.degree_tensor
 
         assert isinstance(result, dict)
-        self.assertEqual(len(result), len(edge_indices))
+        self.assertEqual(set(result.keys()), set(edge_indices.keys()))
 
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assertIn(edge_type, result)
             self.assert_tensor_equality(result[edge_type], expected)
 
 
