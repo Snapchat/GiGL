@@ -12,7 +12,7 @@ Colocated Mode (DistDataset)
 ============================
 
 For colocated mode, use compute_and_broadcast_degree_tensors(dataset) or
-dataset.compute_degree_tensors():
+dataset.compute_degree_tensor():
 
     compute_and_broadcast_degree_tensors(dataset: DistDataset)
         └─► _compute_degrees_from_local_dataset
