@@ -11,7 +11,6 @@ from gigl.distributed.utils.degree import (
     _clamp_to_int16,
     _compute_degrees_from_indptr,
     _pad_to_size,
-    _sum_tensors_with_padding,
     compute_and_broadcast_degree_tensors,
 )
 from gigl.env.distributed import GraphStoreInfo
@@ -87,11 +86,9 @@ class TestLocalDegreeComputation(TestCase):
 
 
 def _mock_async_request_server(server_rank, func, *args, **kwargs):
-    """Mock async_request_server that returns a completed Future with the result.
+    """Mock async_request_server that calls the server method synchronously.
 
-    In a real distributed setup, this would make an async RPC call to the server.
-    For testing, we call the server method synchronously and wrap the result
-    in a Future to match the expected interface.
+    Returns a completed Future with the result.
     """
     result = _call_func_on_server(func, *args, **kwargs)
     future: torch.futures.Future = torch.futures.Future()
@@ -121,19 +118,25 @@ class TestRemoteHomogeneousDegreeComputation(TestCase):
 
     Uses a real DistServer and RemoteDistDataset, with RPC calls mocked to route
     through the local server. This verifies the full integration path:
-    RemoteDistDataset.fetch_local_degrees() -> DistServer.get_local_degrees()
+    RemoteDistDataset.compute_degree_tensors() -> DistServer.compute_and_distribute_global_degrees()
     -> degree computation utilities.
+
+    The architecture uses all-reduce among storage servers:
+    1. Client calls remote_dataset.compute_degree_tensors()
+    2. This triggers all servers to participate in all-reduce
+    3. Each server computes local degrees, all-reduces, and stores global degrees
     """
 
     def setUp(self) -> None:
-        """Set up a DistServer with a homogeneous graph."""
+        """Set up a DistServer with a homogeneous graph and initialize distributed."""
         super().setUp()
+        create_test_process_group()
         dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
         self._server = DistServer(dataset)
         dist_server_module._dist_server = self._server
 
     def tearDown(self) -> None:
-        """Clean up server state."""
+        """Clean up server state and distributed."""
         dist_server_module._dist_server = None
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
@@ -143,19 +146,22 @@ class TestRemoteHomogeneousDegreeComputation(TestCase):
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_degree_computation(self, mock_async_request):
-        """Test degree computation for homogeneous graph via RemoteDistDataset."""
+    def test_compute_degree_tensors_pushes_to_server(self, mock_async_request):
+        """Test that RemoteDistDataset.compute_degree_tensors() pushes degrees to server."""
         edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
         num_nodes = int(edge_index.max().item() + 1)
 
+        self.assertIsNone(self._server.dataset.degree_tensors)
+
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-        result = compute_and_broadcast_degree_tensors(remote_dataset)
+        remote_dataset.compute_degree_tensors()
 
-        assert isinstance(result, torch.Tensor)
+        server_degrees = self._server.dataset.degree_tensors
+        self.assertIsNotNone(server_degrees)
+        assert isinstance(server_degrees, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assertEqual(result.shape[0], num_nodes)
-        self.assert_tensor_equality(result, expected)
+        self.assert_tensor_equality(server_degrees, expected)
 
 
 class TestRemoteHeterogeneousDegreeComputation(TestCase):
@@ -163,11 +169,14 @@ class TestRemoteHeterogeneousDegreeComputation(TestCase):
 
     Uses a real DistServer and RemoteDistDataset, with RPC calls mocked to route
     through the local server. Each edge type's degrees are computed independently.
+
+    The architecture uses all-reduce among storage servers.
     """
 
     def setUp(self) -> None:
-        """Set up a DistServer with a heterogeneous graph."""
+        """Set up a DistServer with a heterogeneous graph and initialize distributed."""
         super().setUp()
+        create_test_process_group()
         dataset = create_heterogeneous_dataset(
             edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
         )
@@ -175,7 +184,7 @@ class TestRemoteHeterogeneousDegreeComputation(TestCase):
         dist_server_module._dist_server = self._server
 
     def tearDown(self) -> None:
-        """Clean up server state."""
+        """Clean up server state and distributed."""
         dist_server_module._dist_server = None
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
@@ -185,22 +194,26 @@ class TestRemoteHeterogeneousDegreeComputation(TestCase):
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_degree_computation(self, mock_async_request):
-        """Test degree computation for heterogeneous graph via RemoteDistDataset."""
+    def test_compute_degree_tensors_pushes_to_server(self, mock_async_request):
+        """Test that RemoteDistDataset.compute_degree_tensors() pushes degrees to server."""
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
+
+        self.assertIsNone(self._server.dataset.degree_tensors)
 
         cluster_info = _create_mock_graph_store_info()
         remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-        result = compute_and_broadcast_degree_tensors(remote_dataset)
+        remote_dataset.compute_degree_tensors()
 
-        assert isinstance(result, dict)
-        self.assertEqual(len(result), len(edge_indices))
+        server_degrees = self._server.dataset.degree_tensors
+        self.assertIsNotNone(server_degrees)
+        assert isinstance(server_degrees, dict)
+        self.assertEqual(len(server_degrees), len(edge_indices))
 
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assertIn(edge_type, result)
-            self.assert_tensor_equality(result[edge_type], expected)
+            self.assertIn(edge_type, server_degrees)
+            self.assert_tensor_equality(server_degrees[edge_type], expected)
 
 
 class TestDistributedDegreeComputation(TestCase):
@@ -313,36 +326,6 @@ class TestDatasetDegreeProperty(TestCase):
 
 class TestHelperFunctions(TestCase):
     """Tests for internal helper functions."""
-
-    @parameterized.expand(
-        [
-            param(
-                "sum_equal_length_tensors",
-                tensors=[
-                    torch.tensor([1, 2, 3], dtype=torch.int32),
-                    torch.tensor([4, 5, 6], dtype=torch.int32),
-                ],
-                expected=torch.tensor([5, 7, 9], dtype=torch.int16),
-            ),
-            param(
-                "sum_different_length_tensors",
-                tensors=[
-                    torch.tensor([1, 2], dtype=torch.int32),
-                    torch.tensor([4, 5, 6], dtype=torch.int32),
-                ],
-                expected=torch.tensor([5, 7, 6], dtype=torch.int16),
-            ),
-            param(
-                "sum_empty_list",
-                tensors=[],
-                expected=torch.tensor([], dtype=torch.int16),
-            ),
-        ]
-    )
-    def test_sum_tensors_with_padding(self, _, tensors, expected):
-        """Test _sum_tensors_with_padding helper function."""
-        result = _sum_tensors_with_padding(tensors)
-        self.assert_tensor_equality(result, expected)
 
     @parameterized.expand(
         [

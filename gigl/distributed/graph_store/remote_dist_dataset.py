@@ -65,6 +65,31 @@ class RemoteDistDataset:
     def cluster_info(self) -> GraphStoreInfo:
         return self._cluster_info
 
+    def compute_degree_tensors(self) -> None:
+        """
+        Compute global node degrees on the storage servers using all-reduce.
+
+        Triggers all storage servers to participate in an all-reduce operation:
+        1. Each server computes its local degrees
+        2. All servers participate in all-reduce to aggregate
+        3. Each server stores the global degrees in dataset.degree_tensors
+
+        All computation and data transfer happens server-side. No degree data
+        is transferred to or stored on the client.
+
+        After calling this method, the degrees are available on each server
+        via server.dataset.degree_tensors.
+        """
+        futures: list[torch.futures.Future[None]] = []
+        for server_rank in range(self._cluster_info.num_storage_nodes):
+            futures.append(
+                async_request_server(
+                    server_rank,
+                    DistServer.compute_and_distribute_global_degrees,
+                )
+            )
+        torch.futures.wait_all(futures)
+
     def fetch_node_feature_info(
         self,
     ) -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:

@@ -433,6 +433,25 @@ class DistServer:
                 )
             return _compute_degrees_from_indptr(topo.indptr)
 
+    def compute_and_distribute_global_degrees(self) -> None:
+        """
+        Compute global degree tensors using all-reduce across storage servers.
+
+        Each server computes its local degrees, then all servers participate
+        in an all-reduce to aggregate them. After completion, all servers
+        have the global degrees stored in dataset.degree_tensors.
+
+        Requires torch.distributed to be initialized among storage servers
+        (this is done in _run_storage_server_session).
+
+        This keeps all degree data on the storage side - the compute side only
+        needs to trigger this method via a single RPC call to any server.
+        """
+        from gigl.distributed.utils.degree import _all_reduce_degrees
+
+        local_degrees = self.get_local_degrees()
+        self.dataset._degree_tensors = _all_reduce_degrees(local_degrees)
+
     def get_ablp_input(
         self,
         split: Union[Literal["train", "val", "test"], str],

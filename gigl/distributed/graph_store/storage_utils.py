@@ -107,7 +107,9 @@ def _run_storage_server_session(
        :func:`gigl.distributed.graph_store.compute.init_compute_process`;
        after this call Torch RPC connections exist between storage and
        compute nodes.
-    2. **Waits for the server to exit.** The server blocks until clients
+    2. **Initialises a torch.distributed process group** among storage
+       nodes for collective operations (e.g., degree tensor aggregation).
+    3. **Waits for the server to exit.** The server blocks until clients
        call
        :func:`gigl.distributed.graph_store.compute.shutdown_compute_proccess`.
 
@@ -138,6 +140,19 @@ def _run_storage_server_session(
         num_clients=cluster_info.compute_cluster_world_size,
     )
 
+    # Initialize process group among storage servers for collective operations
+    # (e.g., all-reduce for degree tensor aggregation). Must be after init_server.
+    logger.info(
+        f"Initializing storage process group for storage node "
+        f"{storage_rank} / {cluster_info.num_storage_nodes}"
+    )
+    torch.distributed.init_process_group(
+        backend="gloo",
+        world_size=cluster_info.num_storage_nodes,
+        rank=storage_rank,
+        init_method=f"tcp://{cluster_master_ip}:{cluster_info.storage_cluster_master_port}",
+    )
+
     logger.info(
         f"Waiting for storage node "
         f"{storage_rank} / {cluster_info.num_storage_nodes} to exit"
@@ -145,6 +160,8 @@ def _run_storage_server_session(
     # Wait for the server to exit.  Will block until clients also shut
     # down (with `gigl.distributed.graph_store.compute.shutdown_compute_proccess`).
     wait_and_shutdown_server()
+
+    torch.distributed.destroy_process_group()
     logger.info(f"Storage node {storage_rank} exited")
 
 
