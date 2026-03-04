@@ -439,7 +439,7 @@ class DistServer:
 
         Each server computes its local degrees, then all servers participate
         in an all-reduce to aggregate them. After completion, all servers
-        have the global degrees stored in dataset.degree_tensors.
+        have the global degrees stored in dataset.degree_tensor.
 
         Requires torch.distributed to be initialized among storage servers
         (this is done in _run_storage_server_session).
@@ -447,10 +447,7 @@ class DistServer:
         This keeps all degree data on the storage side - the compute side only
         needs to trigger this method via a single RPC call to any server.
         """
-        from gigl.distributed.utils.degree import _all_reduce_degrees
-
-        local_degrees = self.get_local_degrees()
-        self.dataset._degree_tensors = _all_reduce_degrees(local_degrees)
+        self.dataset.compute_degree_tensor()
 
     def get_ablp_input(
         self,

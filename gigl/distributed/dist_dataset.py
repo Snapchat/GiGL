@@ -312,16 +312,9 @@ class DistDataset(glt.distributed.DistDataset):
         """
         return self._degree_tensor
 
-    @degree_tensor.setter
-    def degree_tensor(
-        self,
-        value: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-    ) -> None:
-        """Set the degree tensor."""
-        self._degree_tensor = value
-
     def compute_degree_tensor(
         self,
+        num_shared_data_processes: int = 1,
     ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """
         Compute node degrees from the graph partition and cache them.
@@ -330,6 +323,11 @@ class DistDataset(glt.distributed.DistDataset):
         to aggregate degrees across all machines when distributed is initialized.
 
         The computed degrees are cached and can be accessed via the degree_tensor property.
+
+        Args:
+            num_shared_data_processes: Number of processes that share the same data
+                (typically processes on the same machine in colocated mode). Used to
+                correct for over-counting in the all-reduce. Defaults to 1 (no correction).
 
         Returns:
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
@@ -341,10 +339,12 @@ class DistDataset(glt.distributed.DistDataset):
         """
         if self._degree_tensor is None:
             from gigl.distributed.utils.degree import (
-                compute_and_broadcast_degree_tensors,
+                compute_and_broadcast_degree_tensor,
             )
 
-            self._degree_tensor = compute_and_broadcast_degree_tensors(self)
+            self._degree_tensor = compute_and_broadcast_degree_tensor(
+                self, num_shared_data_processes=num_shared_data_processes
+            )
         return self._degree_tensor
 
     @property
