@@ -8,46 +8,48 @@ CSR (Compressed Sparse Row) topology stored in GraphLearn-Torch Graph objects.
 Note: Degree tensors are not moved to shared memory and may be duplicated across
 processes on the same machine.
 
-Colocated Mode (DistDataset)
-============================
+Usage
+=====
 
-For colocated mode, use compute_and_broadcast_degree_tensors(dataset) or
-dataset.compute_degree_tensor():
+Use dataset.compute_degree_tensor() or compute_and_broadcast_degree_tensor(dataset):
 
-    compute_and_broadcast_degree_tensors(dataset: DistDataset)
-        └─► _compute_degrees_from_local_dataset
-                └─► _process_graph
-                        └─► _compute_degrees_from_indptr
-                        └─► _all_reduce_degrees (if distributed)
+    compute_and_broadcast_degree_tensor(dataset, num_shared_data_processes)
+        └─► _compute_degrees_from_indptr (for each edge type)
+        └─► _all_reduce_degrees (if distributed)
+
+The num_shared_data_processes parameter controls over-counting correction:
+- Default is 1 (no correction) - appropriate for graph store mode
+- For colocated mode, caller should compute and pass the number of processes
+  per machine that share the same data
 """
 
-from collections import Counter
 from typing import Union
 
 import torch
 from graphlearn_torch.data import Graph
 from torch_geometric.typing import EdgeType
 
-import gigl.distributed.utils
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 
 logger = Logger()
 
 
-def compute_and_broadcast_degree_tensors(
+def compute_and_broadcast_degree_tensor(
     dataset: DistDataset,
+    num_shared_data_processes: int = 1,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """
     Compute node degrees from a local graph partition and aggregate across all machines.
 
-    This function is for colocated mode (DistDataset). For graph store mode,
-    use RemoteDistDataset.compute_degree_tensors() instead, which keeps all
-    computation server-side.
+    Extracts the graph topology from the dataset, computes degrees from the CSR
+    row pointers (indptr), and performs all-reduce if torch.distributed is initialized.
 
     Args:
         dataset: A DistDataset containing the local graph partition.
+        num_shared_data_processes: Number of processes that share the same data (typically
+            processes on the same machine in colocated mode). Used to correct for
+            over-counting in the all-reduce. Defaults to 1 (no correction).
 
     Returns:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
@@ -56,14 +58,52 @@ def compute_and_broadcast_degree_tensors(
 
     Raises:
         ValueError: If the dataset graph is None or topology is unavailable.
-        TypeError: If a RemoteDistDataset is passed (use its compute_degree_tensors() method).
     """
-    if isinstance(dataset, RemoteDistDataset):
-        raise TypeError(
-            "For RemoteDistDataset, use remote_dataset.compute_degree_tensors() instead. "
-            "This keeps all computation server-side."
+    graph = dataset.graph
+    if graph is None:
+        raise ValueError("Dataset graph is None. Cannot compute degrees.")
+
+    # Compute local degrees from graph topology
+    if isinstance(graph, Graph):
+        topo = graph.topo
+        if topo is None or topo.indptr is None:
+            raise ValueError("Topology/indptr not available for graph.")
+        local_degrees: Union[
+            torch.Tensor, dict[EdgeType, torch.Tensor]
+        ] = _compute_degrees_from_indptr(topo.indptr)
+    else:
+        local_dict: dict[EdgeType, torch.Tensor] = {}
+        for edge_type, edge_graph in graph.items():
+            topo = edge_graph.topo
+            if topo is None or topo.indptr is None:
+                logger.warning(
+                    f"Topology/indptr not available for edge type {edge_type}, skipping."
+                )
+                continue
+            local_dict[edge_type] = _compute_degrees_from_indptr(topo.indptr)
+        local_degrees = local_dict
+
+    # All-reduce if distributed
+    if torch.distributed.is_initialized():
+        result = _all_reduce_degrees(local_degrees, num_shared_data_processes)
+    else:
+        if isinstance(local_degrees, torch.Tensor):
+            result = _clamp_to_int16(local_degrees)
+        else:
+            result = {k: _clamp_to_int16(v) for k, v in local_degrees.items()}
+
+    # Log results
+    if isinstance(result, torch.Tensor):
+        logger.info(
+            f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
         )
-    return _compute_degrees_from_local_dataset(dataset)
+    else:
+        for degrees in result.values():
+            logger.info(
+                f"{degrees.size(0)} nodes, max={degrees.max().item()}, min={degrees.min().item()}"
+            )
+
+    return result
 
 
 def _pad_to_size(tensor: torch.Tensor, target_size: int) -> torch.Tensor:
@@ -89,20 +129,9 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
     return (indptr[1:] - indptr[:-1]).contiguous().to(torch.int16)
 
 
-def _compute_degrees_from_local_dataset(
-    dataset: DistDataset,
-) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
-    """Compute degrees from a local DistDataset with all-reduce across machines."""
-    graph = dataset.graph
-    if graph is None:
-        raise ValueError("Dataset graph is None. Cannot compute degrees.")
-
-    return _process_graph(graph)
-
-
 def _all_reduce_degrees(
     local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-    local_world_size: int = 1,
+    num_shared_data_processes: int = 1,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """All-reduce degree tensors across ranks, handling both homogeneous and heterogeneous cases.
 
@@ -115,8 +144,8 @@ def _all_reduce_degrees(
     Args:
         local_degrees: Either a single tensor (homogeneous) or dict mapping EdgeType
             to tensors (heterogeneous).
-        local_world_size: Number of processes on the local machine that share the same
-            data. Used to correct for over-counting. Defaults to 1 (no correction),
+        num_shared_data_processes: Number of processes that share the same data.
+            Used to correct for over-counting. Defaults to 1 (no correction),
             which is correct for graph store mode where each server has distinct data.
             For colocated mode, pass the number of processes sharing data.
 
@@ -146,7 +175,7 @@ def _all_reduce_degrees(
         torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
         # Correct for over-counting, move back to CPU, and clamp to int16
-        return _clamp_to_int16((padded // local_world_size).cpu())
+        return _clamp_to_int16((padded // num_shared_data_processes).cpu())
 
     # Homogeneous case
     if isinstance(local_degrees, torch.Tensor):
@@ -170,69 +199,5 @@ def _all_reduce_degrees(
         else:
             tensor = torch.zeros(1, dtype=torch.int16)
         result[edge_type] = reduce_tensor(tensor)
-
-    return result
-
-
-def _process_graph(
-    graph: Union[Graph, dict[EdgeType, Graph]],
-) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
-    """Process graph(s) to compute degrees with optional all-reduce.
-
-    If torch.distributed is initialized, performs all-reduce to aggregate
-    degrees across all ranks. Otherwise, returns local degrees only.
-
-    Args:
-        graph: Either a single Graph (homogeneous) or dict of Graphs (heterogeneous).
-
-    Returns:
-        For homogeneous: A single degree tensor.
-        For heterogeneous: A dict mapping EdgeType to degree tensors.
-    """
-    # Compute local degrees
-    if isinstance(graph, Graph):
-        topo = graph.topo
-        if topo is None or topo.indptr is None:
-            raise ValueError("Topology/indptr not available for graph.")
-        local_degrees: Union[
-            torch.Tensor, dict[EdgeType, torch.Tensor]
-        ] = _compute_degrees_from_indptr(topo.indptr)
-    else:
-        local_dict: dict[EdgeType, torch.Tensor] = {}
-        for edge_type, edge_graph in graph.items():
-            topo = edge_graph.topo
-            if topo is None or topo.indptr is None:
-                logger.warning(
-                    f"Topology/indptr not available for edge type {edge_type}, skipping."
-                )
-                continue
-            local_dict[edge_type] = _compute_degrees_from_indptr(topo.indptr)
-        local_degrees = local_dict
-
-    # All-reduce if distributed (with over-counting correction for colocated mode)
-    if torch.distributed.is_initialized():
-        rank = torch.distributed.get_rank()
-        rank_ips = gigl.distributed.utils.get_internal_ip_from_all_ranks()
-        local_world_size = Counter(rank_ips)[rank_ips[rank]]
-        logger.info(
-            f"Degree computation: rank={rank}, local_world_size={local_world_size}"
-        )
-        result = _all_reduce_degrees(local_degrees, local_world_size)
-    else:
-        if isinstance(local_degrees, torch.Tensor):
-            result = _clamp_to_int16(local_degrees)
-        else:
-            result = {k: _clamp_to_int16(v) for k, v in local_degrees.items()}
-
-    # Log results
-    if isinstance(result, torch.Tensor):
-        logger.info(
-            f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
-        )
-    else:
-        for degrees in result.values():
-            logger.info(
-                f"{degrees.size(0)} nodes, max={degrees.max().item()}, min={degrees.min().item()}"
-            )
 
     return result
