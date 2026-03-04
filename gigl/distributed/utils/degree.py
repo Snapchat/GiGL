@@ -55,11 +55,6 @@ from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 logger = Logger()
 
 
-# =============================================================================
-# Entry Point
-# =============================================================================
-
-
 def compute_and_broadcast_degree_tensors(
     dataset: DistDataset,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
@@ -88,11 +83,6 @@ def compute_and_broadcast_degree_tensors(
             "This keeps all computation server-side."
         )
     return _compute_degrees_from_local_dataset(dataset)
-
-
-# =============================================================================
-# Shared Utilities
-# =============================================================================
 
 
 def _pad_to_size(tensor: torch.Tensor, target_size: int) -> torch.Tensor:
