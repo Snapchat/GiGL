@@ -17,7 +17,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -330,8 +330,8 @@ class DistABLPLoader(BaseDistLoader):
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
             producer: Union[
-                DistABLPSamplingProducer, Callable[..., int]
-            ] = DistABLPSamplingProducer(
+                DistSamplingProducer, Callable[..., int]
+            ] = DistSamplingProducer(
                 dataset,
                 sampler_input,
                 sampling_config,
@@ -339,7 +339,7 @@ class DistABLPLoader(BaseDistLoader):
                 channel,
             )
         else:
-            producer = DistServer.create_sampling_ablp_producer
+            producer = DistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).

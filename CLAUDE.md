@@ -56,8 +56,8 @@ GiGL extends GraphLearn-for-PyTorch (GLT) for distributed GNN training. Key clas
   labels, split metadata, and feature info
 - **`DistNeighborLoader`** (extends GLT `DistLoader`) - Standard node-based sampling loader
 - **`DistABLPLoader`** (extends GLT `DistLoader`) - Anchor-Based Link Prediction sampling loader
-- **`DistABLPNeighborSampler`** (extends GLT `DistNeighborSampler`) - Custom sampler supporting ABLP with
-  positive/negative label injection
+- **`DistNeighborSampler`** (extends GLT `DistNeighborSampler`) - Unified sampler supporting both standard
+  neighbor sampling and ABLP with positive/negative label injection
 
 **Two deployment modes:**
 

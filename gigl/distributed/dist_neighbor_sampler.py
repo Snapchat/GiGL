@@ -6,7 +6,7 @@ from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.distributed import DistNeighborSampler
+from graphlearn_torch.distributed import DistNeighborSampler as GltDistNeighborSampler
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -25,7 +25,7 @@ from gigl.utils.data_splitters import PADDING_NODE
 
 
 @dataclass
-class PreparedSamplingInputs:
+class SamplingInputs:
     """Prepared inputs for the sampling loop.
 
     Attributes:
@@ -35,54 +35,136 @@ class PreparedSamplingInputs:
             in sampling. May include additional nodes beyond input_seeds
             (e.g., supervision nodes in ABLP).
         metadata: Metadata dict to include in the sampler output.
-        use_original_seeds_for_batch: If True, use input_seeds as the batch
-            (ABLP behavior). If False, use the inducer result as the batch
-            (GLT base behavior). Defaults to False for GLT compatibility.
     """
 
     input_seeds: torch.Tensor
     input_type: NodeType
     nodes_to_sample: dict[Union[str, NodeType], torch.Tensor]
     metadata: dict[str, torch.Tensor]
-    use_original_seeds_for_batch: bool = False
 
 
-class GiglDistNeighborSampler(DistNeighborSampler):
-    """GiGL's base distributed neighbor sampler with template method pattern.
+class DistNeighborSampler(GltDistNeighborSampler):
+    """GiGL's distributed neighbor sampler supporting both standard and ABLP inputs.
 
-    Extends GLT's DistNeighborSampler and overrides _sample_from_nodes to use
-    a hook (_prepare_sampling_inputs) that subclasses can override to customize
-    input preparation without duplicating the core sampling loop.
+    Extends GLT's DistNeighborSampler and overrides _sample_from_nodes to support
+    both NodeSamplerInput (standard neighbor sampling) and ABLPNodeSamplerInput
+    (anchor-based link prediction with supervision nodes).
 
-    The default implementation behaves identically to the base GLT sampler.
-    Subclasses can override _prepare_sampling_inputs to add additional nodes
-    to the sampling (e.g., supervision nodes) or populate metadata.
+    For ABLPNodeSamplerInput, supervision nodes (positive/negative labels) are
+    added to the sampling seeds, and label information is included in the output
+    metadata.
     """
 
     def _prepare_sampling_inputs(
         self,
         inputs: NodeSamplerInput,
-    ) -> PreparedSamplingInputs:
+    ) -> SamplingInputs:
         """Prepare inputs for the sampling loop.
 
-        Override this method in subclasses to customize input preparation.
-        The default implementation uses the input seeds directly with no
-        additional nodes or metadata.
+        Handles both standard NodeSamplerInput and ABLPNodeSamplerInput.
+        For ABLP inputs, adds supervision nodes to the sampling seeds and
+        builds label metadata.
 
         Args:
-            inputs: The node sampler input.
+            inputs: Either a NodeSamplerInput or ABLPNodeSamplerInput.
 
         Returns:
-            PreparedSamplingInputs containing the seeds, node type, nodes to
+            SamplingInputs containing the seeds, node type, nodes to
             sample from, and metadata.
         """
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
-        return PreparedSamplingInputs(
+
+        if isinstance(inputs, ABLPNodeSamplerInput):
+            return self._prepare_ablp_inputs(inputs, input_seeds, input_type)
+
+        return SamplingInputs(
             input_seeds=input_seeds,
             input_type=input_type,
             nodes_to_sample={input_type: input_seeds},
             metadata={},
+        )
+
+    def _prepare_ablp_inputs(
+        self,
+        inputs: ABLPNodeSamplerInput,
+        input_seeds: torch.Tensor,
+        input_type: NodeType,
+    ) -> SamplingInputs:
+        """Prepare ABLP inputs with supervision nodes and label metadata.
+
+        Args:
+            inputs: The ABLPNodeSamplerInput containing label information.
+            input_seeds: The anchor node seeds (already moved to device).
+            input_type: The node type of the anchor seeds.
+
+        Returns:
+            SamplingInputs with supervision nodes included in nodes_to_sample
+            and label tensors in metadata.
+        """
+        # Since GLT swaps src/dst for edge_dir = "out",
+        # and GiGL assumes that supervision edge types are always
+        # (anchor_node_type, to, supervision_node_type),
+        # we need to index into supervision edge types accordingly.
+        label_edge_index = 0 if self.edge_dir == "in" else 2
+
+        # Build metadata and input nodes from positive/negative labels.
+        # We need to sample from the supervision nodes as well, and ensure
+        # that we are sampling from the correct node type.
+        metadata: dict[str, torch.Tensor] = {}
+        input_seeds_builder: dict[
+            Union[str, NodeType], list[torch.Tensor]
+        ] = defaultdict(list)
+        input_seeds_builder[input_type].append(input_seeds)
+
+        for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
+            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
+                self.device
+            )
+            input_seeds_builder[edge_type[label_edge_index]].append(
+                filtered_label_tensor
+            )
+            # Update the metadata per positive label edge type.
+            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
+            metadata[
+                f"{POSITIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
+            ] = label_tensor
+
+        for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
+            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
+                self.device
+            )
+            input_seeds_builder[edge_type[label_edge_index]].append(
+                filtered_label_tensor
+            )
+            # Update the metadata per negative label edge type.
+            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
+            metadata[
+                f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
+            ] = label_tensor
+
+        # As a perf optimization, we *could* have `nodes_to_sample` be only the
+        # unique nodes, but since torch.unique() calls a sort, we should
+        # investigate if it's worth it.
+        # TODO(kmonte, mkolodner-sc): Investigate if this is worth it.
+        nodes_to_sample: dict[Union[str, NodeType], torch.Tensor] = {
+            node_type: torch.cat(seeds, dim=0).to(self.device)
+            for node_type, seeds in input_seeds_builder.items()
+        }
+
+        # Memory cleanup
+        del filtered_label_tensor, label_tensor
+        for value in input_seeds_builder.values():
+            value.clear()
+        input_seeds_builder.clear()
+        del input_seeds_builder
+        gc.collect()
+
+        return SamplingInputs(
+            input_seeds=input_seeds,
+            input_type=input_type,
+            nodes_to_sample=nodes_to_sample,
+            metadata=metadata,
         )
 
     async def _sample_from_nodes(
@@ -91,17 +173,18 @@ class GiglDistNeighborSampler(DistNeighborSampler):
     ) -> Optional[SampleMessage]:
         """Sample subgraph from seed nodes.
 
-        Uses _prepare_sampling_inputs hook to allow subclasses to customize
-        which nodes to sample from and what metadata to include.
+        Supports both NodeSamplerInput and ABLPNodeSamplerInput. For ABLP,
+        supervision nodes are included in sampling and label metadata is
+        attached to the output.
         """
         prepared = self._prepare_sampling_inputs(inputs)
-        input_seeds = prepared.input_seeds
         input_type = prepared.input_type
         nodes_to_sample = prepared.nodes_to_sample
         metadata = prepared.metadata
-        use_original_seeds_for_batch = prepared.use_original_seeds_for_batch
 
-        self.max_input_size = max(self.max_input_size, input_seeds.numel())
+        self.max_input_size: int = max(
+            self.max_input_size, prepared.input_seeds.numel()
+        )
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
 
@@ -116,10 +199,10 @@ class GiglDistNeighborSampler(DistNeighborSampler):
             num_sampled_edges_hetero: dict[EdgeType, list[torch.Tensor]] = {}
 
             src_dict = inducer.init_node(nodes_to_sample)
-            # GLT uses src_dict (inducer result) for batch; ABLP uses original seeds
-            batch = (
-                {input_type: input_seeds} if use_original_seeds_for_batch else src_dict
-            )
+            # Extract only the anchor node type for batch tracking.
+            # This excludes supervision nodes (for ABLP) and uses the
+            # inducer result (deduplicated).
+            batch = {input_type: src_dict[input_type]}
 
             merge_dict(src_dict, out_nodes_hetero)
             count_dict(src_dict, num_sampled_nodes_hetero, 1)
@@ -190,8 +273,7 @@ class GiglDistNeighborSampler(DistNeighborSampler):
             ), f"Expected input type {input_type}, got {list(nodes_to_sample.keys())[0]}"
 
             srcs = inducer.init_node(nodes_to_sample[input_type])
-            # GLT uses srcs (inducer result) for batch; ABLP uses original seeds
-            batch = input_seeds if use_original_seeds_for_batch else srcs
+            batch = srcs
             out_nodes: list[torch.Tensor] = []
             out_edges: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
             num_sampled_nodes: list[torch.Tensor] = []
@@ -239,98 +321,3 @@ class GiglDistNeighborSampler(DistNeighborSampler):
 
         self.inducer_pool.put(inducer)
         return sample_output
-
-
-class DistABLPNeighborSampler(GiglDistNeighborSampler):
-    """ABLP-specific neighbor sampler that adds supervision nodes to sampling.
-
-    Overrides _prepare_sampling_inputs to parse ABLPNodeSamplerInput, adding
-    supervision nodes (positive/negative labels) to the sampling seeds and
-    including label information in the output metadata.
-    """
-
-    def _prepare_sampling_inputs(
-        self,
-        inputs: NodeSamplerInput,
-    ) -> PreparedSamplingInputs:
-        """Prepare ABLP inputs with supervision nodes and label metadata.
-
-        Parses ABLPNodeSamplerInput to extract positive/negative label nodes,
-        adds them to the sampling seeds, and builds metadata with label tensors.
-
-        Args:
-            inputs: Must be an ABLPNodeSamplerInput.
-
-        Returns:
-            PreparedSamplingInputs with supervision nodes included in
-            nodes_to_sample and label tensors in metadata.
-        """
-        assert isinstance(inputs, ABLPNodeSamplerInput)
-        input_seeds = inputs.node.to(self.device)
-        input_type = inputs.input_type
-
-        # Since GLT swaps src/dst for edge_dir = "out",
-        # and GiGL assumes that supervision edge types are always
-        # (anchor_node_type, to, supervision_node_type),
-        # we need to index into supervision edge types accordingly.
-        label_edge_index = 0 if self.edge_dir == "in" else 2
-
-        # Build metadata and input nodes from positive/negative labels.
-        # We need to sample from the supervision nodes as well, and ensure
-        # that we are sampling from the correct node type.
-        metadata: dict[str, torch.Tensor] = {}
-        input_seeds_builder: dict[
-            Union[str, NodeType], list[torch.Tensor]
-        ] = defaultdict(list)
-        input_seeds_builder[input_type].append(input_seeds)
-
-        for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
-            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
-                self.device
-            )
-            input_seeds_builder[edge_type[label_edge_index]].append(
-                filtered_label_tensor
-            )
-            # Update the metadata per positive label edge type.
-            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
-            metadata[
-                f"{POSITIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
-            ] = label_tensor
-
-        for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
-            filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
-                self.device
-            )
-            input_seeds_builder[edge_type[label_edge_index]].append(
-                filtered_label_tensor
-            )
-            # Update the metadata per negative label edge type.
-            # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
-            metadata[
-                f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
-            ] = label_tensor
-
-        # As a perf optimization, we *could* have `nodes_to_sample` be only the
-        # unique nodes, but since torch.unique() calls a sort, we should
-        # investigate if it's worth it.
-        # TODO(kmonte, mkolodner-sc): Investigate if this is worth it.
-        nodes_to_sample: dict[Union[str, NodeType], torch.Tensor] = {
-            node_type: torch.cat(seeds, dim=0).to(self.device)
-            for node_type, seeds in input_seeds_builder.items()
-        }
-
-        # Memory cleanup
-        del filtered_label_tensor, label_tensor
-        for value in input_seeds_builder.values():
-            value.clear()
-        input_seeds_builder.clear()
-        del input_seeds_builder
-        gc.collect()
-
-        return PreparedSamplingInputs(
-            input_seeds=input_seeds,
-            input_type=input_type,
-            nodes_to_sample=nodes_to_sample,
-            metadata=metadata,
-            use_original_seeds_for_batch=True,
-        )

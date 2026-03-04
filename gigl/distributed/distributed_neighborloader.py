@@ -9,7 +9,6 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
-from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
 from graphlearn_torch.sampler import NodeSamplerInput
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -19,6 +18,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
@@ -238,8 +238,8 @@ class DistNeighborLoader(BaseDistLoader):
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
             producer: Union[
-                DistMpSamplingProducer, Callable[..., int]
-            ] = DistMpSamplingProducer(
+                DistSamplingProducer, Callable[..., int]
+            ] = DistSamplingProducer(
                 dataset,
                 input_data,
                 sampling_config,
