@@ -196,6 +196,7 @@ def _all_reduce_degrees(
         torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
         # Correct for over-counting, move back to CPU, and clamp to int16
+        # TODO (mkolodner-sc): Potentially want to paramaterize this in the future if we want degrees higher than the int16 max.
         return _clamp_to_int16((padded // local_world_size).cpu())
 
     # Homogeneous case
