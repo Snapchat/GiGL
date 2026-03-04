@@ -308,6 +308,23 @@ class TestHelperFunctions(TestCase):
         result = _compute_degrees_from_indptr(indptr)
         self.assert_tensor_equality(result, expected)
 
+    def test_compute_degrees_from_indptr_all_zeros(self):
+        """Test _compute_degrees_from_indptr with all-zero indptr (no edges)."""
+        # All-zero indptr means no outgoing edges for any node
+        indptr = torch.tensor([0, 0, 0, 0, 0], dtype=torch.int64)
+        expected = torch.tensor([0, 0, 0, 0], dtype=torch.int16)
+        result = _compute_degrees_from_indptr(indptr)
+        self.assert_tensor_equality(result, expected)
+
+    def test_compute_degrees_from_indptr_empty(self):
+        """Test _compute_degrees_from_indptr with empty indptr (no nodes)."""
+        # indptr of [0] means 0 nodes
+        indptr = torch.empty(0, dtype=torch.int64)
+        expected = torch.empty(0, dtype=torch.int16)
+        result = _compute_degrees_from_indptr(indptr)
+        self.assert_tensor_equality(result, expected)
+        self.assertEqual(result.numel(), 0)
+
     def test_clamp_to_int16(self):
         """Test _clamp_to_int16 helper function."""
         max_int16 = torch.iinfo(torch.int16).max
