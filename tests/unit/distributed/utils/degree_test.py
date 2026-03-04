@@ -127,67 +127,50 @@ class TestDistributedDegreeComputation(TestCase):
             self.assertIn(edge_type, result)
             self.assert_tensor_equality(result[edge_type], expected)
 
-    def test_num_shared_data_processes_divides_degrees(self):
-        """Test that num_shared_data_processes correctly divides degrees for over-counting correction.
+    @patch("gigl.distributed.utils.degree.get_internal_ip_from_all_ranks")
+    def test_local_world_size_correction_homogeneous(self, mock_get_ips):
+        """Test over-counting correction when local_world_size > 1.
 
-        In colocated mode, multiple processes on the same machine share the same data.
-        When they all compute and all-reduce their degrees, the result is over-counted
-        by the number of local processes. The num_shared_data_processes parameter corrects this.
+        Mocks get_internal_ip_from_all_ranks to simulate 2 processes on the same
+        machine (both reporting the same IP). This should cause local_world_size=2,
+        which divides the all-reduced degrees by 2.
 
-        With a single-process test group, passing num_shared_data_processes=2 should halve
-        the degrees (simulating 2 processes that would have over-counted).
+        The mock returns a list with 2 identical IPs, simulating 2 ranks that
+        share the same machine. Since my_rank=0 in a single-process test,
+        my_ip=all_ips[0] and Counter(all_ips)[my_ip]=2, giving local_world_size=2.
         """
+        mock_get_ips.return_value = ["192.168.1.1", "192.168.1.1"]
+
         edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
         num_nodes = int(edge_index.max().item() + 1)
-
         dataset = create_homogeneous_dataset(edge_index=edge_index)
 
-        # Compute with num_shared_data_processes=1 (no correction)
-        result_no_correction = compute_and_broadcast_degree_tensor(
-            dataset, num_shared_data_processes=1
-        )
+        result = compute_and_broadcast_degree_tensor(dataset)
 
-        # Reset the cached degree tensor to compute again
-        dataset._degree_tensor = None
+        assert isinstance(result, torch.Tensor)
+        raw_expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
+        expected = raw_expected // 2
+        self.assert_tensor_equality(result, expected)
 
-        # Compute with num_shared_data_processes=2 (simulates 2 processes sharing data)
-        result_with_correction = compute_and_broadcast_degree_tensor(
-            dataset, num_shared_data_processes=2
-        )
+    @patch("gigl.distributed.utils.degree.get_internal_ip_from_all_ranks")
+    def test_local_world_size_correction_heterogeneous(self, mock_get_ips):
+        """Test over-counting correction for heterogeneous graphs with local_world_size > 1."""
+        mock_get_ips.return_value = ["192.168.1.1", "192.168.1.1"]
 
-        # The result with correction should be half of the uncorrected result
-        # (integer division, so may have rounding)
-        assert isinstance(result_no_correction, torch.Tensor)
-        assert isinstance(result_with_correction, torch.Tensor)
-        expected_corrected = result_no_correction // 2
-        self.assert_tensor_equality(result_with_correction, expected_corrected)
-
-    def test_num_shared_data_processes_heterogeneous(self):
-        """Test num_shared_data_processes correction for heterogeneous graphs."""
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
 
-        # Compute with num_shared_data_processes=1 (no correction)
-        result_no_correction = compute_and_broadcast_degree_tensor(
-            dataset, num_shared_data_processes=1
-        )
+        result = compute_and_broadcast_degree_tensor(dataset)
 
-        # Reset the cached degree tensor to compute again
-        dataset._degree_tensor = None
-
-        # Compute with num_shared_data_processes=2 (simulates 2 processes sharing data)
-        result_with_correction = compute_and_broadcast_degree_tensor(
-            dataset, num_shared_data_processes=2
-        )
-
-        assert isinstance(result_no_correction, dict)
-        assert isinstance(result_with_correction, dict)
-
-        for edge_type in result_no_correction:
-            expected_corrected = result_no_correction[edge_type] // 2
-            self.assert_tensor_equality(
-                result_with_correction[edge_type], expected_corrected
+        assert isinstance(result, dict)
+        for edge_type, edge_index in edge_indices.items():
+            num_nodes = int(edge_index[0].max().item() + 1)
+            raw_expected = _compute_expected_degrees_from_edge_index(
+                edge_index, num_nodes
             )
+            expected = raw_expected // 2
+            self.assertIn(edge_type, result)
+            self.assert_tensor_equality(result[edge_type], expected)
 
 
 class TestDatasetDegreeProperty(TestCase):

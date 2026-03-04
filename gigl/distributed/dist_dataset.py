@@ -314,7 +314,6 @@ class DistDataset(glt.distributed.DistDataset):
 
     def compute_degree_tensor(
         self,
-        num_shared_data_processes: int = 1,
     ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """
         Compute node degrees from the graph partition and cache them.
@@ -322,12 +321,10 @@ class DistDataset(glt.distributed.DistDataset):
         Extracts topology from the local graph partition and uses all-reduce
         to aggregate degrees across all machines when distributed is initialized.
 
-        The computed degrees are cached and can be accessed via the degree_tensor property.
+        Over-counting correction (for processes sharing the same data on the same
+        machine) is handled automatically by detecting the distributed topology.
 
-        Args:
-            num_shared_data_processes: Number of processes that share the same data
-                (typically processes on the same machine in colocated mode). Used to
-                correct for over-counting in the all-reduce. Defaults to 1 (no correction).
+        The computed degrees are cached and can be accessed via the degree_tensor property.
 
         Returns:
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
@@ -342,9 +339,7 @@ class DistDataset(glt.distributed.DistDataset):
                 compute_and_broadcast_degree_tensor,
             )
 
-            self._degree_tensor = compute_and_broadcast_degree_tensor(
-                self, num_shared_data_processes=num_shared_data_processes
-            )
+            self._degree_tensor = compute_and_broadcast_degree_tensor(self)
         return self._degree_tensor
 
     @property
