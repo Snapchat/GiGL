@@ -4,16 +4,12 @@ import torch
 from absl.testing import absltest
 from parameterized import param, parameterized
 
-import gigl.distributed.graph_store.dist_server as dist_server_module
-from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.degree import (
     _clamp_to_int16,
     _compute_degrees_from_indptr,
     _pad_to_size,
     compute_and_broadcast_degree_tensor,
 )
-from gigl.env.distributed import GraphStoreInfo
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -228,142 +224,6 @@ class TestHelperFunctions(TestCase):
         expected = torch.tensor([1, max_int16, 5], dtype=torch.int16)
         result = _clamp_to_int16(tensor)
         self.assert_tensor_equality(result, expected)
-
-
-# =============================================================================
-# Remote Degree Computation Tests
-# =============================================================================
-
-
-def _mock_async_request_server(server_rank, func, *args, **kwargs):
-    """Mock async_request_server that calls the server method synchronously.
-
-    Returns a completed Future with the result.
-    """
-    result = _call_func_on_server(func, *args, **kwargs)
-    future: torch.futures.Future = torch.futures.Future()
-    future.set_result(result)
-    return future
-
-
-def _create_mock_graph_store_info(num_storage_nodes: int = 1) -> GraphStoreInfo:
-    """Create a mock GraphStoreInfo for testing."""
-    return GraphStoreInfo(
-        num_storage_nodes=num_storage_nodes,
-        num_compute_nodes=1,
-        cluster_master_ip="127.0.0.1",
-        storage_cluster_master_ip="127.0.0.1",
-        compute_cluster_master_ip="127.0.0.1",
-        cluster_master_port=12345,
-        storage_cluster_master_port=12346,
-        compute_cluster_master_port=12347,
-        num_processes_per_compute=1,
-        rpc_master_port=12348,
-        rpc_wait_port=12349,
-    )
-
-
-class TestRemoteHomogeneousDegreeComputation(TestCase):
-    """Tests for remote degree computation on homogeneous graphs.
-
-    Uses a real DistServer and RemoteDistDataset, with RPC calls mocked to route
-    through the local server. This verifies the full integration path:
-    RemoteDistDataset.compute_degree_tensor() -> DistServer.compute_and_distribute_global_degrees()
-    -> degree computation utilities.
-
-    The architecture uses all-reduce among storage servers:
-    1. Client calls remote_dataset.compute_degree_tensor()
-    2. This triggers all servers to participate in all-reduce
-    3. Each server computes local degrees, all-reduces, and stores global degrees
-    """
-
-    def setUp(self) -> None:
-        """Set up a DistServer with a homogeneous graph and initialize distributed."""
-        super().setUp()
-        create_test_process_group()
-        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
-        self._server = DistServer(dataset)
-        dist_server_module._dist_server = self._server
-
-    def tearDown(self) -> None:
-        """Clean up server state and distributed."""
-        dist_server_module._dist_server = None
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
-        super().tearDown()
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_compute_degree_tensor_pushes_to_server(self, mock_async_request):
-        """Test that RemoteDistDataset.compute_degree_tensor() pushes degrees to server."""
-        edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
-        num_nodes = int(edge_index.max().item() + 1)
-
-        self.assertIsNone(self._server.dataset.degree_tensor)
-
-        cluster_info = _create_mock_graph_store_info()
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-        remote_dataset.compute_degree_tensor()
-
-        server_degrees = self._server.dataset.degree_tensor
-        self.assertIsNotNone(server_degrees)
-        assert isinstance(server_degrees, torch.Tensor)
-        expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assert_tensor_equality(server_degrees, expected)
-
-
-class TestRemoteHeterogeneousDegreeComputation(TestCase):
-    """Tests for remote degree computation on heterogeneous graphs.
-
-    Uses a real DistServer and RemoteDistDataset, with RPC calls mocked to route
-    through the local server. Each edge type's degrees are computed independently.
-
-    The architecture uses all-reduce among storage servers.
-    """
-
-    def setUp(self) -> None:
-        """Set up a DistServer with a heterogeneous graph and initialize distributed."""
-        super().setUp()
-        create_test_process_group()
-        dataset = create_heterogeneous_dataset(
-            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES
-        )
-        self._server = DistServer(dataset)
-        dist_server_module._dist_server = self._server
-
-    def tearDown(self) -> None:
-        """Clean up server state and distributed."""
-        dist_server_module._dist_server = None
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
-        super().tearDown()
-
-    @patch(
-        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
-        side_effect=_mock_async_request_server,
-    )
-    def test_compute_degree_tensor_pushes_to_server(self, mock_async_request):
-        """Test that RemoteDistDataset.compute_degree_tensor() pushes degrees to server."""
-        edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
-
-        self.assertIsNone(self._server.dataset.degree_tensor)
-
-        cluster_info = _create_mock_graph_store_info()
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-        remote_dataset.compute_degree_tensor()
-
-        server_degrees = self._server.dataset.degree_tensor
-        self.assertIsNotNone(server_degrees)
-        assert isinstance(server_degrees, dict)
-        self.assertEqual(len(server_degrees), len(edge_indices))
-
-        for edge_type, edge_index in edge_indices.items():
-            num_nodes = int(edge_index[0].max().item() + 1)
-            expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assertIn(edge_type, server_degrees)
-            self.assert_tensor_equality(server_degrees[edge_type], expected)
 
 
 if __name__ == "__main__":
