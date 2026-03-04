@@ -13,16 +13,15 @@ Usage
 
 Use dataset.compute_degree_tensor() or compute_and_broadcast_degree_tensor(dataset):
 
-    compute_and_broadcast_degree_tensor(dataset, num_shared_data_processes)
+    compute_and_broadcast_degree_tensor(dataset)
         └─► _compute_degrees_from_indptr (for each edge type)
         └─► _all_reduce_degrees (if distributed)
 
-The num_shared_data_processes parameter controls over-counting correction:
-- Default is 1 (no correction) - appropriate for graph store mode
-- For colocated mode, caller should compute and pass the number of processes
-  per machine that share the same data
+Over-counting correction is handled automatically in _all_reduce_degrees by
+detecting how many processes share the same machine (and thus the same data).
 """
 
+from collections import Counter
 from typing import Union
 
 import torch
@@ -31,13 +30,13 @@ from torch_geometric.typing import EdgeType
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
 
 logger = Logger()
 
 
 def compute_and_broadcast_degree_tensor(
     dataset: DistDataset,
-    num_shared_data_processes: int = 1,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """
     Compute node degrees from a local graph partition and aggregate across all machines.
@@ -45,11 +44,11 @@ def compute_and_broadcast_degree_tensor(
     Extracts the graph topology from the dataset, computes degrees from the CSR
     row pointers (indptr), and performs all-reduce if torch.distributed is initialized.
 
+    Over-counting correction (for processes sharing the same data) is handled
+    automatically by detecting the distributed topology.
+
     Args:
         dataset: A DistDataset containing the local graph partition.
-        num_shared_data_processes: Number of processes that share the same data (typically
-            processes on the same machine in colocated mode). Used to correct for
-            over-counting in the all-reduce. Defaults to 1 (no correction).
 
     Returns:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
@@ -83,9 +82,9 @@ def compute_and_broadcast_degree_tensor(
             local_dict[edge_type] = _compute_degrees_from_indptr(topo.indptr)
         local_degrees = local_dict
 
-    # All-reduce if distributed
+    # All-reduce if distributed (over-counting correction handled internally)
     if torch.distributed.is_initialized():
-        result = _all_reduce_degrees(local_degrees, num_shared_data_processes)
+        result = _all_reduce_degrees(local_degrees)
     else:
         if isinstance(local_degrees, torch.Tensor):
             result = _clamp_to_int16(local_degrees)
@@ -131,7 +130,6 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
 
 def _all_reduce_degrees(
     local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-    num_shared_data_processes: int = 1,
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """All-reduce degree tensors across ranks, handling both homogeneous and heterogeneous cases.
 
@@ -141,13 +139,14 @@ def _all_reduce_degrees(
     Moves tensors to GPU for the all-reduce if CUDA is available (for NCCL compatibility),
     then moves back to CPU.
 
+    Automatically detects over-counting by counting how many processes share the same
+    machine (and thus the same data). This works for both colocated mode (multiple
+    training processes per machine) and graph store mode (multiple server processes
+    per machine).
+
     Args:
         local_degrees: Either a single tensor (homogeneous) or dict mapping EdgeType
             to tensors (heterogeneous).
-        num_shared_data_processes: Number of processes that share the same data.
-            Used to correct for over-counting. Defaults to 1 (no correction),
-            which is correct for graph store mode where each server has distinct data.
-            For colocated mode, pass the number of processes sharing data.
 
     Returns:
         Aggregated degree tensors in the same format as input.
@@ -159,6 +158,12 @@ def _all_reduce_degrees(
         raise RuntimeError(
             "_all_reduce_degrees requires torch.distributed to be initialized."
         )
+
+    # Compute local_world_size: number of processes on the same machine sharing data
+    all_ips = get_internal_ip_from_all_ranks()
+    my_rank = torch.distributed.get_rank()
+    my_ip = all_ips[my_rank]
+    local_world_size = Counter(all_ips)[my_ip]
 
     # Use GPU if available (required for NCCL backend)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -175,7 +180,7 @@ def _all_reduce_degrees(
         torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
         # Correct for over-counting, move back to CPU, and clamp to int16
-        return _clamp_to_int16((padded // num_shared_data_processes).cpu())
+        return _clamp_to_int16((padded // local_world_size).cpu())
 
     # Homogeneous case
     if isinstance(local_degrees, torch.Tensor):
