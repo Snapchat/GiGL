@@ -8,15 +8,15 @@ CSR (Compressed Sparse Row) topology stored in GraphLearn-Torch Graph objects.
 Note: Degree tensors are not moved to shared memory and may be duplicated across
 processes on the same machine.
 
+Requirements
+============
+
+torch.distributed must be initialized before calling these functions.
+
 Usage
 =====
 
-Use dataset.compute_degree_tensor() to build the degree tensor in-place in the dataset or compute_and_broadcast_degree_tensor(dataset)
-to extract a degree tensor directly.
-
-    compute_and_broadcast_degree_tensor(dataset)
-        └─► _compute_degrees_from_indptr (for each edge type)
-        └─► _all_reduce_degrees (if distributed)
+Access dataset.degree_tensor to lazily compute and cache the degree tensor.
 
 Over-counting correction is handled automatically in _all_reduce_degrees by
 detecting how many processes share the same machine (and thus the same data).
@@ -30,26 +30,25 @@ from graphlearn_torch.data import Graph
 from torch_geometric.typing import EdgeType
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
 
 logger = Logger()
 
 
 def compute_and_broadcast_degree_tensor(
-    dataset: DistDataset,
+    graph: Union[Graph, dict[EdgeType, Graph]],
 ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
     """
-    Compute node degrees from a local graph partition and aggregate across all machines.
+    Compute node degrees from a graph and aggregate across all machines.
 
-    Extracts the graph topology from the dataset, computes degrees from the CSR
-    row pointers (indptr), and performs all-reduce if torch.distributed is initialized.
+    Computes degrees from the CSR row pointers (indptr) and performs all-reduce
+    to aggregate across ranks.
 
     Over-counting correction (for processes sharing the same data) is handled
     automatically by detecting the distributed topology.
 
     Args:
-        dataset: A DistDataset containing the local graph partition.
+        graph: A Graph (homogeneous) or dict[EdgeType, Graph] (heterogeneous).
 
     Returns:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
@@ -57,11 +56,13 @@ def compute_and_broadcast_degree_tensor(
             - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
 
     Raises:
-        ValueError: If the dataset graph is None or topology is unavailable.
+        RuntimeError: If torch.distributed is not initialized.
+        ValueError: If topology is unavailable.
     """
-    graph = dataset.graph
-    if graph is None:
-        raise ValueError("Dataset graph is None. Cannot compute degrees.")
+    if not torch.distributed.is_initialized():
+        raise RuntimeError(
+            "compute_and_broadcast_degree_tensor requires torch.distributed to be initialized."
+        )
 
     # Compute local degrees from graph topology
     if isinstance(graph, Graph):
@@ -83,17 +84,9 @@ def compute_and_broadcast_degree_tensor(
             local_dict[edge_type] = _compute_degrees_from_indptr(topo.indptr)
         local_degrees = local_dict
 
-    # All-reduce if distributed (over-counting correction handled internally)
-    if torch.distributed.is_initialized():
-        # For heterogeneous graphs, pass the known edge types from the graph schema
-        # to avoid using all_gather_object (which uses pickle)
-        all_edge_types = sorted(graph.keys()) if isinstance(graph, dict) else None
-        result = _all_reduce_degrees(local_degrees, all_edge_types)
-    else:
-        if isinstance(local_degrees, torch.Tensor):
-            result = _clamp_to_int16(local_degrees)
-        else:
-            result = {k: _clamp_to_int16(v) for k, v in local_degrees.items()}
+    # All-reduce across ranks (over-counting correction handled internally)
+    all_edge_types = sorted(graph.keys()) if isinstance(graph, dict) else None
+    result = _all_reduce_degrees(local_degrees, all_edge_types)
 
     # Log results
     if isinstance(result, torch.Tensor):
@@ -129,7 +122,7 @@ def _clamp_to_int16(tensor: torch.Tensor) -> torch.Tensor:
 
 def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
     """Compute degrees from CSR row pointers: degree[i] = indptr[i+1] - indptr[i]."""
-    return (indptr[1:] - indptr[:-1]).contiguous().to(torch.int16)
+    return (indptr[1:] - indptr[:-1]).to(torch.int16)
 
 
 def _all_reduce_degrees(
@@ -142,13 +135,26 @@ def _all_reduce_degrees(
     to all-reduce. Each rank participates in the all-reduce for each edge type (contributing
     zeros for edge types it doesn't have locally).
 
-    Moves tensors to GPU for the all-reduce if CUDA is available (for NCCL compatibility),
-    then moves back to CPU.
+    Moves tensors to GPU for the all-reduce if using NCCL backend (which requires CUDA),
+    otherwise keeps tensors on CPU (for Gloo backend).
 
-    Automatically detects over-counting by counting how many processes share the same
-    machine (and thus the same data). This works for both colocated mode (multiple
-    training processes per machine) and graph store mode (multiple server processes
-    per machine).
+    Over-counting correction:
+        In distributed training, multiple processes on the same machine often share the
+        same graph partition data (via shared memory). When we all-reduce degrees, each
+        process contributes its "local" degrees - but if 4 processes on one machine all
+        read the same partition, that partition's degrees get summed 4 times instead of 1.
+
+        Example: Machine A has 2 processes sharing partition with degrees [3, 5, 2].
+                 Machine B has 2 processes sharing partition with degrees [1, 4, 6].
+
+                 Without correction: all-reduce sums = [3+3+1+1, 5+5+4+4, 2+2+6+6]
+                                                     = [8, 18, 16]  (wrong!)
+
+                 With correction: divide by local_world_size (2 per machine)
+                                  = [4, 9, 8]  (correct: [3+1, 5+4, 2+6])
+
+        This function detects how many processes share the same machine by comparing
+        IP addresses, then divides by that count to correct the over-counting.
 
     Args:
         local_degrees: Either a single tensor (homogeneous) or dict mapping EdgeType
@@ -174,8 +180,9 @@ def _all_reduce_degrees(
     my_ip = all_ips[my_rank]
     local_world_size = Counter(all_ips)[my_ip]
 
-    # Use GPU if available (required for NCCL backend)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # NCCL backend requires CUDA tensors; Gloo works with CPU
+    backend = torch.distributed.get_backend()
+    device = torch.device("cuda" if backend == "nccl" else "cpu")
 
     def reduce_tensor(tensor: torch.Tensor) -> torch.Tensor:
         """All-reduce a single tensor with size sync and over-counting correction."""
