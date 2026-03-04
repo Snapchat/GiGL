@@ -16,6 +16,8 @@ make install_dev_deps              # Full dev setup (gcloud auth, uv, pre-commit
 
 # Testing
 make unit_test_py                                    # All Python unit tests (includes type_check)
+# NOTE: PY_TEST_FILES should *only* be the filename, *not* the full path.
+# e.g. if you want to test `tests/unit/common/foo_test.py` then you should run `make unit_test_py PY_TEST_FILES="foo_test.py"
 make unit_test_py PY_TEST_FILES="specific_test.py"   # Single test file
 make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one at a time, slow)
 
