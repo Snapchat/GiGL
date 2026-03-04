@@ -87,7 +87,7 @@ def compute_and_broadcast_degree_tensor(
     if torch.distributed.is_initialized():
         # For heterogeneous graphs, pass the known edge types from the graph schema
         # to avoid using all_gather_object (which uses pickle)
-        all_edge_types = set(graph.keys()) if isinstance(graph, dict) else None
+        all_edge_types = sorted(set(graph.keys())) if isinstance(graph, dict) else None
         result = _all_reduce_degrees(local_degrees, all_edge_types)
     else:
         if isinstance(local_degrees, torch.Tensor):
