@@ -122,6 +122,7 @@ import gc
 import os
 import statistics
 import sys
+import threading
 import time
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
@@ -382,6 +383,7 @@ class TrainingProcessArgs:
     local_world_size: int
     cluster_info: GraphStoreInfo
     mp_sharing_dict: MutableMapping[str, torch.Tensor]
+    mp_barrier: threading.Barrier
 
     # Model
     model_uri: Uri
@@ -887,8 +889,9 @@ def _run_example_training(
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
     # Step 4: Create shared dict for inter-process tensor sharing
-    mp_sharing_dict = mp.Manager().dict()
-
+    manager = mp.Manager()
+    mp_sharing_dict = manager.dict()
+    mp_barrier = manager.Barrier(local_world_size) # type: ignore[attr-defined]
     # Step 5: Spawn training processes
     logger.info("--- Launching training processes ...\n")
     flush()
@@ -898,6 +901,7 @@ def _run_example_training(
         local_world_size=local_world_size,
         cluster_info=cluster_info,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
         model_uri=model_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,
