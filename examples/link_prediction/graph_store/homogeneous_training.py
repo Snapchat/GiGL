@@ -429,7 +429,10 @@ def _training_process(
     flush()
     init_compute_process(local_rank, args.cluster_info)
     dataset = RemoteDistDataset(
-        args.cluster_info, local_rank, mp_sharing_dict=args.mp_sharing_dict
+        args.cluster_info,
+        local_rank,
+        mp_sharing_dict=args.mp_sharing_dict,
+        mp_barrier=args.mp_barrier,
     )
 
     rank = torch.distributed.get_rank()
