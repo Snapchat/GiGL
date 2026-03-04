@@ -28,7 +28,7 @@ trainerConfig:
       splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
       # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
       # We do this so that the tuples for edge types get parsed as such.
-      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": True, "num_val": 0.1, "num_test": 0.1}'
+      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": True, "num_val": 0.25, "num_test": 0.25}'
       # We only do one session for training.
       # You should set one server session per process group you want to communicate with.
       # e.g. for inference:
