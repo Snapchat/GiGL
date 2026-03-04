@@ -3,6 +3,7 @@
 import gc
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from multiprocessing.reduction import ForkingPickler
 from typing import Literal, Optional, Tuple, TypeVar, Union, overload
 
@@ -31,6 +32,33 @@ from gigl.utils.share_memory import share_memory
 logger = Logger()
 
 _EntityType = TypeVar("_EntityType", NodeType, EdgeType)
+
+
+@dataclass(frozen=True)
+class _DistDatasetIpcHandle:
+    """Serialization container for passing DistDataset between processes via shared memory IPC.
+
+    Each field corresponds to a DistDataset constructor parameter. Using a dataclass
+    instead of a positional tuple provides named fields and type safety.
+    """
+
+    rank: int
+    world_size: int
+    edge_dir: Literal["in", "out"]
+    graph_partition: Optional[Union[Graph, dict[EdgeType, Graph]]]
+    node_feature_partition: Optional[Union[Feature, dict[NodeType, Feature]]]
+    edge_feature_partition: Optional[Union[Feature, dict[EdgeType, Feature]]]
+    node_labels: Optional[Union[Feature, dict[NodeType, Feature]]]
+    node_partition_book: Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]]
+    edge_partition_book: Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]]
+    positive_edge_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    negative_edge_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]
+    num_train: Optional[Union[int, dict[NodeType, int]]]
+    num_val: Optional[Union[int, dict[NodeType, int]]]
+    num_test: Optional[Union[int, dict[NodeType, int]]]
+    node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
+    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
 
 
 class DistDataset(glt.distributed.DistDataset):
@@ -796,47 +824,12 @@ class DistDataset(glt.distributed.DistDataset):
             f"Rank {self._rank} finished building dataset class from partitioned graph in {time.time() - start_time:.2f} seconds. Waiting for other ranks to finish ..."
         )
 
-    def share_ipc(
-        self,
-    ) -> Tuple[
-        int,
-        int,
-        Literal["in", "out"],
-        Optional[Union[Graph, dict[EdgeType, Graph]]],
-        Optional[Union[Feature, dict[NodeType, Feature]]],
-        Optional[Union[Feature, dict[EdgeType, Feature]]],
-        Optional[Union[Feature, dict[NodeType, Feature]]],
-        Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]],
-        Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
-        Optional[Union[int, dict[NodeType, int]]],
-        Optional[Union[int, dict[NodeType, int]]],
-        Optional[Union[int, dict[NodeType, int]]],
-        Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
-        Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
-    ]:
-        """
-        Serializes the member variables of the DistDatasetClass
+    def share_ipc(self) -> _DistDatasetIpcHandle:
+        """Serializes the member variables of the DistDataset for IPC transfer.
+
         Returns:
-            int: Rank on current machine
-            int: World size across all machines
-            Literal["in", "out"]: Graph Edge Direction
-            Optional[Union[Graph, dict[EdgeType, Graph]]]: Partitioned Graph Data
-            Optional[Union[Feature, dict[NodeType, Feature]]]: Partitioned Node Feature Data
-            Optional[Union[Feature, dict[EdgeType, Feature]]]: Partitioned Edge Feature Data
-            Optional[Union[Feature, dict[NodeType, Feature]]]: Node labels on the current machine. Will be a dict if heterogeneous.
-            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Node Partition Book Tensor
-            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Edge Partition Book Tensor
-            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Positive Edge Label Tensor
-            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Negative Edge Label Tensor
-            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Node Ids
-            Optional[Union[int, dict[NodeType, int]]]: Number of training nodes on the current machine. Will be a dict if heterogeneous.
-            Optional[Union[int, dict[NodeType, int]]]: Number of validation nodes on the current machine. Will be a dict if heterogeneous.
-            Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
-            Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
-            Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
+            DistDatasetIpcHandle: A frozen dataclass containing all dataset fields
+                needed to reconstruct the DistDataset in another process.
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -845,26 +838,59 @@ class DistDataset(glt.distributed.DistDataset):
         share_memory(entity=self._positive_edge_label)
         share_memory(entity=self._negative_edge_label)
         share_memory(entity=self._node_ids)
-        ipc_handle = (
-            self._rank,
-            self._world_size,
-            self._edge_dir,
-            self._graph,
-            self._node_features,
-            self._edge_features,
-            self._node_labels,
-            self._node_partition_book,
-            self._edge_partition_book,
-            self._positive_edge_label,  # Additional field unique to DistDataset class
-            self._negative_edge_label,  # Additional field unique to DistDataset class
-            self._node_ids,  # Additional field unique to DistDataset class
-            self._num_train,  # Additional field unique to DistDataset class
-            self._num_val,  # Additional field unique to DistDataset class
-            self._num_test,  # Additional field unique to DistDataset class
-            self._node_feature_info,  # Additional field unique to DistDataset class
-            self._edge_feature_info,  # Additional field unique to DistDataset class
+        return _DistDatasetIpcHandle(
+            rank=self._rank,
+            world_size=self._world_size,
+            edge_dir=self._edge_dir,
+            graph_partition=self._graph,
+            node_feature_partition=self._node_features,
+            edge_feature_partition=self._edge_features,
+            node_labels=self._node_labels,
+            node_partition_book=self._node_partition_book,
+            edge_partition_book=self._edge_partition_book,
+            positive_edge_label=self._positive_edge_label,
+            negative_edge_label=self._negative_edge_label,
+            node_ids=self._node_ids,
+            num_train=self._num_train,
+            num_val=self._num_val,
+            num_test=self._num_test,
+            node_feature_info=self._node_feature_info,
+            edge_feature_info=self._edge_feature_info,
         )
-        return ipc_handle
+
+    @classmethod
+    def from_ipc_handle(cls, ipc_handle: _DistDatasetIpcHandle) -> "DistDataset":
+        """Reconstructs a DistDataset from a serialized IPC handle.
+
+        Overrides GLT's default ``from_ipc_handle`` which uses positional
+        unpacking (``cls(*ipc_handle)``), instead using named fields from the
+        dataclass for explicit, order-independent construction.
+
+        Args:
+            ipc_handle: The serialized dataset fields produced by ``share_ipc()``.
+
+        Returns:
+            A new DistDataset instance reconstructed from the IPC handle.
+        """
+        return cls(
+            rank=ipc_handle.rank,
+            world_size=ipc_handle.world_size,
+            edge_dir=ipc_handle.edge_dir,
+            graph_partition=ipc_handle.graph_partition,
+            node_feature_partition=ipc_handle.node_feature_partition,
+            edge_feature_partition=ipc_handle.edge_feature_partition,
+            node_labels=ipc_handle.node_labels,
+            node_partition_book=ipc_handle.node_partition_book,
+            edge_partition_book=ipc_handle.edge_partition_book,
+            positive_edge_label=ipc_handle.positive_edge_label,
+            negative_edge_label=ipc_handle.negative_edge_label,
+            node_ids=ipc_handle.node_ids,
+            num_train=ipc_handle.num_train,
+            num_val=ipc_handle.num_val,
+            num_test=ipc_handle.num_test,
+            node_feature_info=ipc_handle.node_feature_info,
+            edge_feature_info=ipc_handle.edge_feature_info,
+        )
 
 
 def _append_non_split_node_ids(
@@ -1073,55 +1099,15 @@ def _prepare_feature_data(
 
 ## Pickling Registration
 # The serialization function (share_ipc) first pushes all member variable tensors
-# to the shared memory, and then packages all references to the tensors in one ipc
-# handle and sends the handle to another process. The deserialization function
-# (from_ipc_handle) calls the class constructor with the ipc_handle. Therefore, the
-# order of variables in the ipc_handle needs to be the same with the constructor
-# interface.
-
-# Since we add the self.positive_label and self.negative_label fields to the dataset class and remove several unused fields for link prediction task
-# and cpu-only sampling, we override the `share_ipc` function to handle our custom member variables.
+# to shared memory, then packages all references into a DistDatasetIpcHandle
+# dataclass and sends it to another process. The deserialization function
+# (from_ipc_handle) reconstructs the DistDataset from the named dataclass fields.
 
 
 def _rebuild_distributed_dataset(
-    ipc_handle: Tuple[
-        int,  # Rank on current machine
-        int,  # World size across machines
-        Literal["in", "out"],  # Edge Direction
-        Optional[Union[Graph, dict[EdgeType, Graph]]],  # Partitioned Graph Data
-        Optional[
-            Union[Feature, dict[NodeType, Feature]]
-        ],  # Partitioned Node Feature Data
-        Optional[
-            Union[Feature, dict[EdgeType, Feature]]
-        ],  # Partitioned Edge Feature Data
-        Optional[Union[Feature, dict[NodeType, Feature]]],  # Node Labels
-        Optional[
-            Union[PartitionBook, dict[NodeType, PartitionBook]]
-        ],  # Node Partition Book Tensor
-        Optional[
-            Union[PartitionBook, dict[EdgeType, PartitionBook]]
-        ],  # Edge Partition Book Tensor
-        Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        ],  # Positive Edge Label Tensor
-        Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        ],  # Negative Edge Label Tensor
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],  # Node Ids
-        Optional[Union[int, dict[NodeType, int]]],  # Number of training nodes
-        Optional[Union[int, dict[NodeType, int]]],  # Number of val nodes
-        Optional[Union[int, dict[NodeType, int]]],  # Number of test nodes
-        Optional[
-            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
-        ],  # Node feature dim and its data type
-        Optional[
-            Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
-        ],  # Edge feature dim and its data type
-    ]
-):
-    dataset = DistDataset.from_ipc_handle(ipc_handle)
-    return dataset
+    ipc_handle: _DistDatasetIpcHandle,
+) -> DistDataset:
+    return DistDataset.from_ipc_handle(ipc_handle)
 
 
 def _reduce_distributed_dataset(dataset: DistDataset):
