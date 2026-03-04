@@ -891,7 +891,7 @@ def _run_example_training(
     # Step 4: Create shared dict for inter-process tensor sharing
     manager = mp.Manager()
     mp_sharing_dict = manager.dict()
-    mp_barrier = manager.Barrier(local_world_size) # type: ignore[attr-defined]
+    mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
     # Step 5: Spawn training processes
     logger.info("--- Launching training processes ...\n")
     flush()
