@@ -584,6 +584,9 @@ def _training_process(
     test_random_negative_loader.shutdown()
 
     # Write eval metrics on the lead process only
+    # These get written to some JSON under the gcs://<PERM ASSETS BUCKET>/<APPLIED TASK IDENTIFIER>/trainer/trainer_eval_metrics.json
+    # And then the "Log Trainer Eval Metrics" component in the KFP pipeline UI will log them to the UI,
+    # as a metrics artifact.
     if args.machine_rank == 0 and local_rank == 0 and args.eval_metrics_uri is not None:
         eval_metrics = EvalMetricsCollection(
             metrics=[
