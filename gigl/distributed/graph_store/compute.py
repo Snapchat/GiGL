@@ -128,6 +128,9 @@ def _init_client_rpc(
     with all other servers and clients. Note that this method should be called
     only in the server-client distribution mode.
 
+    Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_client.py#L24
+    with the modification being to add the timeout parameter.
+
     Args:
       num_servers (int): Number of processes participating in the server group.
       num_clients (int): Number of processes participating in the client group.
