@@ -86,7 +86,7 @@ from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
-from gigl.distributed.utils import get_graph_store_info, write_readiness_signal
+from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
@@ -166,11 +166,6 @@ def storage_node_process(
         should_load_tensors_in_parallel=should_load_tf_records_in_parallel,
         ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
-
-    # Ensure all storage nodes have finished loading before signaling readiness.
-    torch.distributed.barrier()
-    if storage_rank == 0:
-        write_readiness_signal(cluster_info.readiness_uri)
 
     logger.info(f"Number of server sessions: {num_server_sessions}")
 

@@ -29,11 +29,7 @@ from gigl.distributed.graph_store.storage_utils import (
     run_storage_server,
 )
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
-from gigl.distributed.utils.networking import (
-    get_free_port,
-    get_free_ports,
-    write_readiness_signal,
-)
+from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
@@ -806,10 +802,6 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
             tf_record_uri_pattern=".*tfrecord",
         )
 
-        if storage_rank == 0:
-            write_readiness_signal(cluster_info.readiness_uri)
-        torch.distributed.barrier()
-        # 5. Run the storage server sessions
         # 3. Destroy the coordination process group before spawning server
         # subprocesses. The subprocess will create its own process group on the
         # same port, so we must release it here first.
