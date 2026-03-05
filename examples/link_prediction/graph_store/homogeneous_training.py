@@ -147,7 +147,15 @@ from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_available_device, get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 from gigl.nn import LinkPredictionGNN, RetrievalLoss
+from gigl.src.common.translators.model_eval_metrics_translator import (
+    write_eval_metrics_to_uri,
+)
 from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.model_eval_metrics import (
+    EvalMetric,
+    EvalMetricsCollection,
+    EvalMetricType,
+)
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.utils.iterator import InfiniteIterator
@@ -360,6 +368,8 @@ class TrainingProcessArgs:
         mp_sharing_dict (MutableMapping[str, torch.Tensor]): Shared dictionary for efficient tensor
             sharing between local processes.
         model_uri (Uri): URI to save/load the trained model state dict.
+        eval_metrics_uri (Optional[Uri]): Destination URI for writing evaluation metrics in
+            KFP-compatible JSON format. If None, metrics are not written.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
         node_feature_dim (int): Input node feature dimension for the model.
@@ -387,6 +397,7 @@ class TrainingProcessArgs:
 
     # Model
     model_uri: Uri
+    eval_metrics_uri: Optional[Uri]
     hid_dim: int
     out_dim: int
     node_feature_dim: int
@@ -645,7 +656,7 @@ def _training_process(
     test_main_loader_iter = iter(test_main_loader)
     test_random_negative_loader_iter = iter(test_random_negative_loader)
 
-    _run_validation_loops(
+    global_avg_test_loss = _run_validation_loops(
         model=model,
         main_loader=test_main_loader_iter,
         random_negative_loader=test_random_negative_loader_iter,
@@ -662,6 +673,19 @@ def _training_process(
 
     test_main_loader.shutdown()
     test_random_negative_loader.shutdown()
+
+    # Write eval metrics on the lead process only
+    if torch.distributed.get_rank() == 0 and args.eval_metrics_uri is not None:
+        eval_metrics = EvalMetricsCollection(
+            metrics=[
+                EvalMetric.from_eval_metric_type(
+                    EvalMetricType.loss, global_avg_test_loss
+                )
+            ]
+        )
+        write_eval_metrics_to_uri(
+            eval_metrics=eval_metrics, eval_metrics_uri=args.eval_metrics_uri
+        )
 
     logger.info(
         f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
@@ -687,7 +711,7 @@ def _run_validation_loops(
     device: torch.device,
     log_every_n_batch: int,
     num_batches: Optional[int] = None,
-) -> None:
+) -> float:
     """
     Runs validation using the provided models and dataloaders.
     Args:
@@ -698,6 +722,9 @@ def _run_validation_loops(
         device (torch.device): Device to use for training or testing
         log_every_n_batch (int): The frequency we should log batch information
         num_batches (Optional[int]): The number of batches to run the validation loop for.
+
+    Returns:
+        float: The global average validation/test loss across all processes.
     """
     rank = torch.distributed.get_rank()
 
@@ -780,7 +807,7 @@ def _run_validation_loops(
     print(f"rank={rank} got global validation loss {global_avg_val_loss=:.6f}")
     flush()
 
-    return
+    return global_avg_val_loss
 
 
 def _run_example_training(
@@ -889,6 +916,13 @@ def _run_example_training(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
+    raw_eval_metrics_uri = (
+        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.eval_metrics_uri
+    )
+    eval_metrics_uri: Optional[Uri] = (
+        UriFactory.create_uri(raw_eval_metrics_uri) if raw_eval_metrics_uri else None
+    )
+
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
     # Step 4: Create shared dict for inter-process tensor sharing
@@ -906,6 +940,7 @@ def _run_example_training(
         mp_sharing_dict=mp_sharing_dict,
         mp_barrier=mp_barrier,
         model_uri=model_uri,
+        eval_metrics_uri=eval_metrics_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,
         node_feature_dim=node_feature_dim,
