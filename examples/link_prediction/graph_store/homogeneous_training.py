@@ -92,7 +92,7 @@ To run this file with GiGL orchestration, set the fields similar to below::
           splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
           # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
           # We do this so that the tuples for edge types get parsed as such.
-          splitter_kwargs: |
+          splitter_kwargs: >-
             {
               "sampling_direction": "in",
               "should_convert_labels_to_edges": true,
