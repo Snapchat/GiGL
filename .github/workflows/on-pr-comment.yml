@@ -3,7 +3,6 @@ name: On Demand Pr Comment Workflows
 on:
   issue_comment:
     types: [created]
-  push: # TODO: revert
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -41,7 +40,7 @@ jobs:
         message: ${{ steps.parse_commands.outputs.help_message }}
 
   unit-test-python:
-    #if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -63,8 +62,8 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: 520
-        #should_leave_progress_comments: "true"
+        pr_number: ${{ github.event.issue.number }}
+        should_leave_progress_comments: "true"
         descriptive_workflow_name: "Python Unit Test (${{ matrix.name }})"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
@@ -98,7 +97,7 @@ jobs:
           make unit_test_scala
 
   integration-test:
-    #if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -118,8 +117,8 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: 520
-       # should_leave_progress_comments: "true"
+        pr_number: ${{ github.event.issue.number }}
+        should_leave_progress_comments: "true"
         descriptive_workflow_name: "Integration Test (${{ matrix.name }})"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
