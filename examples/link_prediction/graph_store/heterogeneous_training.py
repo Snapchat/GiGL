@@ -44,8 +44,22 @@ trainerConfig:
     storageArgs:
       sample_edge_direction: "in"
       splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
-      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": true, "num_val": 0.1, "num_test": 0.1}'
+      # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
+      # We do this so that the tuples for edge types get parsed as such.
+      spillter_kwargs: >-
+        {
+          "sampling_direction": "in",
+          "should_convert_labels_to_edges": true,
+          "num_val": 0.1,
+          "num_test": 0.1
+        }
       ssl_positive_label_percentage: "0.05"
+    # We only do one session for training.
+    # You should set one server session per process group you want to communicate with.
+    # e.g. for inference:
+    # for node_type in inference_node_types:
+    #   launch_inference_process(node_type)
+    #   num_server_sessions = len(inference_node_types)
       num_server_sessions: "1"
 featureFlags:
   should_run_glt_backend: 'True'
@@ -181,8 +195,6 @@ def _setup_dataloaders(
         anchor_node_type=anchor_node_type,
         supervision_edge_type=supervision_edge_type,
     )
-    pos_labels = [a.labels[supervision_edge_type][0].shape for a in ablp_input.values()]
-    print(f"---Rank {rank} split {split} ABLP input sizes: main_loader: {[a.anchor_nodes.shape for a in ablp_input.values()]}, pos labels: {pos_labels}")
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -210,8 +222,6 @@ def _setup_dataloaders(
         node_type=labeled_node_type,
     )
 
-    print(f"---Rank {rank} split {split} all node ids sizes: {[n.shape for n in all_node_ids.values()]}")
-    flush()
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,

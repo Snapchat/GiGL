@@ -28,7 +28,13 @@ trainerConfig:
       splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
       # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
       # We do this so that the tuples for edge types get parsed as such.
-      splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": True, "num_val": 0.25, "num_test": 0.25}'
+      spillter_kwargs: >-
+        {
+          "sampling_direction": "in",
+          "should_convert_labels_to_edges": True,
+          "num_val": 0.25,
+          "num_test": 0.25
+        }
       # We only do one session for training.
       # You should set one server session per process group you want to communicate with.
       # e.g. for inference:
@@ -36,7 +42,6 @@ trainerConfig:
       #   launch_inference_process(node_type)
       #   num_server_sessions = len(inference_node_types)
       num_server_sessions: "1"
-# TODO(kmonte): Move to user-defined server code
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
