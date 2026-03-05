@@ -34,16 +34,12 @@ class SampleLoopInputs:
     duplicating the sampling loop logic.
 
     Attributes:
-        input_seeds: The original anchor/batch node seeds (used for batch tracking).
-        input_type: The node type of the anchor seeds.
         nodes_to_sample: Dict mapping node types to tensors of nodes to include
             in the sampling. For standard sampling, this equals {input_type: input_seeds}.
             For ABLP, this also includes supervision nodes (positive/negative labels).
         metadata: Metadata dict to attach to the sampler output (e.g., label tensors).
     """
 
-    input_seeds: torch.Tensor
-    input_type: NodeType
     nodes_to_sample: dict[Union[str, NodeType], torch.Tensor]
     metadata: dict[str, torch.Tensor]
 
@@ -60,7 +56,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
     metadata.
     """
 
-    def _prepare_sampling_inputs(
+    def _prepare_sample_loop_inputs(
         self,
         inputs: NodeSamplerInput,
     ) -> SampleLoopInputs:
@@ -74,8 +70,8 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             inputs: Either a NodeSamplerInput or ABLPNodeSamplerInput.
 
         Returns:
-            SampleLoopInputs containing the seeds, node type, nodes to
-            sample from, and metadata.
+            SampleLoopInputs containing the node type, nodes to sample from,
+            and any metadata related to the task.
         """
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
@@ -84,8 +80,6 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             return self._prepare_ablp_inputs(inputs, input_seeds, input_type)
 
         return SampleLoopInputs(
-            input_seeds=input_seeds,
-            input_type=input_type,
             nodes_to_sample={input_type: input_seeds},
             metadata={},
         )
@@ -166,8 +160,6 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         gc.collect()
 
         return SampleLoopInputs(
-            input_seeds=input_seeds,
-            input_type=input_type,
             nodes_to_sample=nodes_to_sample,
             metadata=metadata,
         )
@@ -182,14 +174,12 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         supervision nodes are included in sampling and label metadata is
         attached to the output.
         """
-        prepared_inputs = self._prepare_sampling_inputs(inputs)
-        input_type = prepared_inputs.input_type
-        nodes_to_sample = prepared_inputs.nodes_to_sample
-        metadata = prepared_inputs.metadata
+        sample_loop_inputs = self._prepare_sample_loop_inputs(inputs)
+        input_type = inputs.input_type
+        nodes_to_sample = sample_loop_inputs.nodes_to_sample
+        metadata = sample_loop_inputs.metadata
 
-        self.max_input_size: int = max(
-            self.max_input_size, prepared_inputs.input_seeds.numel()
-        )
+        self.max_input_size = max(self.max_input_size, inputs.node.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
 
@@ -204,10 +194,10 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             num_sampled_edges_hetero: dict[EdgeType, list[torch.Tensor]] = {}
 
             src_dict = inducer.init_node(nodes_to_sample)
-            # Extract only the anchor node type for batch tracking.
-            # This excludes supervision nodes (for ABLP) and uses the
-            # inducer result (deduplicated).
-            batch = {input_type: src_dict[input_type]}
+            # Use the original anchor seeds (inputs.node) for batch tracking,
+            # not the deduped nodes_to_sample. For ABLP, nodes_to_sample includes
+            # supervision nodes which should not be part of the batch.
+            batch = {input_type: inputs.node.to(self.device)}
 
             merge_dict(src_dict, out_nodes_hetero)
             count_dict(src_dict, num_sampled_nodes_hetero, 1)
@@ -278,7 +268,10 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             ), f"Expected input type {input_type}, got {list(nodes_to_sample.keys())[0]}"
 
             srcs = inducer.init_node(nodes_to_sample[input_type])
-            batch = srcs
+            # Use the original anchor seeds (inputs.node) for batch tracking,
+            # not the deduped nodes_to_sample. For ABLP, nodes_to_sample includes
+            # supervision nodes which should not be part of the batch.
+            batch = inputs.node.to(self.device)
             out_nodes: list[torch.Tensor] = []
             out_edges: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
             num_sampled_nodes: list[torch.Tensor] = []
