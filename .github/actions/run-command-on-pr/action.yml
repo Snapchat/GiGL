@@ -48,24 +48,6 @@ inputs:
     required: false
     default: ""
 
-  # Parameters for sharded Cloud Build execution
-  use_sharded_cloud_build:
-    description: "Whether to use sharded Cloud Build instead of a single Cloud Build job"
-    required: false
-    default: "false"
-  total_shards:
-    description: "Number of parallel test shards (only used when use_sharded_cloud_build is true)"
-    required: false
-    default: "4"
-  sharded_test_command:
-    description: "The Make target to run for each shard (e.g. 'unit_test_py_shard')"
-    required: false
-    default: ""
-  run_type_check:
-    description: "Whether to launch a separate type-check Cloud Build job (only used when use_sharded_cloud_build is true)"
-    required: false
-    default: "false"
-
 runs:
   using: "composite"
   steps:
@@ -110,20 +92,10 @@ runs:
       run: ${{ inputs.command }}
 
     - name: Run specified command on the PR branch using Cloud Run
-      if: ${{ inputs.use_cloud_run == 'true' && inputs.use_sharded_cloud_build != 'true' }}
+      if: ${{ inputs.use_cloud_run == 'true' }}
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         cmd: ${{ inputs.command }}
-        service_account: ${{ inputs.gcp_service_account_email }}
-        project: ${{ inputs.gcp_project_id }}
-
-    - name: Run sharded Cloud Build tests
-      if: ${{ inputs.use_sharded_cloud_build == 'true' }}
-      uses: ./.github/actions/run-sharded-cloud-build
-      with:
-        test_command: ${{ inputs.sharded_test_command }}
-        total_shards: ${{ inputs.total_shards }}
-        run_type_check: ${{ inputs.run_type_check }}
         service_account: ${{ inputs.gcp_service_account_email }}
         project: ${{ inputs.gcp_project_id }}
 
