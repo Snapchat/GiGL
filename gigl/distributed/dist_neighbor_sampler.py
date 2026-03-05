@@ -179,7 +179,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         nodes_to_sample = sample_loop_inputs.nodes_to_sample
         metadata = sample_loop_inputs.metadata
 
-        self.max_input_size = max(self.max_input_size, inputs.node.numel())
+        self.max_input_size: int = max(self.max_input_size, inputs.node.numel())
         inducer = self._acquire_inducer()
         is_hetero = self.dist_graph.data_cls == "hetero"
 
