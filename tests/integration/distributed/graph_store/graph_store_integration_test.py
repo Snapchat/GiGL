@@ -810,6 +810,12 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
             write_readiness_signal(cluster_info.readiness_uri)
         torch.distributed.barrier()
         # 5. Run the storage server sessions
+        # 3. Destroy the coordination process group before spawning server
+        # subprocesses. The subprocess will create its own process group on the
+        # same port, so we must release it here first.
+        torch.distributed.destroy_process_group()
+
+        # 4. Run the storage server sessions
         run_storage_server(
             storage_rank=storage_rank,
             cluster_info=cluster_info,

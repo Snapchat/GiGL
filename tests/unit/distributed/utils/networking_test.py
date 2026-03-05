@@ -1,15 +1,17 @@
 import json
 import os
 import subprocess
+import tempfile
 from typing import Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from parameterized import param, parameterized
 
-from gigl.common import GcsUri, UriFactory
+from gigl.common import LocalUri
+from gigl.common.utils.vertex_ai_context import get_vertex_ai_job_id
 from gigl.distributed.utils import (
     GraphStoreInfo,
     get_free_ports_from_master_node,
@@ -29,17 +31,6 @@ from gigl.env.distributed import (
 from gigl.env.pipelines_config import get_resource_config
 from tests.test_assets.distributed.utils import get_process_group_init_method
 from tests.test_assets.test_case import TestCase
-
-_UNITTEST_RESOURCE_CONFIG_PATH = os.path.join(
-    os.path.dirname(__file__),
-    "..",
-    "..",
-    "..",
-    "..",
-    "deployment",
-    "configs",
-    "unittest_resource_config.yaml",
-)
 
 
 def _test_fetching_free_ports_in_dist_context(
@@ -323,7 +314,6 @@ def _test_get_graph_store_info_in_dist_context(
     init_process_group_init_method: str,
     storage_nodes: int,
     compute_nodes: int,
-    resource_config_path: str,
 ):
     """Test get_graph_store_info in a real distributed context."""
     # Initialize distributed process group
@@ -366,12 +356,6 @@ def _test_get_graph_store_info_in_dist_context(
         clear=False,
     ):
         try:
-            # Pre-load the resource config singleton so get_graph_store_info()
-            # picks it up (spawned processes start with a fresh module state).
-            get_resource_config(
-                resource_config_uri=UriFactory.create_uri(resource_config_path)
-            )
-
             # Call get_graph_store_info
             graph_store_info = get_graph_store_info()
 
@@ -440,8 +424,12 @@ def _test_get_graph_store_info_in_dist_context(
             ), "Compute cluster world size should be the number of compute nodes times the number of processes per compute"
 
             # Verify readiness URI is constructed correctly
-            expected_readiness_uri = GcsUri(
-                "gs://gigl-cicd-temp/test_job_id/graph_store_readiness.txt"
+            expected_readiness_uri = (
+                get_resource_config().temp_assets_bucket_path
+                / "gigl"
+                / "graph_store"
+                / get_vertex_ai_job_id()
+                / "graph_store_readiness.txt"
             )
             assert (
                 graph_store_info.readiness_uri == expected_readiness_uri
@@ -536,7 +524,6 @@ class TestGetGraphStoreInfo(TestCase):
                     init_process_group_init_method,
                     storage_nodes,
                     compute_nodes,
-                    _UNITTEST_RESOURCE_CONFIG_PATH,
                 ),
                 nprocs=world_size,
             )
@@ -545,74 +532,26 @@ class TestGetGraphStoreInfo(TestCase):
 class TestReadinessSignal(TestCase):
     """Test suite for write_readiness_signal and wait_for_readiness_signal."""
 
-    @patch("gigl.distributed.utils.networking.FileLoader")
-    def test_write_readiness_signal(self, mock_file_loader_cls: MagicMock) -> None:
+    def test_write_readiness_signal(self) -> None:
         """Test that write_readiness_signal uploads a sentinel file."""
 
-        mock_file_loader = mock_file_loader_cls.return_value
-        readiness_uri = GcsUri("gs://bucket/path/readiness.txt")
+        tmp_file = tempfile.NamedTemporaryFile(delete=False)
+        self.addCleanup(tmp_file.close)
+        readiness_uri = LocalUri(tmp_file.name)
+        write_readiness_signal(readiness_uri)
+
+        with open(tmp_file.name, "r") as f:
+            assert f.read() == "ready"
+
+    def test_wait_for_readiness_signal(self) -> None:
+        """Test that wait_for_readiness_signal waits for the readiness signal to be written."""
+
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        readiness_uri = LocalUri(temp_dir.name) / "readiness.txt"
+        with self.assertRaises(TimeoutError):
+            wait_for_readiness_signal(readiness_uri, timeout=0.1, poll_interval=0.01)
 
         write_readiness_signal(readiness_uri)
 
-        mock_file_loader.load_from_filelike.assert_called_once()
-        call_args = mock_file_loader.load_from_filelike.call_args
-        self.assertEqual(call_args[0][0], readiness_uri)
-        self.assertEqual(call_args[0][1].read(), b"ready")
-
-    @patch("gigl.distributed.utils.networking.time.sleep")
-    @patch("gigl.distributed.utils.networking.FileLoader")
-    def test_wait_for_readiness_signal_immediate(
-        self, mock_file_loader_cls: MagicMock, mock_sleep: MagicMock
-    ) -> None:
-        """Test that wait_for_readiness_signal returns immediately when file exists."""
-
-        mock_file_loader = mock_file_loader_cls.return_value
-        mock_file_loader.does_uri_exist.return_value = True
-        readiness_uri = GcsUri("gs://bucket/path/readiness.txt")
-
         wait_for_readiness_signal(readiness_uri)
-
-        mock_file_loader.does_uri_exist.assert_called_once_with(readiness_uri)
-        mock_sleep.assert_not_called()
-
-    @patch("gigl.distributed.utils.networking.time.sleep")
-    @patch("gigl.distributed.utils.networking.time.monotonic")
-    @patch("gigl.distributed.utils.networking.FileLoader")
-    def test_wait_for_readiness_signal_delayed(
-        self,
-        mock_file_loader_cls: MagicMock,
-        mock_monotonic: MagicMock,
-        mock_sleep: MagicMock,
-    ) -> None:
-        """Test that wait_for_readiness_signal polls until file appears."""
-
-        mock_file_loader = mock_file_loader_cls.return_value
-        mock_file_loader.does_uri_exist.side_effect = [False, False, True]
-        # Simulate time progression: start=0, first poll check=5, second poll check=15, third poll check=25
-        mock_monotonic.side_effect = [0.0, 5.0, 15.0, 25.0]
-        readiness_uri = GcsUri("gs://bucket/path/readiness.txt")
-
-        wait_for_readiness_signal(readiness_uri, timeout=3600.0, poll_interval=10.0)
-
-        self.assertEqual(mock_file_loader.does_uri_exist.call_count, 3)
-        self.assertEqual(mock_sleep.call_count, 2)
-
-    @patch("gigl.distributed.utils.networking.time.sleep")
-    @patch("gigl.distributed.utils.networking.time.monotonic")
-    @patch("gigl.distributed.utils.networking.FileLoader")
-    def test_wait_for_readiness_signal_timeout(
-        self,
-        mock_file_loader_cls: MagicMock,
-        mock_monotonic: MagicMock,
-        mock_sleep: MagicMock,
-    ) -> None:
-        """Test that wait_for_readiness_signal raises TimeoutError on timeout."""
-
-        mock_file_loader = mock_file_loader_cls.return_value
-        mock_file_loader.does_uri_exist.return_value = False
-        # Simulate: start=0, then elapsed=3601 on the check
-        mock_monotonic.side_effect = [0.0, 3601.0]
-        readiness_uri = GcsUri("gs://bucket/path/readiness.txt")
-
-        with self.assertRaises(TimeoutError):
-            wait_for_readiness_signal(readiness_uri, timeout=3600.0)

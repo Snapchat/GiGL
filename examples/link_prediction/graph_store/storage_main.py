@@ -72,6 +72,7 @@ the compute processes signal shutdown via `gigl.distributed.graph_store.compute.
 """
 
 import argparse
+import ast
 import os
 from distutils.util import strtobool
 from typing import Literal, Optional, Union
@@ -80,6 +81,7 @@ import torch
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.os_utils import import_obj
 from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
@@ -114,8 +116,7 @@ def storage_node_process(
        nodes for coordination (server comms).
     2. Builds the dataset via
        :func:`~gigl.distributed.graph_store.storage_utils.build_storage_dataset`.
-    3. Obtains free ports from the master node.
-    4. Destroys the coordination process group and spawns one
+    3. Destroys the coordination process group and spawns one
        :func:`~gigl.distributed.graph_store.storage_utils.run_storage_server`
        per session.
 
@@ -124,6 +125,9 @@ def storage_node_process(
         cluster_info (GraphStoreInfo): The cluster information.
         task_config_uri (Uri): The task config URI.
         sample_edge_direction (Literal["in", "out"]): The sample edge direction.
+        num_server_sessions (int): Number of server sessions to run. For training, this should be 1
+            (a single session for the entire training + testing lifecycle). For inference, this should
+            be one session per inference node type.
         splitter (Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]]): The splitter to use. If None, will not split the dataset.
         tf_record_uri_pattern (str): The TF Record URI pattern.
         ssl_positive_label_percentage (Optional[float]): The percentage of edges to select as self-supervised labels.
@@ -183,7 +187,6 @@ def storage_node_process(
 
 
 if __name__ == "__main__":
-    # TODO(kmonte): We want to expose splitter class here probably.
     parser = argparse.ArgumentParser()
     parser.add_argument("--task_config_uri", type=str, required=True)
     parser.add_argument("--resource_config_uri", type=str, required=True)
@@ -193,16 +196,59 @@ if __name__ == "__main__":
     parser.add_argument(
         "--should_load_tf_records_in_parallel", type=str, default="True"
     )
+    # Splitter configuration: use import_obj to dynamically load a splitter class.
+    # This is needed for training (where the dataset needs train/val/test splits) but not for inference.
+    parser.add_argument(
+        "--splitter_cls_path",
+        type=str,
+        default=None,
+        help="Fully qualified import path to splitter class, e.g. 'gigl.utils.data_splitters.DistNodeAnchorLinkSplitter'",
+    )
+    parser.add_argument(
+        "--splitter_kwargs",
+        type=str,
+        default=None,
+        help="Python dict literal of keyword arguments for the splitter constructor, "
+        "parsed with ast.literal_eval. Tuples are supported directly, e.g. "
+        "'supervision_edge_types': [('paper', 'to', 'author')].",
+    )
+    parser.add_argument(
+        "--ssl_positive_label_percentage",
+        type=str,
+        default=None,
+        help="Percentage of edges to select as self-supervised labels. "
+        "Must be None if supervised edge labels are provided in advance.",
+    )
     parser.add_argument("--num_rpc_threads", type=int, default=16)
     parser.add_argument("--rpc_timeout", type=int, default=None)
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
 
+    # Build splitter from args if provided.
+    # We use ast.literal_eval instead of json.loads so that Python tuples (e.g. for EdgeType)
+    # can be passed directly in the splitter_kwargs string without needing custom serialization.
+    splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
+    ssl_positive_label_percentage: Optional[float] = None
+    if args.splitter_cls_path:
+        splitter_cls = import_obj(args.splitter_cls_path)
+        splitter_kwargs = (
+            ast.literal_eval(args.splitter_kwargs) if args.splitter_kwargs else {}
+        )
+        splitter = splitter_cls(**splitter_kwargs)
+        logger.info(f"Built splitter: {splitter}")
+
+    if args.ssl_positive_label_percentage:
+        ssl_positive_label_percentage = float(args.ssl_positive_label_percentage)
+
     # Setup cluster-wide (e.g. storage and compute nodes) Torch Distributed process group.
     # This is needed so we can get the cluster information (e.g. number of storage and compute nodes) and rank/world_size.
     torch.distributed.init_process_group(backend="gloo")
     cluster_info = get_graph_store_info()
-    # Tear down the """"global""" process group so we can have a server-specific process group.
+    logger.info(f"Cluster info: {cluster_info}")
+    logger.info(
+        f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
+    )
+    # Tear down the "global" process group so we can have a server-specific process group.
     torch.distributed.destroy_process_group()
     storage_node_process(
         storage_rank=cluster_info.storage_node_rank,
@@ -210,6 +256,8 @@ if __name__ == "__main__":
         task_config_uri=UriFactory.create_uri(args.task_config_uri),
         sample_edge_direction=args.sample_edge_direction,
         num_server_sessions=args.num_server_sessions,
+        splitter=splitter,
+        ssl_positive_label_percentage=ssl_positive_label_percentage,
         should_load_tf_records_in_parallel=bool(
             strtobool(args.should_load_tf_records_in_parallel)
         ),

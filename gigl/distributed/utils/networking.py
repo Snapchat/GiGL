@@ -6,7 +6,7 @@ from typing import Optional
 
 import torch
 
-from gigl.common import GcsUri, Uri
+from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.vertex_ai_context import (
     ClusterSpec,
@@ -233,6 +233,7 @@ def wait_for_readiness_signal(
     readiness_uri: Uri,
     timeout: float = 3600.0,
     poll_interval: float = 10.0,
+    log_every_n_attempts: int = 10,
 ) -> None:
     """Poll for a readiness sentinel file before initiating RPC connections.
 
@@ -252,6 +253,7 @@ def wait_for_readiness_signal(
     )
     file_loader = FileLoader()
     start_time = time.monotonic()
+    attempt = 0
     while True:
         if file_loader.does_uri_exist(readiness_uri):
             logger.info(f"Readiness signal detected at {readiness_uri}")
@@ -261,9 +263,11 @@ def wait_for_readiness_signal(
             raise TimeoutError(
                 f"Timed out after {timeout}s waiting for readiness signal at {readiness_uri}"
             )
-        logger.info(
-            f"Readiness signal not yet available at {readiness_uri}. Elapsed: {elapsed:.0f}s. Retrying in {poll_interval}s..."
-        )
+        if attempt % log_every_n_attempts == 0:
+            logger.info(
+                f"Readiness signal not yet available at {readiness_uri}. Elapsed: {elapsed:.0f}s. Retrying in {poll_interval}s..."
+            )
+        attempt += 1
         time.sleep(poll_interval)
 
 
@@ -325,10 +329,12 @@ def get_graph_store_info() -> GraphStoreInfo:
         os.environ.get(COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY, "1")
     )
 
-    readiness_uri = GcsUri.join(
-        get_resource_config().temp_assets_bucket_path,
-        get_vertex_ai_job_id(),
-        "graph_store_readiness.txt",
+    readiness_uri = (
+        get_resource_config().temp_assets_bucket_path
+        / "gigl"
+        / "graph_store"
+        / get_vertex_ai_job_id()
+        / "graph_store_readiness.txt"
     )
 
     return GraphStoreInfo(
