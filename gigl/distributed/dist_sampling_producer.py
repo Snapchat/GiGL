@@ -1,6 +1,7 @@
-# A significant amount of code in this file is directly taken from GraphLearn-for-PyTorch (graphlearn_torch/python/distributed/dist_sampling_producer.py),
-# Sampling producer that uses GiGL's DistNeighborSampler (which supports both
-# standard neighbor sampling and ABLP) instead of GLT's DistNeighborSampler.
+# Significant portions of this file are taken from GraphLearn-for-PyTorch
+# (graphlearn_torch/python/distributed/dist_sampling_producer.py).
+# This version uses GiGL's DistNeighborSampler (which supports both standard
+# neighbor sampling and ABLP) instead of GLT's DistNeighborSampler.
 
 import datetime
 import queue

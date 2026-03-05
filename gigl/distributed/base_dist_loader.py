@@ -95,7 +95,7 @@ class BaseDistLoader(DistLoader):
         dataset_schema: Contains edge types, feature info, edge dir, etc.
         worker_options: ``MpDistSamplingWorkerOptions`` (colocated) or
             ``RemoteDistSamplingWorkerOptions`` (graph store).
-        sampling_config: Configuration for the sampler (created via ``create_sampling_config``).
+        sampling_config: Configuration for sampling (created via ``create_sampling_config``).
         device: Target device for sampled results.
         runtime: Resolved distributed runtime information.
         producer: Either a pre-constructed ``DistSamplingProducer`` (colocated mode)

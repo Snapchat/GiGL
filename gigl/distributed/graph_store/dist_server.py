@@ -432,11 +432,11 @@ class DistServer:
         sampling_config: SamplingConfig,
         worker_options: RemoteDistSamplingWorkerOptions,
     ) -> int:
-        r"""Create and initialize an instance of ``DistSamplingProducer`` with
+        """Create and initialize an instance of ``DistSamplingProducer`` with
         a group of subprocesses for distributed sampling.
 
-        Supports standard NodeSamplerInput and ABLPNodeSamplerInput through the
-        DistNeighborSampler
+        Supports both standard ``NodeSamplerInput`` and ``ABLPNodeSamplerInput``
+        through the unified ``DistNeighborSampler``.
 
         Args:
           sampler_input (NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput,

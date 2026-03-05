@@ -29,7 +29,7 @@ class SampleLoopInputs:
     """Inputs prepared for the neighbor sampling loop in _sample_from_nodes.
 
     This dataclass holds the processed inputs that are passed to the core
-    sampling loop. It allows _prepare_sampling_inputs to customize what nodes
+    sampling loop. It allows _prepare_sample_loop_inputs to customize what nodes
     are sampled from and what metadata is attached to the output, without
     duplicating the sampling loop logic.
 
@@ -70,8 +70,8 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             inputs: Either a NodeSamplerInput or ABLPNodeSamplerInput.
 
         Returns:
-            SampleLoopInputs containing the node type, nodes to sample from,
-            and any metadata related to the task.
+            SampleLoopInputs containing the nodes to sample from and any
+            metadata related to the task (e.g., label tensors for ABLP).
         """
         input_seeds = inputs.node.to(self.device)
         input_type = inputs.input_type
@@ -158,8 +158,12 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             for node_type, seeds in input_seeds_builder.items()
         }
 
-        # Memory cleanup
-        del filtered_label_tensor, label_tensor
+        # Memory cleanup — only del loop vars if any labels were processed
+        has_labels = bool(
+            inputs.positive_label_by_edge_types or inputs.negative_label_by_edge_types
+        )
+        if has_labels:
+            del filtered_label_tensor, label_tensor
         for value in input_seeds_builder.values():
             value.clear()
         input_seeds_builder.clear()
@@ -301,9 +305,13 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             if not out_edges:
                 sample_output = SamplerOutput(
                     node=torch.cat(out_nodes),
-                    row=torch.tensor([]).to(self.device),
-                    col=torch.tensor([]).to(self.device),
-                    edge=(torch.tensor([]).to(self.device) if self.with_edge else None),
+                    row=torch.empty(0, dtype=torch.long, device=self.device),
+                    col=torch.empty(0, dtype=torch.long, device=self.device),
+                    edge=(
+                        torch.empty(0, dtype=torch.long, device=self.device)
+                        if self.with_edge
+                        else None
+                    ),
                     batch=batch,
                     num_sampled_nodes=num_sampled_nodes,
                     num_sampled_edges=num_sampled_edges,
