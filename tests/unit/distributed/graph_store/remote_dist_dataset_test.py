@@ -7,6 +7,7 @@ import torch.multiprocessing as mp
 from absl.testing import absltest
 
 import gigl.distributed.graph_store.dist_server as dist_server_module
+from gigl.common import LocalUri
 from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.env.distributed import GraphStoreInfo
@@ -69,6 +70,7 @@ def _create_mock_graph_store_info(
         num_processes_per_compute=num_processes_per_compute,
         rpc_master_port=12348,
         rpc_wait_port=12349,
+        readiness_uri=LocalUri("/tmp/mock_readiness.txt"),
     )
     return MockGraphStoreInfo(real_info, compute_node_rank)
 
