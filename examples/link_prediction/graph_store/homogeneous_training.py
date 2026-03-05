@@ -90,7 +90,22 @@ To run this file with GiGL orchestration, set the fields similar to below::
         storageArgs:
           sample_edge_direction: "in"
           splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
-          splitter_kwargs: '{"sampling_direction": "in", "should_convert_labels_to_edges": true, "num_val": 0.1, "num_test": 0.1}'
+          # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
+          # We do this so that the tuples for edge types get parsed as such.
+          splitter_kwargs: |
+            {
+              "sampling_direction": "in",
+              "should_convert_labels_to_edges": true,
+              "num_val": 0.1,
+              "num_test": 0.1,
+              "supervision_edge_types": [("paper", "cites", "paper")]
+            }
+          # We only do one session for training.
+          # You should set one server session per process group you want to communicate with.
+          # e.g. for inference:
+          # for node_type in inference_node_types:
+          #   launch_inference_process(node_type)
+          #   num_server_sessions = len(inference_node_types)
           num_server_sessions: "1"
     featureFlags:
       should_run_glt_backend: 'True'
@@ -107,6 +122,7 @@ import gc
 import os
 import statistics
 import sys
+import threading
 import time
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
@@ -206,14 +222,6 @@ def _setup_dataloaders(
         world_size=cluster_info.num_compute_nodes,
     )
 
-    for storage_rank, ablp_nodes in ablp_input.items():
-        print(
-            f"Rank {rank} split={split}: storage_rank={storage_rank}, "
-            f"num_anchors={ablp_nodes.anchor_nodes.shape}, "
-            f"labels: {ablp_nodes.labels}"
-        )
-        flush()
-
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -239,13 +247,6 @@ def _setup_dataloaders(
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
-
-    for storage_rank, node_ids_tensor in all_node_ids.items():
-        print(
-            f"Rank {rank} split={split}: random_negative storage_rank={storage_rank}, "
-            f"num_node_ids={node_ids_tensor.shape}"
-        )
-        flush()
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
@@ -289,10 +290,6 @@ def _compute_loss(
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
-    # print(f"Computing loss for main data: {main_data}")
-    # print(f"Computing loss for random negative data: {random_negative_data}")
-    # print(f"Using model: {model}")
-    flush()
     # Forward pass through encoder
     main_embeddings = model(data=main_data, device=device)
     random_negative_embeddings = model(data=random_negative_data, device=device)
@@ -386,6 +383,7 @@ class TrainingProcessArgs:
     local_world_size: int
     cluster_info: GraphStoreInfo
     mp_sharing_dict: MutableMapping[str, torch.Tensor]
+    mp_barrier: threading.Barrier
 
     # Model
     model_uri: Uri
@@ -431,7 +429,10 @@ def _training_process(
     flush()
     init_compute_process(local_rank, args.cluster_info)
     dataset = RemoteDistDataset(
-        args.cluster_info, local_rank, mp_sharing_dict=args.mp_sharing_dict
+        args.cluster_info,
+        local_rank,
+        mp_sharing_dict=args.mp_sharing_dict,
+        mp_barrier=args.mp_barrier,
     )
 
     rank = torch.distributed.get_rank()
@@ -891,8 +892,9 @@ def _run_example_training(
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
     # Step 4: Create shared dict for inter-process tensor sharing
-    mp_sharing_dict = mp.Manager().dict()
-
+    manager = mp.Manager()
+    mp_sharing_dict = manager.dict()
+    mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
     # Step 5: Spawn training processes
     logger.info("--- Launching training processes ...\n")
     flush()
@@ -902,6 +904,7 @@ def _run_example_training(
         local_world_size=local_world_size,
         cluster_info=cluster_info,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
         model_uri=model_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,

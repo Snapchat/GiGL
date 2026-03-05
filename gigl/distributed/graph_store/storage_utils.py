@@ -96,6 +96,8 @@ def _run_storage_server_session(
     storage_rank: int,
     cluster_info: GraphStoreInfo,
     dataset: DistDataset,
+    num_rpc_threads: int = 16,
+    rpc_timeout: Optional[int] = None,
 ) -> None:
     """Run a single storage-server session and block until shutdown.
 
@@ -107,7 +109,9 @@ def _run_storage_server_session(
        :func:`gigl.distributed.graph_store.compute.init_compute_process`;
        after this call Torch RPC connections exist between storage and
        compute nodes.
-    2. **Waits for the server to exit.** The server blocks until clients
+    2. **Initialises a torch.distributed process group** among storage
+       nodes for collective operations (e.g., degree tensor aggregation).
+    3. **Waits for the server to exit.** The server blocks until clients
        call
        :func:`gigl.distributed.graph_store.compute.shutdown_compute_proccess`.
 
@@ -119,6 +123,10 @@ def _run_storage_server_session(
         storage_rank: Rank of this storage node in the storage cluster.
         cluster_info: Cluster topology information.
         dataset: The :class:`DistDataset` to serve.
+        num_rpc_threads: The number of RPC threads to use for the server.
+            This is the maximum number of concurrent RPC requests that the server can handle.
+        rpc_timeout: The max timeout in seconds for remote RPC requests.
+            If ``None``, uses the ``init_server`` default of 180 seconds.
     """
     cluster_master_ip = cluster_info.storage_cluster_master_ip
     logger.info(
@@ -136,6 +144,21 @@ def _run_storage_server_session(
         master_addr=cluster_master_ip,
         master_port=cluster_info.rpc_master_port,
         num_clients=cluster_info.compute_cluster_world_size,
+        num_rpc_threads=num_rpc_threads,
+        request_timeout=rpc_timeout if rpc_timeout is not None else 180,
+    )
+
+    # Initialize process group among storage servers for collective operations
+    # (e.g., all-reduce for degree tensor aggregation). Must be after init_server.
+    logger.info(
+        f"Initializing storage process group for storage node "
+        f"{storage_rank} / {cluster_info.num_storage_nodes}"
+    )
+    torch.distributed.init_process_group(
+        backend="gloo",
+        world_size=cluster_info.num_storage_nodes,
+        rank=storage_rank,
+        init_method=f"tcp://{cluster_master_ip}:{cluster_info.storage_cluster_master_port}",
     )
 
     logger.info(
@@ -145,6 +168,8 @@ def _run_storage_server_session(
     # Wait for the server to exit.  Will block until clients also shut
     # down (with `gigl.distributed.graph_store.compute.shutdown_compute_proccess`).
     wait_and_shutdown_server()
+
+    torch.distributed.destroy_process_group()
     logger.info(f"Storage node {storage_rank} exited")
 
 
@@ -154,6 +179,8 @@ def run_storage_server(
     dataset: DistDataset,
     num_server_sessions: int,
     timeout_seconds: Optional[float] = None,
+    num_rpc_threads: int = 16,
+    rpc_timeout: Optional[int] = None,
 ) -> None:
     """Spawn sequential storage-server sessions as subprocesses.
 
@@ -171,6 +198,14 @@ def run_storage_server(
             (typically one per inference node type).
         timeout_seconds: Timeout for joining each server subprocess.
             ``None`` waits indefinitely.
+        num_rpc_threads: The number of RPC threads to use for the server.
+            This is the maximum number of concurrent RPC requests that the server can handle.
+            Should be set to the maximum number of concurrent RPCs a server *must* handle,
+            in practice, the compute world size is an upper bound.
+        rpc_timeout: The max timeout in seconds for remote RPC requests.
+            If ``None``, uses the ``init_server`` default of 180 seconds.
+            If there are long running RPCs (e.g.  producer creation), and they timeout,
+            then this parameter should be increased to avoid timeout errors.
     """
     mp_context = torch.multiprocessing.get_context("spawn")
     for i in range(num_server_sessions):
@@ -189,6 +224,8 @@ def run_storage_server(
                     storage_rank + j,  # storage_rank
                     cluster_info,  # cluster_info
                     dataset,  # dataset
+                    num_rpc_threads,  # num_rpc_threads
+                    rpc_timeout,  # rpc_timeout
                 ),
             )
             server_processes.append(server_process)

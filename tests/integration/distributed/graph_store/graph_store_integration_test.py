@@ -2,6 +2,7 @@ import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
+import threading
 import traceback
 import unittest
 from collections.abc import MutableMapping
@@ -196,6 +197,7 @@ def _run_compute_train_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
     """
@@ -207,6 +209,7 @@ def _run_compute_train_tests(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
     )
 
     # Test fetch_ablp_input for train split
@@ -293,6 +296,7 @@ def _run_compute_multiple_loaders_test(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
     """
@@ -308,6 +312,7 @@ def _run_compute_multiple_loaders_test(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
     )
 
     ablp_result = remote_dist_dataset.fetch_ablp_input(
@@ -508,7 +513,9 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
     process_name = f"client_train_{args.client_rank}"
     try:
         mp_context = torch.multiprocessing.get_context("spawn")
-        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        manager = torch.multiprocessing.Manager()
+        mp_sharing_dict = manager.dict()
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting train client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -518,6 +525,7 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
                     mp_sharing_dict,  # mp_sharing_dict
+                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                 ],
             )
@@ -540,7 +548,9 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
     process_name = f"client_multiple_loaders_{args.client_rank}"
     try:
         mp_context = torch.multiprocessing.get_context("spawn")
-        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        manager = torch.multiprocessing.Manager()
+        mp_sharing_dict = manager.dict()
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting multiple loaders client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -550,6 +560,7 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
                     mp_sharing_dict,  # mp_sharing_dict
+                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                 ],
             )
@@ -567,6 +578,7 @@ def _run_compute_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
     expected_sampler_input: dict[int, list[torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
@@ -581,6 +593,7 @@ def _run_compute_tests(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
@@ -703,7 +716,9 @@ def _client_process(args: ClientProcessArgs) -> None:
             f"Initializing client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {args.client_rank}"
         )
         mp_context = torch.multiprocessing.get_context("spawn")
-        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        manager = torch.multiprocessing.Manager()
+        mp_sharing_dict = manager.dict()
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -713,6 +728,7 @@ def _client_process(args: ClientProcessArgs) -> None:
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
                     mp_sharing_dict,  # mp_sharing_dict
+                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                     args.expected_sampler_input,  # expected_sampler_input
                     args.expected_edge_types,  # expected_edge_types
@@ -788,7 +804,12 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
             tf_record_uri_pattern=".*tfrecord",
         )
 
-        # 5. Run the storage server sessions
+        # 3. Destroy the coordination process group before spawning server
+        # subprocesses. The subprocess will create its own process group on the
+        # same port, so we must release it here first.
+        torch.distributed.destroy_process_group()
+
+        # 4. Run the storage server sessions
         run_storage_server(
             storage_rank=storage_rank,
             cluster_info=cluster_info,
