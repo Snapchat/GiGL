@@ -83,9 +83,6 @@ unit_test_py: clean_build_files_py type_check
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
 
-# Runs only the type checker without tests. Used as a standalone Cloud Build shard job.
-type_check_only: clean_build_files_py type_check
-
 # Runs a single shard of the Python unit tests (no type checking).
 # Usage: make unit_test_py_shard SHARD_INDEX=0 TOTAL_SHARDS=4
 unit_test_py_shard: clean_build_files_py

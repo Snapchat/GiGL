@@ -3,6 +3,7 @@ name: On Demand Pr Comment Workflows
 on:
   issue_comment:
     types: [created]
+  push:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -43,26 +44,38 @@ jobs:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Type Check"
+            command: "make type_check"
+          - name: "Shard 0"
+            command: "make unit_test_py_shard SHARD_INDEX=0 TOTAL_SHARDS=4"
+          - name: "Shard 1"
+            command: "make unit_test_py_shard SHARD_INDEX=1 TOTAL_SHARDS=4"
+          - name: "Shard 2"
+            command: "make unit_test_py_shard SHARD_INDEX=2 TOTAL_SHARDS=4"
+          - name: "Shard 3"
+            command: "make unit_test_py_shard SHARD_INDEX=3 TOTAL_SHARDS=4"
     steps:
-    - name: Run Python Unit Tests (sharded)
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+    - name: Run Python Unit Tests (${{ matrix.name }})
+      uses: ./.github/actions/run-command-on-pr
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Python Unit Test"
+        descriptive_workflow_name: "Python Unit Test (${{ matrix.name }})"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
         # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
         # https://github.com/tensorflow/tensorflow/issues/57104
-        use_sharded_cloud_build: "true"
-        sharded_test_command: "unit_test_py_shard"
-        total_shards: "4"
-        run_type_check: "true"
+        use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        command: ${{ matrix.command }}
 
   unit-test-scala:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
@@ -88,25 +101,36 @@ jobs:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Shard 0"
+            command: "make integration_test_shard SHARD_INDEX=0 TOTAL_SHARDS=4"
+          - name: "Shard 1"
+            command: "make integration_test_shard SHARD_INDEX=1 TOTAL_SHARDS=4"
+          - name: "Shard 2"
+            command: "make integration_test_shard SHARD_INDEX=2 TOTAL_SHARDS=4"
+          - name: "Shard 3"
+            command: "make integration_test_shard SHARD_INDEX=3 TOTAL_SHARDS=4"
     steps:
-    - name: Run Integration Tests (sharded)
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+    - name: Run Integration Tests (${{ matrix.name }})
+      uses: ./.github/actions/run-command-on-pr
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Integration Test"
+        descriptive_workflow_name: "Integration Test (${{ matrix.name }})"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
         # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
         # https://github.com/tensorflow/tensorflow/issues/57104
-        use_sharded_cloud_build: "true"
-        sharded_test_command: "integration_test_shard"
-        total_shards: "4"
+        use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        command: ${{ matrix.command }}
 
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
