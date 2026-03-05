@@ -60,7 +60,7 @@ jobs:
             command: "make unit_test_py_shard SHARD_INDEX=3 TOTAL_SHARDS=4"
     steps:
     - name: Run Python Unit Tests (${{ matrix.name }})
-      uses: ./.github/actions/run-command-on-pr
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -115,7 +115,7 @@ jobs:
             command: "make integration_test_shard SHARD_INDEX=3 TOTAL_SHARDS=4"
     steps:
     - name: Run Integration Tests (${{ matrix.name }})
-      uses: ./.github/actions/run-command-on-pr
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
