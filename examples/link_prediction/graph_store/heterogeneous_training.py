@@ -222,7 +222,6 @@ def _setup_dataloaders(
         node_type=labeled_node_type,
     )
 
-
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
