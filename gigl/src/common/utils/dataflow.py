@@ -36,6 +36,7 @@ def init_beam_pipeline_options(
     job_name_suffix: str,
     component: Optional[GiGLComponents] = None,
     custom_worker_image_uri: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
     **kwargs: Any,
 ) -> PipelineOptions:
     """Can pass in any options i.e.
@@ -47,6 +48,8 @@ def init_beam_pipeline_options(
         applied_task_identifier (AppliedTaskIdentifier)
         job_name_suffix (str): Unique identifier for the dataflow job in relation to this task (applied_task_identifier)
             i.e. job_name_suffix = "inference"
+        timeout_seconds (Optional[int]): Timeout in seconds for the Dataflow job. If not provided,
+            defaults to MAX_WORKFLOW_RUNTIME_WALLTIME_SECONDS (24 hours).
     Returns:
        PipelineOptions: options you can use to generate the pipeline
     """
@@ -125,9 +128,13 @@ def init_beam_pipeline_options(
         )
         dataflow_service_options.append(f"min_num_workers={num_workers}")
 
-    dataflow_service_options.append(
-        f"max_workflow_runtime_walltime_seconds={MAX_WORKFLOW_RUNTIME_WALLTIME_SECONDS}"
+    effective_timeout = (
+        timeout_seconds if timeout_seconds else MAX_WORKFLOW_RUNTIME_WALLTIME_SECONDS
     )
+    dataflow_service_options.append(
+        f"max_workflow_runtime_walltime_seconds={effective_timeout}"
+    )
+    logger.info(f"Using timeout of {effective_timeout} seconds for Dataflow job")
     google_cloud_options.dataflow_service_options = dataflow_service_options
 
     google_cloud_options.service_account_email = (
