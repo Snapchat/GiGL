@@ -9,7 +9,6 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
-from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
 from graphlearn_torch.sampler import NodeSamplerInput
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
@@ -19,6 +18,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
@@ -231,15 +231,15 @@ class DistNeighborLoader(BaseDistLoader):
             drop_last=drop_last,
         )
 
-        # Build the sampler: a pre-constructed producer for colocated mode,
+        # Build the producer: a pre-constructed producer for colocated mode,
         # or an RPC callable for graph store mode.
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
-            sampler: Union[
-                DistMpSamplingProducer, Callable[..., int]
-            ] = DistMpSamplingProducer(
+            producer: Union[
+                DistSamplingProducer, Callable[..., int]
+            ] = DistSamplingProducer(
                 dataset,
                 input_data,
                 sampling_config,
@@ -247,7 +247,7 @@ class DistNeighborLoader(BaseDistLoader):
                 channel,
             )
         else:
-            sampler = GiglDistServer.create_sampling_producer
+            producer = GiglDistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
@@ -259,7 +259,7 @@ class DistNeighborLoader(BaseDistLoader):
             sampling_config=sampling_config,
             device=device,
             runtime=runtime,
-            sampler=sampler,
+            producer=producer,
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
