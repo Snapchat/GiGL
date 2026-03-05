@@ -1,8 +1,8 @@
 """
 GiGL implementation of GLT DistServer.
 
-Uses GiGL's DistSamplingProducer which supports both standard neighbor sampling
-and ABLP (anchor-based link prediction) via the unified DistNeighborSampler.
+Uses GiGL's DistSamplingProducer which supports neighbor sampling
+and ABLP (anchor-based link prediction) via the DistNeighborSampler.
 
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
 """
@@ -435,8 +435,8 @@ class DistServer:
         r"""Create and initialize an instance of ``DistSamplingProducer`` with
         a group of subprocesses for distributed sampling.
 
-        Supports both standard NodeSamplerInput and ABLPNodeSamplerInput since the
-        underlying DistNeighborSampler handles both input types.
+        Supports standard NodeSamplerInput and ABLPNodeSamplerInput through the
+        DistNeighborSampler
 
         Args:
           sampler_input (NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput,
@@ -446,7 +446,7 @@ class DistServer:
             remote sampling workers by this server.
 
         Returns:
-          A unique id of created sampling producer on this server.
+          int: A unique id of created sampling producer on this server.
         """
         if isinstance(sampler_input, RemoteSamplerInput):
             sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)

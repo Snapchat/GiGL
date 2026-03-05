@@ -23,7 +23,6 @@ from graphlearn_torch.distributed import (
     get_context,
 )
 from graphlearn_torch.distributed.dist_client import async_request_server
-from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
 from graphlearn_torch.distributed.rpc import rpc_is_initialized
 from graphlearn_torch.sampler import (
     NodeSamplerInput,
@@ -39,6 +38,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
@@ -83,7 +83,7 @@ class BaseDistLoader(DistLoader):
     2. Determine mode (colocated vs graph store).
     3. Call ``create_sampling_config()`` to build the SamplingConfig.
     4. For colocated: call ``create_colocated_channel()`` and construct the
-       ``DistMpSamplingProducer`` (or subclass), then pass the producer as ``producer``.
+       ``DistSamplingProducer`` (or subclass), then pass the producer as ``producer``.
     5. For graph store: pass the RPC function (e.g. ``DistServer.create_sampling_producer``)
        as ``producer``.
     6. Call ``super().__init__()`` with the prepared data.
@@ -98,7 +98,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: Configuration for the sampler (created via ``create_sampling_config``).
         device: Target device for sampled results.
         runtime: Resolved distributed runtime information.
-        producer: Either a pre-constructed ``DistMpSamplingProducer`` (colocated mode)
+        producer: Either a pre-constructed ``DistSamplingProducer`` (colocated mode)
             or a callable to dispatch on the ``DistServer`` (graph store mode).
         process_start_gap_seconds: Delay between each process for staggered colocated init.
     """
@@ -204,7 +204,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         device: torch.device,
         runtime: DistributedRuntimeInfo,
-        producer: Union[DistMpSamplingProducer, Callable[..., int]],
+        producer: Union[DistSamplingProducer, Callable[..., int]],
         process_start_gap_seconds: float = 60.0,
     ):
         # Set right away so __del__ can clean up if we throw during init.
@@ -239,7 +239,7 @@ class BaseDistLoader(DistLoader):
         self._epoch = 0
 
         # --- Mode-specific attributes and connection initialization ---
-        if isinstance(producer, DistMpSamplingProducer):
+        if isinstance(producer, DistSamplingProducer):
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             assert isinstance(sampler_input, NodeSamplerInput)
@@ -356,7 +356,7 @@ class BaseDistLoader(DistLoader):
             worker_options: The colocated worker options (must already be fully configured).
 
         Returns:
-            A ShmChannel ready to be passed to a DistMpSamplingProducer.
+            A ShmChannel ready to be passed to a DistSamplingProducer.
         """
         channel = ShmChannel(
             worker_options.channel_capacity, worker_options.channel_size
@@ -368,7 +368,7 @@ class BaseDistLoader(DistLoader):
     def _init_colocated_connections(
         self,
         dataset: DistDataset,
-        producer: DistMpSamplingProducer,
+        producer: DistSamplingProducer,
         runtime: DistributedRuntimeInfo,
         process_start_gap_seconds: float,
     ) -> None:
@@ -381,7 +381,7 @@ class BaseDistLoader(DistLoader):
 
         Args:
             dataset: The local DistDataset.
-            producer: A pre-constructed DistMpSamplingProducer (or subclass).
+            producer: A pre-constructed DistSamplingProducer (or subclass).
             runtime: Resolved distributed runtime info (used for staggered sleep).
             process_start_gap_seconds: Delay multiplier for staggered init.
         """

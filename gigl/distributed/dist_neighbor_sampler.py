@@ -34,13 +34,13 @@ class SampleLoopInputs:
     duplicating the sampling loop logic.
 
     Attributes:
-        nodes_to_sample: Dict mapping node types to tensors of nodes to include
-            in the sampling. For standard sampling, this equals {input_type: input_seeds}.
+        nodes_to_sample: For homogeneous graphs, a tensor of node IDs. For
+            heterogeneous graphs, a dict mapping node types to tensors.
             For ABLP, this also includes supervision nodes (positive/negative labels).
         metadata: Metadata dict to attach to the sampler output (e.g., label tensors).
     """
 
-    nodes_to_sample: dict[Union[str, NodeType], torch.Tensor]
+    nodes_to_sample: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     metadata: dict[str, torch.Tensor]
 
 
@@ -79,6 +79,13 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         if isinstance(inputs, ABLPNodeSamplerInput):
             return self._prepare_ablp_inputs(inputs, input_seeds, input_type)
 
+        # For homogeneous graphs (input_type is None), return tensor directly.
+        # For heterogeneous graphs, return dict mapping node type to tensor.
+        if input_type is None:
+            return SampleLoopInputs(
+                nodes_to_sample=input_seeds,
+                metadata={},
+            )
         return SampleLoopInputs(
             nodes_to_sample={input_type: input_seeds},
             metadata={},
@@ -186,6 +193,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
         output: NeighborOutput
         if is_hetero:
             assert input_type is not None
+            assert isinstance(nodes_to_sample, dict)
             out_nodes_hetero: dict[NodeType, list[torch.Tensor]] = {}
             out_rows_hetero: dict[EdgeType, list[torch.Tensor]] = {}
             out_cols_hetero: dict[EdgeType, list[torch.Tensor]] = {}
@@ -261,13 +269,11 @@ class DistNeighborSampler(GLTDistNeighborSampler):
             )
         else:
             assert (
-                len(nodes_to_sample) == 1
-            ), f"Expected 1 input node type, got {len(nodes_to_sample)}"
-            assert (
-                input_type == list(nodes_to_sample.keys())[0]
-            ), f"Expected input type {input_type}, got {list(nodes_to_sample.keys())[0]}"
+                input_type is None
+            ), f"Expected input_type to be None for homogeneous graph, got {input_type}"
+            assert isinstance(nodes_to_sample, torch.Tensor)
 
-            srcs = inducer.init_node(nodes_to_sample[input_type])
+            srcs = inducer.init_node(nodes_to_sample)
             # Use the original anchor seeds (inputs.node) for batch tracking,
             # not the deduped nodes_to_sample. For ABLP, nodes_to_sample includes
             # supervision nodes which should not be part of the batch.
