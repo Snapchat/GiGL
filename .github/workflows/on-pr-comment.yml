@@ -64,7 +64,7 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
-        should_leave_progress_comments: "true"
+        #should_leave_progress_comments: "true"
         descriptive_workflow_name: "Python Unit Test (${{ matrix.name }})"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
@@ -119,7 +119,7 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
-        should_leave_progress_comments: "true"
+       # should_leave_progress_comments: "true"
         descriptive_workflow_name: "Integration Test (${{ matrix.name }})"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
