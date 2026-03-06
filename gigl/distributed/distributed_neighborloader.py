@@ -249,12 +249,12 @@ class DistNeighborLoader(BaseDistLoader):
             producer: Union[
                 DistSamplingProducer, Callable[..., int]
             ] = DistSamplingProducer(
-                dataset,
-                input_data,
-                sampling_config,
-                worker_options,
-                channel,
-                sampler_options,
+                data=dataset,
+                sampler_input=input_data,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
+                channel=channel,
+                sampler_options=sampler_options,
             )
         else:
             producer = GiglDistServer.create_sampling_producer

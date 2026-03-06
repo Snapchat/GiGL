@@ -35,7 +35,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import KHopNeighborSamplerOptions, SamplerOptions
 
 
 def _sampling_worker_loop(
@@ -49,7 +49,7 @@ def _sampling_worker_loop(
     task_queue: mp.Queue,
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
-    sampler_options: Optional[SamplerOptions] = None,
+    sampler_options: SamplerOptions,
 ):
     dist_sampler = None
     try:
@@ -90,7 +90,12 @@ def _sampling_worker_loop(
             seed_everything(sampling_config.seed)
 
         # Resolve sampler class from options
-        sampler_cls = DistNeighborSampler
+        if isinstance(sampler_options, KHopNeighborSamplerOptions):
+            sampler_cls = DistNeighborSampler
+        else:
+            raise NotImplementedError(
+                f"Unsupported sampler options type: {type(sampler_options)}"
+            )
 
         dist_sampler = sampler_cls(
             data,
@@ -181,7 +186,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         channel: ChannelBase,
-        sampler_options: Optional[SamplerOptions] = None,
+        sampler_options: SamplerOptions,
     ):
         super().__init__(data, sampler_input, sampling_config, worker_options, channel)
         self._sampler_options = sampler_options

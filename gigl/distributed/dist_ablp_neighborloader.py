@@ -341,12 +341,12 @@ class DistABLPLoader(BaseDistLoader):
             producer: Union[
                 DistSamplingProducer, Callable[..., int]
             ] = DistSamplingProducer(
-                dataset,
-                sampler_input,
-                sampling_config,
-                worker_options,
-                channel,
-                sampler_options,
+                data=dataset,
+                sampler_input=sampler_input,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
+                channel=channel,
+                sampler_options=sampler_options,
             )
         else:
             producer = DistServer.create_sampling_producer
