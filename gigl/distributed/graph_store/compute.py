@@ -8,6 +8,7 @@ from graphlearn_torch.distributed.rpc import rpc_global_request_async
 
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.dist_server import _call_func_on_server
+from gigl.distributed.utils.networking import wait_for_readiness_signal
 from gigl.env.distributed import GraphStoreInfo
 
 logger = Logger()
@@ -47,6 +48,9 @@ def init_compute_process(
         f" OS rank: {os.environ['RANK']}, local compute rank: {local_rank}"
         f" num_servers: {cluster_info.num_storage_nodes}, num_clients: {cluster_info.compute_cluster_world_size}"
     )
+    # Wait for storage nodes to finish loading data before attempting RPC connections.
+    wait_for_readiness_signal(cluster_info.readiness_uri)
+
     # Initialize the GLT client before starting the Torch Distributed process group.
     # Otherwise, we saw intermittent hangs when initializing the client.
     glt.distributed.init_client(
