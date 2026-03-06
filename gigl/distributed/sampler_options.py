@@ -49,52 +49,35 @@ SamplerOptions = Union[KHopNeighborSamplerOptions, CustomSamplerOptions]
 
 
 def resolve_sampler_options(
-    num_neighbors: Optional[Union[list[int], dict[EdgeType, list[int]]]],
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
     sampler_options: Optional[SamplerOptions],
-) -> tuple[Union[list[int], dict[EdgeType, list[int]]], SamplerOptions]:
-    """Resolve num_neighbors and sampler_options from user-provided values.
+) -> SamplerOptions:
+    """Resolve sampler_options from user-provided values.
 
-    Handles backwards compatibility: callers can provide ``num_neighbors``
-    alone (old API), ``sampler_options`` alone (new API), or both (validated
-    for consistency).
-
-    ``num_neighbors`` is always required — either directly or via
-    ``KHopNeighborSamplerOptions.num_neighbors``. This follows the PyG
-    convention where neighbor fanout must be explicitly specified.
+    If ``sampler_options`` is ``None``, wraps ``num_neighbors`` in a
+    ``KHopNeighborSamplerOptions``. If ``KHopNeighborSamplerOptions`` is
+    provided, validates that its ``num_neighbors`` matches the explicit value.
 
     Args:
-        num_neighbors: Fanout per hop, or None.
+        num_neighbors: Fanout per hop (always required).
         sampler_options: Sampler configuration, or None.
 
     Returns:
-        A tuple of (resolved_num_neighbors, resolved_sampler_options).
+        The resolved SamplerOptions.
 
     Raises:
-        ValueError: If num_neighbors cannot be determined, or if both provide
-            conflicting num_neighbors values.
+        ValueError: If ``KHopNeighborSamplerOptions.num_neighbors`` conflicts
+            with the explicit ``num_neighbors``.
     """
     if sampler_options is None:
-        if num_neighbors is None:
-            raise ValueError(
-                "num_neighbors must be provided, either directly or via "
-                "KHopNeighborSamplerOptions."
-            )
-        return num_neighbors, KHopNeighborSamplerOptions(num_neighbors)
+        return KHopNeighborSamplerOptions(num_neighbors)
 
     if isinstance(sampler_options, KHopNeighborSamplerOptions):
-        if num_neighbors is None:
-            return sampler_options.num_neighbors, sampler_options
         if num_neighbors != sampler_options.num_neighbors:
             raise ValueError(
                 f"num_neighbors ({num_neighbors}) does not match "
                 f"sampler_options.num_neighbors ({sampler_options.num_neighbors}). "
                 f"Provide one or the other, not both with different values."
             )
-        return num_neighbors, sampler_options
 
-    assert isinstance(sampler_options, CustomSamplerOptions)
-    if num_neighbors is None:
-        raise ValueError(
-            "num_neighbors must be provided when using CustomSamplerOptions."
-        )
-    return num_neighbors, sampler_options
+    return sampler_options

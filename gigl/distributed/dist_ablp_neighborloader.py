@@ -63,7 +63,7 @@ class DistABLPLoader(BaseDistLoader):
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
-        num_neighbors: Optional[Union[list[int], dict[EdgeType, list[int]]]] = None,
+        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[
                 torch.Tensor,
@@ -138,13 +138,12 @@ class DistABLPLoader(BaseDistLoader):
         Args:
             dataset (Union[DistDataset, RemoteDistDataset]): The dataset to sample from.
                 If this is a `RemoteDistDataset`, then we are in "Graph Store" mode.
-            num_neighbors (Optional[list[int] or dict[tuple[str, str, str], list[int]]]):
+            num_neighbors (list[int] or dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
-                Required — either directly or via ``KHopNeighborSamplerOptions``.
-                If both are provided with ``KHopNeighborSamplerOptions``, they must match.
+                If ``KHopNeighborSamplerOptions`` is also provided, they must match.
             input_nodes: Indices of seed nodes to start sampling from.
                 For Colocated mode: `torch.Tensor` or `tuple[NodeType, torch.Tensor]`.
                     If set to `None` for homogeneous settings, all nodes will be considered.
@@ -206,9 +205,7 @@ class DistABLPLoader(BaseDistLoader):
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
 
-        num_neighbors, sampler_options = resolve_sampler_options(
-            num_neighbors, sampler_options
-        )
+        sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
         # Determine sampling cluster setup based on dataset type
         if isinstance(dataset, RemoteDistDataset):
