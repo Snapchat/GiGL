@@ -41,6 +41,7 @@ from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     patch_fanout_for_sampling,
@@ -100,6 +101,8 @@ class BaseDistLoader(DistLoader):
         runtime: Resolved distributed runtime information.
         producer: Either a pre-constructed ``DistSamplingProducer`` (colocated mode)
             or a callable to dispatch on the ``DistServer`` (graph store mode).
+        sampler_options: Controls which sampler class is instantiated. If ``None``,
+            falls back to the default ``NeighborSamplerOptions``.
         process_start_gap_seconds: Delay between each process for staggered colocated init.
     """
 
@@ -205,6 +208,7 @@ class BaseDistLoader(DistLoader):
         device: torch.device,
         runtime: DistributedRuntimeInfo,
         producer: Union[DistSamplingProducer, Callable[..., int]],
+        sampler_options: Optional[SamplerOptions] = None,
         process_start_gap_seconds: float = 60.0,
     ):
         # Set right away so __del__ can clean up if we throw during init.
@@ -217,6 +221,8 @@ class BaseDistLoader(DistLoader):
         )
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
+
+        self._sampler_options = sampler_options
 
         # --- Attributes shared by both modes (mirrors GLT DistLoader.__init__) ---
         self.input_data = sampler_input
@@ -504,6 +510,7 @@ class BaseDistLoader(DistLoader):
                 inp_data,
                 self.sampling_config,
                 self.worker_options,
+                self._sampler_options,
             )
             rpc_futures.append((server_rank, fut))
         logger.info(

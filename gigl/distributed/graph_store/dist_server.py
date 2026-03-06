@@ -35,6 +35,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -431,6 +432,7 @@ class DistServer:
         ],
         sampling_config: SamplingConfig,
         worker_options: RemoteDistSamplingWorkerOptions,
+        sampler_options: Optional[SamplerOptions] = None,
     ) -> int:
         """Create and initialize an instance of ``DistSamplingProducer`` with
         a group of subprocesses for distributed sampling.
@@ -444,6 +446,9 @@ class DistServer:
           sampling_config (SamplingConfig): Configuration of sampling meta info.
           worker_options (RemoteDistSamplingWorkerOptions): Options for launching
             remote sampling workers by this server.
+          sampler_options (Optional[SamplerOptions]): Controls which sampler class
+            is instantiated. If ``None``, defaults to the built-in
+            ``DistNeighborSampler``.
 
         Returns:
           int: A unique id of created sampling producer on this server.
@@ -467,7 +472,12 @@ class DistServer:
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
                 producer = DistSamplingProducer(
-                    self.dataset, sampler_input, sampling_config, worker_options, buffer
+                    self.dataset,
+                    sampler_input,
+                    sampling_config,
+                    worker_options,
+                    buffer,
+                    sampler_options=sampler_options,
                 )
                 producer.init()
                 self._producer_pool[producer_id] = producer

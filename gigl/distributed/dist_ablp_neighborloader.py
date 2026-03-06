@@ -27,6 +27,7 @@ from gigl.distributed.sampler import (
     ABLPNodeSamplerInput,
     metadata_key_with_prefix,
 )
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
@@ -82,6 +83,7 @@ class DistABLPLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        sampler_options: Optional[SamplerOptions] = None,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
@@ -189,6 +191,10 @@ class DistABLPLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            sampler_options (Optional[SamplerOptions]): Controls which sampler class is
+                instantiated. Pass ``NeighborSamplerOptions`` to use the built-in sampler,
+                or ``CustomSamplerOptions`` to dynamically import a custom sampler class.
+                If ``None``, defaults to ``NeighborSamplerOptions(num_neighbors)``.
             context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
@@ -337,6 +343,7 @@ class DistABLPLoader(BaseDistLoader):
                 sampling_config,
                 worker_options,
                 channel,
+                sampler_options=sampler_options,
             )
         else:
             producer = DistServer.create_sampling_producer
@@ -352,6 +359,7 @@ class DistABLPLoader(BaseDistLoader):
             device=device,
             runtime=runtime,
             producer=producer,
+            sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
         )
 

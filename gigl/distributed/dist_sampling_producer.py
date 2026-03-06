@@ -34,7 +34,12 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
-from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
+from gigl.distributed.sampler_options import (
+    CustomSamplerOptions,
+    NeighborSamplerOptions,
+    SamplerOptions,
+    resolve_sampler_class,
+)
 
 
 def _sampling_worker_loop(
@@ -48,6 +53,7 @@ def _sampling_worker_loop(
     task_queue: mp.Queue,
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
+    sampler_options: Optional[SamplerOptions] = None,
 ):
     dist_sampler = None
     try:
@@ -86,7 +92,16 @@ def _sampling_worker_loop(
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
-        dist_sampler = DistNeighborSampler(
+
+        sampler_cls = resolve_sampler_class(
+            sampler_options
+            if sampler_options is not None
+            else NeighborSamplerOptions(num_neighbors=sampling_config.num_neighbors)
+        )
+        extra_kwargs: dict[str, object] = {}
+        if isinstance(sampler_options, CustomSamplerOptions):
+            extra_kwargs = sampler_options.class_args
+        dist_sampler = sampler_cls(
             data,
             sampling_config.num_neighbors,
             sampling_config.with_edge,
@@ -99,6 +114,7 @@ def _sampling_worker_loop(
             worker_options.worker_concurrency,
             current_device,
             seed=sampling_config.seed,
+            **extra_kwargs,
         )
         dist_sampler.start_loop()
 
@@ -168,6 +184,18 @@ def _sampling_worker_loop(
 
 
 class DistSamplingProducer(DistMpSamplingProducer):
+    def __init__(
+        self,
+        data: DistDataset,
+        sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
+        sampling_config: SamplingConfig,
+        worker_options: MpDistSamplingWorkerOptions,
+        channel: ChannelBase,
+        sampler_options: Optional[SamplerOptions] = None,
+    ):
+        super().__init__(data, sampler_input, sampling_config, worker_options, channel)
+        self._sampler_options = sampler_options
+
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
         if self.sampling_config.seed is not None:
@@ -197,6 +225,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     task_queue,
                     self.sampling_completed_worker_count,
                     barrier,
+                    self._sampler_options,
                 ),
             )
             w.daemon = True

@@ -21,6 +21,7 @@ from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
@@ -81,6 +82,7 @@ class DistNeighborLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        sampler_options: Optional[SamplerOptions] = None,
     ):
         """
         Distributed Neighbor Loader.
@@ -146,6 +148,10 @@ class DistNeighborLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            sampler_options (Optional[SamplerOptions]): Controls which sampler class is
+                instantiated. Pass ``NeighborSamplerOptions`` to use the built-in sampler,
+                or ``CustomSamplerOptions`` to dynamically import a custom sampler class.
+                If ``None``, defaults to ``NeighborSamplerOptions(num_neighbors)``.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -245,6 +251,7 @@ class DistNeighborLoader(BaseDistLoader):
                 sampling_config,
                 worker_options,
                 channel,
+                sampler_options=sampler_options,
             )
         else:
             producer = GiglDistServer.create_sampling_producer
@@ -260,6 +267,7 @@ class DistNeighborLoader(BaseDistLoader):
             device=device,
             runtime=runtime,
             producer=producer,
+            sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
