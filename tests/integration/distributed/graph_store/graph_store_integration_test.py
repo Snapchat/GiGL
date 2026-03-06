@@ -2,6 +2,7 @@ import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
+import tempfile
 import threading
 import traceback
 import unittest
@@ -14,7 +15,7 @@ import torch
 import torch.multiprocessing as mp
 from torch_geometric.data import Data, HeteroData
 
-from gigl.common import Uri
+from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -28,7 +29,7 @@ from gigl.distributed.graph_store.storage_utils import (
     run_storage_server,
 )
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
-from gigl.distributed.utils.networking import get_free_ports
+from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
@@ -875,26 +876,28 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def test_graph_store_homogeneous(self):
-        # Simulating two server machine, two compute machines.
-        # Each machine has one process.
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+    def _create_cluster_info(
+        self,
+        num_storage_nodes: int = 2,
+        num_compute_nodes: int = 2,
+        num_processes_per_compute: int = 2,
+    ) -> GraphStoreInfo:
         (
             cluster_master_port,
             storage_cluster_master_port,
             compute_cluster_master_port,
-            master_port,
             rpc_master_port,
             rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
+        ) = get_free_ports(num_ports=5)
         host_ip = socket.gethostbyname(socket.gethostname())
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=2,
-            num_compute_nodes=2,
-            num_processes_per_compute=2,
+        tmp_file = tempfile.NamedTemporaryFile(delete=False)
+        tmp_file_path = tmp_file.name
+        self.addCleanup(tmp_file.close)
+        readiness_uri = UriFactory.create_uri(tmp_file_path)
+        return GraphStoreInfo(
+            num_storage_nodes=num_storage_nodes,
+            num_compute_nodes=num_compute_nodes,
+            num_processes_per_compute=num_processes_per_compute,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
             compute_cluster_master_ip=host_ip,
@@ -903,7 +906,19 @@ class GraphStoreIntegrationTest(TestCase):
             compute_cluster_master_port=compute_cluster_master_port,
             rpc_master_port=rpc_master_port,
             rpc_wait_port=rpc_wait_port,
+            readiness_uri=readiness_uri,
         )
+
+    def test_graph_store_homogeneous(self):
+        # Simulating two server machine, two compute machines.
+        # Each machine has one process.
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+        master_port = get_free_port()
+        host_ip = socket.gethostbyname(socket.gethostname())
+        cluster_info = self._create_cluster_info()
 
         num_cora_nodes = 2708
         expected_sampler_input = _get_expected_input_nodes_by_rank(
@@ -979,28 +994,11 @@ class GraphStoreIntegrationTest(TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         task_config_uri = cora_supervised_info.frozen_gbml_config_uri
-        (
-            cluster_master_port,
-            storage_cluster_master_port,
-            compute_cluster_master_port,
-            master_port,
-            rpc_master_port,
-            rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
-        host_ip = socket.gethostbyname(socket.gethostname())
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=2,
-            num_compute_nodes=2,
-            num_processes_per_compute=1,
-            cluster_master_ip=host_ip,
-            storage_cluster_master_ip=host_ip,
-            compute_cluster_master_ip=host_ip,
-            cluster_master_port=cluster_master_port,
-            storage_cluster_master_port=storage_cluster_master_port,
-            compute_cluster_master_port=compute_cluster_master_port,
-            rpc_master_port=rpc_master_port,
-            rpc_wait_port=rpc_wait_port,
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=2, num_compute_nodes=2, num_processes_per_compute=1
         )
+        master_port = get_free_port()
+        host_ip = socket.gethostbyname(socket.gethostname())
 
         ctx = mp.get_context("spawn")
         launched_processes: list[py_mp_context.SpawnProcess] = []
@@ -1075,28 +1073,10 @@ class GraphStoreIntegrationTest(TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         task_config_uri = cora_supervised_info.frozen_gbml_config_uri
-        (
-            cluster_master_port,
-            storage_cluster_master_port,
-            compute_cluster_master_port,
-            master_port,
-            rpc_master_port,
-            rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
+        master_port = get_free_port()
         host_ip = socket.gethostbyname(socket.gethostname())
-        # Very small cluster to avoid OOMing on CICD.
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=1,
-            num_compute_nodes=1,
-            num_processes_per_compute=1,
-            cluster_master_ip=host_ip,
-            storage_cluster_master_ip=host_ip,
-            compute_cluster_master_ip=host_ip,
-            cluster_master_port=cluster_master_port,
-            storage_cluster_master_port=storage_cluster_master_port,
-            compute_cluster_master_port=compute_cluster_master_port,
-            rpc_master_port=rpc_master_port,
-            rpc_wait_port=rpc_wait_port,
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=1, num_compute_nodes=1, num_processes_per_compute=1
         )
 
         ctx = mp.get_context("spawn")
@@ -1174,27 +1154,10 @@ class GraphStoreIntegrationTest(TestCase):
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         task_config_uri = dblp_supervised_info.frozen_gbml_config_uri
-        (
-            cluster_master_port,
-            storage_cluster_master_port,
-            compute_cluster_master_port,
-            master_port,
-            rpc_master_port,
-            rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
+        master_port = get_free_port()
         host_ip = socket.gethostbyname(socket.gethostname())
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=2,
-            num_compute_nodes=2,
-            num_processes_per_compute=2,
-            cluster_master_ip=host_ip,
-            storage_cluster_master_ip=host_ip,
-            compute_cluster_master_ip=host_ip,
-            cluster_master_port=cluster_master_port,
-            storage_cluster_master_port=storage_cluster_master_port,
-            compute_cluster_master_port=compute_cluster_master_port,
-            rpc_master_port=rpc_master_port,
-            rpc_wait_port=rpc_wait_port,
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=2, num_compute_nodes=2, num_processes_per_compute=2
         )
 
         num_dblp_nodes = 4057
