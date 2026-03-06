@@ -76,8 +76,7 @@ def resolve_sampler_options(
         if num_neighbors != sampler_options.num_neighbors:
             raise ValueError(
                 f"num_neighbors ({num_neighbors}) does not match "
-                f"sampler_options.num_neighbors ({sampler_options.num_neighbors}). "
-                f"Provide one or the other, not both with different values."
+                f"sampler_options.num_neighbors ({sampler_options.num_neighbors})."
             )
 
     return sampler_options
