@@ -23,7 +23,6 @@ from graphlearn_torch.distributed import (
     get_context,
 )
 from graphlearn_torch.distributed.dist_client import async_request_server
-from graphlearn_torch.distributed.dist_sampling_producer import DistMpSamplingProducer
 from graphlearn_torch.distributed.rpc import rpc_is_initialized
 from graphlearn_torch.sampler import (
     NodeSamplerInput,
@@ -39,6 +38,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils.neighborloader import (
@@ -83,9 +83,9 @@ class BaseDistLoader(DistLoader):
     2. Determine mode (colocated vs graph store).
     3. Call ``create_sampling_config()`` to build the SamplingConfig.
     4. For colocated: call ``create_colocated_channel()`` and construct the
-       ``DistMpSamplingProducer`` (or subclass), then pass the producer as ``sampler``.
+       ``DistSamplingProducer`` (or subclass), then pass the producer as ``producer``.
     5. For graph store: pass the RPC function (e.g. ``DistServer.create_sampling_producer``)
-       as ``sampler``.
+       as ``producer``.
     6. Call ``super().__init__()`` with the prepared data.
 
     Args:
@@ -95,10 +95,10 @@ class BaseDistLoader(DistLoader):
         dataset_schema: Contains edge types, feature info, edge dir, etc.
         worker_options: ``MpDistSamplingWorkerOptions`` (colocated) or
             ``RemoteDistSamplingWorkerOptions`` (graph store).
-        sampling_config: Configuration for the sampler (created via ``create_sampling_config``).
+        sampling_config: Configuration for sampling (created via ``create_sampling_config``).
         device: Target device for sampled results.
         runtime: Resolved distributed runtime information.
-        sampler: Either a pre-constructed ``DistMpSamplingProducer`` (colocated mode)
+        producer: Either a pre-constructed ``DistSamplingProducer`` (colocated mode)
             or a callable to dispatch on the ``DistServer`` (graph store mode).
         process_start_gap_seconds: Delay between each process for staggered colocated init.
     """
@@ -204,7 +204,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         device: torch.device,
         runtime: DistributedRuntimeInfo,
-        sampler: Union[DistMpSamplingProducer, Callable[..., int]],
+        producer: Union[DistSamplingProducer, Callable[..., int]],
         process_start_gap_seconds: float = 60.0,
     ):
         # Set right away so __del__ can clean up if we throw during init.
@@ -239,7 +239,7 @@ class BaseDistLoader(DistLoader):
         self._epoch = 0
 
         # --- Mode-specific attributes and connection initialization ---
-        if isinstance(sampler, DistMpSamplingProducer):
+        if isinstance(producer, DistSamplingProducer):
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             assert isinstance(sampler_input, NodeSamplerInput)
@@ -263,7 +263,7 @@ class BaseDistLoader(DistLoader):
             self._shutdowned = False
             self._init_colocated_connections(
                 dataset=dataset,
-                producer=sampler,
+                producer=producer,
                 runtime=runtime,
                 process_start_gap_seconds=process_start_gap_seconds,
             )
@@ -271,7 +271,7 @@ class BaseDistLoader(DistLoader):
             assert isinstance(dataset, RemoteDistDataset)
             assert isinstance(worker_options, RemoteDistSamplingWorkerOptions)
             assert isinstance(sampler_input, list)
-            assert callable(sampler)
+            assert callable(producer)
 
             self.data = None
             self._is_mp_worker = False
@@ -300,7 +300,7 @@ class BaseDistLoader(DistLoader):
             self._shutdowned = False
             self._init_graph_store_connections(
                 dataset=dataset,
-                create_producer_fn=sampler,
+                create_producer_fn=producer,
                 runtime=runtime,
             )
 
@@ -357,7 +357,7 @@ class BaseDistLoader(DistLoader):
             worker_options: The colocated worker options (must already be fully configured).
 
         Returns:
-            A ShmChannel ready to be passed to a DistMpSamplingProducer.
+            A ShmChannel ready to be passed to a DistSamplingProducer.
         """
         channel = ShmChannel(
             worker_options.channel_capacity, worker_options.channel_size
@@ -369,7 +369,7 @@ class BaseDistLoader(DistLoader):
     def _init_colocated_connections(
         self,
         dataset: DistDataset,
-        producer: DistMpSamplingProducer,
+        producer: DistSamplingProducer,
         runtime: DistributedRuntimeInfo,
         process_start_gap_seconds: float,
     ) -> None:
@@ -382,7 +382,7 @@ class BaseDistLoader(DistLoader):
 
         Args:
             dataset: The local DistDataset.
-            producer: A pre-constructed DistMpSamplingProducer (or subclass).
+            producer: A pre-constructed DistSamplingProducer (or subclass).
             runtime: Resolved distributed runtime info (used for staggered sleep).
             process_start_gap_seconds: Delay multiplier for staggered init.
         """
@@ -570,9 +570,10 @@ class BaseDistLoader(DistLoader):
                 f"created in {time.time() - t_dispatch:.2f}s total"
             )
             _flush()
-        else: # if not leader
-            logger.info(f"Since rank {runtime.rank} is not the leader for worker key {my_worker_key}, we will wait for the leader (rank {leader_rank}) to dispatch RPCs")
-
+        else:  # if not leader
+            logger.info(
+                f"Since rank {runtime.rank} is not the leader for worker key {my_worker_key}, we will wait for the leader (rank {leader_rank}) to dispatch RPCs"
+            )
 
         # --- Distribute producer IDs to all ranks ---
         all_producer_ids: list[list[int]] = [[] for _ in range(runtime.world_size)]

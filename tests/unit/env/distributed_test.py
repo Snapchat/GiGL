@@ -5,6 +5,7 @@ from unittest import mock
 from absl.testing import absltest
 from parameterized import param, parameterized
 
+from gigl.common import LocalUri
 from gigl.env.distributed import GraphStoreInfo
 from tests.test_assets.test_case import TestCase
 
@@ -30,6 +31,7 @@ class TestGraphStoreInfo(TestCase):
             compute_cluster_master_port=1236,
             rpc_master_port=1237,
             rpc_wait_port=1238,
+            readiness_uri=LocalUri("/tmp/test_readiness.txt"),
         )
 
     def test_num_cluster_nodes(self):

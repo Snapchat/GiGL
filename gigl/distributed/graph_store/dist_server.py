@@ -1,7 +1,8 @@
 """
 GiGL implementation of GLT DistServer.
 
-Main change here is that we use gigl DistAblpSamplingProducer instead of GLT DistMpSamplingProducer.
+Uses GiGL's DistSamplingProducer which supports neighbor sampling
+and ABLP (anchor-based link prediction) via the DistNeighborSampler.
 
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
 """
@@ -17,7 +18,6 @@ import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
 from graphlearn_torch.channel import QueueTimeoutError, ShmChannel
 from graphlearn_torch.distributed import (
-    DistMpSamplingProducer,
     RemoteDistSamplingWorkerOptions,
     barrier,
     init_rpc,
@@ -33,7 +33,7 @@ from graphlearn_torch.sampler import (
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -80,7 +80,7 @@ class DistServer:
         # The mapping from the key in worker options (such as 'train', 'test')
         # to producer id
         self._worker_key2producer_id: dict[str, int] = {}
-        self._producer_pool: dict[int, DistMpSamplingProducer] = {}
+        self._producer_pool: dict[int, DistSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
         # Per-producer locks that guard the lifecycle of individual producers
@@ -424,40 +424,6 @@ class DistServer:
         )
         return anchors, positive_labels, negative_labels
 
-    def create_sampling_ablp_producer(
-        self,
-        sampler_input: Union[
-            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-        ],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-    ) -> int:
-        r"""Create and initialize an instance of ``DistABLPSamplingProducer`` with
-        a group of subprocesses for distributed sampling.
-
-        Args:
-          sampler_input (NodeSamplerInput or EdgeSamplerInput): The input data
-            for sampling.
-          sampling_config (SamplingConfig): Configuration of sampling meta info.
-          worker_options (RemoteDistSamplingWorkerOptions): Options for launching
-            remote sampling workers by this server.
-
-        Returns:
-          A unique id of created sampling producer on this server.
-        """
-
-        if not isinstance(sampler_input, ABLPNodeSamplerInput):
-            raise ValueError(
-                f"Sampler input must be an instance of ABLPNodeSamplerInput. Received: {type(sampler_input)}"
-            )
-
-        return self._create_producer(
-            sampler_input=sampler_input,
-            sampling_config=sampling_config,
-            worker_options=worker_options,
-            producer_cls=DistABLPSamplingProducer,
-        )
-
     def create_sampling_producer(
         self,
         sampler_input: Union[
@@ -466,39 +432,11 @@ class DistServer:
         sampling_config: SamplingConfig,
         worker_options: RemoteDistSamplingWorkerOptions,
     ) -> int:
-        r"""Create and initialize an instance of ``DistSamplingProducer`` with
+        """Create and initialize an instance of ``DistSamplingProducer`` with
         a group of subprocesses for distributed sampling.
 
-        Args:
-          sampler_input (NodeSamplerInput or EdgeSamplerInput): The input data
-            for sampling.
-          sampling_config (SamplingConfig): Configuration of sampling meta info.
-          worker_options (RemoteDistSamplingWorkerOptions): Options for launching
-            remote sampling workers by this server.
-
-        Returns:
-          A unique id of created sampling producer on this server.
-        """
-        return self._create_producer(
-            sampler_input=sampler_input,
-            sampling_config=sampling_config,
-            worker_options=worker_options,
-            producer_cls=DistMpSamplingProducer,
-        )
-
-    def _create_producer(
-        self,
-        sampler_input: Union[
-            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-        ],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-        producer_cls: type[Union[DistABLPSamplingProducer, DistMpSamplingProducer]],
-    ) -> int:
-        r"""Shared logic to create and initialize a sampling producer.
-
-        Converts remote sampler inputs to local, creates a ``ShmChannel`` buffer,
-        instantiates the given ``producer_cls``, and registers it in the internal pools.
+        Supports both standard ``NodeSamplerInput`` and ``ABLPNodeSamplerInput``
+        through the unified ``DistNeighborSampler``.
 
         Args:
           sampler_input (NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput,
@@ -506,8 +444,6 @@ class DistServer:
           sampling_config (SamplingConfig): Configuration of sampling meta info.
           worker_options (RemoteDistSamplingWorkerOptions): Options for launching
             remote sampling workers by this server.
-          producer_cls: The producer class to instantiate
-            (``DistABLPSamplingProducer`` or ``DistMpSamplingProducer``).
 
         Returns:
           int: A unique id of created sampling producer on this server.
@@ -518,11 +454,15 @@ class DistServer:
         with self._lock:
             producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
             if producer_id is None:
-                logger.info(f"Creating new producer for worker key {worker_options.worker_key}")
+                logger.info(
+                    f"Creating new producer for worker key {worker_options.worker_key}"
+                )
                 producer_id = self._cur_producer_idx
                 self._cur_producer_idx += 1
             else:
-                logger.info(f"Reusing producer for worker key {worker_options.worker_key}, producer id {producer_id}")
+                logger.info(
+                    f"Reusing producer for worker key {worker_options.worker_key}, producer id {producer_id}"
+                )
             producer_lock = self._producer_lock.get(producer_id, None)
             if producer_lock is None:
                 producer_lock = threading.RLock()
@@ -530,24 +470,32 @@ class DistServer:
                 self._worker_key2producer_id[worker_options.worker_key] = producer_id
         with producer_lock:
             if producer_id not in self._producer_pool:
-                logger.info(f"Creating new producer pool entry for producer id {producer_id}")
+                logger.info(
+                    f"Creating new producer pool entry for producer id {producer_id}"
+                )
                 buffer = ShmChannel(
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
-                producer = producer_cls(
+                producer = DistSamplingProducer(
                     self.dataset, sampler_input, sampling_config, worker_options, buffer
                 )
                 producer_start_time = time.time()
                 producer.init()
                 producer_init_time = time.time()
-                logger.info(f"Producer {producer_id} initialized in {producer_init_time - producer_start_time:.2f}s")
+                logger.info(
+                    f"Producer {producer_id} initialized in {producer_init_time - producer_start_time:.2f}s"
+                )
                 self._producer_pool[producer_id] = producer
                 self._msg_buffer_pool[producer_id] = buffer
                 self._epoch[producer_id] = -1
             else:
-                logger.info(f"Reusing producer pool entry for producer id {producer_id}")
+                logger.info(
+                    f"Reusing producer pool entry for producer id {producer_id}"
+                )
         request_end_time = time.time()
-        logger.info(f"Request to create producer for worker key {worker_options.worker_key} took {request_end_time - request_start_time:.2f}s")
+        logger.info(
+            f"Request to create producer for worker key {worker_options.worker_key} took {request_end_time - request_start_time:.2f}s"
+        )
         return producer_id
 
     def destroy_sampling_producer(self, producer_id: int) -> None:
