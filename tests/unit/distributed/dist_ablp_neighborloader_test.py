@@ -17,7 +17,7 @@ from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.sampler_options import (
     CustomSamplerOptions,
-    NeighborSamplerOptions,
+    KHopNeighborSamplerOptions,
     SamplerOptions,
 )
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
@@ -950,8 +950,8 @@ class DistABLPLoaderTest(TestCase):
     @parameterized.expand(
         [
             param(
-                "NeighborSamplerOptions",
-                sampler_options=NeighborSamplerOptions(num_neighbors=[2, 2]),
+                "KHopNeighborSamplerOptions",
+                sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2, 2]),
             ),
             param(
                 "CustomSamplerOptions with DistNeighborSampler",

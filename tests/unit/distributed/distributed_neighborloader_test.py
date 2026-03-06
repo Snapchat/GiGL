@@ -13,7 +13,7 @@ from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import (
     CustomSamplerOptions,
-    NeighborSamplerOptions,
+    KHopNeighborSamplerOptions,
     SamplerOptions,
 )
 from gigl.distributed.utils import get_free_port
@@ -609,8 +609,8 @@ class DistributedNeighborLoaderTest(TestCase):
     @parameterized.expand(
         [
             param(
-                "NeighborSamplerOptions",
-                sampler_options=NeighborSamplerOptions(num_neighbors=[2, 2]),
+                "KHopNeighborSamplerOptions",
+                sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2, 2]),
             ),
             param(
                 "CustomSamplerOptions with DistNeighborSampler",

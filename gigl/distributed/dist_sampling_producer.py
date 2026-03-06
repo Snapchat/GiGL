@@ -4,6 +4,7 @@
 # neighbor sampling and ABLP) instead of GLT's DistNeighborSampler.
 
 import datetime
+import importlib
 import queue
 from threading import Barrier
 from typing import Optional, Union, cast
@@ -34,12 +35,8 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
-from gigl.distributed.sampler_options import (
-    CustomSamplerOptions,
-    NeighborSamplerOptions,
-    SamplerOptions,
-    resolve_sampler_class,
-)
+from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
+from gigl.distributed.sampler_options import CustomSamplerOptions, SamplerOptions
 
 
 def _sampling_worker_loop(
@@ -93,14 +90,16 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        sampler_cls = resolve_sampler_class(
-            sampler_options
-            if sampler_options is not None
-            else NeighborSamplerOptions(num_neighbors=sampling_config.num_neighbors)
-        )
+        # Resolve sampler class from options
         extra_kwargs: dict[str, object] = {}
         if isinstance(sampler_options, CustomSamplerOptions):
+            module_path, class_name = sampler_options.class_path.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            sampler_cls = getattr(module, class_name)
             extra_kwargs = sampler_options.class_args
+        else:
+            sampler_cls = DistNeighborSampler
+
         dist_sampler = sampler_cls(
             data,
             sampling_config.num_neighbors,

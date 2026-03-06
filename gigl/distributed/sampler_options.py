@@ -1,14 +1,13 @@
 """Sampler option types for configuring which sampler class to use in distributed loading.
 
 Provides two options:
-- ``NeighborSamplerOptions``: Uses GiGL's built-in ``DistNeighborSampler``.
+- ``KHopNeighborSamplerOptions``: Uses GiGL's built-in ``DistNeighborSampler``.
 - ``CustomSamplerOptions``: Dynamically imports and uses a user-provided sampler class.
 
 Both are frozen dataclasses so they are safe to pickle across RPC boundaries
 (required for Graph Store mode).
 """
 
-import importlib
 from dataclasses import dataclass, field
 from typing import Any, Union
 
@@ -16,7 +15,7 @@ from graphlearn_torch.typing import EdgeType
 
 
 @dataclass(frozen=True)
-class NeighborSamplerOptions:
+class KHopNeighborSamplerOptions:
     """Default sampler options using GiGL's DistNeighborSampler.
 
     Attributes:
@@ -46,35 +45,4 @@ class CustomSamplerOptions:
     class_args: dict[str, Any] = field(default_factory=dict)
 
 
-SamplerOptions = Union[NeighborSamplerOptions, CustomSamplerOptions]
-
-
-def resolve_sampler_class(sampler_options: SamplerOptions) -> type:
-    """Resolve a sampler class from the given options.
-
-    Args:
-        sampler_options: Either ``NeighborSamplerOptions`` (returns the built-in
-            ``DistNeighborSampler``) or ``CustomSamplerOptions`` (dynamically
-            imports the class at ``class_path``).
-
-    Returns:
-        The sampler class to instantiate.
-
-    Raises:
-        TypeError: If ``sampler_options`` is not a recognized type.
-        ImportError: If the module in ``class_path`` cannot be imported.
-        AttributeError: If the class name is not found in the module.
-    """
-    if isinstance(sampler_options, NeighborSamplerOptions):
-        from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
-
-        return DistNeighborSampler
-    elif isinstance(sampler_options, CustomSamplerOptions):
-        module_path, class_name = sampler_options.class_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name)
-    else:
-        raise TypeError(
-            f"Unsupported sampler_options type: {type(sampler_options)}. "
-            f"Expected NeighborSamplerOptions or CustomSamplerOptions."
-        )
+SamplerOptions = Union[KHopNeighborSamplerOptions, CustomSamplerOptions]

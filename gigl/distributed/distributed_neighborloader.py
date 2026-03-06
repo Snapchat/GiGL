@@ -149,9 +149,9 @@ class DistNeighborLoader(BaseDistLoader):
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
             sampler_options (Optional[SamplerOptions]): Controls which sampler class is
-                instantiated. Pass ``NeighborSamplerOptions`` to use the built-in sampler,
+                instantiated. Pass ``KHopNeighborSamplerOptions`` to use the built-in sampler,
                 or ``CustomSamplerOptions`` to dynamically import a custom sampler class.
-                If ``None``, defaults to ``NeighborSamplerOptions(num_neighbors)``.
+                If ``None``, defaults to ``KHopNeighborSamplerOptions(num_neighbors)``.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
