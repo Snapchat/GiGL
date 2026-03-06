@@ -58,6 +58,10 @@ def resolve_sampler_options(
     alone (old API), ``sampler_options`` alone (new API), or both (validated
     for consistency).
 
+    ``num_neighbors`` is always required — either directly or via
+    ``KHopNeighborSamplerOptions.num_neighbors``. This follows the PyG
+    convention where neighbor fanout must be explicitly specified.
+
     Args:
         num_neighbors: Fanout per hop, or None.
         sampler_options: Sampler configuration, or None.
@@ -66,14 +70,15 @@ def resolve_sampler_options(
         A tuple of (resolved_num_neighbors, resolved_sampler_options).
 
     Raises:
-        ValueError: If neither is provided, or if both provide conflicting
-            num_neighbors values.
+        ValueError: If num_neighbors cannot be determined, or if both provide
+            conflicting num_neighbors values.
     """
-    if num_neighbors is None and sampler_options is None:
-        raise ValueError("Either num_neighbors or sampler_options must be provided.")
-
     if sampler_options is None:
-        assert num_neighbors is not None
+        if num_neighbors is None:
+            raise ValueError(
+                "num_neighbors must be provided, either directly or via "
+                "KHopNeighborSamplerOptions."
+            )
         return num_neighbors, KHopNeighborSamplerOptions(num_neighbors)
 
     if isinstance(sampler_options, KHopNeighborSamplerOptions):
@@ -87,8 +92,9 @@ def resolve_sampler_options(
             )
         return num_neighbors, sampler_options
 
-    # CustomSamplerOptions — num_neighbors is not meaningful, default to []
     assert isinstance(sampler_options, CustomSamplerOptions)
     if num_neighbors is None:
-        return [], sampler_options
+        raise ValueError(
+            "num_neighbors must be provided when using CustomSamplerOptions."
+        )
     return num_neighbors, sampler_options

@@ -143,7 +143,7 @@ class DistABLPLoader(BaseDistLoader):
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
-                Either ``num_neighbors`` or ``sampler_options`` must be provided.
+                Required — either directly or via ``KHopNeighborSamplerOptions``.
                 If both are provided with ``KHopNeighborSamplerOptions``, they must match.
             input_nodes: Indices of seed nodes to start sampling from.
                 For Colocated mode: `torch.Tensor` or `tuple[NodeType, torch.Tensor]`.

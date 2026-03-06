@@ -317,6 +317,7 @@ def _run_distributed_ablp_loader_with_sampler_options(
     create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
+        num_neighbors=[2, 2],
         input_nodes=to_homogeneous(dataset.train_node_ids),
         pin_memory_device=torch.device("cpu"),
         sampler_options=sampler_options,

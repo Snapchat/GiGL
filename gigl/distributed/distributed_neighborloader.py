@@ -104,7 +104,7 @@ class DistNeighborLoader(BaseDistLoader):
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
-                Either ``num_neighbors`` or ``sampler_options`` must be provided.
+                Required — either directly or via ``KHopNeighborSamplerOptions``.
                 If both are provided with ``KHopNeighborSamplerOptions``, they must match.
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.

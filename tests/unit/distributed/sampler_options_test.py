@@ -40,13 +40,10 @@ class ResolveSamplerOptionsTest(TestCase):
         with self.assertRaises(ValueError):
             resolve_sampler_options(num_neighbors=[2, 2], sampler_options=opts)
 
-    def test_custom_options_without_num_neighbors(self):
+    def test_custom_options_without_num_neighbors_raises(self):
         opts = CustomSamplerOptions(class_path="my.module.MySampler")
-        num_neighbors, options = resolve_sampler_options(
-            num_neighbors=None, sampler_options=opts
-        )
-        self.assertEqual(num_neighbors, [])
-        self.assertIs(options, opts)
+        with self.assertRaises(ValueError):
+            resolve_sampler_options(num_neighbors=None, sampler_options=opts)
 
     def test_custom_options_with_num_neighbors(self):
         opts = CustomSamplerOptions(class_path="my.module.MySampler")

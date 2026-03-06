@@ -285,6 +285,7 @@ def _run_distributed_neighbor_loader_with_sampler_options(
     create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
+        num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         sampler_options=sampler_options,
     )
