@@ -1,15 +1,13 @@
 """Sampler option types for configuring which sampler class to use in distributed loading.
 
-Provides two options:
-- ``KHopNeighborSamplerOptions``: Uses GiGL's built-in ``DistNeighborSampler``.
-- ``CustomSamplerOptions``: Dynamically imports and uses a user-provided sampler class.
+Provides ``KHopNeighborSamplerOptions`` for using GiGL's built-in ``DistNeighborSampler``.
 
-Both are frozen dataclasses so they are safe to pickle across RPC boundaries
+Frozen dataclass so it is safe to pickle across RPC boundaries
 (required for Graph Store mode).
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Optional, Union
+from dataclasses import dataclass
+from typing import Optional, Union
 
 from graphlearn_torch.typing import EdgeType
 
@@ -26,26 +24,7 @@ class KHopNeighborSamplerOptions:
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
 
 
-@dataclass(frozen=True)
-class CustomSamplerOptions:
-    """Custom sampler options that dynamically import a user-provided sampler class.
-
-    The class at ``class_path`` must conform to the same interface as
-    ``DistNeighborSampler`` (extend ``GLTDistNeighborSampler`` or at minimum
-    support ``start_loop``, ``sample_from_nodes``, etc.).
-
-    Attributes:
-        class_path: Fully qualified Python import path, e.g.
-            ``"my.module.MySampler"``.
-        class_args: Additional keyword arguments passed to the sampler
-            constructor (on top of the standard GLT arguments).
-    """
-
-    class_path: str
-    class_args: dict[str, Any] = field(default_factory=dict)
-
-
-SamplerOptions = Union[KHopNeighborSamplerOptions, CustomSamplerOptions]
+SamplerOptions = KHopNeighborSamplerOptions
 
 
 def resolve_sampler_options(
@@ -72,11 +51,10 @@ def resolve_sampler_options(
     if sampler_options is None:
         return KHopNeighborSamplerOptions(num_neighbors)
 
-    if isinstance(sampler_options, KHopNeighborSamplerOptions):
-        if num_neighbors != sampler_options.num_neighbors:
-            raise ValueError(
-                f"num_neighbors ({num_neighbors}) does not match "
-                f"sampler_options.num_neighbors ({sampler_options.num_neighbors})."
-            )
+    if num_neighbors != sampler_options.num_neighbors:
+        raise ValueError(
+            f"num_neighbors ({num_neighbors}) does not match "
+            f"sampler_options.num_neighbors ({sampler_options.num_neighbors})."
+        )
 
     return sampler_options

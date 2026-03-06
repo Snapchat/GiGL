@@ -1,5 +1,4 @@
 from gigl.distributed.sampler_options import (
-    CustomSamplerOptions,
     KHopNeighborSamplerOptions,
     resolve_sampler_options,
 )
@@ -21,8 +20,3 @@ class ResolveSamplerOptionsTest(TestCase):
         opts = KHopNeighborSamplerOptions(num_neighbors=[3, 3])
         with self.assertRaises(ValueError):
             resolve_sampler_options(num_neighbors=[2, 2], sampler_options=opts)
-
-    def test_custom_options_with_num_neighbors(self):
-        opts = CustomSamplerOptions(class_path="my.module.MySampler")
-        options = resolve_sampler_options(num_neighbors=[2, 2], sampler_options=opts)
-        self.assertIs(options, opts)

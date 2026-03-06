@@ -11,7 +11,6 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.sampler_options import CustomSamplerOptions, SamplerOptions
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -272,30 +271,6 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
             story_datum[_STORY], "y"
         ), "Story subgraph is missing the 'y' attribute for labels"
         assert_tensor_equality(story_datum[_STORY].y, story_datum[_STORY].node)
-
-    shutdown_rpc()
-
-
-def _run_distributed_neighbor_loader_with_sampler_options(
-    _,
-    dataset: DistDataset,
-    expected_data_count: int,
-    sampler_options: SamplerOptions,
-):
-    create_test_process_group()
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        num_neighbors=[2, 2],
-        pin_memory_device=torch.device("cpu"),
-        sampler_options=sampler_options,
-    )
-
-    count = 0
-    for datum in loader:
-        assert isinstance(datum, Data)
-        count += 1
-
-    assert count == expected_data_count
 
     shutdown_rpc()
 
@@ -600,25 +575,6 @@ class DistributedNeighborLoaderTest(TestCase):
         mp.spawn(
             fn=_run_distributed_neighbor_loader,
             args=(dataset, 18),
-        )
-
-    def test_distributed_neighbor_loader_with_custom_sampler_options(self):
-        expected_data_count = 2708
-        dataset = run_distributed_dataset(
-            rank=0,
-            world_size=self._world_size,
-            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            _port=get_free_port(),
-        )
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader_with_sampler_options,
-            args=(
-                dataset,
-                expected_data_count,
-                CustomSamplerOptions(
-                    class_path="gigl.distributed.dist_neighbor_sampler.DistNeighborSampler",
-                ),
-            ),
         )
 
     @parameterized.expand(

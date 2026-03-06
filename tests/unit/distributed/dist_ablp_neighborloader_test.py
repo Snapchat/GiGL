@@ -15,7 +15,6 @@ from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
-from gigl.distributed.sampler_options import CustomSamplerOptions, SamplerOptions
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -304,30 +303,6 @@ def _run_toy_heterogeneous_ablp(
     assert_tensor_equality(
         torch.tensor(global_anchor_nodes), datum[anchor_node_type].batch, dim=0
     )
-
-    shutdown_rpc()
-
-
-def _run_distributed_ablp_loader_with_sampler_options(
-    _,
-    dataset: DistDataset,
-    expected_data_count: int,
-    sampler_options: SamplerOptions,
-):
-    create_test_process_group()
-    loader = DistABLPLoader(
-        dataset=dataset,
-        num_neighbors=[2, 2],
-        input_nodes=to_homogeneous(dataset.train_node_ids),
-        pin_memory_device=torch.device("cpu"),
-        sampler_options=sampler_options,
-    )
-    count = 0
-    for datum in loader:
-        assert isinstance(datum, Data)
-        assert hasattr(datum, "y_positive")
-        count += 1
-    assert count == expected_data_count
 
     shutdown_rpc()
 
@@ -942,47 +917,6 @@ class DistABLPLoaderTest(TestCase):
                 expected_negative_labels,  # expected_negative_labels
             ),
         ),
-
-    def test_ablp_loader_with_custom_sampler_options(self):
-        create_test_process_group()
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-
-        gbml_config_pb_wrapper = (
-            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
-            )
-        )
-
-        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
-        )
-
-        splitter = DistNodeAnchorLinkSplitter(
-            sampling_direction="in", should_convert_labels_to_edges=True
-        )
-
-        dataset = build_dataset(
-            serialized_graph_metadata=serialized_graph_metadata,
-            sample_edge_direction="in",
-            splitter=splitter,
-        )
-
-        assert dataset.train_node_ids is not None, "Train node ids must exist."
-
-        mp.spawn(
-            fn=_run_distributed_ablp_loader_with_sampler_options,
-            args=(
-                dataset,
-                to_homogeneous(dataset.train_node_ids).numel(),
-                CustomSamplerOptions(
-                    class_path="gigl.distributed.dist_neighbor_sampler.DistNeighborSampler",
-                ),
-            ),
-        )
 
     @parameterized.expand(
         [
