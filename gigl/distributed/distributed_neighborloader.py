@@ -21,7 +21,7 @@ from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
@@ -60,7 +60,7 @@ class DistNeighborLoader(BaseDistLoader):
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
-        num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
+        num_neighbors: Optional[Union[list[int], dict[EdgeType, list[int]]]] = None,
         input_nodes: Optional[
             Union[
                 torch.Tensor,
@@ -99,11 +99,13 @@ class DistNeighborLoader(BaseDistLoader):
         Args:
             dataset (DistDataset | RemoteDistDataset): The dataset to sample from.
             If this is a `RemoteDistDataset`, then we assumed to be in "Graph Store" mode.
-            num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
+            num_neighbors (Optional[list[int] or dict[Tuple[str, str, str], list[int]]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
+                Either ``num_neighbors`` or ``sampler_options`` must be provided.
+                If both are provided with ``KHopNeighborSamplerOptions``, they must match.
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
@@ -157,6 +159,10 @@ class DistNeighborLoader(BaseDistLoader):
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
+
+        num_neighbors, sampler_options = resolve_sampler_options(
+            num_neighbors, sampler_options
+        )
 
         # Resolve distributed context
         runtime = BaseDistLoader.resolve_runtime(
