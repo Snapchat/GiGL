@@ -17,7 +17,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -323,15 +323,15 @@ class DistABLPLoader(BaseDistLoader):
             drop_last=drop_last,
         )
 
-        # Build the sampler: a pre-constructed producer for colocated mode,
+        # Build the producer: a pre-constructed producer for colocated mode,
         # or an RPC callable for graph store mode.
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
-            sampler: Union[
-                DistABLPSamplingProducer, Callable[..., int]
-            ] = DistABLPSamplingProducer(
+            producer: Union[
+                DistSamplingProducer, Callable[..., int]
+            ] = DistSamplingProducer(
                 dataset,
                 sampler_input,
                 sampling_config,
@@ -339,7 +339,7 @@ class DistABLPLoader(BaseDistLoader):
                 channel,
             )
         else:
-            sampler = DistServer.create_sampling_ablp_producer
+            producer = DistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
@@ -351,7 +351,7 @@ class DistABLPLoader(BaseDistLoader):
             sampling_config=sampling_config,
             device=device,
             runtime=runtime,
-            sampler=sampler,
+            producer=producer,
             process_start_gap_seconds=process_start_gap_seconds,
         )
 
