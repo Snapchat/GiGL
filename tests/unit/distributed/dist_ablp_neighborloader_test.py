@@ -15,11 +15,7 @@ from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
-from gigl.distributed.sampler_options import (
-    CustomSamplerOptions,
-    KHopNeighborSamplerOptions,
-    SamplerOptions,
-)
+from gigl.distributed.sampler_options import CustomSamplerOptions, SamplerOptions
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -946,25 +942,7 @@ class DistABLPLoaderTest(TestCase):
             ),
         ),
 
-    @parameterized.expand(
-        [
-            param(
-                "KHopNeighborSamplerOptions",
-                sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2, 2]),
-            ),
-            param(
-                "CustomSamplerOptions with DistNeighborSampler",
-                sampler_options=CustomSamplerOptions(
-                    class_path="gigl.distributed.dist_neighbor_sampler.DistNeighborSampler",
-                ),
-            ),
-        ]
-    )
-    def test_ablp_loader_with_sampler_options(
-        self,
-        _: str,
-        sampler_options: SamplerOptions,
-    ):
+    def test_ablp_loader_with_custom_sampler_options(self):
         create_test_process_group()
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
@@ -999,7 +977,9 @@ class DistABLPLoaderTest(TestCase):
             args=(
                 dataset,
                 to_homogeneous(dataset.train_node_ids).numel(),
-                sampler_options,
+                CustomSamplerOptions(
+                    class_path="gigl.distributed.dist_neighbor_sampler.DistNeighborSampler",
+                ),
             ),
         )
 

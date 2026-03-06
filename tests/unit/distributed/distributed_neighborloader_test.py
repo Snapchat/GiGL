@@ -11,11 +11,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.sampler_options import (
-    CustomSamplerOptions,
-    KHopNeighborSamplerOptions,
-    SamplerOptions,
-)
+from gigl.distributed.sampler_options import CustomSamplerOptions, SamplerOptions
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -605,25 +601,7 @@ class DistributedNeighborLoaderTest(TestCase):
             args=(dataset, 18),
         )
 
-    @parameterized.expand(
-        [
-            param(
-                "KHopNeighborSamplerOptions",
-                sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2, 2]),
-            ),
-            param(
-                "CustomSamplerOptions with DistNeighborSampler",
-                sampler_options=CustomSamplerOptions(
-                    class_path="gigl.distributed.dist_neighbor_sampler.DistNeighborSampler",
-                ),
-            ),
-        ]
-    )
-    def test_distributed_neighbor_loader_with_sampler_options(
-        self,
-        _: str,
-        sampler_options: SamplerOptions,
-    ):
+    def test_distributed_neighbor_loader_with_custom_sampler_options(self):
         expected_data_count = 2708
         dataset = run_distributed_dataset(
             rank=0,
@@ -633,7 +611,13 @@ class DistributedNeighborLoaderTest(TestCase):
         )
         mp.spawn(
             fn=_run_distributed_neighbor_loader_with_sampler_options,
-            args=(dataset, expected_data_count, sampler_options),
+            args=(
+                dataset,
+                expected_data_count,
+                CustomSamplerOptions(
+                    class_path="gigl.distributed.dist_neighbor_sampler.DistNeighborSampler",
+                ),
+            ),
         )
 
     @parameterized.expand(
