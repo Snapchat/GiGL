@@ -1,19 +1,25 @@
+import io
 import os
 import socket
+import time
 from typing import Optional
 
 import torch
 
+from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.vertex_ai_context import (
     ClusterSpec,
     get_cluster_spec,
+    get_vertex_ai_job_id,
     is_currently_running_in_vertex_ai_job,
 )
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
 )
+from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 
@@ -207,6 +213,64 @@ def get_internal_ip_from_all_ranks() -> list[str]:
     return ip_list
 
 
+def write_readiness_signal(readiness_uri: Uri) -> None:
+    """Write a sentinel file to signal that storage nodes are ready.
+
+    Should be called by the master storage node (storage_rank == 0) after all
+    storage nodes have finished loading their datasets.
+
+    Args:
+        readiness_uri: The URI to write the sentinel file to.
+            Supports both GcsUri (production) and LocalUri (testing).
+    """
+    logger.info(f"Writing readiness signal to {readiness_uri}")
+    file_loader = FileLoader()
+    file_loader.load_from_filelike(readiness_uri, io.BytesIO(b"ready"))
+    logger.info(f"Readiness signal written to {readiness_uri}")
+
+
+def wait_for_readiness_signal(
+    readiness_uri: Uri,
+    timeout: float = 3600.0,
+    poll_interval: float = 10.0,
+    log_every_n_attempts: int = 10,
+) -> None:
+    """Poll for a readiness sentinel file before initiating RPC connections.
+
+    Should be called by compute nodes before calling ``init_client()``.
+
+    Args:
+        readiness_uri: The URI to poll for the sentinel file.
+            Supports both GcsUri (production) and LocalUri (testing).
+        timeout: Maximum time in seconds to wait for the signal. Defaults to 3600.
+        poll_interval: Time in seconds between poll attempts. Defaults to 10.
+
+    Raises:
+        TimeoutError: If the readiness signal is not found within the timeout.
+    """
+    logger.info(
+        f"Waiting for readiness signal at {readiness_uri} (timeout={timeout}s, poll_interval={poll_interval}s)"
+    )
+    file_loader = FileLoader()
+    start_time = time.monotonic()
+    attempt = 0
+    while True:
+        if file_loader.does_uri_exist(readiness_uri):
+            logger.info(f"Readiness signal detected at {readiness_uri}")
+            return
+        elapsed = time.monotonic() - start_time
+        if elapsed >= timeout:
+            raise TimeoutError(
+                f"Timed out after {timeout}s waiting for readiness signal at {readiness_uri}"
+            )
+        if attempt % log_every_n_attempts == 0:
+            logger.info(
+                f"Readiness signal not yet available at {readiness_uri}. Elapsed: {elapsed:.0f}s. Retrying in {poll_interval}s..."
+            )
+        attempt += 1
+        time.sleep(poll_interval)
+
+
 def get_graph_store_info() -> GraphStoreInfo:
     """
     Get the information about the graph store cluster.
@@ -265,6 +329,14 @@ def get_graph_store_info() -> GraphStoreInfo:
         os.environ.get(COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY, "1")
     )
 
+    readiness_uri = (
+        get_resource_config().temp_assets_bucket_path
+        / "gigl"
+        / "graph_store"
+        / get_vertex_ai_job_id()
+        / "graph_store_readiness.txt"
+    )
+
     return GraphStoreInfo(
         num_storage_nodes=num_storage_nodes,
         num_compute_nodes=num_compute_nodes,
@@ -277,6 +349,7 @@ def get_graph_store_info() -> GraphStoreInfo:
         compute_cluster_master_port=compute_cluster_master_port,
         rpc_master_port=storage_rpc_port,
         rpc_wait_port=storage_rpc_wait_port,
+        readiness_uri=readiness_uri,
     )
 
 

@@ -2,6 +2,7 @@ from typing import Callable, Optional
 
 import torch
 
+from gigl.common import LocalUri
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_free_port, get_free_ports
 from gigl.env.distributed import GraphStoreInfo
@@ -163,6 +164,7 @@ class MockRemoteDistDataset(RemoteDistDataset):
             num_processes_per_compute=num_processes_per_compute,
             rpc_master_port=12348,
             rpc_wait_port=12349,
+            readiness_uri=LocalUri("/tmp/mock_readiness.txt"),
         )
         self._mock_compute_node_rank = compute_node_rank
         self._mock_edge_types = edge_types
