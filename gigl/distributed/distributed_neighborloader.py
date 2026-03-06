@@ -251,7 +251,7 @@ class DistNeighborLoader(BaseDistLoader):
                 sampling_config,
                 worker_options,
                 channel,
-                sampler_options=sampler_options,
+                sampler_options,
             )
         else:
             producer = GiglDistServer.create_sampling_producer

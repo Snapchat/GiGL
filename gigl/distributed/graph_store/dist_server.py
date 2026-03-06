@@ -477,7 +477,7 @@ class DistServer:
                     sampling_config,
                     worker_options,
                     buffer,
-                    sampler_options=sampler_options,
+                    sampler_options,
                 )
                 producer.init()
                 self._producer_pool[producer_id] = producer
