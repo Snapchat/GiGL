@@ -1,8 +1,9 @@
 """
 Transform HeteroData to Graph Transformer sequence input.
 
-TODO: Doesn't support multiple node types with different feature dim yet.
+TODO: Doesn't support multiple node types with different feature dim yet. --> Node features projector
 TODO: Doesn't support relative encoding used for attention bias yet.
+TODO: Doesn't support RW sampling, for that we can grab directly from data.ppr_edges, data.ppr_weight
 
 This module provides functionality to convert PyG HeteroData objects (typically
 batched 2-hop subgraphs) into sequence format suitable for Graph Transformers.
@@ -97,7 +98,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
 
-def hetero_to_graph_transformer_input(
+def hetero_data_to_graph_transformer_input(
     data: HeteroData,
     batch_size: int,
     max_seq_len: int,
@@ -374,7 +375,7 @@ class HeteroToGraphTransformerInput:
         self, data: HeteroData
     ) -> Tensor:
         """Transform HeteroData to Graph Transformer input."""
-        return hetero_to_graph_transformer_input(
+        return hetero_data_to_graph_transformer_input(
             data=data,
             batch_size=self.batch_size,
             max_seq_len=self.max_seq_len,
