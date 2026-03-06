@@ -160,5 +160,5 @@ def _init_client_rpc(
         master_port,
         num_rpc_threads=num_rpc_threads,
         is_dynamic=is_dynamic,
-        timeout=timeout,
+        rpc_timeout=timeout,
     )
