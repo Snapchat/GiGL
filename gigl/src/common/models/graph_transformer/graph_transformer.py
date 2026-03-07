@@ -244,6 +244,20 @@ class GraphTransformerEncoder(nn.Module):
         attention_dropout_rate: Dropout probability for attention weights.
         should_l2_normalize_embedding_layer_output: Whether to L2 normalize
             output embeddings.
+        pe_attr_names: List of positional encoding attribute names to concatenate
+            to node features. These should be node-level attributes stored by
+            transforms like ``AddHeteroRandomWalkPE`` or ``AddHeteroRandomWalkSE``.
+            Example: ``['random_walk_pe', 'random_walk_se']``.
+            If None, no positional encodings are attached. (default: None)
+        anchor_based_pe_attr_names: List of graph-level attribute names containing
+            sparse (N x N) matrices for anchor-based positional encodings. For each
+            node in the sequence, the value ``PE[anchor_idx, node_idx]`` is looked up
+            and concatenated to node features.
+            Example: ``['hop_distance']`` (from ``AddHeteroHopDistanceEncoding``).
+            If None, no anchor-based PEs are attached. (default: None)
+        feature_embedding_layer_dict: Optional ModuleDict mapping node types to
+            feature embedding layers. If provided, these are applied to node
+            features before node projection. (default: None)
 
     Example:
         >>> from gigl.src.common.models.graph_transformer.graph_transformer import (
@@ -273,6 +287,9 @@ class GraphTransformerEncoder(nn.Module):
         dropout_rate: float = 0.3,
         attention_dropout_rate: float = 0.0,
         should_l2_normalize_embedding_layer_output: bool = False,
+        pe_attr_names: Optional[list[str]] = None,
+        anchor_based_pe_attr_names: Optional[list[str]] = None,
+        feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -284,6 +301,9 @@ class GraphTransformerEncoder(nn.Module):
         self._should_l2_normalize_embedding_layer_output = (
             should_l2_normalize_embedding_layer_output
         )
+        self._pe_attr_names = pe_attr_names
+        self._anchor_based_pe_attr_names = anchor_based_pe_attr_names
+        self._feature_embedding_layer_dict = feature_embedding_layer_dict
 
         # Per-node-type input projection to hid_dim (like HGT's lin_dict)
         self._node_projection_dict = nn.ModuleDict(
@@ -319,8 +339,8 @@ class GraphTransformerEncoder(nn.Module):
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
-        output_node_types: list[NodeType],
-        device: torch.device,
+        output_node_types: Optional[list[NodeType]] = None,
+        device: Optional[torch.device] = None,
     ) -> dict[NodeType, torch.Tensor]:
         """Run the forward pass of the Graph Transformer encoder.
 
@@ -328,8 +348,8 @@ class GraphTransformerEncoder(nn.Module):
             data: Input HeteroData object with node features (``x_dict``)
                 and edge indices (``edge_index_dict``).
             output_node_types: List of node types for which to return output
-                embeddings.
-            device: Torch device for output tensors.
+                embeddings. If None, uses all node types in data.
+            device: Torch device for output tensors. If None, inferred from data.
 
         Returns:
             Dictionary mapping each requested node type to its output
@@ -337,6 +357,19 @@ class GraphTransformerEncoder(nn.Module):
             ``data`` comes from neighbor sampling, only seed/anchor node
             embeddings are produced (not sampled neighbors).
         """
+        # Infer device from data if not provided
+        if device is None:
+            device = next(iter(data.x_dict.values())).device
+
+        # Use all node types if not specified
+        if output_node_types is None:
+            output_node_types = list(data.node_types)
+
+        # 0. Apply feature embedding if provided
+        if self._feature_embedding_layer_dict is not None:
+            for node_type, emb_layer in self._feature_embedding_layer_dict.items():
+                data[node_type].x = emb_layer(data[node_type].x)
+
         # 1. Project all node features to hid_dim
         projected_x_dict = {
             node_type: self._node_projection_dict[str(node_type)](x.to(device))
@@ -380,6 +413,8 @@ class GraphTransformerEncoder(nn.Module):
                 max_seq_len=self._max_seq_len,
                 anchor_node_type=node_type,
                 hop_distance=self._hop_distance,
+                pe_attr_names=self._pe_attr_names,
+                anchor_based_pe_attr_names=self._anchor_based_pe_attr_names,
             )
 
             embeddings = self._encode_and_readout(sequences)
