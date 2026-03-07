@@ -2,7 +2,7 @@
 
 Adapted from RelGT's LocalModule (https://github.com/snap-stanford/relgt).
 Converts heterogeneous graph data into fixed-length sequences via
-``hetero_to_graph_transformer_input``, processes through a stack of pre-norm
+``heterodata_to_graph_transformer_input``, processes through a stack of pre-norm
 transformer encoder layers, then produces per-node embeddings via
 attention-weighted neighbor readout.
 
@@ -21,7 +21,7 @@ from torch import Tensor
 
 from gigl.src.common.models.layers.normalization import l2_normalize_embeddings
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.transforms.graph_transformer import hetero_to_graph_transformer_input
+from gigl.transforms.graph_transformer import heterodata_to_graph_transformer_input
 
 
 class FeedForwardNetwork(nn.Module):
@@ -216,7 +216,7 @@ class GraphTransformerEncoder(nn.Module):
     """Graph Transformer encoder for heterogeneous graphs.
 
     Converts heterogeneous graph data into fixed-length sequences via
-    ``hetero_to_graph_transformer_input``, processes through pre-norm
+    ``heterodata_to_graph_transformer_input``, processes through pre-norm
     transformer encoder layers, and produces per-node embeddings via
     attention-weighted neighbor readout (from RelGT's LocalModule).
 
@@ -333,7 +333,9 @@ class GraphTransformerEncoder(nn.Module):
 
         Returns:
             Dictionary mapping each requested node type to its output
-            embeddings of shape ``(num_nodes_of_type, out_dim)``.
+            embeddings of shape ``(num_seed_nodes, out_dim)``. When
+            ``data`` comes from neighbor sampling, only seed/anchor node
+            embeddings are produced (not sampled neighbors).
         """
         # 1. Project all node features to hid_dim
         projected_x_dict = {
@@ -341,7 +343,8 @@ class GraphTransformerEncoder(nn.Module):
             for node_type, x in data.x_dict.items()
         }
 
-        # 2. Build projected HeteroData (same pattern as SimpleHGN)
+        # 2. Build projected HeteroData, preserving batch_size metadata
+        # from neighbor sampling (first batch_size nodes are seed/anchor nodes).
         init_dict: dict = {
             edge_type: {"edge_index": data.edge_index_dict[edge_type]}
             for edge_type in data.edge_index_dict.keys()
@@ -350,6 +353,11 @@ class GraphTransformerEncoder(nn.Module):
             {node_type: {"x": x} for node_type, x in projected_x_dict.items()}
         )
         projected_data = torch_geometric.data.hetero_data.HeteroData(init_dict)
+
+        # Preserve batch_size metadata so we only build sequences for seed nodes.
+        for nt in data.node_types:
+            if hasattr(data[nt], "batch_size"):
+                projected_data[nt].batch_size = data[nt].batch_size
 
         # 3. For each output node type, run transform + transformer
         node_typed_embeddings: dict[NodeType, torch.Tensor] = {}
@@ -361,10 +369,14 @@ class GraphTransformerEncoder(nn.Module):
                 )
                 continue
 
-            num_nodes = projected_data[node_type].num_nodes
-            sequences = hetero_to_graph_transformer_input(
+            # Use seed batch_size (from neighbor sampling) when available;
+            # fall back to num_nodes for non-sampled data (e.g., full-batch).
+            num_seed_nodes = getattr(
+                projected_data[node_type], "batch_size", projected_data[node_type].num_nodes
+            )
+            sequences = heterodata_to_graph_transformer_input(
                 data=projected_data,
-                batch_size=num_nodes,
+                batch_size=num_seed_nodes,
                 max_seq_len=self._max_seq_len,
                 anchor_node_type=node_type,
                 hop_distance=self._hop_distance,
