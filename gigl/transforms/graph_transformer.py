@@ -1,9 +1,7 @@
+# TODO: support RW sampling, edges from data.ppr_edge, data.ppr_weights
+# TODO: output attention bias as well
 """
 Transform HeteroData to Graph Transformer sequence input.
-
-TODO: Doesn't support multiple node types with different feature dim yet. --> Node features projector
-TODO: Doesn't support relative encoding used for attention bias yet.
-TODO: Doesn't support RW sampling, for that we can grab directly from data.ppr_edges, data.ppr_weight
 
 This module provides functionality to convert PyG HeteroData objects (typically
 batched 2-hop subgraphs) into sequence format suitable for Graph Transformers.
@@ -13,7 +11,7 @@ and creates a fixed-length sequence of node features with padding.
 
 Example Usage:
     >>> from torch_geometric.data import HeteroData
-    >>> from gigl.transforms.graph_transformer import HeteroToGraphTransformerInput
+    >>> from gigl.transforms.graph_transformer import heterodata_to_graph_transformer_input
     >>>
     >>> # Create batched HeteroData (e.g., from NeighborLoader)
     >>> # First batch_size nodes in each node type are anchor nodes
@@ -23,69 +21,43 @@ Example Usage:
     >>> data['user', 'buys', 'item'].edge_index = ...
     >>>
     >>> # Transform to Graph Transformer input
-    >>> transform = HeteroToGraphTransformerInput(
+    >>> sequences = heterodata_to_graph_transformer_input(
+    ...     data=data,
     ...     batch_size=32,
     ...     max_seq_len=128,
     ...     anchor_node_type='user',
     ... )
-    >>> sequences = transform(data)
     >>> # sequences: (batch_size, max_seq_len, feature_dim)
 
-    Using with PyTorch TransformerEncoderLayer:
-    >>> import torch.nn as nn
-    >>>
-    >>> feature_dim = 64
-    >>> encoder_layer = nn.TransformerEncoderLayer(
-    ...     d_model=feature_dim,
-    ...     nhead=8,
-    ...     dim_feedforward=256,
-    ...     batch_first=True,
+    With Positional Encodings:
+    You can attach node-level positional encodings (computed by transforms in
+    gigl/transforms/add_positional_encodings.py) to node features:
+
+    >>> from torch_geometric.transforms import Compose
+    >>> from gigl.transforms.add_positional_encodings import (
+    ...     AddHeteroRandomWalkPE,
+    ...     AddHeteroRandomWalkSE,
+    ...     AddHeteroHopDistanceEncoding,
     ... )
-    >>> transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
     >>>
-    >>> # Transform data and pass to transformer
-    >>> sequences = transform(data)
-    >>> # Create attention mask from padding (padding_value positions)
-    >>> key_padding_mask = (sequences.sum(dim=-1) == 0)  # True where all features are 0
-    >>> output = transformer_encoder(sequences, src_key_padding_mask=key_padding_mask)
-    >>> # output: (batch_size, max_seq_len, feature_dim)
-
-    Handling Multiple Node Types with Different Feature Dimensions:
-    When node types have different feature dimensions, project them to a common
-    dimension BEFORE calling to_homogeneous(). This ensures all nodes have the
-    same feature dimension when converted to sequences.
-
-    >>> import torch.nn as nn
-    >>> from torch_geometric.data import HeteroData
+    >>> # First apply PE transforms to the data
+    >>> pe_transform = Compose([
+    ...     AddHeteroRandomWalkPE(walk_length=8),
+    ...     AddHeteroRandomWalkSE(walk_length=8),
+    ...     AddHeteroHopDistanceEncoding(h_max=5),
+    ... ])
+    >>> data = pe_transform(data)
     >>>
-    >>> # Define per-node-type linear projections
-    >>> class NodeTypeProjector(nn.Module):
-    ...     def __init__(self, input_dims: dict, output_dim: int):
-    ...         super().__init__()
-    ...         self.projectors = nn.ModuleDict({
-    ...             node_type: nn.Linear(in_dim, output_dim)
-    ...             for node_type, in_dim in input_dims.items()
-    ...         })
-    ...
-    ...     def forward(self, data: HeteroData) -> HeteroData:
-    ...         # Project each node type's features to common dimension
-    ...         for node_type, projector in self.projectors.items():
-    ...             if node_type in data.node_types:
-    ...                 data[node_type].x = projector(data[node_type].x)
-    ...         return data
-    >>>
-    >>> # Example usage
-    >>> input_dims = {'user': 128, 'item': 64, 'category': 32}
-    >>> common_dim = 256
-    >>> projector = NodeTypeProjector(input_dims, common_dim)
-    >>>
-    >>> # In your forward pass:
-    >>> # 1. Project node features to common dimension
-    >>> data = projector(data)
-    >>> # 2. Now all node types have same feature dim, safe to transform
-    >>> sequences = transform(data)
-    >>> # 3. Pass to transformer
-    >>> output = transformer_encoder(sequences)
+    >>> # Transform to sequences with PE concatenated
+    >>> sequences = heterodata_to_graph_transformer_input(
+    ...     data=data,
+    ...     batch_size=32,
+    ...     max_seq_len=128,
+    ...     anchor_node_type='user',
+    ...     pe_attr_names=['random_walk_pe', 'random_walk_se'],  # Node-level PE
+    ...     anchor_based_pe_attr_names=['hop_distance'],  # Anchor-based PE (N×N sparse CSR)
+    ... )
+    >>> # sequences: (batch_size, max_seq_len, feature_dim + 8 + 8 + 1)
 """
 
 from typing import Optional
@@ -98,7 +70,67 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
 
-def hetero_data_to_graph_transformer_input(
+def _concatenate_positional_encodings(
+    data: HeteroData,
+    homo_x: Tensor,
+    pe_attr_names: list[str],
+    device: torch.device,
+) -> Tensor:
+    """
+    Concatenate positional encodings from HeteroData to homogeneous node features.
+
+    Positional encodings are stored as per-node-type attributes (e.g.,
+    data['user'].random_walk_pe). This function retrieves them for each node type,
+    orders them according to the homogeneous graph ordering (alphabetically by
+    node type), and concatenates them to the node features.
+
+    Args:
+        data: HeteroData with positional encodings as node attributes.
+        homo_x: (num_nodes, feature_dim) homogeneous node features.
+        pe_attr_names: List of attribute names to concatenate (e.g., ['random_walk_pe']).
+        device: Device for tensors.
+
+    Returns:
+        (num_nodes, feature_dim + sum(pe_dims)) node features with PE concatenated.
+    """
+    # Node types are sorted alphabetically in to_homogeneous()
+    sorted_node_types = sorted(data.node_types)
+
+    pe_tensors = []
+    for attr_name in pe_attr_names:
+        # Collect PE for each node type in sorted order
+        pe_parts = []
+        for node_type in sorted_node_types:
+            node_store = data[node_type]
+            if hasattr(node_store, attr_name):
+                pe = getattr(node_store, attr_name)
+                pe_parts.append(pe.to(device))
+            else:
+                # If PE not available for this node type, create zeros
+                # Infer PE dimension from another node type that has it
+                pe_dim = None
+                for nt in sorted_node_types:
+                    if hasattr(data[nt], attr_name):
+                        pe_dim = getattr(data[nt], attr_name).size(-1)
+                        break
+                if pe_dim is None:
+                    raise ValueError(
+                        f"Positional encoding '{attr_name}' not found in any node type. "
+                        f"Make sure to apply the corresponding transform (e.g., "
+                        f"AddHeteroRandomWalkPE) before calling this function."
+                    )
+                pe_parts.append(
+                    torch.zeros(node_store.num_nodes, pe_dim, device=device)
+                )
+
+        # Concatenate PE for all node types (in homogeneous order)
+        pe_tensors.append(torch.cat(pe_parts, dim=0))
+
+    # Concatenate all PEs to node features
+    return torch.cat([homo_x] + pe_tensors, dim=-1)
+
+
+def heterodata_to_graph_transformer_input(
     data: HeteroData,
     batch_size: int,
     max_seq_len: int,
@@ -107,6 +139,8 @@ def hetero_data_to_graph_transformer_input(
     hop_distance: int = 2,
     include_anchor_first: bool = True,
     padding_value: float = 0.0,
+    pe_attr_names: Optional[list[str]] = None,
+    anchor_based_pe_attr_names: Optional[list[str]] = None,
 ) -> Tensor:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
@@ -128,9 +162,21 @@ def hetero_data_to_graph_transformer_input(
         hop_distance: Number of hops to consider for neighborhood (default: 2).
         include_anchor_first: If True, anchor node is always first in sequence.
         padding_value: Value to use for padding (default: 0.0).
+        pe_attr_names: List of positional encoding attribute names to concatenate
+            to node features. These should be node-level attributes stored by
+            transforms like AddHeteroRandomWalkPE or AddHeteroRandomWalkSE.
+            Example: ['random_walk_pe', 'random_walk_se']
+            If None, no positional encodings are attached. (default: None)
+        anchor_based_pe_attr_names: List of graph-level attribute names containing
+            sparse (N x N) matrices for anchor-based positional encodings. For each
+            node in the sequence, the value PE[anchor_idx, node_idx] is looked up
+            and concatenated to node features.
+            Examples: ['hop_distance'] (from AddHeteroHopDistanceEncoding)
+            If None, no anchor-based PEs are attached. (default: None)
 
     Returns:
         sequences: (batch_size, max_seq_len, feature_dim) padded node features
+            where feature_dim includes concatenated positional encodings if specified.
     """
     device = data[anchor_node_type].x.device
 
@@ -140,6 +186,15 @@ def hetero_data_to_graph_transformer_input(
     homo_edge_index = homo_data.edge_index  # (2, num_edges)
 
     num_nodes = homo_data.num_nodes
+
+    # Concatenate positional encodings to node features if specified
+    if pe_attr_names:
+        homo_x = _concatenate_positional_encodings(
+            data=data,
+            homo_x=homo_x,
+            pe_attr_names=pe_attr_names,
+            device=device,
+        )
 
     # Get node type to index mapping (sorted alphabetically)
     sorted_node_types = sorted(data.node_types)
@@ -169,6 +224,18 @@ def hetero_data_to_graph_transformer_input(
         device=device,
     )
 
+    # Get anchor-based PE matrices if specified
+    anchor_based_pe_matrices = []
+    if anchor_based_pe_attr_names:
+        for attr_name in anchor_based_pe_attr_names:
+            if hasattr(data, attr_name):
+                anchor_based_pe_matrices.append(getattr(data, attr_name))
+            else:
+                raise ValueError(
+                    f"Anchor-based PE attribute '{attr_name}' not found in data. "
+                    f"Make sure to apply the corresponding transform first."
+                )
+
     # Build sequences for each anchor using the sparse reachable mask
     sequences = _build_sequences_from_sparse_neighbors(
         reachable=reachable,
@@ -178,6 +245,7 @@ def hetero_data_to_graph_transformer_input(
         include_anchor_first=include_anchor_first,
         padding_value=padding_value,
         device=device,
+        anchor_based_pe_matrices=anchor_based_pe_matrices if anchor_based_pe_matrices else None,
     )
 
     return sequences
@@ -257,6 +325,7 @@ def _build_sequences_from_sparse_neighbors(
     include_anchor_first: bool,
     padding_value: float,
     device: torch.device,
+    anchor_based_pe_matrices: Optional[list[Tensor]] = None,
 ) -> Tensor:
     """
     Build padded sequences from sparse reachability information.
@@ -269,16 +338,23 @@ def _build_sequences_from_sparse_neighbors(
         include_anchor_first: Whether to put anchor first
         padding_value: Padding value for sequences
         device: Device for tensors
+        anchor_based_pe_matrices: Optional list of (num_nodes, num_nodes) sparse tensors
+            containing pairwise values. For each matrix, the value at [anchor, node]
+            is looked up and concatenated to node features.
 
     Returns:
-        sequences: (batch_size, max_seq_len, feature_dim)
+        sequences: (batch_size, max_seq_len, feature_dim + num_pe_matrices)
     """
     batch_size = anchor_indices.size(0)
-    feature_dim = node_features.size(1)
+    base_feature_dim = node_features.size(1)
+
+    # Output feature dim includes one value per anchor-based PE matrix
+    num_anchor_pe = len(anchor_based_pe_matrices) if anchor_based_pe_matrices else 0
+    output_feature_dim = base_feature_dim + num_anchor_pe
 
     # Initialize output
     sequences = torch.full(
-        (batch_size, max_seq_len, feature_dim),
+        (batch_size, max_seq_len, output_feature_dim),
         padding_value,
         dtype=node_features.dtype,
         device=device,
@@ -291,12 +367,18 @@ def _build_sequences_from_sparse_neighbors(
 
     if batch_idx.numel() == 0:
         if include_anchor_first:
-            sequences[:, 0] = node_features[anchor_indices]
+            sequences[:, 0, :base_feature_dim] = node_features[anchor_indices]
+            # Anchor-based PE for self is 0 (distance to self)
+            if num_anchor_pe > 0:
+                sequences[:, 0, base_feature_dim:] = 0.0
         return sequences
 
     if include_anchor_first:
         # Place anchors at position 0
-        sequences[:, 0] = node_features[anchor_indices]
+        sequences[:, 0, :base_feature_dim] = node_features[anchor_indices]
+        # Anchor-based PE for self is 0
+        if num_anchor_pe > 0:
+            sequences[:, 0, base_feature_dim:] = 0.0
 
         # Remove anchors from node list
         keep = node_idx != anchor_indices[batch_idx]
@@ -321,76 +403,92 @@ def _build_sequences_from_sparse_neighbors(
     group_starts = torch.nonzero(is_new_batch, as_tuple=True)[0]
     positions = torch.arange(n, device=device) - group_starts[group_id] + start_pos
 
-    # Filter to max_seq_len and scatter
+    # Filter to max_seq_len
     valid = positions < max_seq_len
-    sequences[batch_idx[valid], positions[valid]] = node_features[node_idx[valid]]
+    valid_batch_idx = batch_idx[valid]
+    valid_positions = positions[valid]
+    valid_node_idx = node_idx[valid]
+
+    # Scatter node features
+    sequences[valid_batch_idx, valid_positions, :base_feature_dim] = node_features[valid_node_idx]
+
+    # Look up and scatter anchor-based PE values
+    if anchor_based_pe_matrices:
+        anchor_for_entry = anchor_indices[valid_batch_idx]
+
+        for pe_idx, pe_matrix in enumerate(anchor_based_pe_matrices):
+            pe_values = _lookup_csr_values(
+                csr_matrix=pe_matrix,
+                row_indices=anchor_for_entry,
+                col_indices=valid_node_idx,
+            )
+            sequences[valid_batch_idx, valid_positions, base_feature_dim + pe_idx] = pe_values
 
     return sequences
 
 
-class HeteroToGraphTransformerInput:
+def _lookup_csr_values(
+    csr_matrix: Tensor,
+    row_indices: Tensor,
+    col_indices: Tensor,
+    default_value: float = 0.0,
+) -> Tensor:
     """
-    Transform class for converting HeteroData to Graph Transformer input.
+    Look up values in a CSR sparse matrix for given (row, col) pairs.
 
-    This class wraps the `hetero_to_graph_transformer_input` function and can
-    be used as a callable transform in data pipelines.
+    Vectorized CSR lookup: for each query, slice the row and search for the column.
+    Time complexity: O(n * avg_nnz_per_row), typically O(n) for sparse matrices.
 
     Args:
-        batch_size: Number of anchor nodes per batch.
-        max_seq_len: Maximum sequence length for transformer input.
-        anchor_node_type: The node type of anchor nodes.
-        feature_dim: Output feature dimension (optional).
-        hop_distance: Number of hops to consider (default: 2).
-        include_anchor_first: Put anchor node first in sequence (default: True).
-        padding_value: Value for padding (default: 0.0).
+        csr_matrix: (num_rows, num_cols) sparse CSR tensor
+        row_indices: (n,) row indices to look up
+        col_indices: (n,) column indices to look up
+        default_value: Value for missing entries (default: 0.0)
 
-    Example:
-        >>> transform = HeteroToGraphTransformerInput(
-        ...     batch_size=32,
-        ...     max_seq_len=128,
-        ...     anchor_node_type='user',
-        ... )
-        >>> sequences = transform(data)
+    Returns:
+        (n,) values from csr_matrix[row, col], or default_value if not present
     """
+    n = row_indices.size(0)
+    device = row_indices.device
 
-    def __init__(
-        self,
-        batch_size: int,
-        max_seq_len: int,
-        anchor_node_type: NodeType,
-        feature_dim: Optional[int] = None,
-        hop_distance: int = 2,
-        include_anchor_first: bool = True,
-        padding_value: float = 0.0,
-    ) -> None:
-        self.batch_size = batch_size
-        self.max_seq_len = max_seq_len
-        self.anchor_node_type = anchor_node_type
-        self.feature_dim = feature_dim
-        self.hop_distance = hop_distance
-        self.include_anchor_first = include_anchor_first
-        self.padding_value = padding_value
+    if n == 0:
+        return torch.zeros(0, device=device, dtype=torch.float)
 
-    def __call__(
-        self, data: HeteroData
-    ) -> Tensor:
-        """Transform HeteroData to Graph Transformer input."""
-        return hetero_data_to_graph_transformer_input(
-            data=data,
-            batch_size=self.batch_size,
-            max_seq_len=self.max_seq_len,
-            anchor_node_type=self.anchor_node_type,
-            feature_dim=self.feature_dim,
-            hop_distance=self.hop_distance,
-            include_anchor_first=self.include_anchor_first,
-            padding_value=self.padding_value,
-        )
+    crow_indices = csr_matrix.crow_indices()
+    col_indices_csr = csr_matrix.col_indices()
+    values_csr = csr_matrix.values()
 
-    def __repr__(self) -> str:
-        return (
-            f'{self.__class__.__name__}('
-            f'batch_size={self.batch_size}, '
-            f'max_seq_len={self.max_seq_len}, '
-            f'anchor_node_type={self.anchor_node_type!r}, '
-            f'hop_distance={self.hop_distance})'
-        )
+    # Get row start/end pointers
+    row_starts = crow_indices[row_indices]
+    row_ends = crow_indices[row_indices + 1]
+    row_lengths = row_ends - row_starts
+    max_row_len = row_lengths.max().item()
+
+    if max_row_len == 0:
+        return torch.full((n,), default_value, device=device, dtype=torch.float)
+
+    # Build offset matrix: (n, max_row_len)
+    offsets = row_starts.unsqueeze(1) + torch.arange(max_row_len, device=device)
+    valid_mask = offsets < row_ends.unsqueeze(1)
+
+    # Safe indexing with clamping
+    nnz = col_indices_csr.size(0)
+    offsets_clamped = offsets.clamp(max=max(nnz - 1, 0))
+
+    # Get columns at offsets and find matches
+    cols_at_offsets = col_indices_csr[offsets_clamped]
+    col_matches = (cols_at_offsets == col_indices.unsqueeze(1)) & valid_mask
+
+    # Find which queries have matches
+    found = col_matches.any(dim=1)
+
+    # Initialize output
+    result = torch.full((n,), default_value, device=device, dtype=torch.float)
+
+    if found.any():
+        # Get match positions and retrieve values
+        match_offsets = col_matches.float().argmax(dim=1)
+        value_indices = row_starts[found] + match_offsets[found]
+        result[found] = values_csr[value_indices].float()
+
+    return result

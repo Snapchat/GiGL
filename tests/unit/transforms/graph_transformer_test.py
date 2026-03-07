@@ -10,7 +10,7 @@ from torch_geometric.data import HeteroData
 
 from gigl.transforms.graph_transformer import (
     HeteroToGraphTransformerInput,
-    hetero_to_graph_transformer_input,
+    heterodata_to_graph_transformer_input,
     _get_k_hop_neighbors_sparse,
 )
 from tests.test_assets.test_case import TestCase
@@ -161,13 +161,13 @@ class TestGetKHopNeighborsSparse(TestCase):
 
 
 class TestHeteroToGraphTransformerInput(TestCase):
-    """Tests for hetero_to_graph_transformer_input function."""
+    """Tests for heterodata_to_graph_transformer_input function."""
 
     def test_basic_transform(self):
         """Test basic transformation with simple data."""
         data = create_simple_hetero_data()
 
-        sequences, attention_mask, neighbor_counts = hetero_to_graph_transformer_input(
+        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=2,
             max_seq_len=10,
@@ -187,7 +187,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         """Test that attention mask correctly identifies valid positions."""
         data = create_simple_hetero_data()
 
-        sequences, attention_mask, neighbor_counts = hetero_to_graph_transformer_input(
+        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=20,
@@ -213,7 +213,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         # 'item' comes before 'user' alphabetically, so user offset = num_items = 2
         anchor_feature = homo_data.x[2]  # First user node
 
-        sequences, _, _ = hetero_to_graph_transformer_input(
+        sequences, _, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=10,
@@ -229,7 +229,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         data = create_simple_hetero_data()
 
         # Test with 'item' as anchor
-        sequences, attention_mask, neighbor_counts = hetero_to_graph_transformer_input(
+        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=10,
@@ -244,7 +244,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         """Test with larger batch size."""
         data = create_larger_hetero_data(num_users=20, num_items=10)
 
-        sequences, attention_mask, neighbor_counts = hetero_to_graph_transformer_input(
+        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=8,
             max_seq_len=50,
@@ -261,7 +261,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         """Test that sequences are truncated to max_seq_len."""
         data = create_larger_hetero_data(num_users=50, num_items=50)
 
-        sequences, attention_mask, _ = hetero_to_graph_transformer_input(
+        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=5,
             max_seq_len=10,  # Small max_seq_len
@@ -279,7 +279,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         """Test custom padding value."""
         data = create_simple_hetero_data()
 
-        sequences, attention_mask, neighbor_counts = hetero_to_graph_transformer_input(
+        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=50,
@@ -340,7 +340,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         feature_dim = 32  # Must match the feature dim in create_larger_hetero_data
 
         # Transform HeteroData to sequences
-        sequences, attention_mask, neighbor_counts = hetero_to_graph_transformer_input(
+        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -384,7 +384,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = hetero_to_graph_transformer_input(
+        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -420,7 +420,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = hetero_to_graph_transformer_input(
+        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -456,7 +456,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = hetero_to_graph_transformer_input(
+        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -498,7 +498,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         feature_dim = 32
         num_classes = 5
 
-        sequences, attention_mask, _ = hetero_to_graph_transformer_input(
+        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -559,7 +559,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = hetero_to_graph_transformer_input(
+        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
