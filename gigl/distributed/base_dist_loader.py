@@ -562,6 +562,8 @@ class BaseDistLoader(DistLoader):
             torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
 
+    _MAX_EPOCH_CATCH_UP_RETRIES: int = 10
+
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
         self._num_recv = 0
@@ -570,7 +572,32 @@ class BaseDistLoader(DistLoader):
         elif self._is_mp_worker:
             self._mp_producer.produce_all()
         else:
-            rpc_futures: list[torch.futures.Future[None]] = []
+            self._request_new_epoch_production()
+            self._channel.reset()
+        self._epoch += 1
+        return self
+
+    def _request_new_epoch_production(self) -> None:
+        """Request production from all servers, retrying only on genuine epoch skew.
+
+        In graph store mode, multiple GPUs on the same compute node share a
+        producer per server (same ``worker_key``).  Only the first GPU to call
+        ``start_new_epoch_sampling`` for a given epoch triggers
+        ``produce_all()``; subsequent calls at the same epoch are no-ops
+        because the data is already flowing through the shared buffer.
+
+        Two distinct cases are handled:
+
+        * **Same epoch** (``self._epoch >= max_server_epoch``): another GPU
+          already triggered production for this epoch.  Data is in the shared
+          buffer — return immediately without retrying.
+        * **Behind** (``self._epoch < max_server_epoch``): our epoch is
+          genuinely stale.  Fast-forward past the server's epoch and retry so
+          ``produce_all()`` is guaranteed to fire.  This typically resolves in
+          two iterations (first detects staleness, second triggers).
+        """
+        for attempt in range(self._MAX_EPOCH_CATCH_UP_RETRIES):
+            rpc_futures: list[torch.futures.Future[tuple[int, bool]]] = []
             for server_rank, producer_id in zip(
                 self._server_rank_list, self._producer_id_list
             ):
@@ -581,7 +608,33 @@ class BaseDistLoader(DistLoader):
                     self._epoch,
                 )
                 rpc_futures.append(fut)
-            torch.futures.wait_all(rpc_futures)
-            self._channel.reset()
-        self._epoch += 1
-        return self
+
+            results = [fut.wait() for fut in rpc_futures]
+            any_produced = any(produced for _, produced in results)
+
+            if any_produced:
+                return
+
+            # No server produced — check whether we are genuinely behind or
+            # another GPU sharing the same producer simply beat us.
+            max_server_epoch = max(server_epoch for server_epoch, _ in results)
+
+            if self._epoch >= max_server_epoch:
+                # Another GPU already triggered production for this epoch.
+                # Data is flowing through the shared buffer — nothing to do.
+                return
+
+            # Our epoch is genuinely behind the server's.  Fast-forward and
+            # retry so the next RPC has epoch > max_server_epoch.
+            logger.warning(
+                f"Epoch skew detected: client epoch {self._epoch} behind "
+                f"server epoch {max_server_epoch}. Retrying with epoch "
+                f"{max_server_epoch + 1} (attempt {attempt + 1})."
+            )
+            self._epoch = max_server_epoch + 1
+
+        raise RuntimeError(
+            f"Failed to trigger production after "
+            f"{self._MAX_EPOCH_CATCH_UP_RETRIES} attempts. "
+            f"This indicates a persistent epoch skew."
+        )
