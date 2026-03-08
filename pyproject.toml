@@ -107,6 +107,7 @@ dev = [
   {include-group = "test"},
   {include-group = "typing-stubs"},
   "pre-commit==3.3.2",
+  "ty>=0.0.17",
 ]
 docs = [
   "astroid==3.3.11", # Newer versions of astroid are not compatible with sphinx==7.4.7
@@ -283,3 +284,34 @@ exclude =  [
 remove-all-unused-imports = true
 in-place = true
 recursive = true
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = [".github/scripts", "examples", "gigl", "tests", "snapchat", "scripts", "testing"]
+
+[tool.ty.analysis]
+# Equivalent to mypy's per-module ignore_missing_imports
+allowed-unresolved-imports = [
+    "kfp.*",
+    "kfp_server_api.*",
+    "networkx.*",
+    "networkx",
+    "setuptools",
+    "tensorflow_data_validation",
+    "tensorflow_metadata.*",
+    "tensorflow.*",
+    "torch_geometric.*",
+    "tfx_bsl.*",
+    "parameterized.*",
+    "pyarrow.*",
+    "matplotlib.*",
+    "msgpack",
+    "torch_sparse.*",
+    "absl.*",
+    "graphlearn_torch.*",
+    "google.cloud.storage.*",
+    "torchrec.*",
+    "google_cloud_pipeline_components.*",
+]
