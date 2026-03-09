@@ -101,8 +101,7 @@ class BaseDistLoader(DistLoader):
         runtime: Resolved distributed runtime information.
         producer: Either a pre-constructed ``DistSamplingProducer`` (colocated mode)
             or a callable to dispatch on the ``DistServer`` (graph store mode).
-        sampler_options: Controls which sampler class is instantiated. If ``None``,
-            falls back to the default ``KHopNeighborSamplerOptions``.
+        sampler_options: Controls which sampler class is instantiated.
         process_start_gap_seconds: Delay between each process for staggered colocated init.
     """
 

@@ -193,9 +193,8 @@ class DistABLPLoader(BaseDistLoader):
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
             sampler_options (Optional[SamplerOptions]): Controls which sampler class is
-                instantiated. Pass ``KHopNeighborSamplerOptions`` to use the built-in sampler,
-                or ``CustomSamplerOptions`` to dynamically import a custom sampler class.
-                If ``None``, defaults to ``KHopNeighborSamplerOptions(num_neighbors)``.
+                instantiated. Defaults to `KHopNeighborSamplerOptions`, which will use the num_neighbors argument
+                to instantiate the sampler.
             context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
