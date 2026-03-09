@@ -35,7 +35,12 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
-from gigl.distributed.sampler_options import KHopNeighborSamplerOptions, SamplerOptions
+from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
+from gigl.distributed.sampler_options import (
+    KHopNeighborSamplerOptions,
+    PPRSamplerOptions,
+    SamplerOptions,
+)
 
 
 def _sampling_worker_loop(
@@ -89,9 +94,20 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        # Resolve sampler class from options
+        # Resolve sampler class and any extra kwargs from options
+        extra_sampler_kwargs: dict[str, object] = {}
         if isinstance(sampler_options, KHopNeighborSamplerOptions):
             sampler_cls = DistNeighborSampler
+        elif isinstance(sampler_options, PPRSamplerOptions):
+            sampler_cls = DistPPRNeighborSampler
+            extra_sampler_kwargs = {
+                "alpha": sampler_options.alpha,
+                "eps": sampler_options.eps,
+                "max_ppr_nodes": sampler_options.max_ppr_nodes,
+                "default_node_id": sampler_options.default_node_id,
+                "default_weight": sampler_options.default_weight,
+                "num_nbrs_per_hop": sampler_options.num_nbrs_per_hop,
+            }
         else:
             raise NotImplementedError(
                 f"Unsupported sampler options type: {type(sampler_options)}"
@@ -110,6 +126,7 @@ def _sampling_worker_loop(
             worker_options.worker_concurrency,
             current_device,
             seed=sampling_config.seed,
+            **extra_sampler_kwargs,
         )
         dist_sampler.start_loop()
 

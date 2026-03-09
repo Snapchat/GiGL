@@ -1,8 +1,9 @@
 """Sampler option types for configuring which sampler class to use in distributed loading.
 
-Provides ``KHopNeighborSamplerOptions`` for using GiGL's built-in ``DistNeighborSampler``.
+Provides ``KHopNeighborSamplerOptions`` for using GiGL's built-in ``DistNeighborSampler``,
+and ``PPRSamplerOptions`` for PPR-based sampling using ``DistPPRNeighborSampler``.
 
-Frozen dataclass so it is safe to pickle across RPC boundaries
+Frozen dataclasses so they are safe to pickle across RPC boundaries
 (required for Graph Store mode).
 """
 
@@ -28,7 +29,38 @@ class KHopNeighborSamplerOptions:
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
 
 
-SamplerOptions = KHopNeighborSamplerOptions
+@dataclass(frozen=True)
+class PPRSamplerOptions:
+    """Sampler options for PPR-based neighbor sampling using DistPPRNeighborSampler.
+
+    Degree tensors are sourced automatically from the dataset at sampler
+    initialization time and do not need to be provided here.
+
+    Attributes:
+        alpha: Restart probability (teleport probability back to seed). Higher
+            values keep samples closer to seeds. Typical values: 0.15-0.25.
+        eps: Convergence threshold for the Forward Push algorithm. Smaller
+            values give more accurate PPR scores but require more computation.
+            Typical values: 1e-4 to 1e-6.
+        max_ppr_nodes: Maximum number of nodes to return per seed based on PPR
+            scores.
+        default_node_id: Node ID used to pad results when fewer than
+            max_ppr_nodes are found.
+        default_weight: PPR weight assigned to padding nodes.
+        num_nbrs_per_hop: Maximum number of neighbors fetched per node per edge
+            type during PPR traversal. Set large to approximate fetching all
+            neighbors.
+    """
+
+    alpha: float = 0.5
+    eps: float = 1e-4
+    max_ppr_nodes: int = 50
+    default_node_id: int = -1
+    default_weight: float = 0.0
+    num_nbrs_per_hop: int = 100000
+
+
+SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]
 
 
 def resolve_sampler_options(
@@ -37,12 +69,14 @@ def resolve_sampler_options(
 ) -> SamplerOptions:
     """Resolve sampler_options from user-provided values.
 
-    If ``sampler_options`` is ``None``, wraps ``num_neighbors`` in a
-    ``KHopNeighborSamplerOptions``. If ``KHopNeighborSamplerOptions`` is
-    provided, validates that its ``num_neighbors`` matches the explicit value.
+    If ``sampler_options`` is a ``PPRSamplerOptions``, returns it directly
+    (``num_neighbors`` is unused for PPR). If ``sampler_options`` is ``None``,
+    wraps ``num_neighbors`` in a ``KHopNeighborSamplerOptions``. If
+    ``KHopNeighborSamplerOptions`` is provided, validates that its
+    ``num_neighbors`` matches the explicit value.
 
     Args:
-        num_neighbors: Fanout per hop (always required).
+        num_neighbors: Fanout per hop (required for KHop; ignored for PPR).
         sampler_options: Sampler configuration, or None.
 
     Returns:
@@ -52,6 +86,9 @@ def resolve_sampler_options(
         ValueError: If ``KHopNeighborSamplerOptions.num_neighbors`` conflicts
             with the explicit ``num_neighbors``.
     """
+    if isinstance(sampler_options, PPRSamplerOptions):
+        return sampler_options
+
     if sampler_options is None:
         return KHopNeighborSamplerOptions(num_neighbors)
 
